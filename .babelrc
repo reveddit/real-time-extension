@@ -1,0 +1,17 @@
+{
+    "presets": [
+        [
+            "@babel/preset-env",
+            {
+            "targets": {
+                "node": 4
+            },
+            "corejs": "3.1.4",
+            "useBuiltIns": "usage"
+            }
+        ]
+    ],
+    "plugins": [
+        "add-module-exports"
+    ]
+}

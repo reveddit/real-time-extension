@@ -1,0 +1,86 @@
+.note.real-time, .userpage-note {
+  display: none;
+}
+
+.reddit-infobar.rev-mod-removed,
+.rev-new-reddit-message-wrap.rev-mod-removed,
+.res-nightmode .reddit-infobar.rev-mod-removed
+ {
+    background-color: #ffb6b6;
+    border-color: #ff0000;
+}
+
+.res-nightmode .reddit-infobar.rev-mod-removed a,
+.res-nightmode .rev-mod-removed .rev-from a,
+.res-nightmode .rev-user-deleted .rev-from a,
+.rev-mod-removed .rev-from a,
+.rev-user-deleted .rev-from a {
+    color: #0079d3;
+}
+
+.rev-mod-removed .rev-from,
+.rev-user-deleted .rev-from,
+.res-nightmode .rev-mod-removed .rev-from {
+    color: black;
+    font-size: 12px;
+    font-weight: 700;
+    margin: 8px;
+}
+
+.res-nightmode .reddit-infobar.rev-mod-removed .md,
+.res-nightmode .reddit-infobar.rev-user-deleted .md {
+    color: black;
+}
+
+.reddit-infobar.rev-mod-removed .md,
+.reddit-infobar.rev-user-deleted .md {
+    margin-left: 16px;
+}
+
+.reddit-infobar.rev-user-deleted,
+.rev-new-reddit-message-wrap.rev-user-deleted,
+.res-nightmode .reddit-infobar.rev-user-deleted {
+    background-color: #d4e6ff;
+    border-color: #66a0ef;
+}
+
+.rev-new-reddit-message-wrap {
+    border: 1px solid;
+    border-radius: 4px;
+    position: relative;
+    margin: 16px;
+    font-family: verdana, arial, helvetica, sans-serif;
+}
+
+.rev-new-reddit-message-content {
+    display: inline-block;
+    margin: 0 8px 8px 16px;
+}
+
+.rev-new-reddit-message-content .rev-new-reddit-message-content-heading {
+    font-weight: 700;
+}
+
+.rev-new-reddit-message-content-heading, .rev-new-reddit-message-content-description {
+    padding-top: 4px;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 16px;
+    color: black;
+}
+
+.link.locked:not(.promoted) .tagline::after {
+    content: 'locked';
+    color: black;
+    background: #ffd635;
+    border-radius: 10px;
+    font-weight: 700;
+    padding: 0 4px 2px;
+    border: 1px solid white;
+    display: inline-block;
+    margin: 3px 5px 0px;
+}
+
+.commentarea .collapsed.deleted.comment {
+    display: block;
+}

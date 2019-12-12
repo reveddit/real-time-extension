@@ -1,0 +1,120 @@
+#go-to-options {
+    float: right;
+}
+
+#bottom {
+    text-align: center;
+}
+.clear-notifications {
+    font-size: small;
+}
+
+#rr-input {
+    display: flex;
+    justify-content: flex-end;
+}
+
+input#user {
+    min-width: 0;
+}
+
+#rr-go {
+    margin-left: 10px;
+}
+
+#popup {
+    width: 300px;
+}
+
+body, input, button {
+    font-size: 1.3em;
+}
+
+.blue-link {
+    color: rgb(63, 154, 222);
+    text-decoration: none;
+}
+
+.unseen {
+    display: inline-block;
+    border-right: 1px solid lightgrey;
+    min-width: 2.5em;
+    margin-right: .6em;
+}
+
+.num-unseen {
+    font-size: .5em;
+    font-weight: bold;
+}
+
+/* toggle switch */
+
+.text-label {
+    color: rgb(204,204,204);
+    cursor: pointer;
+}
+
+.text-label.set {
+    color: rgb(63, 154, 222);
+}
+
+.switch {
+    float:right;
+    /*display:none;*/
+    margin-bottom: 5px;
+}
+
+.cmn-toggle {
+  position: absolute;
+  margin-left: -9999px;
+  visibility: hidden;
+}
+.cmn-toggle + label {
+  display: block;
+  position: relative;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+input.cmn-toggle-round-flat + label {
+  padding: 2px;
+  width: 60px;
+  height: 30px;
+  background-color: #dddddd;
+  border-radius: 30px;
+  transition: background 0.4s;
+}
+input.cmn-toggle-round-flat + label:before,
+input.cmn-toggle-round-flat + label:after {
+  display: block;
+  position: absolute;
+  content: "";
+}
+input.cmn-toggle-round-flat + label:before {
+  top: 2px;
+  left: 2px;
+  bottom: 2px;
+  right: 2px;
+  background-color: #fff;
+  border-radius: 30px;
+  transition: background 0.4s;
+}
+input.cmn-toggle-round-flat + label:after {
+  top: 4px;
+  left: 4px;
+  bottom: 4px;
+  width: 25px;
+  background-color: #dddddd;
+  border-radius: 25px;
+  transition: margin 0.4s, background 0.4s;
+}
+input.cmn-toggle-round-flat:checked + label {
+  background-color: rgb(63, 154, 222);
+}
+input.cmn-toggle-round-flat:checked + label:after {
+  margin-left: 30px;
+  background-color: rgb(63, 154, 222);
+}
+
+/* end toggle switch */
