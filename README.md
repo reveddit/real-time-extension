@@ -18,5 +18,5 @@ Firefox: `yarn start-firefox`, load `dist-dev-firefox/`
 
 ## Future work
 
-* Monitor parent comments / posts of subscribed users
+* Monitor parent comments / posts of subscribed users' comments + other subscribed comments
 * Track edits to parent comments
