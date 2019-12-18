@@ -15,3 +15,8 @@ Firefox: `yarn start-firefox`, load `dist-dev-firefox/`
 ## Dev: Production build
 
 `yarn build-prod` builds Chrome and Firefox code and packages it into zip files.
+
+## Future work
+
+* Monitor parent comments / posts of subscribed users
+* Track edits to parent comments
