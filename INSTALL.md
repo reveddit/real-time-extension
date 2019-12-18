@@ -1,6 +1,6 @@
 ## Installing from source
 
-### Chrome
+###  Chrome [![chrome](images/chrome.png)](#)
 
 1. Download and expand this [zip file](https://github.com/reveddit/real-time-extension/archive/master.zip)
 
