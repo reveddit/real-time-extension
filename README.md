@@ -1,14 +1,16 @@
 ## Direct Installation
 
-This extension can be installed directly via [Firefox](https://addons.mozilla.org/en-US/firefox/addon/reveddit-real-time/):
+This extension can be installed directly via [Chrome](https://chrome.google.com/webstore/detail/reveddit-real-time/ickfhlplfbipnfahjbeongebnmojbnhm) or [Firefox](https://addons.mozilla.org/en-US/firefox/addon/reveddit-real-time/):
 
 <p align="center">
+  <a href="https://chrome.google.com/webstore/detail/reveddit-real-time/ickfhlplfbipnfahjbeongebnmojbnhm">
+    <img src="https://i.imgur.com/B0i5sn3.png" alt="Chrome Web Store"></a>
   <a href="https://addons.mozilla.org/en-US/firefox/addon/reveddit-real-time/">
     <img src="https://i.imgur.com/dvof8rG.png" alt="Firefox add-ons"></a>
 </p>
 
 
-![chrome](images/chrome.png) For Chrome, see the steps to [install from source](INSTALL.md). It is currently unavailable in the Chrome store (details [here](https://www.reddit.com/r/reveddit/comments/ec7j5g/chrome_store_removed_the_realtime_extension_from/)).
+![chrome](images/chrome.png) Note: the Chrome Store may or may not have the latest update (details [here](https://www.reddit.com/r/reveddit/comments/ehequ8/update_on_chrome_store_realtime_extension_its/)).
 
 ## Install from source
 
