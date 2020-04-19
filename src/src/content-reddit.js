@@ -56,7 +56,7 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = '.Post', postData = {
     if (postID) {
         if ($('meta[name="robots"][content="noindex,nofollow"]').length ||
             ('is_robot_indexable' in postData && ! postData.is_robot_indexable) ) {
-            const author = postData.author || $('.link .author').first().text() || $('.Post span:contains("u/[deleted]")').first().text()
+            const author = postData.author || $('.link .author').first().text() || $('.link .tagline span:contains("[deleted]")').text() || $('.Post span:contains("u/[deleted]")').first().text()
             if (author === '[deleted]' || author === 'u/[deleted]') {
                 className = USER_DELETED
                 message_1 = `This post was deleted by the person who posted it.`
