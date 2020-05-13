@@ -47,6 +47,7 @@ function modify(buffer) {
         manifest.browser_specific_settings = {
             "gecko": { id }
         }
+        manifest.permissions.push("activeTab")
     }
     if (mode === 'development') {
         manifest.permissions.push("http://localhost/*")

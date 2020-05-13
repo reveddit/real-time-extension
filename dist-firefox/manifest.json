@@ -8,11 +8,11 @@
     "alarms",
     "storage",
     "contextMenus",
-    "activeTab",
     "webRequest",
     "webRequestBlocking",
     "https://*.reddit.com/*",
-    "https://*.reveddit.com/*"
+    "https://*.reveddit.com/*",
+    "activeTab"
   ],
   "icons": {
     "16": "icons/16.png",

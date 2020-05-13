@@ -57,15 +57,17 @@ function populatePopup() {
 
         chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
             const url = tabs[0].url
-            const [postID, commentID, user] = getFullIDsFromURL(url)
-            if (commentID) {
-                showToggleSubscribe({comment: commentID}, syncStorage, url)
-            }
-            if (postID) {
-                showToggleSubscribe({post: postID}, syncStorage, url)
-            }
-            if (user) {
-                showToggleSubscribe({user: user}, syncStorage, url)
+            if (url) {
+                const [postID, commentID, user] = getFullIDsFromURL(url)
+                if (commentID) {
+                    showToggleSubscribe({comment: commentID}, syncStorage, url)
+                }
+                if (postID) {
+                    showToggleSubscribe({post: postID}, syncStorage, url)
+                }
+                if (user) {
+                    showToggleSubscribe({user: user}, syncStorage, url)
+                }
             }
         })
     });
