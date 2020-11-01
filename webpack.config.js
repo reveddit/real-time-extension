@@ -81,7 +81,7 @@ const plugins = [
 
 const contentScripts = {
     common: './src/src/common.js',
-    content: './src/src/content.js',
+    content: ['@babel/polyfill', './src/src/content.js'],
     'content-reddit': './src/src/content-reddit.js',
     'content-revddit': './src/src/content-revddit.js',
     'content-common': './src/src/content-common.js',
@@ -91,10 +91,10 @@ const contentScripts = {
 }
 
 const extensionPages = {
-    options: './src/src/options.js',
-    popup: './src/src/popup.js',
-    history: './src/src/history.js',
-    other: './src/src/other.js'
+    options: ['@babel/polyfill', './src/src/options.js'],
+    popup: ['@babel/polyfill', './src/src/popup.js'],
+    history: ['@babel/polyfill', './src/src/history.js'],
+    other: ['@babel/polyfill', './src/src/other.js'],
 }
 
 if (hot_reload) {
@@ -117,7 +117,7 @@ module.exports = {
     //     suggests not using eval statements
     devtool: "inline-source-map",
     entry: {
-        background: './src/src/background.js',
+        background: ['@babel/polyfill', './src/src/background.js'],
         ...contentScripts,
         ...extensionPages
     },

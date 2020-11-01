@@ -9,6 +9,14 @@ import {setupContextualMenu} from './contextMenus.js'
 
 setupContextualMenu()
 
+
+// BEGIN webRequest API code
+// When manifest v3 goes live, this code should only run for firefox
+// It enables viewing quarantined content on reveddit (except user pages which are covered with cloudflare workers)
+
+// Can use this to check for firefox build:
+// if (__BUILT_FOR__ !== 'chrome') {
+
 const opt_extraInfoSpec = ['requestHeaders', 'blocking']
 
 if (chrome && chrome.webRequest.OnBeforeSendHeadersOptions.hasOwnProperty('EXTRA_HEADERS')) {
@@ -18,7 +26,6 @@ if (chrome && chrome.webRequest.OnBeforeSendHeadersOptions.hasOwnProperty('EXTRA
 chrome.webRequest.onBeforeSendHeaders.addListener(function(details){
     var newCookie = '_options={%22pref_quarantine_optin%22:true};'
     var gotCookie = false
-    var gotAcceptLanguage = false
     for (var n in details.requestHeaders) {
         const headerName = details.requestHeaders[n].name.toLowerCase()
         if (headerName === "cookie") {
@@ -27,21 +34,17 @@ chrome.webRequest.onBeforeSendHeaders.addListener(function(details){
                 details.requestHeaders[n].value = details.requestHeaders[n].value + `; ${newCookie}`
             }
             gotCookie = true
-        } else if (headerName === "accept-language") {
-            details.requestHeaders[n].value = 'en'
-            gotAcceptLanguage = true
         }
     }
     if (! gotCookie) {
         details.requestHeaders.push({name:"Cookie",value:newCookie})
     }
-    if (! gotAcceptLanguage) {
-        details.requestHeaders.push({name:"accept-language",value:'en'})
-    }
     return {requestHeaders:details.requestHeaders}
 },{
     urls:["https://oauth.reddit.com/*.json*", "https://*.reddit.com/api/info*"]
 }, opt_extraInfoSpec)
+
+// END webRequest API code
 
 chrome.runtime.onMessage.addListener(
     function(request, sender, sendResponse) {

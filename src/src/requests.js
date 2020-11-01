@@ -10,10 +10,43 @@ export const lookupItemsByID = (ids, auth) => {
     const params = {id:ids, raw_json:1}
     const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
 
-    return window.fetch(...getFetchParams('api/info', search, auth))
+    return fetch_forReddit(...getFetchParams('api/info', search, auth))
+}
+
+const cookieDetails_redditSession = {name: 'reddit_session', url: 'https://reddit.com'}
+
+const acceptable_setCookieDetails = ['name', 'value', 'domain', 'path', 'secure', 'httpOnly', 'storeId']
+
+const getSettableCookie = (cookie, url = 'https://reddit.com') => {
+    if (! cookie) {
+        return cookie
+    }
+    const filtered = Object.keys(cookie)
+        .filter(key => acceptable_setCookieDetails.includes(key))
+        .reduce((obj, key) => {
+            return {
+                ...obj,
+                [key]: cookie[key]
+            };
+        }, {});
+    filtered.url = url
+    return filtered
+}
+
+const fetch_forReddit = async (url, options) => {
+    const cookie_redditSession = getSettableCookie(await browser.cookies.get(cookieDetails_redditSession))
+    browser.cookies.set({domain: 'reddit.com', url: 'https://reddit.com', name: '_options', value: '{%22pref_quarantine_optin%22:true}'})
+    if (cookie_redditSession) {
+        await browser.cookies.remove(cookieDetails_redditSession)
+    }
+    const result = window.fetch(url, options)
     .then(handleFetchErrors)
     .then(getRedditData)
     .catch(console.log)
+    if (cookie_redditSession) {
+        await browser.cookies.set(cookie_redditSession)
+    }
+    return result
 }
 
 export const lookupItemsByUser = (user, after, sort, timeSpan, auth) => {
@@ -22,11 +55,7 @@ export const lookupItemsByUser = (user, after, sort, timeSpan, auth) => {
     if (timeSpan) params.t = timeSpan
     const path = `user/${user}/overview.json`
     const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
-
-    return window.fetch(...getFetchParams(path, search, auth))
-    .then(handleFetchErrors)
-    .then(getRedditData)
-    .catch(console.log)
+    return fetch_forReddit(...getFetchParams(path, search, auth))
 }
 
 export const handleFetchErrors = (response) => {
