@@ -27,8 +27,8 @@ export const getFullIDsFromURL = (url) => {
     return getFullIDsFromPath(path)
 }
 
-const regex_pc = /^\/(r|user)\/([^/]+)\/comments\/([^/]+)\/[^/]*(?:\/([^/?&#]+))?/
-const regex_user = /^\/user\/([^/?&#]+)\/?/
+const regex_pc = /^\/(v|r|user)\/([^/]+)\/comments\/([^/]+)\/[^/]*(?:\/([^/?&#]+))?/
+const regex_user = /^\/(?:user|y|u)\/([^/?&#]+)\/?/
 
 export const getFullIDsFromPath = (path) => {
     let postID = undefined, commentID = undefined, user = undefined, subreddit = undefined
