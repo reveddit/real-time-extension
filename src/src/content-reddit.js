@@ -1,6 +1,7 @@
 import {getAuth, lookupItemsByID} from './requests.js'
 import {getFullIDsFromPath} from './common.js'
 import {setTextAndFunction_subscribe,setTextAndFunction_unsubscribe} from './content-common.js'
+import browser from 'webextension-polyfill'
 
 const USER_DELETED = 'rev-user-deleted'
 const MOD_REMOVED = 'rev-mod-removed'

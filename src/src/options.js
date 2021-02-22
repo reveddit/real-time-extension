@@ -2,6 +2,7 @@ import {alphaLowerSort,showError,countUnseen_updateBadge_background,saveSubscrip
 import {subscribeUser, unsubscribeUser, getOptions, INTERVAL_DEFAULT, saveOptions} from './storage.js'
 
 import {setAlarm, ALARM_NAME} from './common.js'
+import browser from 'webextension-polyfill'
 
 
 

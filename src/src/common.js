@@ -1,10 +1,10 @@
 import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
         getSubscribedUsers_withUnseenIDs } from './storage.js'
+import browser from 'webextension-polyfill'
 
 export const ALARM_NAME = 'notifyme'
-
-
 const maxRedditContentLength = 300
+const ACTION_API = __BUILT_FOR__ === 'chrome' ? 'action' : 'browserAction'
 
 // https://stackoverflow.com/questions/25933556/chrome-extension-open-new-tab-when-browser-opened-in-background-mac/25933964#25933964
 export const createTab = (url) => {
@@ -247,9 +247,22 @@ export const createNotification = ({notificationId, title, message}) => {
             options: {notificationId, title, message}
         })
     } else {
-        chrome.notifications.create(notificationId,
-            {type: 'basic', iconUrl: '/icons/128.png',
-             title, message})
+        if (__BUILT_FOR__ === 'chrome') {
+            registration.showNotification(title, {
+                body: message,
+                data: notificationId,
+                icon: '/icons/128.png',
+                message
+            })
+        } else {
+            // notifications.create does not work in chrome's manifest v3, something wrong with reading image data
+            // https://stackoverflow.com/questions/65570332/google-chrome-extensions-v3-error-in-event-handler-referenceerror-image-is-n
+            // https://bugs.chromium.org/p/chromium/issues/detail?id=1168477&q=image%20is%20not%20defined%20notification%20manifest%20v3&can=2
+            chrome.notifications.create(notificationId,
+                {type: 'basic',
+                 iconUrl: '/icons/128.png',
+                 title, message})
+        }
     }
 }
 
@@ -266,8 +279,8 @@ export const updateBadgeUnseenCount = () => {
             })
             let text = total.toString()
             if (total == 0) text = ''
-            chrome.browserAction.setBadgeBackgroundColor({color: "red"})
-            chrome.browserAction.setBadgeText({text: text})
+            chrome[ACTION_API].setBadgeBackgroundColor({color: "red"})
+            chrome[ACTION_API].setBadgeText({text: text})
         })
     }
 }

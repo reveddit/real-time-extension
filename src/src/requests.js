@@ -1,4 +1,5 @@
 import {getOptions} from './storage.js'
+import browser from 'webextension-polyfill'
 
 const clientID = 'SEw1uvRd6kxFEw'
 const oauth_reddit = 'https://oauth.reddit.com/'
@@ -39,7 +40,7 @@ const fetch_forReddit = async (url, options) => {
     if (cookie_redditSession) {
         await browser.cookies.remove(cookieDetails_redditSession)
     }
-    const result = window.fetch(url, options)
+    const result = fetch(url, options)
     .then(handleFetchErrors)
     .then(getRedditData)
     .catch(console.log)
@@ -90,14 +91,14 @@ export const getAuth = () => {
         }
         const tokenInit = {
             headers: {
-                Authorization: `Basic ${window.btoa(`${use_this_clientID}:`)}`,
+                Authorization: `Basic ${btoa(`${use_this_clientID}:`)}`,
                 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'
             },
             method: 'POST',
             body: `grant_type=${encodeURIComponent('https://oauth.reddit.com/grants/installed_client')}&device_id=DO_NOT_TRACK_THIS_DEVICE`
         }
 
-        return window.fetch('https://www.reddit.com/api/v1/access_token', tokenInit)
+        return fetch('https://www.reddit.com/api/v1/access_token', tokenInit)
         .then(handleFetchErrors)
         .then(getRedditToken)
         .then(token => ({
@@ -113,7 +114,7 @@ export const getAuth = () => {
 // code: https://github.com/toolbox-team/reddit-moderator-toolbox/blob/434ec0bb71ebba2fcf0cb5e4cad529035a1ae742/extension/data/background/handlers/webrequest.js#L34
 // discussion: https://www.reddit.com/r/redditdev/comments/5jf4yg/api_new_modmail/dbfnw98/
 export const getLocalAuth = () => {
-    return window.fetch('https://mod.reddit.com/mail/all')
+    return fetch('https://mod.reddit.com/mail/all')
     .then(result => {
         getCookie({url: 'https://mod.reddit.com', name: 'token'})
         .then(cookie => {
@@ -179,7 +180,7 @@ export const getLocalOrAppAuth = () => {
 }
 
 export const getLoggedinUser = () => {
-    return window.fetch('https://www.reddit.com/api/me.json')
+    return fetch('https://www.reddit.com/api/me.json')
     .then(handleFetchErrors)
     .then(getRedditUsername)
     .catch(console.log)

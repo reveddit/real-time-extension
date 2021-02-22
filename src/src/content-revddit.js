@@ -1,5 +1,6 @@
 import {markIDsAsSeenIfSubscribed} from './storage.js'
 import {setTextAndFunction_subscribe,setTextAndFunction_unsubscribe} from './content-common.js'
+import browser from 'webextension-polyfill'
 
 const id_match = /^t[13]_.+/
 

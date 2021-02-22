@@ -1,5 +1,6 @@
 import { getItemFromLocalStorage, unsubscribeId, getIDs_thing } from './storage.js'
 import { getPrettyDate, isComment, sortDict_by_numberValuedAttribute } from './common.js'
+import browser from 'webextension-polyfill'
 
 const key = 'other_subscriptions'
 chrome.storage.local.get(null, localStorage => {

@@ -18,18 +18,22 @@
         "webpack-extension-reloader": "https://github.com/rhaksw/webpack-extension-reloader.git"
     },
     "scripts": {
-        "build": "yarn clean && yarn build-all",
+        "build": "yarn clean-all && yarn build-all",
         "start": "yarn start-chrome",
         "start-chrome": "NODE_ENV=development HOT_RELOAD=true FORCHROME=true webpack --watch",
         "start-firefox": "NODE_ENV=development HOT_RELOAD=true FORFIREFOX=true webpack --watch",
         "build-all": "yarn build-prod && yarn build-dev",
         "build-prod": "yarn build-chrome && yarn build-firefox",
-        "build-chrome": "NODE_ENV=production FORCHROME=true webpack && (cd dist-chrome && zip -r ../chrome.zip .)",
-        "build-firefox": "NODE_ENV=production FORFIREFOX=true webpack && (cd dist-firefox && zip -r ../firefox.zip .)",
+        "build-chrome": "yarn clean-chrome && NODE_ENV=production FORCHROME=true webpack && (cd dist-chrome && zip -r ../chrome.zip .)",
+        "build-firefox": "yarn clean-firefox && NODE_ENV=production FORFIREFOX=true webpack && (cd dist-firefox && zip -r ../firefox.zip .)",
         "build-dev": "yarn build-chrome-dev && yarn build-firefox-dev",
-        "build-chrome-dev": "NODE_ENV=development FORCHROME=true webpack",
-        "build-firefox-dev": "NODE_ENV=development FORFIREFOX=true webpack",
-        "clean": "rimraf dist-chrome dist-firefox dist-dev-chrome dist-dev-firefox chrome.zip firefox.zip"
+        "build-chrome-dev": "yarn clean-chrome-dev && NODE_ENV=development FORCHROME=true webpack",
+        "build-firefox-dev": "yarn clean-firefox-dev && NODE_ENV=development FORFIREFOX=true webpack",
+        "clean-chrome-dev": "rimraf dist-dev-chrome",
+        "clean-firefox-dev": "rimraf dist-dev-firefox",
+        "clean-chrome": "rimraf dist-chrome chrome.zip",
+        "clean-firefox": "rimraf dist-firefox firefox.zip",
+        "clean-all": "yarn clean-chrome-dev && yarn clean-firefox-dev && yarn clean-chrome && yarn clean-firefox"
     },
     "dependencies": {
         "arrive": "^2.4.1",

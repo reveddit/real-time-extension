@@ -39,18 +39,30 @@ function modify(buffer) {
     //     Cannot find module 'core-js/modules/es.object.to-string'
     // maybe babel converts it incorrectly?
     var manifest = JSON.parse(buffer.toString());
+    let host_permissions_location = 'host_permissions'
     if (process.env.FORCHROME) {
         manifest.incognito = 'split'
     }
     if (process.env.FORFIREFOX) {
+        host_permissions_location = 'permissions'
         let id = 'real-time-stable@reveddit.com'
         manifest.browser_specific_settings = {
             "gecko": { id }
         }
-        manifest.permissions.push("activeTab")
+        manifest.permissions.push(
+            'activeTab', 'webRequest', 'webRequestBlocking',
+            'https://*.reddit.com/*', 'https://*.reveddit.com/*',
+        )
+        delete manifest.host_permissions
+        manifest.manifest_version = 2
+        manifest.background.scripts = [manifest.background.service_worker]
+        manifest.background.persistent = true
+        delete manifest.background.service_worker
+        delete Object.assign(manifest, {browser_action: manifest.action }).action
+        manifest.web_accessible_resources = manifest.web_accessible_resources[0].resources
     }
     if (mode === 'development') {
-        manifest.permissions.push("http://localhost/*")
+        manifest[host_permissions_location].push("http://localhost/*")
         manifest.content_scripts[0].matches.push("http://localhost/*")
     }
     // pretty print to JSON with two spaces
@@ -71,7 +83,6 @@ const plugins = [
         { context: 'src/src/', from: "*.html", to: distSrcPath },
         { context: 'src/src/', from: "*.css", to: distSrcPath },
         { context: 'lib/', from: "*", to: distLibPath },
-        { context: 'node_modules/webextension-polyfill/dist/', from: 'browser-polyfill.js*', to: distLibPath },
         { context: 'node_modules/arrive/src/', from: 'arrive.js', to: distLibPath }
     ]),
     new webpack.DefinePlugin({
@@ -117,13 +128,20 @@ module.exports = {
     //     suggests not using eval statements
     devtool: "inline-source-map",
     entry: {
-        background: ['@babel/polyfill', './src/src/background.js'],
+        background: ['@babel/polyfill', './src/background.js'],
         ...contentScripts,
         ...extensionPages
     },
     output: {
-        path: distSrcPath,
-        filename: "[name].js"
+        path: distPath,
+        filename: (pathData) => {
+            const filename = '[name].js'
+            if (pathData.chunk.name !== 'background') {
+                return 'src/'+filename
+            } else {
+                return filename
+            }
+        }
     },
     plugins,
     module: {

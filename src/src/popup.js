@@ -3,6 +3,7 @@ import {getSubscribedUsers_withSeenAndUnseenIDs,
         subscribeUser, unsubscribeUser, subscribeId, unsubscribeId,
         markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen} from './storage.js'
 import {setCurrentStateForId} from './monitoring.js'
+import browser from 'webextension-polyfill'
 
 
 populatePopup()

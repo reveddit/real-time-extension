@@ -6,6 +6,7 @@ import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
 import {createNotification, updateBadgeUnseenCount, trimDict_by_numberValuedAttribute,
         isUserDeletedItem, isRemovedItem,
         ItemForStorage, LocalStorageItem, ChangeForStorage} from './common.js'
+import browser from 'webextension-polyfill'
 
 
 const SUBSCRIBED_FROM_REDDIT = 0

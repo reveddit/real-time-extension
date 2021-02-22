@@ -1,11 +1,11 @@
 import {goToOptions, setAlarm, ALARM_NAME,
-        createNotification, updateBadgeUnseenCount, createTab } from './common.js'
-import {checkForChanges} from './monitoring.js'
-import {lookupItemsByID, getLoggedinUser, getCookie, getAuth} from './requests.js'
+        createNotification, updateBadgeUnseenCount, createTab } from './src/common.js'
+import {checkForChanges} from './src/monitoring.js'
+import {lookupItemsByID, getLoggedinUser, getCookie, getAuth} from './src/requests.js'
 import {initStorage, INTERVAL_DEFAULT, subscribeUser,
-        getUnseenIDs_thing, markThingAsSeen } from './storage.js'
-import {setupContextualMenu} from './contextMenus.js'
-
+        getUnseenIDs_thing, markThingAsSeen } from './src/storage.js'
+import {setupContextualMenu} from './src/contextMenus.js'
+import browser from 'webextension-polyfill'
 
 setupContextualMenu()
 
@@ -15,37 +15,34 @@ setupContextualMenu()
 // It enables viewing quarantined content on reveddit (except user pages which are covered with cloudflare workers)
 
 // Can use this to check for firefox build:
-// if (__BUILT_FOR__ !== 'chrome') {
+if (__BUILT_FOR__ !== 'chrome') {
+    const opt_extraInfoSpec = ['requestHeaders', 'blocking']
 
-const opt_extraInfoSpec = ['requestHeaders', 'blocking']
-
-if (chrome && chrome.webRequest.OnBeforeSendHeadersOptions.hasOwnProperty('EXTRA_HEADERS')) {
-    opt_extraInfoSpec.push('extraHeaders')
-}
-
-chrome.webRequest.onBeforeSendHeaders.addListener(function(details){
-    if (details.initiator === 'https://www.reveddit.com') {
-        var newCookie = '_options={%22pref_quarantine_optin%22:true};'
-        var gotCookie = false
-        for (var n in details.requestHeaders) {
-            const headerName = details.requestHeaders[n].name.toLowerCase()
-            if (headerName === "cookie") {
-                details.requestHeaders[n].value = details.requestHeaders[n].value.replace(/ ?reddit_session[^;]*;/,'')
-                if (! details.requestHeaders[n].value.match(/pref_quarantine_optin/)) {
-                    details.requestHeaders[n].value = details.requestHeaders[n].value + `; ${newCookie}`
+    browser.webRequest.onBeforeSendHeaders.addListener(function(details){
+        //chrome uses details.initiator, but since chrome doesn't support webRequest anymore,
+        //only need to check the value supported by firefox
+        if (details.originUrl.match(/^https:\/\/www.reveddit.com(\/.*)?$/)) {
+            var newCookie = '_options={%22pref_quarantine_optin%22:true};'
+            var gotCookie = false
+            for (var n in details.requestHeaders) {
+                const headerName = details.requestHeaders[n].name.toLowerCase()
+                if (headerName === "cookie") {
+                    details.requestHeaders[n].value = details.requestHeaders[n].value.replace(/ ?reddit_session[^;]*;/,'')
+                    if (! details.requestHeaders[n].value.match(/pref_quarantine_optin/)) {
+                        details.requestHeaders[n].value = details.requestHeaders[n].value + `; ${newCookie}`
+                    }
+                    gotCookie = true
                 }
-                gotCookie = true
+            }
+            if (! gotCookie) {
+                details.requestHeaders.push({name:"Cookie",value:newCookie})
             }
         }
-        if (! gotCookie) {
-            details.requestHeaders.push({name:"Cookie",value:newCookie})
-        }
-    }
-    return {requestHeaders:details.requestHeaders}
-},{
-    urls:["https://oauth.reddit.com/*.json*", "https://*.reddit.com/api/info*"]
-}, opt_extraInfoSpec)
-
+        return {requestHeaders:details.requestHeaders}
+    },{
+        urls:["https://oauth.reddit.com/*.json*", "https://*.reddit.com/api/info*"]
+    }, opt_extraInfoSpec)
+}
 // END webRequest API code
 
 chrome.runtime.onMessage.addListener(
@@ -109,7 +106,7 @@ function subscribeToLoggedInUser_or_promptForUser() {
             browser.tabs.create({url: `https://www.reveddit.com/user/`})
             .then(tab => {
                 // try to make request via content page instead (works for firefox)
-                window.setTimeout(() => {
+                setTimeout(() => {
                     browser.tabs.sendMessage(tab.id, {action: 'query-user'})
                 }, 2000)
             })
@@ -117,9 +114,8 @@ function subscribeToLoggedInUser_or_promptForUser() {
     })
 }
 
-chrome.notifications.onClicked.addListener((thing) => {
-    let isUser = true
-    if (thing === 'other') isUser = false
+const notificationClicked = (thing) => {
+    const isUser = thing === 'other' ? false : true
     chrome.storage.sync.get(null, (storage) => {
         const unseenIDs = getUnseenIDs_thing(thing, isUser, storage)
         let url = null
@@ -143,8 +139,20 @@ chrome.notifications.onClicked.addListener((thing) => {
             })
         }
     })
+}
+
+chrome.notifications.onClicked.addListener((thing) => {
+    notificationClicked(thing)
     chrome.notifications.clear(thing)
 })
+
+// only need this while using registration.showNotification in common.js
+if (__BUILT_FOR__ === 'chrome') {
+    self.addEventListener('notificationclick', (event) => {
+        notificationClicked(event.notification.data)
+        event.notification.close()
+    })
+}
 
 if (! chrome.extension.inIncognitoContext) {
     chrome.alarms.onAlarm.addListener(function(alarm) {

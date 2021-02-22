@@ -1,6 +1,7 @@
 import {subscribeUser, subscribeId} from './storage.js'
 import {getFullIDsFromURL} from './common.js'
 import {setCurrentStateForId} from './monitoring.js'
+import browser from 'webextension-polyfill'
 
 const regex_comment = /^\/r\/[^/]+\/comments\/[^/]+\/[^/]*\/([^/]+)/
 const regex_post = /^\/r\/[^/]+\/comments\/([^/]+)\/[^/]*\/?/

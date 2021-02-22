@@ -2,6 +2,7 @@ import {getSubscribedUsers_withSeenAndUnseenIDs, subscribeUser} from './storage.
 import {redditModifications} from './content-reddit.js'
 import {revdditModifications} from './content-revddit.js'
 import {getLoggedinUser} from './requests.js'
+import browser from 'webextension-polyfill'
 
 
 

@@ -1,4 +1,5 @@
 import {alphaLowerSort, ItemForStorage, LocalStorageItem, trimDict_by_numberValuedAttribute} from './common.js'
+import browser from 'webextension-polyfill'
 
 export const INTERVAL_DEFAULT = 1;
 

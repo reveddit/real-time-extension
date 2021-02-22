@@ -1,15 +1,15 @@
 {
   "name": "reveddit real-time",
   "description": "reveddit notifies you when any of your content on reddit has been removed.",
-  "version": "0.0.1.5",
+  "version": "0.0.1.6",
   "permissions": [
     "cookies",
     "notifications",
     "alarms",
     "storage",
-    "contextMenus",
-    "webRequest",
-    "webRequestBlocking",
+    "contextMenus"
+  ],
+  "host_permissions": [
     "https://*.reddit.com/*",
     "https://*.reveddit.com/*"
   ],
@@ -18,7 +18,7 @@
     "48": "icons/48.png",
     "128": "icons/128.png"
   },
-  "browser_action": {
+  "action": {
     "default_popup": "src/popup.html",
     "default_icon": {
       "16": "icons/16.png",
@@ -27,9 +27,13 @@
     }
   },
   "web_accessible_resources": [
-    "icons/rr-chrome-icon-128.png",
-    "src/history.html",
-    "src/other.html"
+    {
+      "resources": [
+        "src/history.html",
+        "src/other.html"
+      ],
+      "matches": []
+    }
   ],
   "content_scripts": [
     {
@@ -39,7 +43,6 @@
       ],
       "js": [
         "lib/jquery-3.2.1.min.js",
-        "lib/browser-polyfill.js",
         "lib/arrive.js",
         "src/content.js"
       ],
@@ -49,16 +52,12 @@
     }
   ],
   "background": {
-    "scripts": [
-      "lib/browser-polyfill.js",
-      "src/background.js"
-    ],
-    "persistent": true
+    "service_worker": "background.js"
   },
   "options_ui": {
     "page": "src/options.html",
     "open_in_tab": false
   },
-  "manifest_version": 2,
+  "manifest_version": 3,
   "incognito": "split"
 }

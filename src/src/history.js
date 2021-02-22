@@ -1,5 +1,6 @@
 import { getAllChanges, getItemFromLocalStorage } from './storage.js'
 import { ChangeForStorage, LocalStorageItem, getPrettyDate, getPrettyTimeLength, alphaLowerSort, isComment } from './common.js'
+import browser from 'webextension-polyfill'
 
 const showChanges = (allChanges, localStorage) => {
 

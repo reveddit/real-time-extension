@@ -1,6 +1,7 @@
 import {subscribeId, unsubscribeId, getLocalStorageItems, saveLocalStorageItems} from './storage.js'
 import {LocalStorageItem} from './common.js'
 import {setCurrentStateForId} from './monitoring.js'
+import browser from 'webextension-polyfill'
 
 let UNSUBSCRIBE_TEXT = 'unsubscribe-rev'
 let SUBSCRIBE_TEXT = 'subscribe-rev'
