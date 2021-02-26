@@ -54,7 +54,7 @@ import browser from 'webextension-polyfill'
                 window.localStorage.removeItem(extensionSaysNoSubscriptions)
             }
             if (isReddit) {
-                redditModifications(storage.other_subscriptions)
+                redditModifications(storage.other_subscriptions, storage.options.hide_subscribe)
             } else {
                 revdditModifications(storage, user, isUserPage, isInfoPage)
             }

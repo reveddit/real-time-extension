@@ -8,30 +8,32 @@ const MOD_REMOVED = 'rev-mod-removed'
 const id_match_comment = /^t1_.+/
 const id_match_post = /^t3_.+/
 
-export const redditModifications = (other_subscriptions) => {
+export const redditModifications = (other_subscriptions, hide_subscribe) => {
     const isNewReddit = document.querySelector('#SHORTCUT_FOCUSABLE_DIV') !== null
     ifThreadPage_showRemovalStatus(isNewReddit)
-    if ( ! isNewReddit ) {
-        const selector = '.thing.link, .thing.comment'
-        addSubscribeLinks_oldReddit($(selector), other_subscriptions)
-        $(document).arrive(selector, (element) => {
-            addSubscribeLinks_oldReddit([element], other_subscriptions)
-        })
-    } else {
-        let selector_comments = '.Comment'
-        addSubscribeLinks_newReddit_comments($(selector_comments), other_subscriptions)
-        $(document).arrive(selector_comments, (element) => {
-            addSubscribeLinks_newReddit_comments([element], other_subscriptions)
-        })
-        const selector_posts = '.Post'
-        addSubscribeLinks_newReddit_posts($(selector_posts), other_subscriptions)
-        $(document).arrive(selector_posts, (element) => {
-            addSubscribeLinks_newReddit_posts([element], other_subscriptions)
-        })
-        const selector_newPost = '.Post div[data-test-id="post-content"]'
-        $(document).arrive(selector_newPost, (element) => {
-            showRemovalStatusForThreadOverlay(element)
-        })
+    if (! hide_subscribe) {
+        if ( ! isNewReddit ) {
+            const selector = '.thing.link, .thing.comment'
+            addSubscribeLinks_oldReddit($(selector), other_subscriptions)
+            $(document).arrive(selector, (element) => {
+                addSubscribeLinks_oldReddit([element], other_subscriptions)
+            })
+        } else {
+            let selector_comments = '.Comment'
+            addSubscribeLinks_newReddit_comments($(selector_comments), other_subscriptions)
+            $(document).arrive(selector_comments, (element) => {
+                addSubscribeLinks_newReddit_comments([element], other_subscriptions)
+            })
+            const selector_posts = '.Post'
+            addSubscribeLinks_newReddit_posts($(selector_posts), other_subscriptions)
+            $(document).arrive(selector_posts, (element) => {
+                addSubscribeLinks_newReddit_posts([element], other_subscriptions)
+            })
+            const selector_newPost = '.Post div[data-test-id="post-content"]'
+            $(document).arrive(selector_newPost, (element) => {
+                showRemovalStatusForThreadOverlay(element)
+            })
+        }
     }
 }
 

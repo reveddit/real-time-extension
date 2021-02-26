@@ -20,6 +20,8 @@ getOptions((users, others, options) => {
 
     $('#locked_track').prop('checked', options.lock_status.track);
     $('#locked_notify').prop('checked', options.lock_status.notify);
+
+    $('#hide_subscribe').prop('checked', options.hide_subscribe);
 })
 
 var $new = $('#new');
@@ -68,8 +70,11 @@ function saveAndCloseOptions() {
     const locked_track = $('#locked_track').prop('checked')
     const locked_notify = $('#locked_notify').prop('checked')
 
+    const hide_subscribe = $('#hide_subscribe').prop('checked')
+
     if (Number.isInteger(interval) && interval > 0) {
-        saveOptions(interval, custom_clientid, removed_track, removed_notify, locked_track, locked_notify, () => {
+        saveOptions(interval, custom_clientid, removed_track, removed_notify,
+                    locked_track, locked_notify, hide_subscribe, () => {
             setAlarm(interval)
             chrome.runtime.sendMessage({action: 'update-badge'})
             window.close();

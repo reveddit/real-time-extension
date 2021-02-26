@@ -311,11 +311,14 @@ export const getOptions = (callback) => {
     })
     .catch(console.log)
 }
-export const saveOptions = (interval, custom_clientid, removed_track, removed_notify, locked_track, locked_notify, callback) => {
+export const saveOptions = (interval, custom_clientid, removed_track, removed_notify, locked_track, locked_notify,
+                            hide_subscribe, callback) => {
     chrome.storage.sync.set({options: {
                                 interval,
                                 custom_clientid,
                                 removal_status: {track: removed_track, notify: removed_notify},
-                                lock_status:    {track: locked_track,  notify: locked_notify}}},
+                                lock_status:    {track: locked_track,  notify: locked_notify},
+                                hide_subscribe,
+                            }},
                             callback)
 }
