@@ -13,39 +13,59 @@ const SUBSCRIBED_FROM_REDDIT = 0
 const SUBSCRIBED_FROM_REVEDDIT = 1
 const SUBSCRIBED_FROM_NA = 2
 
-export const setCurrentStateForId = (id, subscribedFromURL, callback = () => {}) => {
+export const setCurrentStateForId = (id, subscribedFromURL) => {
     let subscribedFrom = SUBSCRIBED_FROM_REDDIT
     if (subscribedFromURL.match(/^https:\/\/www.reveddit.com/)) {
         subscribedFrom = SUBSCRIBED_FROM_REVEDDIT
     }
-    chrome.storage.sync.get(null, function (storage) {
+    return chrome.storage.sync.get(null, function (storage) {
         getAuth()
         .then((auth) => {
-            checkForChanges_thing_byId([id], 'other', false, auth, storage, subscribedFrom, {}, callback)
+            return checkForChanges_thing_byId([id], 'other', false, auth, storage, subscribedFrom, {})
         })
     })
 }
 
+const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 5*(60*60*24)
 
 export const checkForChanges = () => {
     chrome.storage.sync.get(null, function (storage) {
         var users = Object.keys(storage.user_subscriptions)
         var other = Object.keys(storage.other_subscriptions)
         if (users.length || other.length) {
+            const now = Math.floor(new Date()/1000)
+            // check for quarantined content once in awhile and enable monitor_quarantined if some is found
+            // because users may not know to enable this option
+            // the option is off by default because it can appear to cause an occasional logout
+            if (! storage.options.monitor_quarantined
+                && (! storage.last_check_quarantined
+                    || (now - storage.last_check_quarantined) > MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS )) {
+                storage.tempVar_monitor_quarantined = true
+            }
             getAuth()
             .then((auth) => {
                 checkForChanges_other(auth, storage)
-                checkForChanges_users(users, auth, storage)
+                return checkForChanges_users(users, auth, storage)
+            })
+            .then(() => {
+                const newStorage = {last_check: now}
+                if (storage.tempVar_monitor_quarantined || storage.options.monitor_quarantined) {
+                    newStorage.last_check_quarantined = now
+                }
+                if (storage.tempVar_quarantined_content_found) {
+                    newStorage.options = storage.options
+                    newStorage.options.monitor_quarantined = true
+                }
+                chrome.storage.sync.set(newStorage)
             })
         }
     })
 }
 
-function checkForChanges_users(users, auth, storage) {
+const checkForChanges_users = async (users, auth, storage) => {
     if (users.length) {
         const user = users[0]
-
-        lookupItemsByUser(user, '', 'new', '', auth)
+        return lookupItemsByUser(user, '', 'new', '', storage.options.monitor_quarantined, storage.tempVar_monitor_quarantined, auth)
         .then(items => {
             if (! items) return // handle expected errors
             var ids = []
@@ -53,10 +73,12 @@ function checkForChanges_users(users, auth, storage) {
             items.forEach(item => {
                 ids.push(item.data.name)
                 itemLookup[item.data.name] = item.data
+                if (item.data.quarantine) {
+                    storage.tempVar_quarantined_content_found = true
+                }
             })
-            checkForChanges_thing_byId(ids, user, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup, () => {
-                checkForChanges_users(users.slice(1), auth, storage)
-            })
+            return checkForChanges_thing_byId(ids, user, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup)
+            .then(() => checkForChanges_users(users.slice(1), auth, storage))
         })
     }
 }
@@ -68,10 +90,20 @@ function checkForChanges_other(auth, storage) {
     }
 }
 
-function checkForChanges_thing_byId (ids, thing, isUser, auth, storage, subscribedFrom, itemLookup = {}, callback = () => {}) {
-    lookupItemsByID(ids, auth)
-    .then(items => {
-        if (! items) return // handle expected errors
+const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, subscribedFrom, itemLookup = {}) => {
+    let promise
+    const monitor_quarantined = storage.options.monitor_quarantined
+    if (location.protocol.match(/^http/)) {
+        // this condition is for when the code is activated via a content script (e.g. the subscribe button) and browser.cookies is unavailable
+        promise = browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids, monitor_quarantined})
+    } else {
+        promise = lookupItemsByID(ids, auth, monitor_quarantined, storage.tempVar_monitor_quarantined)
+    }
+    return promise
+    .then(result => {
+        if (! result) return // handle expected errors
+        const items = Array.isArray(result) ? result : result.items
+        if (! items) return // handle expected errors from obj
         const removal_status = storage.options.removal_status
         const lock_status = storage.options.lock_status
 
@@ -110,7 +142,7 @@ function checkForChanges_thing_byId (ids, thing, isUser, auth, storage, subscrib
 
         const changeTypes = []
         let num_changes = 0
-        getLocalStorageItems(thing, isUser)
+        return getLocalStorageItems(thing, isUser)
         .then(existingLocalStorageItems => {
             if (removal_status.track) {
                 num_changes += markChanges(removed, REMOVED, 'mod removed', known_removed,
@@ -133,14 +165,15 @@ function checkForChanges_thing_byId (ids, thing, isUser, auth, storage, subscrib
                      title: thing,
                      message: `${num_changes} new [${changeTypes.join(', ')}] actions, click to view`})
             }
-            chrome.storage.sync.set({[keys['removed']]: trimDict_by_numberValuedAttribute(known_removed, MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c'),
+            return chrome.storage.sync.set({
+                                     [keys['removed']]: trimDict_by_numberValuedAttribute(known_removed, MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c'),
                                      [keys['approved']]: trimDict_by_numberValuedAttribute(known_approved, MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c'),
                                      [keys['locked']]: trimDict_by_numberValuedAttribute(known_locked, MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c'),
                                      [keys['unlocked']]: trimDict_by_numberValuedAttribute(known_unlocked, MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c'),
                                      [keys['changes']]: changes.slice(-MAX_SYNC_STORAGE_CHANGES)
                                     }, () => {
                 updateBadgeUnseenCount()
-                addLocalStorageItems(newLocalStorageItems, thing, isUser, callback)
+                return addLocalStorageItems(newLocalStorageItems, thing, isUser)
             })
         })
     })

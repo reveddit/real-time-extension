@@ -7,6 +7,9 @@
 </head>
 <body>
 
+<div style="float:right;">
+    <button class="rr-opt-save">save</button>
+</div>
 <h3 class="rr-opt-h">Subscriptions</h3>
 <div id="rr-subscriptions">
 </div>
@@ -42,6 +45,11 @@
     <label>hide subscribe button: </label>
     <input type="checkbox" id="hide_subscribe">
 </div>
+<div class="rr-row">
+    <label>monitor quarantined content: </label>
+    <input type="checkbox" id="monitor_quarantined">
+</div>
+<p id="monitor-quarantined-note">Note: enabling "monitor quarantined content" may appear to cause an occasional logout. Refreshing the page should show you are still logged in. Increase "minutes between updates" to 5 or more to reduce this occurrence.
 <div>
     <a id="advanced-btn" class="blue-link" href="">advanced</a>
     <div id="advanced">
@@ -57,7 +65,7 @@
 <div style="clear: both;"></div>
 <div id="rr-opt-error"></div>
 <div class="rr-input end">
-    <button id="rr-opt-save">save</button>
+    <button class="rr-opt-save">save</button>
 </div>
 <div style="clear: both;"></div>
 

@@ -67,7 +67,7 @@ chrome.runtime.onMessage.addListener(
         } else if (request.action == "get-reddit-items-by-id") {
             getAuth()
             .then(auth => {
-                return lookupItemsByID(request.ids, auth)
+                return lookupItemsByID(request.ids, auth, request.monitor_quarantined)
             })
             .then(items => {
                 // if request fails, items is null

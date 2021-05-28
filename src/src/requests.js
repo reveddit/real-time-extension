@@ -4,14 +4,16 @@ import browser from 'webextension-polyfill'
 const clientID = 'SEw1uvRd6kxFEw'
 const oauth_reddit = 'https://oauth.reddit.com/'
 const www_reddit = 'https://www.reddit.com/'
+const OAUTH_REVEDDIT = 'https://ored.reveddit.com/'
+const WWW_REVEDDIT = 'https://wred.reveddit.com/'
 
 const NO_AUTH = 'none'
 
-export const lookupItemsByID = (ids, auth) => {
+export const lookupItemsByID = (ids, auth, monitor_quarantined = false, monitor_quarantined_remote = false) => {
     const params = {id:ids, raw_json:1}
     const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
 
-    return fetch_forReddit(...getFetchParams('api/info', search, auth))
+    return fetch_forReddit(...getFetchParams('api/info', search, auth, monitor_quarantined_remote), monitor_quarantined)
 }
 
 const cookieDetails_redditSession = {name: 'reddit_session', url: 'https://reddit.com'}
@@ -34,11 +36,17 @@ const getSettableCookie = (cookie, url = 'https://reddit.com') => {
     return filtered
 }
 
-const fetch_forReddit = async (url, options) => {
-    const cookie_redditSession = getSettableCookie(await browser.cookies.get(cookieDetails_redditSession))
-    browser.cookies.set({domain: 'reddit.com', url: 'https://reddit.com', name: '_options', value: '{%22pref_quarantine_optin%22:true}'})
-    if (cookie_redditSession) {
-        await browser.cookies.remove(cookieDetails_redditSession)
+
+//monitor_quarantined -> when true, client sets cookie (used for every look up)
+//monitor_quarantined_remote -> when true, remote server sets cookie (used once in awhile)
+const fetch_forReddit = async (url, options, monitor_quarantined = false) => {
+    let cookie_redditSession
+    await browser.cookies.set({domain: 'reddit.com', url: 'https://reddit.com', name: '_options', value: '{%22pref_quarantine_optin%22:true}'})
+    if (monitor_quarantined) {
+        cookie_redditSession = getSettableCookie(await browser.cookies.get(cookieDetails_redditSession))
+        if (cookie_redditSession) {
+            await browser.cookies.remove(cookieDetails_redditSession)
+        }
     }
     const result = fetch(url, options)
     .then(handleFetchErrors)
@@ -50,13 +58,13 @@ const fetch_forReddit = async (url, options) => {
     return result
 }
 
-export const lookupItemsByUser = (user, after, sort, timeSpan, auth) => {
+export const lookupItemsByUser = (user, after, sort, timeSpan, monitor_quarantined, monitor_quarantined_remote, auth) => {
     const params = {limit: 100, sort, raw_json:1}
     if (after) params.after = after
     if (timeSpan) params.t = timeSpan
     const path = `user/${user}/overview.json`
     const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
-    return fetch_forReddit(...getFetchParams(path, search, auth))
+    return fetch_forReddit(...getFetchParams(path, search, auth, monitor_quarantined_remote), monitor_quarantined)
 }
 
 export const handleFetchErrors = (response) => {
@@ -156,16 +164,16 @@ export const getCookie = ({url, name}) => {
     }
 }
 
-const getFetchParams = (path, search, auth) => {
+const getFetchParams = (path, search, auth, monitor_quarantined_remote) => {
     if (! auth || auth === NO_AUTH) {
-        let url = www_reddit+path
+        let url = (monitor_quarantined_remote ? WWW_REVEDDIT : www_reddit)+path
         if (path === 'api/info') {
             url += '.json'
         }
         url += search
         return [url]
     } else {
-        const url = oauth_reddit+path+search
+        const url = (monitor_quarantined_remote ? OAUTH_REVEDDIT : oauth_reddit)+path+search
         return [url, auth]
     }
 }

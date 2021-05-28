@@ -22,6 +22,22 @@ getOptions((users, others, options) => {
     $('#locked_notify').prop('checked', options.lock_status.notify);
 
     $('#hide_subscribe').prop('checked', options.hide_subscribe);
+    $('#monitor_quarantined').prop('checked', options.monitor_quarantined);
+
+    const $monitor_quarantined = $('#monitor_quarantined')
+    const $monitor_quarantined_note = $('#monitor-quarantined-note')
+
+    const show_hide_monitor_quarantined_note = () => {
+        if ($monitor_quarantined.is(':checked')) {
+            $monitor_quarantined_note.show()
+        } else {
+            $monitor_quarantined_note.hide()
+        }
+    }
+    show_hide_monitor_quarantined_note()
+    $monitor_quarantined.click(() => {
+        show_hide_monitor_quarantined_note()
+    })
 })
 
 var $new = $('#new');
@@ -30,7 +46,7 @@ $new.bind("enterKey",addSubscriptionViaOptions);
 
 $('#rr-opt-add').click(addSubscriptionViaOptions);
 
-$('#rr-opt-save').click(saveAndCloseOptions);
+$('.rr-opt-save').click(saveAndCloseOptions);
 $('#reset').click(resetDefaults);
 
 $('#advanced-btn').click((ev) => {
@@ -71,10 +87,11 @@ function saveAndCloseOptions() {
     const locked_notify = $('#locked_notify').prop('checked')
 
     const hide_subscribe = $('#hide_subscribe').prop('checked')
+    const monitor_quarantined = $('#monitor_quarantined').prop('checked')
 
     if (Number.isInteger(interval) && interval > 0) {
         saveOptions(interval, custom_clientid, removed_track, removed_notify,
-                    locked_track, locked_notify, hide_subscribe, () => {
+                    locked_track, locked_notify, hide_subscribe, monitor_quarantined, () => {
             setAlarm(interval)
             chrome.runtime.sendMessage({action: 'update-badge'})
             window.close();

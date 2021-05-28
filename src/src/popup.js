@@ -141,7 +141,7 @@ function showToggleSubscribe({post: post, comment: comment, user: user}, storage
     $input.change((e) => {
         let fn = subFn
         if (! $input.prop('checked')) fn = unsubFn
-        fn(id, () => {
+        fn(id, async () => {
             chrome.runtime.sendMessage({action: 'update-badge'})
             toggleLabelTextAndColor()
             if (fn === subFn && (comment || post)) {
@@ -149,9 +149,8 @@ function showToggleSubscribe({post: post, comment: comment, user: user}, storage
                 // otherwise one of the following happens:
                 //   (1) chaining this makes the function a little slow
                 //   (2) not chaining it will mess up sync state writes
-                setCurrentStateForId(id, url, () => {
-                    populatePopup()
-                })
+                await setCurrentStateForId(id, url)
+                populatePopup()
             } else {
                 populatePopup()
             }

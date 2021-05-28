@@ -8,9 +8,9 @@ const MOD_REMOVED = 'rev-mod-removed'
 const id_match_comment = /^t1_.+/
 const id_match_post = /^t3_.+/
 
-export const redditModifications = (other_subscriptions, hide_subscribe) => {
+export const redditModifications = (other_subscriptions, hide_subscribe, monitor_quarantined) => {
     const isNewReddit = document.querySelector('#SHORTCUT_FOCUSABLE_DIV') !== null
-    ifThreadPage_showRemovalStatus(isNewReddit)
+    ifThreadPage_showRemovalStatus(isNewReddit, monitor_quarantined)
     if (! hide_subscribe) {
         if ( ! isNewReddit ) {
             const selector = '.thing.link, .thing.comment'
@@ -31,17 +31,17 @@ export const redditModifications = (other_subscriptions, hide_subscribe) => {
             })
             const selector_newPost = '.Post div[data-test-id="post-content"]'
             $(document).arrive(selector_newPost, (element) => {
-                showRemovalStatusForThreadOverlay(element)
+                showRemovalStatusForThreadOverlay(element, monitor_quarantined)
             })
         }
     }
 }
 
-const ifThreadPage_showRemovalStatus = (isNewReddit, newRedditTarget = '.Post', postData = {}) => {
+const ifThreadPage_showRemovalStatus = (isNewReddit, monitor_quarantined, newRedditTarget = '.Post', postData = {}) => {
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     // links to comments on new reddit do not have robots noindex,nofollow, so need to lookup data if haven't already
     if (isNewReddit && commentID && Object.keys(postData).length === 0) {
-        browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids: [postID]})
+        browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids: [postID], monitor_quarantined})
         .then(response => {
             if (! response || ! response.items || ! response.items.length) return
             postData = response.items[0].data
@@ -95,28 +95,28 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = '.Post', postData = {
     }
 }
 
-const showRemovalStatusForThreadOverlay = (element) => {
+const showRemovalStatusForThreadOverlay = (element, monitor_quarantined) => {
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     // built for Chrome, i.e., incognito mode is 'split' and CORB applies
     if (__BUILT_FOR__ === 'chrome') {
-        browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids: [postID]})
+        browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids: [postID], monitor_quarantined})
         .then(response => {
             if (! response || ! response.items || ! response.items.length) return
             const postData = response.items[0].data
-            ifThreadPage_showRemovalStatus(true, element.parentNode, postData)
+            ifThreadPage_showRemovalStatus(true, monitor_quarantined, element.parentNode, postData)
         })
     } else {
         // built for Firefox, i.e., incognito mode is 'spanning' and content scripts
         // are allowed to send cross-origin requests
         getAuth()
         .then(auth => {
-            return lookupItemsByID([postID], auth)
+            return lookupItemsByID([postID], auth, monitor_quarantined)
         })
         .then(items => {
             // if request fails, items is null
             if (! items) return
             const postData = items[0].data
-            ifThreadPage_showRemovalStatus(true, element.parentNode, postData)
+            ifThreadPage_showRemovalStatus(true, monitor_quarantined, element.parentNode, postData)
         })
     }
 }

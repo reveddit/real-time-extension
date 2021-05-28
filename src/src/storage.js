@@ -52,7 +52,14 @@ const getStorageInit = () => {
     const result = {
         user_subscriptions: {},
         other_subscriptions: {},
-        options: {interval: INTERVAL_DEFAULT, custom_clientid: '', removal_status: {track: true, notify: true}, lock_status: {track: true, notify: true}}
+        options: {interval: INTERVAL_DEFAULT,
+                  custom_clientid: '',
+                  removal_status: {track: true, notify: true},
+                  lock_status: {track: true, notify: true},
+                  monitor_quarantined: false,
+              },
+        last_check: null,
+        last_check_quarantined: null,
     }
     addTrackTypes(result, 'other', false)
     return result;
@@ -254,9 +261,9 @@ export const saveLocalStorageItems = (thing, isUser, itemsToSave) => {
     return browser.storage.local.set({[key_localStorage]: itemsToSave})
 }
 
-export const addLocalStorageItems = (items, thing, isUser, callback = () => {}) => {
+export const addLocalStorageItems = (items, thing, isUser) => {
     const key_localStorage = getObjectName('items', thing, isUser)
-    chrome.storage.local.get({[key_localStorage]: {}}, (localStorageItems) => {
+    return chrome.storage.local.get({[key_localStorage]: {}}, (localStorageItems) => {
         const storedItems = localStorageItems[key_localStorage]
         Object.keys(items).forEach(id => {
             storedItems[id] = items[id]
@@ -265,7 +272,7 @@ export const addLocalStorageItems = (items, thing, isUser, callback = () => {}) 
         if (Object.keys(storedItems).length > MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT) {
             itemsToSave = trimDictOfItems_by_utcAttribute(storedItems, MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT, 'o')
         }
-        chrome.storage.local.set({[key_localStorage]: itemsToSave}, callback)
+        return browser.storage.local.set({[key_localStorage]: itemsToSave})
     })
 }
 
@@ -312,13 +319,14 @@ export const getOptions = (callback) => {
     .catch(console.log)
 }
 export const saveOptions = (interval, custom_clientid, removed_track, removed_notify, locked_track, locked_notify,
-                            hide_subscribe, callback) => {
+                            hide_subscribe, monitor_quarantined, callback) => {
     chrome.storage.sync.set({options: {
                                 interval,
                                 custom_clientid,
                                 removal_status: {track: removed_track, notify: removed_notify},
                                 lock_status:    {track: locked_track,  notify: locked_notify},
                                 hide_subscribe,
+                                monitor_quarantined,
                             }},
                             callback)
 }

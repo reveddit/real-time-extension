@@ -20,25 +20,24 @@ export const setTextAndFunction_unsubscribe = (id, element, commentBody) => {
 }
 
 const subscribeId_changeText = (id, element, commentBody = '') => {
-    subscribeId(id, () => {
+    subscribeId(id, async () => {
         setTextAndFunction_unsubscribe(id, element, commentBody)
-        setCurrentStateForId(id, window.location.href, () => {
-            if (commentBody) {
-                getLocalStorageItems('other', false)
-                .then(storedItems => {
-                    const item = storedItems[id]
-                    // content from private subs won't be saved b/c
-                    // no item is created for that (reddit returns no data for
-                    // non-logged-in authenticated apps)
-                    if (item) {
-                        const itemObj = new LocalStorageItem({object: item})
-                        itemObj.setText(commentBody)
-                        storedItems[id] = itemObj
-                        saveLocalStorageItems('other', false, storedItems)
-                    }
-                })
-            }
-        })
+        await setCurrentStateForId(id, window.location.href)
+        if (commentBody) {
+            getLocalStorageItems('other', false)
+            .then(storedItems => {
+                const item = storedItems[id]
+                // content from private subs won't be saved b/c
+                // no item is created for that (reddit returns no data for
+                // non-logged-in authenticated apps)
+                if (item) {
+                    const itemObj = new LocalStorageItem({object: item})
+                    itemObj.setText(commentBody)
+                    storedItems[id] = itemObj
+                    saveLocalStorageItems('other', false, storedItems)
+                }
+            })
+        }
     })
     return false
 }
