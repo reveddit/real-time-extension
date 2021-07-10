@@ -75,7 +75,7 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = '.Post', postData = {
         const from = '<div class="rev-from"><a href="https://www.reveddit.com/about">re(ve)ddit</a> note</div>'
         if (! isNewReddit) {
             if (className !== USER_DELETED) {
-                message_1 += ` View the post <a href="https://new.reddit.com${window.location.pathname}">on new reddit</a> for more details.`
+                message_1 += ` View the post <a href="https://new.reddit.com${window.location.pathname.split('/',6).join('/')}/">on new reddit</a> for more details.`
             }
             const $html_message = $(`<div class="reddit-infobar md-container-small ${className}">`)
                 .append(from)
