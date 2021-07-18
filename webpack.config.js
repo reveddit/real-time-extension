@@ -3,7 +3,7 @@ const path = require("path")
 const CopyWebpackPlugin = require("copy-webpack-plugin")
 const ExtensionReloader  = require("webpack-extension-reloader")
 
-function getDistFolderName (mode, forChrome, forFirefox) {
+function getDistFolderName (mode, forChrome, forFirefox, forEdge) {
     let folderName = 'dist-'
 
     if (mode === 'development') {
@@ -13,6 +13,8 @@ function getDistFolderName (mode, forChrome, forFirefox) {
         return folderName + 'chrome'
     } else if (forFirefox) {
         return folderName + 'firefox'
+    } else if (forEdge) {
+        return folderName + 'edge'
     } else {
         return folderName + 'unknown'
     }
@@ -20,14 +22,15 @@ function getDistFolderName (mode, forChrome, forFirefox) {
 
 const mode = process.env.NODE_ENV
 const hot_reload = process.env.HOT_RELOAD === 'true'
-const distFolder = getDistFolderName(mode, process.env.FORCHROME, process.env.FORFIREFOX)
+const distFolder = getDistFolderName(mode, process.env.FORCHROME, process.env.FORFIREFOX, process.env.FOREDGE)
 const distPath = path.join(__dirname, distFolder)
 const distSrcPath = path.join(distPath, 'src')
 const distLibPath = path.join(distPath, 'lib')
 
-let built_for = '"chrome"'
+let built_for = '"chrome"', chromelike = true
 if (process.env.FORFIREFOX) {
     built_for = '"firefox"'
+    chromelike = false
 }
 
 const manifestPath = path.join(distPath,
@@ -40,10 +43,13 @@ function modify(buffer) {
     // maybe babel converts it incorrectly?
     var manifest = JSON.parse(buffer.toString());
     let host_permissions_location = 'host_permissions'
-    if (process.env.FORCHROME) {
+    if (chromelike) {
         manifest.incognito = 'split'
     }
-    if (process.env.FORFIREFOX) {
+
+    if (process.env.FOREDGE) {
+        manifest.update_url = 'https://edge.microsoft.com/extensionwebstorebase/v1/crx'
+    } else if (process.env.FORFIREFOX) {
         host_permissions_location = 'permissions'
         let id = 'real-time-stable@reveddit.com'
         manifest.browser_specific_settings = {
