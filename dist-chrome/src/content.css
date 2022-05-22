@@ -13,8 +13,13 @@
 .res-nightmode .reddit-infobar.rev-mod-removed a,
 .res-nightmode .rev-mod-removed .rev-from a,
 .res-nightmode .rev-user-deleted .rev-from a,
+.res-nightmode .rev-user-deleted .md a,
+.res-nightmode .rev-mod-removed .md a,
 .rev-mod-removed .rev-from a,
-.rev-user-deleted .rev-from a {
+.rev-user-deleted .rev-from a,
+.rev-new-reddit-message-wrap a,
+.res-nightmode .rev-new-reddit-message-wrap a,
+.res-nightmode .md .rev-new-reddit-message-wrap a {
     color: #0079d3;
 }
 
@@ -61,8 +66,13 @@
     font-weight: 700;
 }
 
+.rev-new-reddit-message-content a {
+    font-size: 14px;
+}
+
 .rev-new-reddit-message-content-heading, .rev-new-reddit-message-content-description {
     padding-top: 4px;
+    padding-bottom: 4px;
     font-size: 14px;
     font-weight: 400;
     line-height: 16px;

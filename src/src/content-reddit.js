@@ -60,9 +60,9 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = '.Post', postData = {
         if ($('meta[name="robots"][content="noindex,nofollow"]').length ||
             ('is_robot_indexable' in postData && ! postData.is_robot_indexable) ) {
             const author = postData.author || $('.link .top-matter .author').first().text() || $('.link .top-matter .tagline span:contains("[deleted]")').text() || $('.Post span:contains("u/[deleted]")').first().text()
-            if (author === '[deleted]' || author === 'u/[deleted]') {
+            if ((author === '[deleted]' || author === 'u/[deleted]') && postData.removed_by_category !== 'moderator') {
                 className = USER_DELETED
-                message_1 = `This post was deleted by the person who posted it.`
+                message_1 = `This post was either deleted by the person who posted it, or removed by a moderator and then deleted by the person who posted it.`
             } else {
                 className = MOD_REMOVED
                 message_1 = `This post is unapproved. It is either waiting to be approved, or it was removed by someone or some robot.`
@@ -71,27 +71,28 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = '.Post', postData = {
     }
 
     if (message_1) {
-        const message_2 = ` It is not currently visible in r/${subreddit} and will not appear in web search results.`
-        const from = '<div class="rev-from"><a href="https://www.reveddit.com/about">re(ve)ddit</a> note</div>'
+        const optionsID = 'goto-options-from-content'
+        const message_2 = ` It is not currently visible in r/${subreddit} and may not appear in web search results.`
+        const from = `<div class="rev-from"><a id="${optionsID}" href="#">Reveddit Real-Time</a> note</div>`
+        const post_path = window.location.pathname.split('/',6).join('/')
+        const reveddit_link = `<p><a href="https://www.reveddit.com${post_path}/">View the post on Reveddit.com</a></p>`
         if (! isNewReddit) {
-            if (className !== USER_DELETED) {
-                message_1 += ` View the post <a href="https://new.reddit.com${window.location.pathname.split('/',6).join('/')}/">on new reddit</a> for more details.`
-            }
+            message_1 += ` View the post <a href="https://new.reddit.com${post_path}/">on new reddit</a> for more details.`
             const $html_message = $(`<div class="reddit-infobar md-container-small ${className}">`)
                 .append(from)
-                .append(`<div class="md"><p>${message_1}${message_2}</p></div>`)
+                .append(`<div class="md"><p>${message_1}${message_2}</p>${reveddit_link}</div>`)
             $html_message.prependTo('div.content[role="main"]')
         } else {
-            if (className !== USER_DELETED) {
-                message_1 += ` More details may appear in a message above from reddit.`
-            }
+            message_1 += ` More details may appear in a message above from reddit.`
             const $html_wrap = $(`<div class="rev-new-reddit-message-wrap ${className}">${from}</div>`)
             const $html_content = $(`<div class="rev-new-reddit-message-content"></div>`)
             const $html_description = $(`<div class="rev-new-reddit-message-content-description">${message_1}${message_2}</div>`)
             $html_content.append($html_description)
+            $html_content.append(reveddit_link)
             $html_wrap.append($html_content)
             $(newRedditTarget).first().after($html_wrap)
         }
+        $(`#${optionsID}`).click(() => browser.runtime.sendMessage({action: 'open-options'}))
     }
 }
 
