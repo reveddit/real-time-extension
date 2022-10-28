@@ -48,6 +48,10 @@ const fetch_forReddit = async (url, options, monitor_quarantined = false) => {
             await browser.cookies.remove(cookieDetails_redditSession)
         }
     }
+    if (! options) {
+        options = {}
+    }
+    options['cache'] = 'reload'
     const result = fetch(url, options)
     .then(handleFetchErrors)
     .then(getRedditData)
