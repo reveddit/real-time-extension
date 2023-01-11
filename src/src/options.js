@@ -1,5 +1,5 @@
 import {alphaLowerSort,showError,countUnseen_updateBadge_background,saveSubscriptions} from './common.js'
-import {subscribeUser, unsubscribeUser, getOptions, INTERVAL_DEFAULT, saveOptions} from './storage.js'
+import {subscribeUser, unsubscribeUser, getOptions, INTERVAL_DEFAULT, SEEN_COUNT_DEFAULT, saveOptions} from './storage.js'
 
 import {setAlarm, ALARM_NAME} from './common.js'
 import browser from 'webextension-polyfill'
@@ -13,6 +13,7 @@ getOptions((users, others, options) => {
         displayUser(v);
     });
     $('#interval').val(options.interval);
+    $('#seen_count').val(options.seen_count || SEEN_COUNT_DEFAULT);
     $('#clientid').val(options.custom_clientid);
 
     $('#removed_track').prop('checked', options.removal_status.track);
@@ -74,11 +75,13 @@ $new.keyup(function(e){
 
 function resetDefaults() {
     $('#interval').val(INTERVAL_DEFAULT);
+    $('#seen_count').val(SEEN_COUNT_DEFAULT);
     $('#clientid').val('')
 }
 
 function saveAndCloseOptions() {
     const interval = Number($('#interval').val())
+    const seen_count = Number($('#seen_count').val())
     const custom_clientid = $('#clientid').val().trim()
     const removed_track = $('#removed_track').prop('checked')
     const removed_notify = $('#removed_notify').prop('checked')
@@ -89,17 +92,18 @@ function saveAndCloseOptions() {
     const hide_subscribe = $('#hide_subscribe').prop('checked')
     const monitor_quarantined = $('#monitor_quarantined').prop('checked')
 
-    if (Number.isInteger(interval) && interval > 0) {
-        saveOptions(interval, custom_clientid, removed_track, removed_notify,
+    if (! (Number.isInteger(interval) && interval > 0)) {
+        showError('"minutes between updates" must be a positive integer', '#rr-opt-error');
+    } else if (! (Number.isInteger(seen_count) && seen_count > 0)) {
+        showError('"same-status count before alert" must be a positive integer', '#rr-opt-error');
+    } else {
+        saveOptions(seen_count, interval, custom_clientid, removed_track, removed_notify,
                     locked_track, locked_notify, hide_subscribe, monitor_quarantined, () => {
             setAlarm(interval)
             chrome.runtime.sendMessage({action: 'update-badge'})
             window.close();
         })
-    } else {
-        showError("minutes between updates must be an integer", '#rr-opt-error');
     }
-
 }
 
 function addSubscriptionViaOptions() {

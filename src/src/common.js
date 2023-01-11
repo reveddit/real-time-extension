@@ -119,15 +119,17 @@ export class ItemForStorage {
 }
 
 export class ChangeForStorage {
-    constructor({ id = null, observed_utc = null, change_type = null, object = null }) {
+    constructor({ id = null, observed_utc = null, change_type = null, seen_count = null, object = null }) {
         if (object) {
             this.i = object.i
             this.o = object.o
             this.g = object.g
+            this.n = object.n
         } else {
             this.i = id
             this.o = observed_utc
             this.g = change_type
+            this.n = seen_count
         }
     }
     getID() { return this.i }
@@ -142,6 +144,7 @@ export class ChangeForStorage {
             case EDITED: return 'edited'
         }
     }
+    getSeenCount() { return this.n }
 }
 
 export class LocalStorageItem {
@@ -150,6 +153,7 @@ export class LocalStorageItem {
             this.t = object.t
             this.o = object.o
             this.c = object.c
+            this.n = object.n || 0 // seen_count, which increments when the same status is observed
         } else {
             let text = ''
             if (isComment(item.name)) {
@@ -160,12 +164,20 @@ export class LocalStorageItem {
             this.t = text
             this.o = observed_utc
             this.c = item.created_utc
+            this.n = 0
         }
     }
     setText(text) {this.t = reformatRedditText(text)}
     getText() { return this.t }
     getObservedUTC() { return this.o }
     getCreatedUTC() { return this.c }
+    getSeenCount() { return this.n }
+    incrementSeenCount() {
+        if (typeof this.n === 'undefined') {
+            this.n = 0
+        }
+        this.n += 1
+    }
 }
 
 export function setAlarm(periodInMinutes) {

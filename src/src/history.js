@@ -17,6 +17,7 @@ const showChanges = (allChanges, localStorage) => {
         const id = change.getID()
         const change_observedUTC = change.getObservedUTC()
         const action = change.getChangeType()
+        const seen_count = change.getSeenCount()
         const user = change.user
         let isUser = true
         if (user === 'other') {
@@ -35,9 +36,13 @@ const showChanges = (allChanges, localStorage) => {
             timeLength = getPrettyTimeLength(change_observedUTC-item_createdUTC)
             formatted_createdUTC = new Date(item_createdUTC*1000)
         }
+        let seen_text = ''
+        if (seen_count) {
+            seen_text = `<div class="seencount">seen ${seen_count}x</div>`
+        }
         var row = $('<tr>')
         //action
-        $('<td>').addClass('action-column').append(`<span class="action ${action}">${action.replace(/ /g,'&nbsp;')}</span>`).appendTo(row)
+        $('<td>').addClass('action-column').append(`<div class="action ${action}">${action.replace(/ /g,'&nbsp;')}</div>${seen_text}`).appendTo(row)
         //observed
         const formatted_observedUTC = new Date(change_observedUTC*1000)
         $('<td>').attr('title',formatted_observedUTC).text(getPrettyDate(change_observedUTC)).appendTo(row)

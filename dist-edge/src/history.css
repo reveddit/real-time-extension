@@ -35,6 +35,10 @@ a {
   padding: 7px;
 }
 
+.seencount {
+    margin-top: 7px;
+}
+
 .action.locked {
     background: #ffd635;
     color: black;

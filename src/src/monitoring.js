@@ -1,7 +1,7 @@
 import {lookupItemsByID, lookupItemsByUser, getAuth} from './requests.js'
 import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
         addLocalStorageItems, getLocalStorageItems,
-        MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, MAX_SYNC_STORAGE_CHANGES,
+        MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, MAX_SYNC_STORAGE_CHANGES, SEEN_COUNT_DEFAULT,
         getObjectNamesForThing } from './storage.js'
 import {createNotification, updateBadgeUnseenCount, trimDict_by_numberValuedAttribute,
         isUserDeletedItem, isRemovedItem,
@@ -113,7 +113,7 @@ const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, sub
         if (! items) return // handle expected errors from obj
         const removal_status = storage.options.removal_status
         const lock_status = storage.options.lock_status
-
+        const target_seen_count = storage.options.seen_count || SEEN_COUNT_DEFAULT
         const keys = getObjectNamesForThing(thing, isUser)
 
         const known_removed = storage[keys['removed']] || {}
@@ -156,14 +156,14 @@ const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, sub
                                            approved, APPROVED, 'approved', known_approved,
                                            changes, itemLookup, removal_status.notify,
                                            newLocalStorageItems, changeTypes, isUser, subscribedFrom,
-                                           existingLocalStorageItems)
+                                           existingLocalStorageItems, target_seen_count)
             }
             if (lock_status.track) {
                 num_changes += markChanges(locked, LOCKED, 'locked', known_locked,
                                            unlocked, UNLOCKED, 'unlocked', known_unlocked,
                                            changes, itemLookup, lock_status.notify,
                                            newLocalStorageItems, changeTypes, isUser, subscribedFrom,
-                                           existingLocalStorageItems)
+                                           existingLocalStorageItems, target_seen_count)
             }
             if (num_changes && changeTypes.length) {
                 createNotification(
@@ -189,7 +189,7 @@ const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, sub
 function markChanges (alert_current_list, alert_type, alert_text, alert_known_hash,
                       normal_current_list, normal_type, normal_text, normal_known_hash,
                       changes, itemLookup, notify, newLocalStorageItems, changeTypes,
-                      isUser, subscribedFrom, existingLocalStorageItems) {
+                      isUser, subscribedFrom, existingLocalStorageItems, target_seen_count) {
     const alert_unseen_ids = [],
           normal_unseen_ids = [],
           alert_userDeleted_unseen_ids = [],
@@ -238,13 +238,23 @@ function markChanges (alert_current_list, alert_type, alert_text, alert_known_ha
             newLocalStorageItems[name] = new LocalStorageItem({item: item, observed_utc: now})
         }
         if (name in alert_known_hash) {
-            normal_known_hash[name] = new ItemForStorage(item.created_utc, true)
-            delete alert_known_hash[name]
+            const this_localStorageItem = new LocalStorageItem({object: existingLocalStorageItems[name]})
+            // Track the seen count, aka 'observed same status' count
+            // Doing so allows sending an alert only after N times a new status has been observed.
+            // See: https://www.reddit.com/r/reveddit/comments/zc7tcm/reveddit_sending_repetitive_notifications/
+            this_localStorageItem.incrementSeenCount()
+            const seen_count = this_localStorageItem.getSeenCount()
+            if (seen_count >= target_seen_count) {
+                normal_known_hash[name] = new ItemForStorage(item.created_utc, true)
+                delete alert_known_hash[name]
 
-            changes.push(new ChangeForStorage({id: name, observed_utc: now, change_type: normal_type}))
-            normal_unseen_ids.push(name)
+                changes.push(new ChangeForStorage({id: name, observed_utc: now, change_type: normal_type, seen_count}))
+                normal_unseen_ids.push(name)
 
-            newLocalStorageItems[name] = new LocalStorageItem({item: item, observed_utc: now})
+                newLocalStorageItems[name] = new LocalStorageItem({item: item, observed_utc: now})
+            } else {
+                newLocalStorageItems[name] = this_localStorageItem
+            }
         } else {
             normal_known_hash[name] = new ItemForStorage(item.created_utc, false)
         }

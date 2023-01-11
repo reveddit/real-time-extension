@@ -2,6 +2,7 @@ import {alphaLowerSort, ItemForStorage, LocalStorageItem, trimDict_by_numberValu
 import browser from 'webextension-polyfill'
 
 export const INTERVAL_DEFAULT = 1;
+export const SEEN_COUNT_DEFAULT = 2
 
 // These limits are set with consideration for Chrome's sync & local storage limits,
 // and for the objects stored by the extension
@@ -53,6 +54,7 @@ const getStorageInit = () => {
         user_subscriptions: {},
         other_subscriptions: {},
         options: {interval: INTERVAL_DEFAULT,
+                  seen_count: SEEN_COUNT_DEFAULT,
                   custom_clientid: '',
                   removal_status: {track: true, notify: true},
                   lock_status: {track: true, notify: true},
@@ -318,9 +320,10 @@ export const getOptions = (callback) => {
     })
     .catch(console.log)
 }
-export const saveOptions = (interval, custom_clientid, removed_track, removed_notify, locked_track, locked_notify,
+export const saveOptions = (seen_count, interval, custom_clientid, removed_track, removed_notify, locked_track, locked_notify,
                             hide_subscribe, monitor_quarantined, callback) => {
     chrome.storage.sync.set({options: {
+                                seen_count,
                                 interval,
                                 custom_clientid,
                                 removal_status: {track: removed_track, notify: removed_notify},
