@@ -37,9 +37,8 @@ export const checkForChanges = () => {
             // check for quarantined content once in awhile and enable monitor_quarantined if some is found
             // because users may not know to enable this option
             // the option is off by default because it can appear to cause an occasional logout
-            if (! storage.options.monitor_quarantined
-                && (! storage.last_check_quarantined
-                    || (now - storage.last_check_quarantined) > MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS )) {
+            if (! storage.last_check_quarantined
+                || (now - storage.last_check_quarantined) > MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS ) {
                 storage.tempVar_monitor_quarantined = true
             }
             getAuth()
@@ -49,7 +48,7 @@ export const checkForChanges = () => {
             })
             .then(() => {
                 const newStorage = {last_check: now}
-                if (storage.tempVar_monitor_quarantined || storage.options.monitor_quarantined) {
+                if (storage.tempVar_monitor_quarantined) {
                     newStorage.last_check_quarantined = now
                 }
                 if (storage.tempVar_quarantined_content_found) {
@@ -69,15 +68,23 @@ const checkForChanges_users = async (users, auth, storage) => {
         .then(items => {
             if (! items) return // handle expected errors
             var ids = []
+            let quarantined_subreddits = new Set()
             const itemLookup = {}
+            if (items.user && items.user.items) { // format from cred2.reveddit.com
+                items = items.user.items
+            }
             items.forEach(item => {
-                ids.push(item.data.name)
-                itemLookup[item.data.name] = item.data
-                if (item.data.quarantine) {
+                if (item.data && item.data.name) { // format from reddit
+                    item = item.data
+                }
+                ids.push(item.name)
+                itemLookup[item.name] = item
+                if (item.quarantine) {
+                    quarantined_subreddits.add(item.subreddit)
                     storage.tempVar_quarantined_content_found = true
                 }
             })
-            return checkForChanges_thing_byId(ids, user, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup)
+            return checkForChanges_thing_byId(ids, user, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup, Array.from(quarantined_subreddits))
             .then(() => checkForChanges_users(users.slice(1), auth, storage))
         })
     }
@@ -90,14 +97,14 @@ function checkForChanges_other(auth, storage) {
     }
 }
 
-const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, subscribedFrom, itemLookup = {}) => {
+const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, subscribedFrom, itemLookup = {}, quarantined_subreddits = []) => {
     let promise
     const monitor_quarantined = storage.options.monitor_quarantined
     if (location.protocol.match(/^http/)) {
         // this condition is for when the code is activated via a content script (e.g. the subscribe button) and browser.cookies is unavailable
         promise = browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids, monitor_quarantined})
     } else {
-        promise = lookupItemsByID(ids, auth, monitor_quarantined, storage.tempVar_monitor_quarantined)
+        promise = lookupItemsByID(ids, auth, monitor_quarantined, storage.tempVar_monitor_quarantined, quarantined_subreddits)
     }
     return promise
     .then(result => {
@@ -158,7 +165,6 @@ const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, sub
                                            newLocalStorageItems, changeTypes, isUser, subscribedFrom,
                                            existingLocalStorageItems)
             }
-
             if (num_changes && changeTypes.length) {
                 createNotification(
                     {notificationId: thing,

@@ -4,13 +4,16 @@ import browser from 'webextension-polyfill'
 const clientID = 'SEw1uvRd6kxFEw'
 const oauth_reddit = 'https://oauth.reddit.com/'
 const www_reddit = 'https://www.reddit.com/'
-const OAUTH_REVEDDIT = 'https://ored.reveddit.com/'
+const OAUTH_REVEDDIT = 'https://cred2.reveddit.com/'
 const WWW_REVEDDIT = 'https://wred.reveddit.com/'
 
 const NO_AUTH = 'none'
 
-export const lookupItemsByID = (ids, auth, monitor_quarantined = false, monitor_quarantined_remote = false) => {
+export const lookupItemsByID = (ids, auth, monitor_quarantined = false, monitor_quarantined_remote = false, quarantined_subreddits = []) => {
     const params = {id:ids, raw_json:1}
+    if (monitor_quarantined_remote) {
+        params.quarantined_subreddits = quarantined_subreddits.join(',')
+    }
     const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
 
     return fetch_forReddit(...getFetchParams('api/info', search, auth, monitor_quarantined_remote), monitor_quarantined)
@@ -78,7 +81,10 @@ export const handleFetchErrors = (response) => {
     return response.json()
 }
 
-export const getRedditData = (data) => {
+const getRedditData = (data) => {
+    if (data && data.user && data.user.items) { // format from cred2.reveddit.com
+        return data
+    }
     if (! data || ! data.data || ! data.data.children) {
         throw Error('reddit data is not defined')
     }
@@ -177,7 +183,13 @@ const getFetchParams = (path, search, auth, monitor_quarantined_remote) => {
         url += search
         return [url]
     } else {
-        const url = (monitor_quarantined_remote ? OAUTH_REVEDDIT : oauth_reddit)+path+search
+        let host = oauth_reddit
+        let path_and_search = path+search
+        if (monitor_quarantined_remote) {
+            host = OAUTH_REVEDDIT
+            path_and_search += '&give_it_to_me=1'
+        }
+        const url = host+path_and_search
         return [url, auth]
     }
 }
