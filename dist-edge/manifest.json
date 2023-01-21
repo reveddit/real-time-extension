@@ -1,7 +1,7 @@
 {
   "name": "reveddit real-time",
   "description": "reveddit notifies you when any of your content on reddit has been removed.",
-  "version": "0.0.2.1",
+  "version": "0.0.2.2",
   "permissions": [
     "cookies",
     "notifications",

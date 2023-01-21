@@ -272,7 +272,7 @@ export const addLocalStorageItems = (items, thing, isUser) => {
         })
         let itemsToSave = storedItems
         if (Object.keys(storedItems).length > MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT) {
-            itemsToSave = trimDictOfItems_by_utcAttribute(storedItems, MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT, 'o')
+            itemsToSave = trimDict_by_numberValuedAttribute(storedItems, MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT, 'o')
         }
         return browser.storage.local.set({[key_localStorage]: itemsToSave})
     })
