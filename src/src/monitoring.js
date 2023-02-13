@@ -13,6 +13,8 @@ const SUBSCRIBED_FROM_REDDIT = 0
 const SUBSCRIBED_FROM_REVEDDIT = 1
 const SUBSCRIBED_FROM_NA = 2
 
+const TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE = Math.floor(Math.random() * 60)+60
+
 export const setCurrentStateForId = (id, subscribedFromURL) => {
     let subscribedFrom = SUBSCRIBED_FROM_REDDIT
     if (subscribedFromURL.match(/^https:\/\/www.reveddit.com/)) {
@@ -185,6 +187,20 @@ const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, sub
     })
 }
 
+const changeIsPreviouslyRecorded = (name, change_type, changes) => {
+    for (const change of changes) {
+        let change_obj = change
+        if (! (change_obj instanceof ChangeForStorage)) {
+            change_obj = new ChangeForStorage({object: change})
+        }
+        if (change_obj.getID() === name && change_type === change_obj.getChangeTypeInternal()) {
+            return true
+        }
+    }
+    return false
+}
+
+
 // newLocalStorageItems operates as a return value
 function markChanges (alert_current_list, alert_type, alert_text, alert_known_hash,
                       normal_current_list, normal_type, normal_text, normal_known_hash,
@@ -201,8 +217,15 @@ function markChanges (alert_current_list, alert_type, alert_text, alert_known_ha
         // if it were overwritten, body would appear on history page as [removed]
         // 2. in the case of userpage tracking (isUser=true), only need to save the text in local storage
         // when there is a change. user page lookup (itemLookup) will have original text
-        if (! isUser && ! existingLocalStorageItems[name]) {
+        const existingLocalStorageItem = existingLocalStorageItems[name]
+        if (! isUser && ! existingLocalStorageItem) {
             newLocalStorageItems[name] = new LocalStorageItem({item: item, observed_utc: now})
+        } else if (existingLocalStorageItem) {
+            // reset seen_count so that items observed as approved/normal must be consecutively seen w/that state
+            // Note: The var seen_count is really a 'seen as normal' count, but we don't need an alert_seen_count
+            const newLocalStorageItem = new LocalStorageItem({object: existingLocalStorageItem})
+            newLocalStorageItem.resetSeenCount()
+            newLocalStorageItems[name] = newLocalStorageItem
         }
         if (! (name in alert_known_hash)) {
             // markUnseen is always true except when subscribing via a reddit (not reveddit) page to a new ID for 'other'
@@ -242,16 +265,23 @@ function markChanges (alert_current_list, alert_type, alert_text, alert_known_ha
             // Track the seen count, aka 'observed same status' count
             // Doing so allows sending an alert only after N times a new status has been observed.
             // See: https://www.reddit.com/r/reveddit/comments/zc7tcm/reveddit_sending_repetitive_notifications/
-            this_localStorageItem.incrementSeenCount()
-            const seen_count = this_localStorageItem.getSeenCount()
+            const seen_count = this_localStorageItem.incrementSeenCount()
             if (seen_count >= target_seen_count) {
-                normal_known_hash[name] = new ItemForStorage(item.created_utc, true)
-                delete alert_known_hash[name]
+                const change_is_previously_recorded = changeIsPreviouslyRecorded(name, normal_type, changes)
+                // To prevent repeat notifications, whose non-deterministic cause I haven't yet figured out,
+                // only notify about the second observed change in status back to 'normal' (approved/unlocked)
+                // if a higher threshold of consecutive normal statuses has been observed
+                if (! change_is_previously_recorded || seen_count >= TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE) {
+                    normal_known_hash[name] = new ItemForStorage(item.created_utc, true)
+                    delete alert_known_hash[name]
 
-                changes.push(new ChangeForStorage({id: name, observed_utc: now, change_type: normal_type, seen_count}))
-                normal_unseen_ids.push(name)
+                    changes.push(new ChangeForStorage({id: name, observed_utc: now, change_type: normal_type, seen_count}))
+                    normal_unseen_ids.push(name)
 
-                newLocalStorageItems[name] = new LocalStorageItem({item: item, observed_utc: now})
+                    newLocalStorageItems[name] = new LocalStorageItem({item: item, observed_utc: now})
+                } else {
+                    newLocalStorageItems[name] = this_localStorageItem
+                }
             } else {
                 newLocalStorageItems[name] = this_localStorageItem
             }

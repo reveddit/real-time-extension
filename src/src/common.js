@@ -134,6 +134,7 @@ export class ChangeForStorage {
     }
     getID() { return this.i }
     getObservedUTC() { return this.o }
+    getChangeTypeInternal() { return this.g }
     getChangeType() {
         switch(this.g) {
             case REMOVED: return 'mod removed'
@@ -171,12 +172,14 @@ export class LocalStorageItem {
     getText() { return this.t }
     getObservedUTC() { return this.o }
     getCreatedUTC() { return this.c }
+    resetSeenCount() { this.n = 0 }
     getSeenCount() { return this.n }
     incrementSeenCount() {
         if (typeof this.n === 'undefined') {
             this.n = 0
         }
         this.n += 1
+        return this.n
     }
 }
 
