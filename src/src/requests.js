@@ -55,6 +55,12 @@ const fetch_forReddit = async (url, options, monitor_quarantined = false) => {
         options = {}
     }
     options['cache'] = 'reload'
+    if (! options.headers) {
+        options.headers = {}
+    }
+    if (options.headers['Accept-Language'] !== 'en') {
+        options.headers['Accept-Language'] = 'en'
+    }
     const result = fetch(url, options)
     .then(handleFetchErrors)
     .then(getRedditData)
@@ -121,7 +127,8 @@ export const getAuth = () => {
         .then(getRedditToken)
         .then(token => ({
             headers: {
-                Authorization: `bearer ${token}`
+                Authorization: `bearer ${token}`,
+                'Accept-Language': 'en',
             }
         }))
         .catch(console.log)
@@ -145,7 +152,8 @@ export const getLocalAuth = () => {
                 if ('accessToken' in tokens && tokens.accessToken) {
                     const auth = {
                         headers: {
-                            Authorization: `bearer ${tokens.accessToken}`
+                            Authorization: `bearer ${tokens.accessToken}`,
+                            'Accept-Language': 'en',
                         }
                     }
                     return auth
