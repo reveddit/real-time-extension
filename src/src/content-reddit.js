@@ -11,14 +11,16 @@ const id_match_post = /^t3_.+/
 export const redditModifications = (other_subscriptions, hide_subscribe, monitor_quarantined) => {
     const isNewReddit = document.querySelector('#SHORTCUT_FOCUSABLE_DIV') !== null
     ifThreadPage_showRemovalStatus(isNewReddit, monitor_quarantined)
-    if (! hide_subscribe) {
-        if ( ! isNewReddit ) {
+    if ( ! isNewReddit ) {
+        if (! hide_subscribe) {
             const selector = '.thing.link, .thing.comment'
             addSubscribeLinks_oldReddit($(selector), other_subscriptions)
             $(document).arrive(selector, (element) => {
                 addSubscribeLinks_oldReddit([element], other_subscriptions)
             })
-        } else {
+        }
+    } else {
+        if (! hide_subscribe) {
             let selector_comments = '.Comment'
             addSubscribeLinks_newReddit_comments($(selector_comments), other_subscriptions)
             $(document).arrive(selector_comments, (element) => {
@@ -29,18 +31,19 @@ export const redditModifications = (other_subscriptions, hide_subscribe, monitor
             $(document).arrive(selector_posts, (element) => {
                 addSubscribeLinks_newReddit_posts([element], other_subscriptions)
             })
-            const selector_newPost = '.Post div[data-test-id="post-content"]'
-            $(document).arrive(selector_newPost, (element) => {
-                showRemovalStatusForThreadOverlay(element, monitor_quarantined)
-            })
         }
+        const selector_newPost = '.Post div[data-test-id="post-content"]'
+        $(document).arrive(selector_newPost, (element) => {
+            showRemovalStatusForThreadOverlay(element, monitor_quarantined)
+        })
     }
 }
 
 const ifThreadPage_showRemovalStatus = (isNewReddit, monitor_quarantined, newRedditTarget = '.Post', postData = {}) => {
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     // links to comments on new reddit do not have robots noindex,nofollow, so need to lookup data if haven't already
-    if (isNewReddit && commentID && Object.keys(postData).length === 0) {
+    // as of 2022/2023: older posts e.g. t3_9emzhp no longer have noindex,nofollow, so always need to look up data for new reddit
+    if (isNewReddit && Object.keys(postData).length === 0) {
         browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids: [postID], monitor_quarantined})
         .then(response => {
             if (! response || ! response.items || ! response.items.length) return
@@ -57,7 +60,7 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = '.Post', postData = {
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     let className = undefined, message_1 = undefined
     if (postID) {
-        if ($('meta[name="robots"][content="noindex,nofollow"]').length ||
+        if ($('meta[name="robots"][content="noindex,nofollow"], meta[name="robots"][content="noindex"]').length ||
             ('is_robot_indexable' in postData && ! postData.is_robot_indexable) ) {
             const author = postData.author || $('.link .top-matter .author').first().text() || $('.link .top-matter .tagline span:contains("[deleted]")').text() || $('.Post span:contains("u/[deleted]")').first().text()
             if ((author === '[deleted]' || author === 'u/[deleted]') && postData.removed_by_category !== 'moderator') {
