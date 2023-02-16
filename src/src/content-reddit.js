@@ -60,7 +60,9 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = '.Post', postData = {
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     let className = undefined, message_1 = undefined
     if (postID) {
-        if ($('meta[name="robots"][content="noindex,nofollow"], meta[name="robots"][content="noindex"]').length ||
+        // Note: Do NOT add this here: meta[name="robots"][content="noindex"]
+        // That shows up on all pages that are permalinks to comments
+        if ($('meta[name="robots"][content="noindex,nofollow"]').length ||
             ('is_robot_indexable' in postData && ! postData.is_robot_indexable) ) {
             const author = postData.author || $('.link .top-matter .author').first().text() || $('.link .top-matter .tagline span:contains("[deleted]")').text() || $('.Post span:contains("u/[deleted]")').first().text()
             if ((author === '[deleted]' || author === 'u/[deleted]') && postData.removed_by_category !== 'moderator') {
