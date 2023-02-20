@@ -55,6 +55,9 @@ export const reformatRedditText = (body) => {
 }
 
 export const isRemovedItem = (item) => {
+    if (item.removal_reason) {
+        return true
+    }
     if (isComment(item.name)) {
         return isRemovedComment(item)
     } else {
@@ -65,10 +68,12 @@ export const isRemovedItem = (item) => {
 export const isComment = (name) => {
     return name.substr(0,2) === 't1'
 }
+// Checking that author starts with '[' for userpage-driven content is sufficient to prove comment is removed.
+// This way, the check is indifferent to language, in case Accept-Language is not set to 'en'
+// Also check body because comments whose author account is deleted may have valid unremoved body
 export const isRemovedComment = (item) => {
-    return ((item.body.replace(/\\/g, '') === '[removed]' ||
-             item.body.replace(/\\/g, '') === '[deleted]') &&
-            item.author.replace(/\\/g, '') === '[deleted]')
+    return (item.author.replace(/\\/g, '')[0] === '['
+        &&    item.body.replace(/\\/g, '')[0] === '[')
 }
 export const isUserDeletedComment = (item) => {
     return (item.body.replace(/\\/g, '') === '[deleted]' &&
