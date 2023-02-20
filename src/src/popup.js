@@ -88,6 +88,7 @@ function populatePopup() {
 }
 
 const openAndClose = (ev) => {
+    ev.preventDefault()
     window.open(ev.target.href)
     window.close()
 }
