@@ -32,11 +32,46 @@ export const redditModifications = (other_subscriptions, hide_subscribe, monitor
                 addSubscribeLinks_newReddit_posts([element], other_subscriptions)
             })
         }
+        addDirectLinks_newReddit_comments()
         const selector_newPost = '.Post div[data-test-id="post-content"]'
         $(document).arrive(selector_newPost, (element) => {
             showRemovalStatusForThreadOverlay(element, monitor_quarantined)
         })
     }
+}
+
+const removedByModeratorText = 'Comment removed by moderator'.toLowerCase().trim()
+const directLink_class = 'RevedditLink'
+const addDirectLinks_newReddit_comments = () => {
+    const processList = (elements) => {
+        for (const el of elements) {
+            const closest_div_ancestor = $(el).closest('div').first()
+            const revedditLink = $(closest_div_ancestor).parent().find(`.${directLink_class}`).length
+            if (! revedditLink) {
+                const redditLink = $(closest_div_ancestor).find('a[href^="https://www.reddit.com"]').first().attr('href')
+                const url = new URL(redditLink)
+                url.searchParams.set('utm_source', 'reveddit-rt')
+                url.host = 'www.reveddit.com'
+                const newEl = $(el).clone()
+                $(newEl).html(`<a target="_blank" style="text-decoration: underline;" href="${url.toString()}">view on Reveddit</a>`)
+                const wrap = $(`<div class="${directLink_class}">${$(newEl)[0].outerHTML}</div>`)
+                wrap.insertAfter(closest_div_ancestor)
+            }
+        }
+    }
+    $(document).arrive('span', (element) => {
+        if (element.textContent.toLowerCase().trim() === removedByModeratorText) {
+            processList([element])
+        }
+    })
+    const processCommentsOnPageLoad = () => {
+        // this selector is not accessible to arrive.js
+        processList($(`span:equalsi("${removedByModeratorText}")`))
+    }
+    processCommentsOnPageLoad()
+    setTimeout(processCommentsOnPageLoad, 1000)
+    setTimeout(processCommentsOnPageLoad, 5000)
+    setTimeout(processCommentsOnPageLoad, 10000)
 }
 
 const ifThreadPage_showRemovalStatus = (isNewReddit, monitor_quarantined, newRedditTarget = '.Post', postData = {}) => {
@@ -148,10 +183,10 @@ const addSubscribeLinks_newReddit_comments = (elements, subscriptions) => {
         if (! $button.length) {
             $button = getButton(element, 'share')
             appendButtonTo = $button.parent()
-            if (! $button.length) {
-                $button = $('<button>...</button>')
-                appendButtonTo = element
-            }
+            // if (! $button.length) {
+            //     $button = $('<button>...</button>')
+            //     appendButtonTo = element
+            // }
         }
         const $button_clone = $button.clone()
         let commentBody = ''
