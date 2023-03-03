@@ -48,13 +48,14 @@ import browser from 'webextension-polyfill'
             }
         }
         getSubscribedUsers_withSeenAndUnseenIDs((users, storage) => {
-            if (Object.keys(users).filter(x => x !== 'other').length === 0) {
+            const subscribed_users_lowercase = Object.keys(users).filter(x => x !== 'other').map(x => x.toLowerCase())
+            if (subscribed_users_lowercase.length === 0) {
                 window.localStorage.setItem(extensionSaysNoSubscriptions, true)
             } else {
                 window.localStorage.removeItem(extensionSaysNoSubscriptions)
             }
             if (isReddit) {
-                redditModifications(storage.other_subscriptions, storage.options.hide_subscribe, storage.options.monitor_quarantined)
+                redditModifications(storage.other_subscriptions, storage.options.hide_subscribe, storage.options.monitor_quarantined, subscribed_users_lowercase, Object.keys((storage.user_unsubscriptions || {})).map(x => x.toLowerCase()))
             } else {
                 revdditModifications(storage, user, isUserPage, isInfoPage)
             }

@@ -6,7 +6,7 @@ export const SEEN_COUNT_DEFAULT = 2
 
 // These limits are set with consideration for Chrome's sync & local storage limits,
 // and for the objects stored by the extension
-const MAX_SUBSCRIPTIONS = 5;
+export const MAX_SUBSCRIPTIONS = 5;
 const MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT = 500
 export const MAX_SYNC_STORAGE_ITEMS_PER_OBJECT = 130
 export const MAX_SYNC_STORAGE_CHANGES = 100
@@ -52,6 +52,7 @@ const getUserInit = (user) => {
 const getStorageInit = () => {
     const result = {
         user_subscriptions: {},
+        user_unsubscriptions: {}, // tracks if username has ever been manually unsubscribed, so it doesn't auto-subscribe again
         other_subscriptions: {},
         options: {interval: INTERVAL_DEFAULT,
                   seen_count: SEEN_COUNT_DEFAULT,
@@ -178,10 +179,11 @@ export const subscribeUser = (user, callbackSuccess = () => {}, callbackError = 
 
 export const unsubscribeUser = (user, callback) => {
     const userKeys = Object.keys(getUserInit(user))
-    chrome.storage.sync.get('user_subscriptions', (result) => {
-        const user_subscriptions = result.user_subscriptions
+    chrome.storage.sync.get(['user_subscriptions', 'user_unsubscriptions'], (result) => {
+        const {user_subscriptions, user_unsubscriptions = {}} = result
         delete user_subscriptions[user]
-        chrome.storage.sync.set({user_subscriptions}, () => {
+        user_unsubscriptions[user] = Math.floor(Date.now()/1000)
+        chrome.storage.sync.set({user_subscriptions, user_unsubscriptions}, () => {
             chrome.storage.sync.remove(userKeys, () => {
                 const userKey_localStorage = getObjectName('items', user, true)
                 chrome.runtime.sendMessage({action: 'update-badge'})

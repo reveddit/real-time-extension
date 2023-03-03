@@ -2,16 +2,29 @@ import {getAuth, lookupItemsByID} from './requests.js'
 import {getFullIDsFromPath} from './common.js'
 import {setTextAndFunction_subscribe,setTextAndFunction_unsubscribe} from './content-common.js'
 import browser from 'webextension-polyfill'
+import {subscribeUser, MAX_SUBSCRIPTIONS} from './storage.js'
 
 const USER_DELETED = 'rev-user-deleted'
 const MOD_REMOVED = 'rev-mod-removed'
 const id_match_comment = /^t1_.+/
 const id_match_post = /^t3_.+/
 
-export const redditModifications = (other_subscriptions, hide_subscribe, monitor_quarantined) => {
+export const redditModifications = (other_subscriptions, hide_subscribe, monitor_quarantined, subscribed_users_lowercase, unsubscribed_users_lowercase) => {
     const isNewReddit = document.querySelector('#SHORTCUT_FOCUSABLE_DIV') !== null
     ifThreadPage_showRemovalStatus(isNewReddit, monitor_quarantined)
+    const subscribeIfNotUnsubscribed = (user) => {
+        const user_lc = user.toLowerCase()
+        if (subscribed_users_lowercase.length < MAX_SUBSCRIPTIONS &&
+            ! subscribed_users_lowercase.includes(user_lc) &&
+            ! unsubscribed_users_lowercase.includes(user_lc)) {
+            subscribeUser(user)
+        }
+    }
     if ( ! isNewReddit ) {
+        const username = $('#header .user a')[0].textContent
+        if (username && ! username.match(/ /) && username.trim().toLowerCase() !== 'login') {
+            subscribeIfNotUnsubscribed(username)
+        }
         if (! hide_subscribe) {
             const selector = '.thing.link, .thing.comment'
             addSubscribeLinks_oldReddit($(selector), other_subscriptions)
@@ -20,6 +33,10 @@ export const redditModifications = (other_subscriptions, hide_subscribe, monitor
             })
         }
     } else {
+        const username = $('.header-user-dropdown span').toArray().map(x => x.textContent.trim()).filter(x => ! x.match(/ /))[0]
+        if (username) {
+            subscribeIfNotUnsubscribed(username)
+        }
         if (! hide_subscribe) {
             let selector_comments = '.Comment'
             addSubscribeLinks_newReddit_comments($(selector_comments), other_subscriptions)
