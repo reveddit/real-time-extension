@@ -13,7 +13,7 @@ function populatePopup() {
     $('#popup').empty()
     $(` <div id="switches"></div>
         <div id="rr-input">
-            <input type="text" id="user" placeholder="username">
+            <input type="text" id="user" placeholder="username" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
             <button id="rr-go">go</button>
         </div>
         <div style="clear:both"></div>
