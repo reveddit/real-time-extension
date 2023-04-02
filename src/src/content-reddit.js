@@ -156,7 +156,8 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = '.Post', postData = {
 const showRemovalStatusForThreadOverlay = (element, monitor_quarantined) => {
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     // built for Chrome, i.e., incognito mode is 'split' and CORB applies
-    if (__BUILT_FOR__ === 'chrome') {
+    // Guessing safari is also restrictive
+    if (__MANIFEST_VERSION__ === 'v3') {
         browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids: [postID], monitor_quarantined})
         .then(response => {
             if (! response || ! response.items || ! response.items.length) return

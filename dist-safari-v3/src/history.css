@@ -1,0 +1,65 @@
+h1 {
+    text-align: center;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+th, td {
+  border: 1px solid black;
+  padding: 10px;
+}
+
+#tables {
+    max-width: 800px;
+    margin: 0 auto;
+    display: table;
+}
+
+.legendkey {
+    font-weight: bold;
+}
+
+a {
+    text-decoration: none;
+}
+
+.action-column {
+    text-align: center;
+}
+
+.action {
+  border-radius: 10px;
+  font-weight: 700;
+  padding: 7px;
+}
+
+.seencount {
+    margin-top: 7px;
+}
+
+.action.locked {
+    background: #ffd635;
+    color: black;
+}
+
+.action.unlocked {
+    background: #ffd635;
+    color: green;
+}
+
+.action.removed {
+    background: rgb(199,3,0);
+    color: white;
+
+}
+.action.deleted {
+    background: #00007d;
+    color: white;
+}
+
+.action.approved {
+    background: green;
+    color: white;
+}

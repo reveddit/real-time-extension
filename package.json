@@ -25,6 +25,8 @@
         "build-all": "yarn build-prod && yarn build-dev",
         "build-prod": "yarn build-chrome && yarn build-firefox && yarn build-edge",
         "build-chrome": "yarn clean-chrome && NODE_ENV=production FORCHROME=true webpack && (cd dist-chrome && zip -r ../chrome.zip .)",
+        "build-safari-v2": "yarn clean-safari-v2 && NODE_ENV=production FORSAFARIV2=true webpack && /Applications/Xcode.app/Contents/Developer/usr/bin/safari-web-extension-converter dist-safari-v2 --project-location ./xcode-safari-v2 --force --macos-only",
+        "build-safari-v3": "yarn clean-safari-v3 && NODE_ENV=production FORSAFARIV3=true webpack && /Applications/Xcode.app/Contents/Developer/usr/bin/safari-web-extension-converter dist-safari-v3 --project-location ./xcode-safari-v3 --force --macos-only; echo REMEMBER TO SELECT Safari / Develop / Allow Unsigned Extensions",
         "build-firefox": "yarn clean-firefox && NODE_ENV=production FORFIREFOX=true webpack && (cd dist-firefox && zip -r ../firefox.zip .)",
         "build-edge": "yarn clean-edge && NODE_ENV=production FOREDGE=true webpack && (cd dist-edge && zip -r ../edge.zip .)",
         "build-dev": "yarn build-chrome-dev && yarn build-firefox-dev",
@@ -34,6 +36,8 @@
         "clean-firefox-dev": "rimraf dist-dev-firefox",
         "clean-chrome": "rimraf dist-chrome chrome.zip",
         "clean-firefox": "rimraf dist-firefox firefox.zip",
+        "clean-safari-v2": "rimraf dist-safari-v2",
+        "clean-safari-v3": "rimraf dist-safari-v3",
         "clean-edge": "rimraf dist-edge edge.zip",
         "clean-all": "yarn clean-chrome-dev && yarn clean-firefox-dev && yarn clean-chrome && yarn clean-firefox"
     },

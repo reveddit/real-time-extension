@@ -1,0 +1,91 @@
+/* options.html */
+
+body {
+    margin: 10px;
+}
+
+.rr-row {
+    clear: both;
+    text-align: right;
+    padding-bottom: 2em;
+}
+
+.blue-link {
+  color: rgb(63, 154, 222);
+  text-decoration: none;
+}
+
+.rr-row label {
+    margin-right: .5em;
+    float: left;
+    width: 15em;
+}
+
+input[type="checkbox"] {
+    margin-left: 0;
+}
+
+.rr-row input {
+    float: left;
+}
+
+.remove-subscription {
+    float: right;
+}
+
+.rr-input {
+    display: flex;
+}
+.rr-input.end {
+    justify-content: flex-end;
+}
+
+.rr-input.start {
+    justify-content: flex-start;
+}
+
+input#new {
+    min-width: 0;
+}
+
+#rr-opt-add {
+    margin-left: 10px;
+}
+
+.rr-opt-h {
+    font-weight: bold;
+}
+
+#rr-subscriptions {
+    margin-bottom: 1.5em;
+}
+
+#rr-subscriptions div {
+    margin-bottom: .5em;
+}
+
+#rr-opt-error {
+    color: red;
+    min-height: 2em;
+}
+
+.header {
+    font-weight: bold;
+}
+.header.row {
+    margin-bottom: 10px;
+    text-align: right;
+}
+.header.col {
+    margin-left: 10px;
+}
+table tr td {
+    text-align: center;
+}
+table {
+    border-collapse: separate;
+    border-spacing: 5px;
+}
+#advanced {
+    display: none;
+}

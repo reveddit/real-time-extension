@@ -4,7 +4,7 @@ import browser from 'webextension-polyfill'
 
 export const ALARM_NAME = 'notifyme'
 const maxRedditContentLength = 300
-const ACTION_API = __BUILT_FOR__ === 'chrome' ? 'action' : 'browserAction'
+const ACTION_API = __MANIFEST_VERSION__ === 'v3' ? 'action' : 'browserAction'
 
 // https://stackoverflow.com/questions/25933556/chrome-extension-open-new-tab-when-browser-opened-in-background-mac/25933964#25933964
 export const createTab = (url) => {
@@ -260,6 +260,34 @@ export const getPrettyDate = (createdUTC) => {
     return getPrettyTimeLength(seconds) + ' ago'
 }
 
+export const notificationClicked = (thing) => {
+    const isUser = thing === 'other' ? false : true
+    chrome.storage.sync.get(null, (storage) => {
+        const unseenIDs = getUnseenIDs_thing(thing, isUser, storage)
+        let url = null
+        if (isUser && storage.user_subscriptions[thing]) {
+            url = `https://www.reveddit.com/user/${thing}`
+            if (unseenIDs.length) {
+                url += `?show=${unseenIDs.join(',')}&removal_status=all`
+            }
+        } else if (! isUser) {
+            url = '/src/other.html'
+            if (unseenIDs.length) {
+                url = `https://www.reveddit.com/info?id=${unseenIDs.join(',')}&removal_status=all`
+            }
+        }
+        if (url) {
+            markThingAsSeen(storage, thing, isUser)
+            browser.storage.sync.set(storage)
+            .then(res => {
+                updateBadgeUnseenCount()
+                createTab(url)
+            })
+        }
+    })
+}
+
+
 export const createNotification = ({notificationId, title, message}) => {
     if (location.protocol.match(/^http/)) {
         chrome.runtime.sendMessage({
@@ -267,13 +295,16 @@ export const createNotification = ({notificationId, title, message}) => {
             options: {notificationId, title, message}
         })
     } else {
-        if (__BUILT_FOR__ === 'chrome') {
-            registration.showNotification(title, {
-                body: message,
-                data: notificationId,
-                icon: '/icons/128.png',
-                message
-            })
+        if (__MANIFEST_VERSION__ === 'v3') {
+            if (! __BUILT_FOR_SAFARI__) {
+                registration.showNotification(title, {
+                    body: message,
+                    data: notificationId,
+                    icon: '/icons/128.png',
+                    message
+                })
+            }
+            // in the future, can add an else here to show notification via content page for safari
         } else {
             // notifications.create does not work in chrome's manifest v3, something wrong with reading image data
             // https://stackoverflow.com/questions/65570332/google-chrome-extensions-v3-error-in-event-handler-referenceerror-image-is-n

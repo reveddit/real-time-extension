@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>options</title>
+    <link rel="stylesheet" href="options.css">
+</head>
+<body>
+
+<div style="float:right;">
+    <button class="rr-opt-save">save</button>
+</div>
+<h3 class="rr-opt-h">Subscriptions</h3>
+<div id="rr-subscriptions">
+</div>
+<div class="rr-input start">
+    <input type="text" id="new" placeholder="username" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <button id="rr-opt-add">add</button>
+</div>
+<br><br>
+<h3 class="rr-opt-h">Tracking & Notification</h3>
+<table>
+    <tr>
+        <td></td>
+        <td class='header col'>track</td>
+        <td class='header col'>notify</td>
+    </tr>
+    <tr>
+        <td class='header row'>removed</td>
+        <td><input type="checkbox" id="removed_track"></td>
+        <td><input type="checkbox" id="removed_notify"></td>
+    </tr>
+    <tr>
+        <td class='header row'>locked</td>
+        <td><input type="checkbox" id="locked_track"></td>
+        <td><input type="checkbox" id="locked_notify"></td>
+    </tr>
+</table>
+<h3 class="rr-opt-h">Other</h3>
+<div class="rr-row">
+    <label>minutes between updates: </label>
+    <input type="text" id="interval">
+</div>
+<div class="rr-row">
+    <label>hide subscribe button: </label>
+    <input type="checkbox" id="hide_subscribe">
+</div>
+<div class="rr-row">
+    <label>monitor quarantined content: </label>
+    <input type="checkbox" id="monitor_quarantined">
+</div>
+<div class="rr-row">
+    <label>same-status count before alert: </label>
+    <input type="text" id="seen_count">
+</div>
+<p id="monitor-quarantined-note">Note: enabling "monitor quarantined content" may appear to cause an occasional logout. Refreshing the page should show you are still logged in. Increase "minutes between updates" to 5 or more to reduce this occurrence.
+<div>
+    <a id="advanced-btn" class="blue-link" href="">advanced</a>
+    <div id="advanced">
+        <h3 class="rr-opt-h">Advanced</h3>
+        <p>This option overrides the "installed app" client id from reddit > preferences > apps.</p>
+        <div class="rr-row">
+            <label>custom client id: </label>
+            <input type="text" id="clientid" placeholder='<default is blank>' autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        </div>
+    </div>
+</div>
+<div class="rr-row"><a id="reset" class="blue-link" href="#">reset to defaults</a></div>
+<div style="clear: both;"></div>
+<div id="rr-opt-error"></div>
+<div class="rr-input end">
+    <button class="rr-opt-save">save</button>
+</div>
+<div style="clear: both;"></div>
+
+<script src="/lib/jquery-3.2.1.min.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

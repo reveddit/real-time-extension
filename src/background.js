@@ -1,5 +1,5 @@
 import {goToOptions, setAlarm, ALARM_NAME,
-        createNotification, updateBadgeUnseenCount, createTab } from './src/common.js'
+        createNotification, updateBadgeUnseenCount, createTab, notificationClicked } from './src/common.js'
 import {checkForChanges} from './src/monitoring.js'
 import {lookupItemsByID, getLoggedinUser, getCookie, getAuth} from './src/requests.js'
 import {initStorage, INTERVAL_DEFAULT, subscribeUser,
@@ -15,7 +15,7 @@ setupContextualMenu()
 // It enables viewing quarantined content on reveddit (except user pages which are covered with cloudflare workers)
 
 // Can use this to check for firefox build:
-if (__BUILT_FOR__ !== 'chrome') {
+if (__MANIFEST_VERSION__ !== 'v3') {
     const opt_extraInfoSpec = ['requestHeaders', 'blocking']
 
     browser.webRequest.onBeforeSendHeaders.addListener(function(details){
@@ -114,44 +114,20 @@ function subscribeToLoggedInUser_or_promptForUser() {
     })
 }
 
-const notificationClicked = (thing) => {
-    const isUser = thing === 'other' ? false : true
-    chrome.storage.sync.get(null, (storage) => {
-        const unseenIDs = getUnseenIDs_thing(thing, isUser, storage)
-        let url = null
-        if (isUser && storage.user_subscriptions[thing]) {
-            url = `https://www.reveddit.com/user/${thing}`
-            if (unseenIDs.length) {
-                url += `?show=${unseenIDs.join(',')}&removal_status=all`
-            }
-        } else if (! isUser) {
-            url = '/src/other.html'
-            if (unseenIDs.length) {
-                url = `https://www.reveddit.com/info?id=${unseenIDs.join(',')}&removal_status=all`
-            }
-        }
-        if (url) {
-            markThingAsSeen(storage, thing, isUser)
-            browser.storage.sync.set(storage)
-            .then(res => {
-                updateBadgeUnseenCount()
-                createTab(url)
-            })
-        }
-    })
-}
-
-chrome.notifications.onClicked.addListener((thing) => {
-    notificationClicked(thing)
-    chrome.notifications.clear(thing)
-})
-
-// only need this while using registration.showNotification in common.js
-if (__BUILT_FOR__ === 'chrome') {
-    self.addEventListener('notificationclick', (event) => {
-        notificationClicked(event.notification.data)
-        event.notification.close()
-    })
+if (! __BUILT_FOR_SAFARI__) {
+    // only need this while using registration.showNotification in common.js
+    if (__MANIFEST_VERSION__ === 'v3') {
+        self.addEventListener('notificationclick', (event) => {
+            notificationClicked(event.notification.data)
+            event.notification.close()
+        })
+    } else {
+        // note: safari does not support chrome.notifications for either manifest v2 or v3
+        chrome.notifications.onClicked.addListener((thing) => {
+            notificationClicked(thing)
+            chrome.notifications.clear(thing)
+        })
+    }
 }
 
 

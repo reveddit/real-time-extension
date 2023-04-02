@@ -3,7 +3,7 @@ const path = require("path")
 const CopyWebpackPlugin = require("copy-webpack-plugin")
 const ExtensionReloader  = require("webpack-extension-reloader")
 
-function getDistFolderName (mode, forChrome, forFirefox, forEdge) {
+function getDistFolderName (mode, forChrome, forFirefox, forEdge, forSafariV2, forSafariV3) {
     let folderName = 'dist-'
 
     if (mode === 'development') {
@@ -15,6 +15,10 @@ function getDistFolderName (mode, forChrome, forFirefox, forEdge) {
         return folderName + 'firefox'
     } else if (forEdge) {
         return folderName + 'edge'
+    } else if (forSafariV2) {
+        return folderName + 'safari-v2'
+    } else if (forSafariV3) {
+        return folderName + 'safari-v3'
     } else {
         return folderName + 'unknown'
     }
@@ -22,15 +26,22 @@ function getDistFolderName (mode, forChrome, forFirefox, forEdge) {
 
 const mode = process.env.NODE_ENV
 const hot_reload = process.env.HOT_RELOAD === 'true'
-const distFolder = getDistFolderName(mode, process.env.FORCHROME, process.env.FORFIREFOX, process.env.FOREDGE)
+const distFolder = getDistFolderName(mode, process.env.FORCHROME, process.env.FORFIREFOX, process.env.FOREDGE, process.env.FORSAFARIV2, process.env.FORSAFARIV3)
 const distPath = path.join(__dirname, distFolder)
 const distSrcPath = path.join(distPath, 'src')
 const distLibPath = path.join(distPath, 'lib')
 
-let built_for = '"chrome"', chromelike = true
+let manifest_version = '"v3"', chromelike = true, built_for_safari = false
 if (process.env.FORFIREFOX) {
-    built_for = '"firefox"'
+    manifest_version = '"v2"'
+}
+
+if (process.env.FORFIREFOX || process.env.FORSAFARIV2 || process.env.FORSAFARIV3) {
     chromelike = false
+}
+
+if (process.env.FORSAFARIV2 || process.env.FORSAFARIV3) {
+    built_for_safari = true
 }
 
 const manifestPath = path.join(distPath,
@@ -66,6 +77,20 @@ function modify(buffer) {
         delete manifest.background.service_worker
         delete Object.assign(manifest, {browser_action: manifest.action }).action
         manifest.web_accessible_resources = manifest.web_accessible_resources[0].resources
+    } else if (process.env.FORSAFARIV2) {
+        // likely no value in building a v2 extension for safari. saving this logic temporarily
+        host_permissions_location = 'permissions'
+        manifest.permissions.push(
+            'activeTab',
+            'https://*.reddit.com/*', 'https://*.reveddit.com/*',
+        )
+        delete manifest.host_permissions
+        manifest.manifest_version = 2
+        manifest.background.scripts = [manifest.background.service_worker]
+        manifest.background.persistent = true
+        delete manifest.background.service_worker
+        delete Object.assign(manifest, {browser_action: manifest.action }).action
+        manifest.web_accessible_resources = manifest.web_accessible_resources[0].resources
     }
     if (mode === 'development') {
         manifest[host_permissions_location].push("http://localhost/*")
@@ -92,7 +117,8 @@ const plugins = [
         { context: 'node_modules/arrive/src/', from: 'arrive.js', to: distLibPath }
     ]),
     new webpack.DefinePlugin({
-        __BUILT_FOR__: built_for
+        __MANIFEST_VERSION__: manifest_version,
+        __BUILT_FOR_SAFARI__: built_for_safari,
     })
 ]
 
