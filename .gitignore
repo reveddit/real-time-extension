@@ -1,6 +1,7 @@
 node_modules/*
 dist/*
 dist-dev-*
+dist-staging-*
 *.zip
 screenshot*
 manifest/
