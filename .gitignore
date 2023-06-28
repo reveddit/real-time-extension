@@ -4,3 +4,4 @@ dist-dev-*
 *.zip
 screenshot*
 manifest/
+yarn-error.log

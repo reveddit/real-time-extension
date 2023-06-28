@@ -1,34 +1,17 @@
-const webpack = require("webpack")
-const path = require("path")
-const CopyWebpackPlugin = require("copy-webpack-plugin")
-const ExtensionReloader  = require("webpack-extension-reloader")
-
-function getDistFolderName (mode, forChrome, forFirefox, forEdge) {
-    let folderName = 'dist-'
-
-    if (mode === 'development') {
-        folderName += 'dev-'
-    }
-    if (forChrome) {
-        return folderName + 'chrome'
-    } else if (forFirefox) {
-        return folderName + 'firefox'
-    } else if (forEdge) {
-        return folderName + 'edge'
-    } else {
-        return folderName + 'unknown'
-    }
-}
+import { distPath, __filename, __dirname } from './common.js'
+import webpack from "webpack"
+import path from "path"
+import CopyWebpackPlugin from "copy-webpack-plugin"
+import babel_preset from "@babel/preset-env"
+import TerserPlugin from 'terser-webpack-plugin'
 
 const mode = process.env.NODE_ENV
-const hot_reload = process.env.HOT_RELOAD === 'true'
-const distFolder = getDistFolderName(mode, process.env.FORCHROME, process.env.FORFIREFOX, process.env.FOREDGE)
-const distPath = path.join(__dirname, distFolder)
 const distSrcPath = path.join(distPath, 'src')
 const distLibPath = path.join(distPath, 'lib')
 
 let built_for = '"chrome"', chromelike = true
-if (process.env.FORFIREFOX) {
+const browserIsFirefox = process.env.BROWSER === 'firefox'
+if (browserIsFirefox) {
     built_for = '"firefox"'
     chromelike = false
 }
@@ -47,9 +30,9 @@ function modify(buffer) {
         manifest.incognito = 'split'
     }
 
-    if (process.env.FOREDGE) {
+    if (process.env.BROWSER === 'edge') {
         manifest.update_url = 'https://edge.microsoft.com/extensionwebstorebase/v1/crx'
-    } else if (process.env.FORFIREFOX) {
+    } else if (browserIsFirefox) {
         host_permissions_location = 'permissions'
         let id = 'real-time-stable@reveddit.com'
         manifest.browser_specific_settings = {
@@ -67,7 +50,7 @@ function modify(buffer) {
         delete Object.assign(manifest, {browser_action: manifest.action }).action
         manifest.web_accessible_resources = manifest.web_accessible_resources[0].resources
     }
-    if (mode === 'development') {
+    if (mode === 'development' || process.env.STAGING) {
         manifest[host_permissions_location].push("http://localhost/*")
         manifest.content_scripts[0].matches.push("http://localhost/*")
     }
@@ -76,7 +59,7 @@ function modify(buffer) {
 }
 
 const plugins = [
-    new CopyWebpackPlugin([
+    new CopyWebpackPlugin({ patterns: [
         {
             from: "./src/manifest.json",
             to:   distPath,
@@ -90,7 +73,7 @@ const plugins = [
         { context: 'src/src/', from: "*.css", to: distSrcPath },
         { context: 'lib/', from: "*", to: distLibPath },
         { context: 'node_modules/arrive/src/', from: 'arrive.js', to: distLibPath }
-    ]),
+    ]}),
     new webpack.DefinePlugin({
         __BUILT_FOR__: built_for
     })
@@ -114,25 +97,18 @@ const extensionPages = {
     other: ['@babel/polyfill', './src/src/other.js'],
 }
 
-if (hot_reload) {
-    plugins.push(new ExtensionReloader({
-        port: 9123,
-        reloadPage: true,
-        entries: {
-          contentScript: Object.keys(contentScripts),
-          extensionPage: Object.keys(extensionPages),
-          background: 'background'
-        }
-    }))
-}
-
-module.exports = {
+export default {
     mode,
     // overriding `devtool` default to, for example, 'inline-source-map',
     // prevents webpack from using 'eval' statements when mode = development.
     //   - useful for extensions b/c browsers' "Content Security Policy (CSP)"
     //     suggests not using eval statements
     devtool: "inline-source-map",
+    optimization: {
+        minimizer: [new TerserPlugin({
+          extractComments: false,
+        })],
+    },
     entry: {
         background: ['@babel/polyfill', './src/background.js'],
         ...contentScripts,
@@ -158,7 +134,7 @@ module.exports = {
                 use: {
                     loader: "babel-loader",
                     options: {
-                        presets: [require("@babel/preset-env")]
+                        presets: [babel_preset]
                     }
                 }
             }
