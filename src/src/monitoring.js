@@ -28,7 +28,7 @@ export const setCurrentStateForId = (id, subscribedFromURL) => {
     })
 }
 
-const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 5*(60*60*24)
+const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 20*(60*60*24)
 
 export const checkForChanges = () => {
     chrome.storage.sync.get(null, function (storage) {
@@ -43,7 +43,7 @@ export const checkForChanges = () => {
                 || (now - storage.last_check_quarantined) > MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS ) {
                 storage.tempVar_monitor_quarantined = true
             }
-            getAuth()
+            getAuth(storage.tempVar_monitor_quarantined)
             .then((auth) => {
                 checkForChanges_other(auth, storage)
                 return checkForChanges_users(users, auth, storage)

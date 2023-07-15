@@ -52,7 +52,7 @@ const fetch_forReddit = async (url, options, monitor_quarantined = false) => {
         }
     }
     if (! options) {
-        options = {}
+        options = {credentials: 'omit'}
     }
     options['cache'] = 'reload'
     if (! options.headers) {
@@ -104,7 +104,7 @@ export const getRedditToken = (data) => {
     return data.access_token
 }
 
-export const getAuth = () => {
+export const getAuth = (monitor_quarantined_remote = false) => {
     return getOptions((users, others, options) => {
         var use_this_clientID = clientID
         if (options.custom_clientid) {
@@ -112,6 +112,8 @@ export const getAuth = () => {
             if (use_this_clientID === 'testing') {
                 return NO_AUTH
             }
+        } else if (! monitor_quarantined_remote) {
+            return NO_AUTH
         }
         const tokenInit = {
             headers: {
