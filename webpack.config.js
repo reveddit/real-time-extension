@@ -49,6 +49,7 @@ function modify(buffer) {
         delete manifest.background.service_worker
         delete Object.assign(manifest, {browser_action: manifest.action }).action
         manifest.web_accessible_resources = manifest.web_accessible_resources[0].resources
+        manifest.content_security_policy = manifest.content_security_policy.extension_pages
     }
     if (mode === 'development' || process.env.STAGING) {
         manifest[host_permissions_location].push("http://localhost/*")

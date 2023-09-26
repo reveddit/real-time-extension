@@ -61,6 +61,7 @@ const fetch_forReddit = async (url, options, monitor_quarantined = false) => {
     if (options.headers['Accept-Language'] !== 'en') {
         options.headers['Accept-Language'] = 'en'
     }
+//    const test = await fetch('https://www.reddit.com/user/rhaksw').then(response => response.text()).then(console.log)
     const result = fetch(url, options)
     .then(handleFetchErrors)
     .then(getRedditData)

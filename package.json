@@ -34,7 +34,8 @@
         "build-firefox-dev": "(export NODE_ENV=development BROWSER=firefox; yarn run-webpack)",
         "build-chrome-staging": "(export  NODE_ENV=production BROWSER=chrome STAGING=true;    yarn run-webpack)",
         "build-firefox-staging": "(export NODE_ENV=production BROWSER=firefox STAGING=true;   yarn run-webpack)",
-        "run-webpack": "node clean.js && webpack"
+        "run-webpack": "node clean.js && webpack && yarn wasm-safe",
+        "wasm-safe": "node wasm_compatibility_replace.js"
     },
     "dependencies": {
         "arrive": "^2.4.1",

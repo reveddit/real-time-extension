@@ -5,8 +5,31 @@ import {getLoggedinUser} from './requests.js'
 import browser from 'webextension-polyfill'
 
 
-
 (function () {
+    const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
+    console.log(matches)
+    window.addEventListener("message", async evt => {
+        // if (evt.origin !== "http://example.com") return;
+        const type = evt.data.type
+        if (type === 'request') {
+            // console.log('extension processing request')
+            // console.log(evt.data) // "Question!"
+            // console.log('evt.origin', evt.origin)
+            const test = await browser.runtime.sendMessage(
+                {action: 'fetch-parse-old',
+                path:'/user/rhaksw'})
+            console.log('sending request info')
+            const info = await browser.runtime.sendMessage(
+                {action: 'fetch-text',
+                url:'https://www.reddit.com/api/info?id=t1_jm5c2x7'})
+            console.log('completed request info', info)
+            evt.source.postMessage({type: 'response', response: test, info}, evt.origin);
+        } else if (type === 'IsExtensionInstalled') {
+            console.log('extension got installation check')
+            evt.source.postMessage({type: 'RevedditExtensionInstalled', version: browser.runtime.getManifest().version})
+        }
+    });
+
     function queryUser (message, sender, response) {
         if (message.action === 'query-user') {
             return getLoggedinUser()
@@ -36,7 +59,6 @@ import browser from 'webextension-polyfill'
     let isInfoPage = false
     let isReddit = false
     jQuery(document).ready(() => {
-        const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
         if (matches) {
             isReddit = matches[1] === 'reddit.com'
             const pathParts = window.location.pathname.split('/')
