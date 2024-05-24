@@ -1072,6 +1072,18 @@
   resolved "https://registry.yarnpkg.com/@pkgjs/parseargs/-/parseargs-0.11.0.tgz#a77ea742fab25775145434eb1d2328cf5013ac33"
   integrity sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==
 
+"@stardazed/streams-compression@^1.0.0":
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/@stardazed/streams-compression/-/streams-compression-1.0.0.tgz#c31298cbbc2a579732b9c9e641a2e8308fe38411"
+  integrity sha512-SQCiwxdIVJ5xxUBYptN+fc+tJpSDbxQuJ0+3u2SmHjIzr6JIRZ28AVFtFnGy6x6j3UBlaLx73w9rC6UAFxnd1g==
+  dependencies:
+    "@stardazed/zlib" "^1.0.0"
+
+"@stardazed/zlib@^1.0.0":
+  version "1.0.1"
+  resolved "https://registry.yarnpkg.com/@stardazed/zlib/-/zlib-1.0.1.tgz#61a1fb3b773e8868cb6071738e8dce79814e9e85"
+  integrity sha512-MS6PCYiRNJ32c69+3NPyL+bu7LpiFDvMcBXnlhQnF8CKMG0R/xRVCCo422NPkQ0+Cox3xKpk5Lc1LfWFS4b3cw==
+
 "@types/eslint-scope@^3.7.3":
   version "3.7.4"
   resolved "https://registry.yarnpkg.com/@types/eslint-scope/-/eslint-scope-3.7.4.tgz#37fc1223f0786c39627068a12e94d6e6fc61de16"
@@ -1362,6 +1374,19 @@
   version "2.0.5"
   resolved "https://registry.yarnpkg.com/@webpack-cli/serve/-/serve-2.0.5.tgz#325db42395cd49fe6c14057f9a900e427df8810e"
   integrity sha512-lqaoKnRYBdo1UgDX8uF24AfGMifWK19TxPmM5FHc2vAGxrJ/qtyUyFBWoY1tISZdelsQ5fBcOusifo5o5wSJxQ==
+
+"@worker-tools/html-rewriter@^0.1.0-pre.19":
+  version "0.1.0-pre.19"
+  resolved "https://registry.yarnpkg.com/@worker-tools/html-rewriter/-/html-rewriter-0.1.0-pre.19.tgz#da0e701dd8ad36614e212bd05db334852ecf98f2"
+  integrity sha512-IUbEZwvSdp8vtaB1LAZ/sBRJGNycd9a8cbkqO05rMEPm5MC59Sb+wiGCWaaRXrwQLDAyWeod4QC/q0TuSUI5EA==
+  dependencies:
+    "@stardazed/streams-compression" "^1.0.0"
+    "@worker-tools/resolvable-promise" latest
+
+"@worker-tools/resolvable-promise@latest":
+  version "0.2.0-pre.6"
+  resolved "https://registry.yarnpkg.com/@worker-tools/resolvable-promise/-/resolvable-promise-0.2.0-pre.6.tgz#44f8c07668e3f48632ce9104a8a26244f6f41f5b"
+  integrity sha512-+5RcuruCLB/P3FYYb376RgyImXaq9BBQoOskUbgPyNK3O0AXPakrXUj1EELv+lcnUSdFws/ufdrrWODLJyoTmg==
 
 "@xtuc/ieee754@^1.2.0":
   version "1.2.0"
