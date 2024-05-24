@@ -4,6 +4,7 @@ import path from "path"
 import CopyWebpackPlugin from "copy-webpack-plugin"
 import babel_preset from "@babel/preset-env"
 import TerserPlugin from 'terser-webpack-plugin'
+import ExtReloader from 'webpack-ext-reloader'
 
 const mode = process.env.NODE_ENV
 const distSrcPath = path.join(distPath, 'src')
@@ -57,8 +58,35 @@ function modify(buffer) {
     // pretty print to JSON with two spaces
     return JSON.stringify(manifest, null, 2);
 }
+const contentScripts = {
+    common: './src/src/common.js',
+    content: ['@babel/polyfill', './src/src/content.js'],
+    'content-reddit': './src/src/content-reddit.js',
+    'content-revddit': './src/src/content-revddit.js',
+    'content-common': './src/src/content-common.js',
+    contextMenus: './src/src/contextMenus.js',
+    requests: './src/src/requests.js',
+    storage: './src/src/storage.js'
+}
+const extensionPages = {
+    options: ['@babel/polyfill', './src/src/options.js'],
+    popup: ['@babel/polyfill', './src/src/popup.js'],
+    history: ['@babel/polyfill', './src/src/history.js'],
+    other: ['@babel/polyfill', './src/src/other.js'],
+}
+
 
 const plugins = [
+    new ExtReloader({
+        //manifest: manifestPath,
+        // must specify content scripts manually. Setting 'manifest' does not work, per:
+        // https://github.com/SimplifyJobs/webpack-ext-reloader/issues/479
+        entries: {
+            contentScript: Object.keys(contentScripts),
+            background: 'background',
+            extensionPage: Object.keys(extensionPages)
+        },
+    }),
     new CopyWebpackPlugin({ patterns: [
         {
             from: "./src/manifest.json",
@@ -79,23 +107,7 @@ const plugins = [
     })
 ]
 
-const contentScripts = {
-    common: './src/src/common.js',
-    content: ['@babel/polyfill', './src/src/content.js'],
-    'content-reddit': './src/src/content-reddit.js',
-    'content-revddit': './src/src/content-revddit.js',
-    'content-common': './src/src/content-common.js',
-    contextMenus: './src/src/contextMenus.js',
-    requests: './src/src/requests.js',
-    storage: './src/src/storage.js'
-}
 
-const extensionPages = {
-    options: ['@babel/polyfill', './src/src/options.js'],
-    popup: ['@babel/polyfill', './src/src/popup.js'],
-    history: ['@babel/polyfill', './src/src/history.js'],
-    other: ['@babel/polyfill', './src/src/other.js'],
-}
 
 export default {
     mode,
