@@ -1,5 +1,6 @@
 import path from "path"
 import { fileURLToPath } from 'url'
+import {readFile, writeFile} from 'fs'
 
 let folderName = 'dist-'
 let zipName
@@ -27,3 +28,22 @@ export const __dirname = path.dirname(__filename)
 export const distPath = path.join(__dirname, folderName)
 
 export const zipFile = zipName ? path.join(__dirname, zipName) : ''
+
+const background_file = path.join(distPath, 'background.js')
+
+export const replaceBackgroundFile = () => {
+
+    readFile(background_file, 'utf-8', function (err, contents) {
+      if (err) {
+        console.log(err);
+        return;
+      }
+  
+      const replaced = contents.replace(/ *document.baseURI *\|\|/g, '');
+  
+      writeFile(background_file, replaced, 'utf-8', function (err) {
+        console.log(err);
+      });
+    });
+  }
+  
