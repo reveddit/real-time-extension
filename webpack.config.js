@@ -56,6 +56,7 @@ function modify(buffer) {
     if (mode === 'development' || process.env.STAGING) {
         manifest[host_permissions_location].push("http://localhost:*/*")
         manifest.content_scripts[0].matches.push("http://localhost:*/*")
+        manifest.externally_connectable.matches.push('http://localhost:*/*')
     }
     // pretty print to JSON with two spaces
     return JSON.stringify(manifest, null, 2);

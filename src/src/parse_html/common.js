@@ -13,7 +13,7 @@ export const redditHTMLRequestOptions = {
   headers: {
     'Accept-Language': 'en',
     'Cookie': 'over18=1;',
-    'User-Agent': 'reveddit worker 3.0'
+    'User-Agent': 'extension'
   }
 }
 

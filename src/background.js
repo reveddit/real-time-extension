@@ -74,24 +74,25 @@ chrome.runtime.onMessage.addListener(
                 sendResponse({response: "done", items})
             })
             return true
-        } else if (request.action == 'fetch-text') {
-            console.log('bg req data', request.url)
-            fetch(request.url).then(response => response.text())
-            .then(data => {
-                console.log(data)
-                sendResponse({data})
-            })
-            return true
-        } else if (request.action == 'fetch-parse-old') {
-            console.log('fetch-parse-old', request.path)
-            const result = getItems_fromOld(request.path)
-            .then(result => {
-                sendResponse(result)
-                console.log('result', result)
-            })
-            return true
         }
 })
+
+chrome.runtime.onMessageExternal.addListener(
+    function(message, sender, sendResponse) {
+        switch (message.action) {
+            case 'fetch-old':
+                getItems_fromOld(message.path)
+                .then(data => {
+                    sendResponse({data})
+                })
+                break
+            case 'version':
+                sendResponse({version: chrome.runtime.getManifest().version})
+                break
+        }
+    }
+)
+
 
 chrome.runtime.onInstalled.addListener(function(details) {
     if (details.reason == 'install') {

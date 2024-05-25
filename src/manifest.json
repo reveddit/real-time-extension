@@ -13,6 +13,11 @@
         "https://*.reddit.com/*",
         "https://*.reveddit.com/*"
     ],
+    "externally_connectable": {
+        "matches": [
+          "https://*.reveddit.com/*"
+        ]
+    },
     "icons": { "128": "icons/128.png",
                "48": "icons/48.png",
                "16": "icons/16.png"
