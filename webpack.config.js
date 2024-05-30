@@ -81,17 +81,7 @@ const extensionPages = {
 
 
 const plugins = [
-    new ExtReloader({
-        //manifest: manifestPath,
-        // must specify content scripts manually. Setting 'manifest' does not work, per:
-        // https://github.com/SimplifyJobs/webpack-ext-reloader/issues/479
-        entries: {
-            contentScript: Object.keys(contentScripts),
-            background: 'background',
-            extensionPage: Object.keys(extensionPages)
-        },
-    }),
-    new CopyWebpackPlugin({ patterns: [
+   new CopyWebpackPlugin({ patterns: [
         {
             from: "./src/manifest.json",
             to:   distPath,
@@ -112,7 +102,20 @@ const plugins = [
     new AfterEmitPlugin(),
 ]
 
-
+if (process.argv.indexOf("--watch") >= 0 && mode !== 'production') {
+  plugins.unshift(
+    new ExtReloader({
+        //manifest: manifestPath,
+        // must specify content scripts manually. Setting 'manifest' does not work, per:
+        // https://github.com/SimplifyJobs/webpack-ext-reloader/issues/479
+        entries: {
+            contentScript: Object.keys(contentScripts),
+            background: 'background',
+            extensionPage: Object.keys(extensionPages)
+        },
+    })
+  )
+}
 
 export default {
     mode,
