@@ -6,7 +6,12 @@ import TurndownService from 'turndown'
 import { HTMLRewriter } from '@worker-tools/html-rewriter'
 
 const turndownService = new TurndownService()
+const domParser = new DOMParser()
 
+const getMarkdownFromHTMLString = (string) => {
+  // Must specify text/html. Without specifying, parser does not include links and messes up spacing
+  return turndownService.turndown(domParser.parseFromString(string, 'text/html'))
+}
 
 turndownService.addRule('listItem', {
   filter: 'li',
@@ -273,6 +278,16 @@ class InnerHTML extends ItemsMeta {
   }
 }
 
+class AuthorDeleted extends ItemsMeta {
+  constructor(itemsObj) {
+    super(itemsObj)
+  }
+  element(element) {
+    super.element(element)
+    this.last['author'] = '[deleted]'
+  }
+}
+
 class ValueFromText extends ItemsMeta {
   constructor(itemsObj, field_name) {
     super(itemsObj)
@@ -420,7 +435,6 @@ export const getItems_fromOld = async path => {
   const url = oldReddit + path
 
   const response = await fetch(url, redditHTMLRequestOptions)
-  const domParser = new DOMParser()
   if (! response.ok) {
     return {error: 'request failed'}
   }
@@ -444,16 +458,45 @@ export const getItems_fromOld = async path => {
   .on('#siteTable .thing .quarantine-stamp', new Quarantined(itemsObj))
   .on('#siteTable .thing .thumbnail img', new Thumbnail(itemsObj))
   await consume(rewriter.transform(response).body)
+  const info_promise = getCommentsInfo_fromOld(Array.from(itemsObj.ids_set))
   itemsObj.fillInDefaultValues()
   itemsObj.printErrors()
   itemsObj.items.forEach(item => {
-    // Must specify text/html. Without specifying, parser does not include links and messes up spacing
-    item.body = turndownService.turndown(domParser.parseFromString(item.body, 'text/html'))
+    item.body = getMarkdownFromHTMLString(item.body)
   })
+  const info = await info_promise
   return {
     quarantined: Array.from(itemsObj.quarantined_subs),
     items: itemsObj.items,
+    info,
     ids_set: itemsObj.ids_set,
   }
 }
 
+const getCommentsInfo_fromOld = async (ids) => {
+  const url = oldReddit + '/api/info?id='+ids.join(',')
+  const response = await fetch(url, {
+    'Accept-Language': 'en',
+    'Cookie': 'over18=1;',
+    'User-Agent': 'extension',
+    'credentials': 'omit',
+  })
+  if (! response.ok) {
+    console.error('request failed:', url)
+    return {}
+  }
+  const itemsObj = new Items(url)
+  const rewriter = new HTMLRewriter()
+  .on('#siteTable .comment', itemsObj)
+  // .comment.deleted assumes the page contains no user-deleted comments.
+  // That will be true as long as IDs given to this function come from user pages.
+  // If user-deleted comments are present, must also check body==[removed]
+  .on('#siteTable .comment.deleted', new AuthorDeleted(itemsObj))
+  await consume(rewriter.transform(response).body)
+  const info_items = itemsObj.items.reduce((obj, item) => {
+    item.name = 't1_'+item.permalink.split('/').slice(6,7)
+    obj[item.name] = item
+    return obj
+  }, {})
+  return info_items
+}
