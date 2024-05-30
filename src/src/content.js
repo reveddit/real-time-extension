@@ -4,9 +4,9 @@ import {revdditModifications} from './content-revddit.js'
 import {getLoggedinUser} from './requests.js'
 import browser from 'webextension-polyfill'
 
-
-
 (function () {
+    const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
+
     function queryUser (message, sender, response) {
         if (message.action === 'query-user') {
             return getLoggedinUser()
@@ -36,7 +36,6 @@ import browser from 'webextension-polyfill'
     let isInfoPage = false
     let isReddit = false
     jQuery(document).ready(() => {
-        const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
         if (matches) {
             isReddit = matches[1] === 'reddit.com'
             const pathParts = window.location.pathname.split('/')

@@ -6,7 +6,7 @@ import {initStorage, INTERVAL_DEFAULT, subscribeUser,
         getUnseenIDs_thing, markThingAsSeen } from './src/storage.js'
 import {setupContextualMenu} from './src/contextMenus.js'
 import browser from 'webextension-polyfill'
-
+import { getItems_fromOld } from './src/parse_html/old.js'
 setupContextualMenu()
 
 
@@ -44,7 +44,7 @@ if (__BUILT_FOR__ !== 'chrome') {
     }, opt_extraInfoSpec)
 }
 // END webRequest API code
-
+console.log('bg script running')
 chrome.runtime.onMessage.addListener(
     function(request, sender, sendResponse) {
         if (request.action == "open-options") {
@@ -76,6 +76,23 @@ chrome.runtime.onMessage.addListener(
             return true
         }
 })
+
+chrome.runtime.onMessageExternal.addListener(
+    function(message, sender, sendResponse) {
+        switch (message.action) {
+            case 'fetch-old':
+                getItems_fromOld(message.path)
+                .then(data => {
+                    sendResponse({data})
+                })
+                break
+            case 'version':
+                sendResponse({version: chrome.runtime.getManifest().version})
+                break
+        }
+    }
+)
+
 
 chrome.runtime.onInstalled.addListener(function(details) {
     if (details.reason == 'install') {

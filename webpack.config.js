@@ -5,6 +5,7 @@ import CopyWebpackPlugin from "copy-webpack-plugin"
 import babel_preset from "@babel/preset-env"
 import TerserPlugin from 'terser-webpack-plugin'
 import ExtReloader from 'webpack-ext-reloader'
+import AfterEmitPlugin from './AfterEmitPlugin.js'
 
 const mode = process.env.NODE_ENV
 const distSrcPath = path.join(distPath, 'src')
@@ -50,10 +51,12 @@ function modify(buffer) {
         delete manifest.background.service_worker
         delete Object.assign(manifest, {browser_action: manifest.action }).action
         manifest.web_accessible_resources = manifest.web_accessible_resources[0].resources
+        manifest.content_security_policy = manifest.content_security_policy.extension_pages
     }
     if (mode === 'development' || process.env.STAGING) {
-        manifest[host_permissions_location].push("http://localhost/*")
-        manifest.content_scripts[0].matches.push("http://localhost/*")
+        manifest[host_permissions_location].push("http://localhost:*/*")
+        manifest.content_scripts[0].matches.push("http://localhost:*/*")
+        manifest.externally_connectable.matches.push('http://localhost:*/*')
     }
     // pretty print to JSON with two spaces
     return JSON.stringify(manifest, null, 2);
@@ -73,6 +76,7 @@ const extensionPages = {
     popup: ['@babel/polyfill', './src/src/popup.js'],
     history: ['@babel/polyfill', './src/src/history.js'],
     other: ['@babel/polyfill', './src/src/other.js'],
+    parse: ['@babel/polyfill', './src/src/parse_html/common.js', './src/src/parse_html/old.js'],
 }
 
 
@@ -104,7 +108,8 @@ const plugins = [
     ]}),
     new webpack.DefinePlugin({
         __BUILT_FOR__: built_for
-    })
+    }),
+    new AfterEmitPlugin(),
 ]
 
 

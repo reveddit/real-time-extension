@@ -13,6 +13,11 @@
         "https://*.reddit.com/*",
         "https://*.reveddit.com/*"
     ],
+    "externally_connectable": {
+        "matches": [
+          "https://*.reveddit.com/*"
+        ]
+    },
     "icons": { "128": "icons/128.png",
                "48": "icons/48.png",
                "16": "icons/16.png"
@@ -42,6 +47,9 @@
     "options_ui": {
         "page": "src/options.html",
         "open_in_tab": false
+    },
+    "content_security_policy": {
+        "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
     },
     "manifest_version": 3
 }
