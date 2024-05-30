@@ -1,8 +1,34 @@
 import { consume,
   oldReddit, redditHTMLRequestOptions, ErrorCollector,
 } from './common.js'
-
+import {DOMParser} from 'linkedom/worker'
+import TurndownService from 'turndown'
 import { HTMLRewriter } from '@worker-tools/html-rewriter'
+
+const turndownService = new TurndownService()
+
+
+turndownService.addRule('listItem', {
+  filter: 'li',
+
+  replacement: function (content, node, options) {
+    content = content
+      .replace(/^\n+/, '') // remove leading newlines
+      .replace(/\n+$/, '\n') // replace trailing newlines with just a single one
+      .replace(/\n/gm, '\n    '); // indent
+    var prefix = options.bulletListMarker + ' ';
+    var parent = node.parentNode;
+    if (parent.nodeName === 'OL') {
+      var start = parent.getAttribute('start');
+      var index = Array.prototype.indexOf.call(parent.children, node);
+      prefix = (start ? Number(start) + index : index + 1) + '. ';
+    }
+    return (
+      prefix + content + (node.nextSibling && !/\n$/.test(content) ? '\n' : '')
+    );
+  }
+});
+
 
 class AttributeMapping {
   constructor(field, attribute, func) {
@@ -16,6 +42,7 @@ const attribute_mappings = [
   new AttributeMapping('name', 'data-fullname'),
   new AttributeMapping('subreddit', 'data-subreddit'),
   new AttributeMapping('author_fullname', 'data-author-fullname'),
+  new AttributeMapping('author', 'data-author'),
   new AttributeMapping('permalink', 'data-permalink'),
   new AttributeMapping('subreddit_id', 'data-subreddit-fullname'),
   new AttributeMapping('created_utc', 'data-timestamp', stringJavascriptEpochSecondsToNumericEpoch),
@@ -216,6 +243,36 @@ class ClassToFieldMap {
   }
 }
 
+// https://qwtel.com/posts/software/how-to-use-htmlrewriter-for-web-scraping/#extracting-html-subtrees
+class InnerHTML extends ItemsMeta {
+  constructor(itemsObj, field_name) {
+    super(itemsObj)
+    this.field_name = field_name
+  }
+  element(element) {
+    super.element(element)
+    if (! this.last[this.field_name]) {
+      this.last[this.field_name] = ''
+    }
+    const attrs = [...element.attributes].map(([k, v]) => ` ${k}="${v}"`).join('');
+    this.last[this.field_name] += `<${element.tagName}${attrs}>`
+    // <br> tags can throw a "no end tag" error here.
+    if (element.tagName !== 'br') {
+      // If there are any other unclosed tags, it is better to ignore bad HTML w/try & catch than fail.
+      try {
+        element.onEndTag(endTag => {
+          this.last[this.field_name] += `</${endTag.name}>`
+        })
+      } catch (error) {
+        this.itemsObj.addError('NO_END_TAG_'+element.tagName)
+      }
+    }
+  }
+  text({text}) {
+    this.last[this.field_name] += text
+  }
+}
+
 class ValueFromText extends ItemsMeta {
   constructor(itemsObj, field_name) {
     super(itemsObj)
@@ -361,7 +418,9 @@ class Quarantined extends ItemsMeta {
 
 export const getItems_fromOld = async path => {
   const url = oldReddit + path
+
   const response = await fetch(url, redditHTMLRequestOptions)
+  const domParser = new DOMParser()
   if (! response.ok) {
     return {error: 'request failed'}
   }
@@ -370,6 +429,7 @@ export const getItems_fromOld = async path => {
   .on('#siteTable .thing', itemsObj)
   .on('#siteTable .thing .parent a.title', new LinkTitles(itemsObj))
   .on('#siteTable .thing .entry p.title a.title', new PostTitle(itemsObj))
+  .on('#siteTable .thing .entry .usertext-body .md *', new InnerHTML(itemsObj, 'body'))
   .on('#siteTable .thing .entry .admin_takedown', new OneField(itemsObj, 'removal_reason', 'legal'))
   .on('#siteTable .thing .tagline .score.unvoted', new Score(itemsObj))
   .on('#siteTable .thing .tagline time', new Times(itemsObj))
@@ -386,6 +446,10 @@ export const getItems_fromOld = async path => {
   await consume(rewriter.transform(response).body)
   itemsObj.fillInDefaultValues()
   itemsObj.printErrors()
+  itemsObj.items.forEach(item => {
+    // Must specify text/html. Without specifying, parser does not include links and messes up spacing
+    item.body = turndownService.turndown(domParser.parseFromString(item.body, 'text/html'))
+  })
   return {
     quarantined: Array.from(itemsObj.quarantined_subs),
     items: itemsObj.items,

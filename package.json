@@ -41,6 +41,8 @@
     "dependencies": {
         "@worker-tools/html-rewriter": "^0.1.0-pre.19",
         "arrive": "^2.4.1",
+        "linkedom": "^0.18.0",
+        "turndown": "^7.2.0",
         "webextension-polyfill": "^0.10.0"
     }
 }
