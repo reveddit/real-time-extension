@@ -8,9 +8,10 @@ const USER_DELETED = 'rev-user-deleted'
 const MOD_REMOVED = 'rev-mod-removed'
 const id_match_comment = /^t1_.+/
 const id_match_post = /^t3_.+/
+const defaultNewRedditTarget = 'shreddit-post'
 
 export const redditModifications = (other_subscriptions, hide_subscribe, monitor_quarantined, subscribed_users_lowercase, unsubscribed_users_lowercase) => {
-    const isNewReddit = document.querySelector('#SHORTCUT_FOCUSABLE_DIV') !== null
+    const isNewReddit = Boolean(document.querySelector('head').getAttribute('prefix'))
     ifThreadPage_showRemovalStatus(isNewReddit, monitor_quarantined)
     const subscribeIfNotUnsubscribed = (user) => {
         const user_lc = user.toLowerCase()
@@ -21,7 +22,7 @@ export const redditModifications = (other_subscriptions, hide_subscribe, monitor
         }
     }
     if ( ! isNewReddit ) {
-        const username = $('#header .user a')[0].textContent
+        const username = $('#header .user a')[0]?.textContent
         if (username && ! username.match(/ /) && username.trim().toLowerCase() !== 'login') {
             subscribeIfNotUnsubscribed(username)
         }
@@ -91,24 +92,29 @@ const addDirectLinks_newReddit_comments = () => {
     setTimeout(processCommentsOnPageLoad, 10000)
 }
 
-const ifThreadPage_showRemovalStatus = (isNewReddit, monitor_quarantined, newRedditTarget = '.Post', postData = {}) => {
+const ifThreadPage_showRemovalStatus = (isNewReddit, monitor_quarantined, newRedditTarget = defaultNewRedditTarget, postData = {}) => {
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     // links to comments on new reddit do not have robots noindex,nofollow, so need to lookup data if haven't already
     // as of 2022/2023: older posts e.g. t3_9emzhp no longer have noindex,nofollow, so always need to look up data for new reddit
     if (isNewReddit && Object.keys(postData).length === 0) {
-        browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids: [postID], monitor_quarantined})
+        browser.runtime.sendMessage({action: 'get-from-old', path: `/r/${subreddit}/comments/${postID.substring(3)}/`})
         .then(response => {
-            if (! response || ! response.items || ! response.items.length) return
-            postData = response.items[0].data
-            showRemovalStatus({isNewReddit, newRedditTarget, postData})
+            if (! response) return
+            showRemovalStatus({isNewReddit, newRedditTarget,
+                postData: {
+                    is_robot_indexable: ! response.is_removed,
+                    ...response,
+                }
+            })
         })
+        // Previous code here called 'get-reddit-items-by-id', but that now returns a 403
     } else {
         showRemovalStatus({isNewReddit, newRedditTarget, postData})
     }
 
 }
 
-const showRemovalStatus = ({isNewReddit, newRedditTarget = '.Post', postData = {}}) => {
+const showRemovalStatus = ({isNewReddit, newRedditTarget = defaultNewRedditTarget, postData = {}}) => {
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     let className = undefined, message_1 = undefined
     if (postID) {
@@ -116,7 +122,7 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = '.Post', postData = {
         // That shows up on all pages that are permalinks to comments
         if ($('meta[name="robots"][content="noindex,nofollow"]').length ||
             ('is_robot_indexable' in postData && ! postData.is_robot_indexable) ) {
-            const author = postData.author || $('.link .top-matter .author').first().text() || $('.link .top-matter .tagline span:contains("[deleted]")').text() || $('.Post span:contains("u/[deleted]")').first().text()
+            const author = postData.author || $('.link .top-matter .author').first().text() || $('.link .top-matter .tagline span:contains("[deleted]")').text() || $('.Post span:contains("u/[deleted]")').first().text() || $('span[slot="authorName"]').first().text().trim()
             if ((author === '[deleted]' || author === 'u/[deleted]') && postData.removed_by_category !== 'moderator') {
                 className = USER_DELETED
                 message_1 = `This post was either deleted by the person who posted it, or removed by a moderator and then deleted by the person who posted it.`
@@ -134,7 +140,7 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = '.Post', postData = {
         const post_path = window.location.pathname.split('/',6).join('/')
         const reveddit_link = `<p><a href="https://www.reveddit.com${post_path}/">View the post on Reveddit.com</a></p>`
         if (! isNewReddit) {
-            message_1 += ` View the post <a href="https://new.reddit.com${post_path}/">on new reddit</a> for more details.`
+            message_1 += ` View the post <a href="https://sh.reddit.com${post_path}/">on new "sh" reddit</a> for more details.`
             const $html_message = $(`<div class="reddit-infobar md-container-small ${className}">`)
                 .append(from)
                 .append(`<div class="md"><p>${message_1}${message_2}</p>${reveddit_link}</div>`)

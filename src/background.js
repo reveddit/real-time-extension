@@ -6,7 +6,7 @@ import {initStorage, INTERVAL_DEFAULT, subscribeUser,
         getUnseenIDs_thing, markThingAsSeen } from './src/storage.js'
 import {setupContextualMenu} from './src/contextMenus.js'
 import browser from 'webextension-polyfill'
-import { getItems_fromOld } from './src/parse_html/old.js'
+import { getItems_fromOld, getPost_fromOld } from './src/parse_html/old.js'
 setupContextualMenu()
 
 
@@ -72,6 +72,12 @@ chrome.runtime.onMessage.addListener(
             .then(items => {
                 // if request fails, items is null
                 sendResponse({response: "done", items})
+            })
+            return true
+        } else if (request.action === "get-from-old") {
+            getPost_fromOld(request.path)
+            .then(data => {
+                sendResponse(data)
             })
             return true
         }

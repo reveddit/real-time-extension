@@ -431,6 +431,26 @@ class Quarantined extends ItemsMeta {
   }
 }
 
+class MetaRobots extends ErrorCollector {
+  constructor(url) {
+    super(url)
+    this.is_removed = false
+  }
+  element(element) {
+    this.is_removed = true
+  }
+}
+
+class ThreadPageAuthor extends ErrorCollector {
+  constructor(url) {
+    super(url)
+    this.author = ''
+  }
+  text({text}) {
+    this.author += text.trim()
+  }
+}
+
 export const getItems_fromOld = async path => {
   const url = oldReddit + path
 
@@ -499,4 +519,22 @@ const getCommentsInfo_fromOld = async (ids) => {
     return obj
   }, {})
   return info_items
+}
+
+export const getPost_fromOld = async (path) => {
+  const url = oldReddit + path
+  const response = await fetch(url, redditHTMLRequestOptions)
+  if (! response.ok) {
+    return {error: 'request failed'}
+  }
+  const metaRobotsObj = new MetaRobots(url)
+  const authorObj = new ThreadPageAuthor(url)
+  const rewriter = new HTMLRewriter()
+  .on('meta[name="robots"][content="noindex,nofollow"]', metaRobotsObj)
+  .on('#siteTable .thing .tagline span', authorObj)
+  await consume(rewriter.transform(response).body)
+  return {
+    is_removed: metaRobotsObj.is_removed,
+    ...(authorObj.author && {author: authorObj.author}),
+  }
 }
