@@ -35,6 +35,34 @@ body, input, button {
     text-decoration: none;
 }
 
+.blue-link.grayed-out {
+    color: #999;
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.warning-message {
+    background-color: #fff3cd;
+    border: 1px solid #ffeaa7;
+    color: #856404;
+    padding: 8px;
+    margin: 5px 0;
+    border-radius: 4px;
+    font-size: 0.9em;
+    text-align: center;
+}
+
+.no-user-message {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    color: #6c757d;
+    padding: 8px;
+    margin: 5px 0;
+    border-radius: 4px;
+    font-size: 0.9em;
+    text-align: center;
+}
+
 .unseen {
     display: inline-block;
     border-right: 1px solid lightgrey;

@@ -1,7 +1,7 @@
 import {goToOptions, setAlarm, ALARM_NAME,
         createNotification, updateBadgeUnseenCount, createTab } from './src/common.js'
 import {checkForChanges} from './src/monitoring.js'
-import {lookupItemsByID, getLoggedinUser, getCookie, getAuth} from './src/requests.js'
+import {lookupItemsByID, getLoggedinUser, getCookie, getAuth, storeRedditCookies} from './src/requests.js'
 import {initStorage, INTERVAL_DEFAULT, subscribeUser,
         getUnseenIDs_thing, markThingAsSeen } from './src/storage.js'
 import {setupContextualMenu} from './src/contextMenus.js'
@@ -45,6 +45,49 @@ if (__BUILT_FOR__ !== 'chrome') {
 }
 // END webRequest API code
 console.log('bg script running')
+// Keep stored Reddit cookies up-to-date automatically
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete' && tab && tab.url && tab.url.match(/^https?:\/\/[^/]*\.reddit\.com\//)) {
+        storeRedditCookies()
+        .then(() => {
+            // If in a degraded state, try to recover by fetching the logged-in user
+            chrome.storage.local.get(['error_status'], (result) => {
+                if (result && result.error_status) {
+                    getLoggedinUser()
+                    .then(user => {
+                        if (user) {
+                            chrome.storage.local.remove('error_status', () => {
+                                updateBadgeUnseenCount()
+                            })
+                        }
+                    })
+                }
+            })
+        })
+    }
+})
+
+chrome.cookies.onChanged.addListener((changeInfo) => {
+    const cookie = changeInfo.cookie
+    if (cookie && cookie.domain && cookie.domain.replace(/^\./, '').endsWith('reddit.com')) {
+        storeRedditCookies()
+        .then(() => {
+            // If in a degraded state, try to recover as soon as cookies change
+            chrome.storage.local.get(['error_status'], (result) => {
+                if (result && result.error_status) {
+                    getLoggedinUser()
+                    .then(user => {
+                        if (user) {
+                            chrome.storage.local.remove('error_status', () => {
+                                updateBadgeUnseenCount()
+                            })
+                        }
+                    })
+                }
+            })
+        })
+    }
+})
 chrome.runtime.onMessage.addListener(
     function(request, sender, sendResponse) {
         if (request.action == "open-options") {
@@ -56,6 +99,7 @@ chrome.runtime.onMessage.addListener(
             sendResponse({response: "done"})
             return true
         } else if (request.action == "create-notification") {
+            console.log('Background script received create-notification request:', request.options)
             createNotification(request.options)
             return true
         } else if (request.action === "get-cookie") {
@@ -65,20 +109,44 @@ chrome.runtime.onMessage.addListener(
             })
             return true
         } else if (request.action == "get-reddit-items-by-id") {
-            getAuth()
-            .then(auth => {
-                return lookupItemsByID(request.ids, auth, request.monitor_quarantined)
+            // Only get OAuth auth if user has provided a custom client ID
+            chrome.storage.sync.get(['options'], (result) => {
+                const needsOAuth = result.options && result.options.custom_clientid && result.options.custom_clientid !== ''
+                const authPromise = needsOAuth ? getAuth() : Promise.resolve('none')
+                
+                authPromise.then(auth => {
+                    return lookupItemsByID(request.ids, auth, request.monitor_quarantined)
+                })
+                .then(items => {
+                    // if request fails, items is null
+                    sendResponse({response: "done", items})
+                })
+                .catch(error => {
+                    console.log('Error in get-reddit-items-by-id:', error)
+                    sendResponse({response: "done", items: null})
+                })
             })
-            .then(items => {
-                // if request fails, items is null
-                sendResponse({response: "done", items})
-            })
+            return true
+        } else if (request.action === 'store-reddit-cookies') {
+            // Trigger cookie capture in background context
+            storeRedditCookies()
+            sendResponse({response: 'done'})
+            return true
+        } else if (request.action == "get-logged-in-user-items") {
+            // This will be handled by content script, just pass it through
             return true
         } else if (request.action === "get-from-old") {
             getPost_fromOld(request.path)
             .then(data => {
                 sendResponse(data)
             })
+            return true
+        } else if (request.action === 'immediate-user-lookup') {
+            const user = request.user
+            if (user) {
+                triggerImmediateLookupOnce(user)
+            }
+            sendResponse({response: 'done'})
             return true
         }
 })
@@ -123,15 +191,37 @@ function subscribeToLoggedInUser_or_promptForUser() {
     .then((user) => {
         if (user) {
             subscribeUser(user, () => {
+                triggerImmediateLookupOnce(user)
                 chrome.tabs.create({url: `https://www.reveddit.com/user/${user}?all=true`})
             })
         } else {
-            browser.tabs.create({url: `https://www.reveddit.com/user/`})
+            browser.tabs.create({url: `https://www.reddit.com/user/me`})
             .then(tab => {
                 // try to make request via content page instead (works for firefox)
                 setTimeout(() => {
                     browser.tabs.sendMessage(tab.id, {action: 'query-user'})
+                    .catch(err => {
+                        // Receiving end does not exist → show warning badge instead of throwing
+                        console.log('Error sending message to new tab:', err)
+                    })
                 }, 2000)
+            })
+        }
+    })
+}
+
+function triggerImmediateLookupOnce(user) {
+    chrome.storage.sync.get(['user_initial_lookup_done'], (result) => {
+        const lookupMap = result.user_initial_lookup_done || {}
+        if (! lookupMap[user]) {
+            lookupMap[user] = true
+            chrome.storage.sync.set({user_initial_lookup_done: lookupMap}, () => {
+                // Run a full check which includes logged-in user
+                try {
+                    checkForChanges()
+                } catch (e) {
+                    console.log('Immediate lookup failed to start:', e)
+                }
             })
         }
     })
@@ -143,10 +233,8 @@ const notificationClicked = (thing) => {
         const unseenIDs = getUnseenIDs_thing(thing, isUser, storage)
         let url = null
         if (isUser && storage.user_subscriptions[thing]) {
-            url = `https://www.reveddit.com/user/${thing}`
-            if (unseenIDs.length) {
-                url += `?show=${unseenIDs.join(',')}&removal_status=all`
-            }
+            // Always point to the extension's history page for user content
+            url = chrome.runtime.getURL('src/history.html')
         } else if (! isUser) {
             url = '/src/other.html'
             if (unseenIDs.length) {
@@ -164,9 +252,10 @@ const notificationClicked = (thing) => {
     })
 }
 
-chrome.notifications.onClicked.addListener((thing) => {
+chrome.notifications.onClicked.addListener((notificationId) => {
+    const thing = (notificationId || '').split('|')[0]
     notificationClicked(thing)
-    chrome.notifications.clear(thing)
+    chrome.notifications.clear(notificationId)
 })
 
 // only need this while using registration.showNotification in common.js

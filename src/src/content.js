@@ -12,12 +12,46 @@ import browser from 'webextension-polyfill'
             return getLoggedinUser()
             .then((user) => {
                 if (user) {
+                    try { chrome.runtime.sendMessage({action: 'immediate-user-lookup', user}) } catch (e) {}
                     return subscribeUser(user, () => {
                         window.location.href=`https://www.reveddit.com/user/${user}?all=true`
                     })
                 } else {
                     return Promise.resolve('failed')
                 }
+            })
+        } else if (message.action === 'get-logged-in-user-items') {
+            // Handle request for logged-in user's items from background script
+            const params = {limit: 100, sort: 'new', raw_json: 1}
+            const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
+            
+            // Use the same subdomain as the current page to avoid cross-site issues
+            const currentHost = window.location.hostname
+            const url = `https://${currentHost}/user/me.json${search}`
+            
+            // Ask background to store cookies for future use when no tabs are open
+            try {
+                chrome.runtime.sendMessage({action: 'store-reddit-cookies'})
+            } catch (e) {
+                // ignore if not available
+            }
+            
+            return fetch(url, {credentials: 'include'})
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`)
+                }
+                return response.json()
+            })
+            .then(data => {
+                if (data && data.data && data.data.children) {
+                    return data.data.children
+                }
+                throw new Error('reddit data is not defined')
+            })
+            .catch(error => {
+                console.log('Error fetching logged-in user items:', error)
+                return null
             })
         }
     }

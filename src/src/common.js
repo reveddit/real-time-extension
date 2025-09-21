@@ -6,6 +6,16 @@ export const ALARM_NAME = 'notifyme'
 const maxRedditContentLength = 300
 const ACTION_API = __BUILT_FOR__ === 'chrome' ? 'action' : 'browserAction'
 
+export const setWarningBadge = (errorStatus) => {
+    try {
+        chrome[ACTION_API].setBadgeText({text: '!'})
+        chrome[ACTION_API].setBadgeBackgroundColor({color: '#ffcc00'})
+        if (errorStatus) {
+            chrome.storage.local.set({error_status: errorStatus})
+        }
+    } catch (e) {}
+}
+
 // https://stackoverflow.com/questions/25933556/chrome-extension-open-new-tab-when-browser-opened-in-background-mac/25933964#25933964
 export const createTab = (url) => {
     chrome.tabs.create({url:url}, (tab) => {
@@ -261,27 +271,49 @@ export const getPrettyDate = (createdUTC) => {
 }
 
 export const createNotification = ({notificationId, title, message}) => {
+    console.log(`createNotification called: ${notificationId} - ${title} - ${message}`)
     if (location.protocol.match(/^http/)) {
+        console.log('Sending notification via message passing')
         chrome.runtime.sendMessage({
             action: 'create-notification',
             options: {notificationId, title, message}
         })
     } else {
-        if (__BUILT_FOR__ === 'chrome') {
-            registration.showNotification(title, {
-                body: message,
-                data: notificationId,
-                icon: '/icons/128.png',
-                message
+        console.log('Creating notification directly with chrome.notifications.create')
+        // Use callback form to avoid Promise issues across browsers
+        // Ensure a unique ID so repeated notifications are not silently merged by the OS
+        const baseId = String(notificationId)
+        const uniqueId = baseId.includes('|') ? baseId : `${baseId}|${Date.now()}`
+        const options = {
+            type: 'basic',
+            iconUrl: chrome.runtime.getURL('icons/128.png'),
+            title: title,
+            message: message
+        }
+        const fallbackShowNotification = () => {
+            try {
+                const swRegistration = self && self.registration ? self.registration : null
+                if (swRegistration && swRegistration.showNotification) {
+                    swRegistration.showNotification(title, {
+                        body: message,
+                        icon: chrome.runtime.getURL('icons/128.png'),
+                        data: baseId
+                    })
+                }
+            } catch (e) {
+                console.log('Fallback showNotification failed:', e)
+            }
+        }
+        try {
+            chrome.notifications.create(uniqueId, options, () => {
+                if (chrome.runtime && chrome.runtime.lastError) {
+                    console.log('chrome.notifications.create error:', chrome.runtime.lastError.message)
+                    fallbackShowNotification()
+                }
             })
-        } else {
-            // notifications.create does not work in chrome's manifest v3, something wrong with reading image data
-            // https://stackoverflow.com/questions/65570332/google-chrome-extensions-v3-error-in-event-handler-referenceerror-image-is-n
-            // https://bugs.chromium.org/p/chromium/issues/detail?id=1168477&q=image%20is%20not%20defined%20notification%20manifest%20v3&can=2
-            chrome.notifications.create(notificationId,
-                {type: 'basic',
-                 iconUrl: '/icons/128.png',
-                 title, message})
+        } catch (error) {
+            console.log('Error creating notification:', error)
+            fallbackShowNotification()
         }
     }
 }
@@ -291,6 +323,7 @@ export const updateBadgeUnseenCount = () => {
         chrome.runtime.sendMessage({
             action: 'update-badge'
         })
+        .catch?.(() => {})
     } else {
         getSubscribedUsers_withUnseenIDs(usersUnseenIDs => {
             let total = 0

@@ -54,7 +54,7 @@ const showChanges = (allChanges, localStorage) => {
         $('<td>').text(user).appendTo(row)
         var href;
         if (isUser) {
-            href = `https://www.reveddit.com/user/${user}?show=${id}&removal_status=all`
+            href = `https://www.reddit.com/user/${user}`
         } else {
             href = `https://www.reveddit.com/info?id=${id}&removal_status=all`
         }

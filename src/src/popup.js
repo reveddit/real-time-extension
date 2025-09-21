@@ -1,8 +1,9 @@
-import {alphaLowerSort, goToOptions, getFullIDsFromURL} from './common.js'
+import {goToOptions, getFullIDsFromURL, createNotification} from './common.js'
 import {getSubscribedUsers_withSeenAndUnseenIDs,
-        subscribeUser, unsubscribeUser, subscribeId, unsubscribeId,
+        subscribeId, unsubscribeId,
         markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen} from './storage.js'
 import {setCurrentStateForId} from './monitoring.js'
+import {getLoggedinUser} from './requests.js'
 import browser from 'webextension-polyfill'
 
 
@@ -12,11 +13,6 @@ populatePopup()
 function populatePopup() {
     $('#popup').empty()
     $(` <div id="switches"></div>
-        <div id="rr-input">
-            <input type="text" id="user" placeholder="username" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-            <button id="rr-go">go</button>
-        </div>
-        <div style="clear:both"></div>
         <div><a class="blue-link" id="go-to-options" href="/src/options.html">options</a></div>
         <div style="clear:both"></div>
         <div><a href="#" class="clear-notifications blue-link">clear notifications</a></div>
@@ -29,61 +25,88 @@ function populatePopup() {
             populatePopup()
         })
     })
+    
     $('#go-to-options').click(goToOptions);
 
-    getSubscribedUsers_withSeenAndUnseenIDs((users, storage) => {
+    getSubscribedUsers_withSeenAndUnseenIDs(async (users, storage) => {
         const other = users['other']
         delete users['other']
-        if (Object.keys(users).length > 0) {
-            $('<div class="num-unseen"># unseen</div>').appendTo('#popup')
-        }
-        Object.keys(users).forEach(user => {
-            const unseenIDs = users[user]['unseen']
-            displayUserInPopup(user, unseenIDs);
+        
+        // Check for supported Reddit subdomains
+        chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
+            const supportedTabs = tabs.filter(tab => {
+                const hostname = new URL(tab.url).hostname
+                return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
+            })
+            
+            if (tabs.length > 0 && supportedTabs.length === 0) {
+                // Check if we've already shown the warning
+                chrome.storage.local.get(['subdomain_warning_shown'], (result) => {
+                    if (!result.subdomain_warning_shown) {
+                        // Show warning for unsupported subdomain only once
+                        $('<div class="warning-message">⚠️ User monitoring requires www.reddit.com or old.reddit.com</div>').appendTo('#popup')
+                        // Mark warning as shown
+                        chrome.storage.local.set({subdomain_warning_shown: true})
+                    }
+                })
+            }
         })
+        
+        // Reserve space and show loading state for the current user section
+        const $currentUserContainer = $('<div id="current-user-section"><span class="loading">loading...</span></div>').appendTo('#popup')
+
+        // Get the current logged-in user and display their content (non-blocking)
+        getLoggedinUser().then(loggedInUser => {
+            $currentUserContainer.empty()
+            if (loggedInUser) {
+                // Check if we have data for this user
+                const userData = users[loggedInUser]
+                if (userData) {
+                    const unseenIDs = userData['unseen']
+                    displayUserInPopup(loggedInUser, unseenIDs, $currentUserContainer)
+                } else {
+                    // User not in storage yet, show them with 0 unseen
+                    displayUserInPopup(loggedInUser, [], $currentUserContainer)
+                }
+            } else {
+                // No logged-in user found
+                $('<div class="no-user-message">No logged-in Reddit user detected</div>').appendTo($currentUserContainer)
+            }
+        }).catch(() => {
+            // Error getting logged-in user
+            $currentUserContainer.empty()
+            $('<div class="no-user-message">Unable to detect logged-in Reddit user</div>').appendTo($currentUserContainer)
+        })
+        
         $('<hr>').appendTo('#popup')
         displayOtherInPopup(other['unseen'], Object.keys(storage.other_subscriptions).length)
         $('<hr>').appendTo('#popup')
         $('<a target="_blank" class="blue-link" id="go-to-history" href="/src/history.html">history</a>')
             .click(openAndClose).wrap('<div id="bottom">').parent().appendTo('#popup')
+        $('<hr>').appendTo('#popup')
+        $('<button id="test-notification" style="margin-top:6px">Test notification</button>').appendTo('#popup')
+        $('#test-notification').on('click', () => {
+            createNotification({
+                notificationId: 'test',
+                title: 'Reveddit test notification',
+                message: 'If you see this, notifications are working.'
+            })
+        })
     })
 
-
     chrome.storage.sync.get(null, syncStorage => {
-        /*console.log('sync storage:')
-        Object.keys(syncStorage).forEach(key => {
-            console.log(key)
-            console.log(syncStorage[key])
-        })*/
-
         chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
             const url = tabs[0].url
             if (url) {
-                const [postID, commentID, user] = getFullIDsFromURL(url)
+                const [postID, commentID] = getFullIDsFromURL(url)
                 if (commentID) {
                     showToggleSubscribe({comment: commentID}, syncStorage, url)
                 }
                 if (postID) {
                     showToggleSubscribe({post: postID}, syncStorage, url)
                 }
-                if (user) {
-                    showToggleSubscribe({user: user}, syncStorage, url)
-                }
             }
         })
-    });
-
-    var $input = $('#user');
-    $input.focus();
-    $input.bind("enterKey",function() {
-        goUser();
-    });
-    $input.keyup(function(e) {
-        if(e.keyCode == 13) $(this).trigger("enterKey");
-    });
-
-    $('#rr-go').click(function() {
-        goUser();
     });
 }
 
@@ -93,29 +116,19 @@ const openAndClose = (ev) => {
     window.close()
 }
 
-function showToggleSubscribe({post: post, comment: comment, user: user}, storage, url) {
+function showToggleSubscribe({post: post, comment: comment}, storage, url) {
     let id = ''
     let type = ''
-    let subFn = undefined, unsubFn = undefined
     if (comment) {
         id = comment
         type = 'comment'
     } else if (post) {
         id = post
         type = 'post'
-    } else if (user) {
-        id = user
-        type = 'user'
     } else {
         return
     }
-    if (comment || post) {
-        subFn = subscribeId
-        unsubFn = unsubscribeId
-    } else {
-        subFn = subscribeUser
-        unsubFn = unsubscribeUser
-    }
+    
     const inputId = `toggle-${type}`
     const textLabelId = `text-label-${type}`
     $('#switches').append(`
@@ -140,12 +153,12 @@ function showToggleSubscribe({post: post, comment: comment, user: user}, storage
     }
 
     $input.change((e) => {
-        let fn = subFn
-        if (! $input.prop('checked')) fn = unsubFn
+        let fn = subscribeId
+        if (! $input.prop('checked')) fn = unsubscribeId
         fn(id, async () => {
             chrome.runtime.sendMessage({action: 'update-badge'})
             toggleLabelTextAndColor()
-            if (fn === subFn && (comment || post)) {
+            if (fn === subscribeId) {
                 // marking state separately from the subscribe function b/c
                 // otherwise one of the following happens:
                 //   (1) chaining this makes the function a little slow
@@ -157,11 +170,7 @@ function showToggleSubscribe({post: post, comment: comment, user: user}, storage
             }
         })
     })
-    if ((post || comment) && id in storage.other_subscriptions) {
-        $input.prop('checked', true)
-        toggleLabelTextAndColor()
-    }
-    if (user && user in storage.user_subscriptions) {
+    if (id in storage.other_subscriptions) {
         $input.prop('checked', true)
         toggleLabelTextAndColor()
     }
@@ -170,20 +179,10 @@ function showToggleSubscribe({post: post, comment: comment, user: user}, storage
     })
 }
 
-function goUser() {
-    var user = $('#user').val().trim();
-    if (user) {
-        chrome.tabs.create({url: `https://www.reveddit.com/user/${user}`});
-    }
-}
-
-function displayUserInPopup(user, unseen) {
-    let params = ''
-    if (unseen.length) {
-        params = `?show=${unseen.join(',')}&removal_status=all`
-    }
-    const url = `https://www.reveddit.com/user/${user}${params}`
-    addUnseenLink(user, true, `${unseen.length}`, url)
+function displayUserInPopup(user, unseen, $parent) {
+    // Always point to the extension's history page for user content
+    const url = chrome.runtime.getURL('src/history.html')
+    addUnseenLink(user, true, `${unseen.length}`, url, $parent)
 }
 
 function displayOtherInPopup(unseen, total) {
@@ -195,7 +194,7 @@ function displayOtherInPopup(unseen, total) {
 }
 
 
-function addUnseenLink(thing, isUser, unseen_str, url) {
+function addUnseenLink(thing, isUser, unseen_str, url, $parent) {
     const $div = $(`<div><span class="unseen">${unseen_str} </span> </div>`)
     const $a = $(`<a class="blue-link" target="_blank" href="${url}">${thing}</a>`)
     $a.click((e) => {
@@ -210,5 +209,5 @@ function addUnseenLink(thing, isUser, unseen_str, url) {
         })
     })
     $a.appendTo($div)
-    $div.appendTo('#popup')
+    $div.appendTo($parent || '#popup')
 }

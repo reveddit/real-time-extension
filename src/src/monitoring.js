@@ -1,11 +1,11 @@
-import {lookupItemsByID, lookupItemsByUser, getAuth} from './requests.js'
+import {lookupItemsByID, lookupItemsByUser, lookupItemsByLoggedInUser, lookupItemsByLoggedInUserWithAuth, getAuth, getLoggedinUser, storeRedditCookies} from './requests.js'
 import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
         addLocalStorageItems, getLocalStorageItems,
         MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, MAX_SYNC_STORAGE_CHANGES, SEEN_COUNT_DEFAULT,
-        getObjectNamesForThing } from './storage.js'
+        getObjectNamesForThing, getUserInit } from './storage.js'
 import {createNotification, updateBadgeUnseenCount, trimDict_by_numberValuedAttribute,
         isUserDeletedItem, isRemovedItem,
-        ItemForStorage, LocalStorageItem, ChangeForStorage} from './common.js'
+        ItemForStorage, LocalStorageItem, ChangeForStorage, setWarningBadge} from './common.js'
 import browser from 'webextension-polyfill'
 
 
@@ -32,43 +32,149 @@ const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 20*(60*60*24)
 
 export const checkForChanges = () => {
     chrome.storage.sync.get(null, function (storage) {
-        var users = Object.keys(storage.user_subscriptions)
         var other = Object.keys(storage.other_subscriptions)
-        if (users.length || other.length) {
-            const now = Math.floor(new Date()/1000)
-            // check for quarantined content once in awhile and enable monitor_quarantined if some is found
-            // because users may not know to enable this option
-            // the option is off by default because it can appear to cause an occasional logout
-            if (! storage.last_check_quarantined
-                || (now - storage.last_check_quarantined) > MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS ) {
-                storage.tempVar_monitor_quarantined = true
-            }
-            getAuth(storage.tempVar_monitor_quarantined)
-            .then((auth) => {
-                checkForChanges_other(auth, storage)
-                return checkForChanges_users(users, auth, storage)
-            })
-            .then(() => {
-                const newStorage = {last_check: now}
-                if (storage.tempVar_monitor_quarantined) {
-                    newStorage.last_check_quarantined = now
-                }
-                if (storage.tempVar_quarantined_content_found) {
-                    newStorage.options = storage.options
-                    newStorage.options.monitor_quarantined = true
-                }
-                chrome.storage.sync.set(newStorage)
-            })
+        const now = Math.floor(new Date()/1000)
+        
+        // check for quarantined content once in awhile and enable monitor_quarantined if some is found
+        // because users may not know to enable this option
+        // the option is off by default because it can appear to cause an occasional logout
+        if (! storage.last_check_quarantined
+            || (now - storage.last_check_quarantined) > MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS ) {
+            storage.tempVar_monitor_quarantined = true
         }
+        
+        // Only get OAuth auth if user has provided a custom client ID
+        const needsOAuth = storage.options.custom_clientid && storage.options.custom_clientid !== ''
+        const authPromise = needsOAuth ? getAuth(storage.tempVar_monitor_quarantined) : Promise.resolve('none')
+        
+        authPromise.then((auth) => {
+            // Always check for logged-in user, regardless of subscription status
+            return checkForChanges_loggedInUser(auth, storage)
+        })
+        .then(() => {
+            // Also check other subscriptions if any exist
+            if (other.length) {
+                return checkForChanges_other(auth, storage)
+            }
+        })
+        .then(() => {
+            const newStorage = {last_check: now}
+            if (storage.tempVar_monitor_quarantined) {
+                newStorage.last_check_quarantined = now
+            }
+            if (storage.tempVar_quarantined_content_found) {
+                newStorage.options = storage.options
+                newStorage.options.monitor_quarantined = true
+            }
+            chrome.storage.sync.set(newStorage)
+        })
+        .catch(error => {
+            console.log('Error in checkForChanges:', error)
+            // Clear warning badge on error
+            updateBadgeUnseenCount()
+        })
     })
 }
 
-const checkForChanges_users = async (users, auth, storage) => {
-    if (users.length) {
-        const user = users[0]
-        return lookupItemsByUser(user, '', 'new', '', storage.options.monitor_quarantined, storage.tempVar_monitor_quarantined, auth)
+const checkForChanges_loggedInUser = async (auth, storage) => {
+    // First get the current logged-in user
+    return getLoggedinUser()
+    .then(loggedInUser => {
+        if (!loggedInUser) {
+            console.log('No logged-in user found, skipping user monitoring')
+            return
+        }
+        
+        // Always monitor the currently logged-in user, regardless of subscription status
+        // Ensure storage keys exist for the logged-in user
+        const userInit = getUserInit(loggedInUser)
+        chrome.storage.sync.get(Object.keys(userInit), (existingKeys) => {
+            const keysToCreate = {}
+            Object.keys(userInit).forEach(key => {
+                if (!(key in existingKeys)) {
+                    keysToCreate[key] = userInit[key]
+                }
+            })
+            if (Object.keys(keysToCreate).length > 0) {
+                chrome.storage.sync.set(keysToCreate)
+            }
+        })
+        
+        // Use message passing to get items from content script context
+        return new Promise((resolve, reject) => {
+            // Try to find a Reddit tab to make the request from
+            chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
+                if (tabs.length === 0) {
+                    // Use stored cookies as fallback
+                    resolve('use_stored_cookies')
+                    return
+                }
+                
+                // Check if we have a supported subdomain (www.reddit.com or old.reddit.com)
+                const supportedTabs = tabs.filter(tab => {
+                    const hostname = new URL(tab.url).hostname
+                    return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
+                })
+                
+                if (supportedTabs.length === 0) {
+                    console.log('No supported Reddit subdomains found (www.reddit.com or old.reddit.com)')
+                    // Try to use stored cookies as fallback
+                    resolve('use_stored_cookies')
+                    return
+                }
+                
+                // Use the first supported Reddit tab
+                const tab = supportedTabs[0]
+                
+                // Store cookies for future use when no tabs are open
+                storeRedditCookies()
+                
+                chrome.tabs.sendMessage(tab.id, {action: 'get-logged-in-user-items'}, (response) => {
+                    if (chrome.runtime.lastError) {
+                        // Receiving end does not exist, fall back gracefully and set warning badge
+                        console.log('Error sending message to content script:', chrome.runtime.lastError)
+                        setWarningBadge('needs_user')
+                        resolve('use_stored_cookies')
+                        return
+                    }
+                    resolve(response)
+                })
+            })
+        })
         .then(items => {
             if (! items) return // handle expected errors
+            
+            // Handle stored cookies case
+            if (items === 'use_stored_cookies') {
+                // Try to fetch items using stored cookies
+                return lookupItemsByLoggedInUserWithAuth('', 'new', '', storage.options.monitor_quarantined, storage.tempVar_monitor_quarantined, auth)
+                .then(storedItems => {
+                    if (! storedItems) {
+                        // Stored cookies also failed → keep yellow badge to indicate attention needed
+                        setWarningBadge('needs_user')
+                        return // handle expected errors
+                    }
+                    var ids = []
+                    let quarantined_subreddits = new Set()
+                    const itemLookup = {}
+                    if (storedItems.user && storedItems.user.items) { // format from cred2.reveddit.com
+                        storedItems = storedItems.user.items
+                    }
+                    storedItems.forEach(item => {
+                        if (item.data && item.data.name) { // format from reddit
+                            item = item.data
+                        }
+                        ids.push(item.name)
+                        itemLookup[item.name] = item
+                        if (item.quarantine) {
+                            quarantined_subreddits.add(item.subreddit)
+                            storage.tempVar_quarantined_content_found = true
+                        }
+                    })
+                    return checkForChanges_thing_byId(ids, loggedInUser, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup, Array.from(quarantined_subreddits))
+                })
+            }
+            
             var ids = []
             let quarantined_subreddits = new Set()
             const itemLookup = {}
@@ -86,10 +192,18 @@ const checkForChanges_users = async (users, auth, storage) => {
                     storage.tempVar_quarantined_content_found = true
                 }
             })
-            return checkForChanges_thing_byId(ids, user, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup, Array.from(quarantined_subreddits))
-            .then(() => checkForChanges_users(users.slice(1), auth, storage))
+            return checkForChanges_thing_byId(ids, loggedInUser, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup, Array.from(quarantined_subreddits))
         })
-    }
+        .then(() => {
+            // Clear warning badge and error state if we successfully processed items
+            chrome.storage.local.remove('error_status', () => {
+                updateBadgeUnseenCount()
+            })
+        })
+    })
+    .catch(error => {
+        console.log('Error in checkForChanges_loggedInUser:', error)
+    })
 }
 
 function checkForChanges_other(auth, storage) {
@@ -168,6 +282,7 @@ const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, sub
                                            existingLocalStorageItems, target_seen_count)
             }
             if (num_changes && changeTypes.length) {
+                console.log(`Creating notification for ${thing}: ${num_changes} changes of type ${changeTypes.join(', ')}`)
                 createNotification(
                     {notificationId: thing,
                      title: thing,

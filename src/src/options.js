@@ -1,5 +1,5 @@
-import {alphaLowerSort,showError,countUnseen_updateBadge_background,saveSubscriptions} from './common.js'
-import {subscribeUser, unsubscribeUser, getOptions, INTERVAL_DEFAULT, SEEN_COUNT_DEFAULT, saveOptions} from './storage.js'
+import {showError,countUnseen_updateBadge_background,saveSubscriptions} from './common.js'
+import {getOptions, INTERVAL_DEFAULT, SEEN_COUNT_DEFAULT, saveOptions} from './storage.js'
 
 import {setAlarm, ALARM_NAME} from './common.js'
 import browser from 'webextension-polyfill'
@@ -7,11 +7,7 @@ import browser from 'webextension-polyfill'
 
 
 getOptions((users, others, options) => {
-    var sorted = users.sort(alphaLowerSort);
     displayOther()
-    $.each(sorted, function (i,v) {
-        displayUser(v);
-    });
     $('#interval').val(options.interval);
     $('#seen_count').val(options.seen_count || SEEN_COUNT_DEFAULT);
     $('#clientid').val(options.custom_clientid);
@@ -41,12 +37,6 @@ getOptions((users, others, options) => {
     })
 })
 
-var $new = $('#new');
-
-$new.bind("enterKey",addSubscriptionViaOptions);
-
-$('#rr-opt-add').click(addSubscriptionViaOptions);
-
 $('.rr-opt-save').click(saveAndCloseOptions);
 $('#reset').click(resetDefaults);
 
@@ -55,10 +45,6 @@ $('#advanced-btn').click((ev) => {
     $(ev.target).hide()
     return false
 })
-
-$new.keyup(function(e){
-    if(e.keyCode == 13) $(this).trigger("enterKey");
-});
 
 ['removed', 'locked'].forEach(type => {
     $(`#${type}_notify`).change(function() {
@@ -106,35 +92,6 @@ function saveAndCloseOptions() {
     }
 }
 
-function addSubscriptionViaOptions() {
-    var new_val = $new.val().trim();
-    if (new_val) {
-        subscribeUser(new_val, () => {
-            displayUser(new_val);
-            $new.val('');
-        }, (errorMessage) => {
-            showError(errorMessage, '#rr-opt-error')
-        })
-    }
-}
-
-
-function displayUser(user) {
-    var $userDiv = $(`<div data-user="${user}"><a class="blue-link" target="_blank" href="https://www.reveddit.com/user/${user}">${user}</a> <a class="remove-subscription blue-link" href="#">remove</a></div>`).appendTo('#rr-subscriptions');
-    $userDiv.find('.remove-subscription').click(removeSubscription);
-}
-
 function displayOther() {
     var $userDiv = $(`<div data-user="other"><a class="blue-link" target="_blank" href="/src/other.html">other</a></div><hr>`).appendTo('#rr-subscriptions');
-}
-
-function removeSubscription(e) {
-    var user = $(e.target).parent().attr('data-user');
-    $('.remove-subscription').off('click')
-    unsubscribeUser(user, () => {
-        $(e.target).parent().remove();
-        chrome.runtime.sendMessage({action: 'update-badge'})
-        $('.remove-subscription').click(removeSubscription)
-    })
-
 }

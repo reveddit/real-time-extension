@@ -43,7 +43,7 @@ export const getObjectNamesForThing = (thing, isUser=true) => {
     return names
 }
 
-const getUserInit = (user) => {
+export const getUserInit = (user) => {
     const result = {}
     addTrackTypes(result, user, true)
     return result
@@ -53,6 +53,7 @@ const getStorageInit = () => {
     const result = {
         user_subscriptions: {},
         user_unsubscriptions: {}, // tracks if username has ever been manually unsubscribed, so it doesn't auto-subscribe again
+        user_initial_lookup_done: {}, // tracks whether we've ever looked up a user's content
         other_subscriptions: {},
         options: {interval: INTERVAL_DEFAULT,
                   seen_count: SEEN_COUNT_DEFAULT,
@@ -100,6 +101,7 @@ export const setStorageUpdateBadge = (storage) => {
     .then(res => {
         return browser.runtime.sendMessage({action: 'update-badge'})
     })
+    .catch(() => {})
 }
 
 const markSeenForStorageKey = (storage, storage_keys, key, ids, is_user) => {

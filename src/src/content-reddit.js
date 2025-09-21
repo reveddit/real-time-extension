@@ -107,6 +107,7 @@ const ifThreadPage_showRemovalStatus = (isNewReddit, monitor_quarantined, newRed
                 }
             })
         })
+        .catch(() => {})
         // Previous code here called 'get-reddit-items-by-id', but that now returns a 403
     } else {
         showRemovalStatus({isNewReddit, newRedditTarget, postData})
@@ -169,6 +170,7 @@ const showRemovalStatusForThreadOverlay = (element, monitor_quarantined) => {
             const postData = response.items[0].data
             ifThreadPage_showRemovalStatus(true, monitor_quarantined, element.parentNode, postData)
         })
+        .catch(() => {})
     } else {
         // built for Firefox, i.e., incognito mode is 'spanning' and content scripts
         // are allowed to send cross-origin requests

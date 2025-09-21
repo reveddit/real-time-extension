@@ -16,7 +16,40 @@ export const lookupItemsByID = (ids, auth, monitor_quarantined = false, monitor_
     }
     const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
 
-    return fetch_forReddit(...getFetchParams('api/info', search, auth, monitor_quarantined_remote), monitor_quarantined)
+    return lookupItemsByID_withFallback('api/info', search, auth, monitor_quarantined, monitor_quarantined_remote)
+}
+
+// New function that tries www.reddit.com first, then falls back to OAuth if needed
+export const lookupItemsByID_withFallback = (path, search, auth, monitor_quarantined = false, monitor_quarantined_remote = false) => {
+    // First try www.reddit.com without authentication
+    const wwwUrl = www_reddit + path + '.json' + search
+    const wwwOptions = {credentials: 'omit'}
+    
+    return fetch(wwwUrl, wwwOptions)
+    .then(response => {
+        if (response.ok) {
+            return response.json()
+        } else {
+            throw new Error(`www.reddit.com request failed: ${response.status}`)
+        }
+    })
+    .then(data => {
+        if (data && data.data && data.data.children) {
+            return data.data.children
+        }
+        throw new Error('Invalid data format from www.reddit.com')
+    })
+    .catch(error => {
+        console.log('www.reddit.com request failed, trying OAuth fallback:', error.message)
+        
+        // Fall back to OAuth if www.reddit.com fails and auth is available
+        if (auth && auth !== 'none') {
+            return fetch_forReddit(...getFetchParams(path, search, auth, monitor_quarantined_remote), monitor_quarantined)
+        } else {
+            console.log('No OAuth auth available for fallback')
+            throw error
+        }
+    })
 }
 
 const cookieDetails_redditSession = {name: 'reddit_session', url: 'https://reddit.com'}
@@ -78,6 +111,54 @@ export const lookupItemsByUser = (user, after, sort, timeSpan, monitor_quarantin
     const path = `user/${user}/overview.json`
     const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
     return fetch_forReddit(...getFetchParams(path, search, auth, monitor_quarantined_remote), monitor_quarantined)
+}
+
+export const lookupItemsByLoggedInUser = (after, sort, timeSpan, monitor_quarantined, monitor_quarantined_remote, auth) => {
+    const params = {limit: 100, sort, raw_json:1}
+    if (after) params.after = after
+    if (timeSpan) params.t = timeSpan
+    const path = `user/me.json`
+    const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
+    return fetch_forReddit(...getFetchParams(path, search, auth, monitor_quarantined_remote), monitor_quarantined)
+}
+
+// Alternative approach: use the same method as getLoggedinUser but with proper authentication
+export const lookupItemsByLoggedInUserWithAuth = (after, sort, timeSpan, monitor_quarantined, monitor_quarantined_remote, auth) => {
+    const params = {limit: 100, sort, raw_json:1}
+    if (after) params.after = after
+    if (timeSpan) params.t = timeSpan
+    const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
+    
+    // First try www.reddit.com with rehydrated cookies
+    return rehydrateStoredRedditCookies().then(() => {
+        const url = `https://www.reddit.com/user/me.json${search}`
+        const options = {credentials: 'include', cache: 'reload'}
+        return fetch(url, options)
+        .then(response => {
+            if (response.ok) {
+                return response.json()
+            } else {
+                throw new Error(`www.reddit.com request failed: ${response.status}`)
+            }
+        })
+        .then(data => {
+            if (data && data.data && data.data.children) {
+                return data.data.children
+            }
+            throw new Error('Invalid data format from www.reddit.com')
+        })
+        .catch(error => {
+            console.log('www.reddit.com request failed, trying OAuth fallback:', error.message)
+            
+            // Fall back to OAuth if www.reddit.com fails and auth is available
+            if (auth && auth !== 'none') {
+                return lookupItemsByUser('me', after, sort, timeSpan, monitor_quarantined, monitor_quarantined_remote, auth)
+            } else {
+                console.log('No OAuth auth available for fallback')
+                throw error
+            }
+        })
+    })
 }
 
 export const handleFetchErrors = (response) => {
@@ -179,6 +260,7 @@ export const getCookie = ({url, name}) => {
         .then(response => {
             return response.cookie
         })
+        .catch(() => null)
     } else {
         return browser.cookies.get({url, name})
     }
@@ -214,10 +296,75 @@ export const getLocalOrAppAuth = () => {
 }
 
 export const getLoggedinUser = () => {
-    return fetch('https://www.reddit.com/api/me.json')
-    .then(handleFetchErrors)
-    .then(getRedditUsername)
-    .catch(console.log)
+    // Try to get the current subdomain from any open Reddit tab
+    return new Promise((resolve) => {
+        const isContentContext = (typeof chrome === 'undefined' || !chrome.tabs || typeof chrome.tabs.query !== 'function')
+        // In a content script, chrome.tabs.query is not available. Use the current page's host.
+        if (isContentContext && typeof window !== 'undefined' && window.location && window.location.hostname) {
+            const currentHost = window.location.hostname
+            const targetUrl = `https://${currentHost}/api/me.json`
+            fetch(targetUrl, {credentials: 'include', cache: 'reload'})
+            .then(handleFetchErrors)
+            .then(getRedditUsername)
+            .then(resolve)
+            .catch(() => resolve(null))
+            return
+        }
+
+        chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
+            let targetUrl = 'https://www.reddit.com/api/me.json' // default fallback
+            let useStoredCookies = false
+            
+            if (tabs.length > 0) {
+                // Find a supported subdomain first
+                const supportedTabs = tabs.filter(tab => {
+                    try {
+                        const hostname = new URL(tab.url).hostname
+                        return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
+                    } catch (e) {
+                        return false
+                    }
+                })
+                
+                if (supportedTabs.length > 0) {
+                    try {
+                        const hostname = new URL(supportedTabs[0].url).hostname
+                        targetUrl = `https://${hostname}/api/me.json`
+                    } catch (e) {
+                        // leave default targetUrl
+                    }
+                }
+            } else {
+                // No Reddit tabs open, try to use stored cookies
+                useStoredCookies = true
+            }
+            
+            if (useStoredCookies) {
+                // Try to use stored cookies for authentication by rehydrating them first
+                rehydrateStoredRedditCookies()
+                .then(success => {
+                    if (! success) {
+                        console.log('No stored cookies available')
+                        return Promise.reject(new Error('no-cookies'))
+                    }
+                    return fetch(targetUrl, {credentials: 'include', cache: 'reload'})
+                })
+                .then(handleFetchErrors)
+                .then(getRedditUsername)
+                .then(resolve)
+                .catch(() => {
+                    console.log('Failed to authenticate with stored cookies')
+                    resolve(null)
+                })
+            } else {
+                fetch(targetUrl, {credentials: 'include', cache: 'reload'})
+                .then(handleFetchErrors)
+                .then(getRedditUsername)
+                .then(resolve)
+                .catch(console.log)
+            }
+        })
+    })
 }
 
 const getRedditUsername = (data) => {
@@ -225,4 +372,96 @@ const getRedditUsername = (data) => {
         throw Error('reddit username is not defined')
     }
     return data.data.name
+}
+
+// Store Reddit cookies for later use when no tabs are open
+export const storeRedditCookies = () => {
+    return new Promise((resolve) => {
+        // Only run this in background script context, not in content scripts
+        if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.cookies) {
+            console.log('storeRedditCookies: Not available in this context (content script)')
+            resolve(false)
+            return
+        }
+        
+        chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
+            const supportedTabs = tabs.filter(tab => {
+                try {
+                    const hostname = new URL(tab.url).hostname
+                    return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
+                } catch (e) {
+                    return false
+                }
+            })
+            
+            if (supportedTabs.length > 0) {
+                const tab = supportedTabs[0]
+                let hostname
+                try {
+                    hostname = new URL(tab.url).hostname
+                } catch (e) {
+                    console.log('storeRedditCookies: invalid tab url', tab && tab.url)
+                    resolve(false)
+                    return
+                }
+                
+                // Get cookies for the Reddit parent domain so we include domain-scoped and host-only cookies
+                chrome.cookies.getAll({domain: 'reddit.com'}, (cookies) => {
+                    const cookieMap = {}
+                    const cookieObjects = []
+                    cookies.forEach(cookie => {
+                        // Save a simple map for backwards compatibility
+                        cookieMap[cookie.name] = cookie.value
+                        // Save full settable cookie details for rehydration
+                        const host = cookie.domain && cookie.domain.startsWith('.') ? cookie.domain.slice(1) : (cookie.domain || 'reddit.com')
+                        const url = `https://${host}`
+                        cookieObjects.push(getSettableCookie(cookie, url))
+                    })
+                    
+                    if (cookies.length > 0) {
+                        chrome.storage.local.set({
+                            stored_reddit_cookies: cookieMap,
+                            stored_reddit_cookie_objects: cookieObjects,
+                            stored_reddit_domain: 'reddit.com'
+                        }, () => {
+                            resolve(true)
+                        })
+                    } else {
+                        resolve(false)
+                    }
+                })
+            } else {
+                resolve(false)
+            }
+        })
+    })
+}
+
+// Retrieve stored Reddit cookies
+export const getStoredRedditCookies = () => {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['stored_reddit_cookies', 'stored_reddit_domain'], (result) => {
+            if (result.stored_reddit_cookies) {
+                resolve(result.stored_reddit_cookies)
+            } else {
+                resolve(null)
+            }
+        })
+    })
+}
+
+// Rehydrate stored cookies back into the browser's cookie jar for reddit.com
+const rehydrateStoredRedditCookies = () => {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['stored_reddit_cookie_objects'], (result) => {
+            const cookieObjects = result.stored_reddit_cookie_objects
+            if (Array.isArray(cookieObjects) && cookieObjects.length) {
+                Promise.all(cookieObjects.map(c => browser.cookies.set(c).catch(() => null)))
+                .then(() => resolve(true))
+                .catch(() => resolve(false))
+            } else {
+                resolve(false)
+            }
+        })
+    })
 }
