@@ -45,22 +45,38 @@ if (__BUILT_FOR__ !== 'chrome') {
 }
 // END webRequest API code
 console.log('bg script running')
+// Throttle recovery calls that fetch /api/me.json to at most ~2 per minute
+const ME_RECOVER_MIN_INTERVAL_MS = 30000 // 30 seconds
+let recoveringMe = false
+let lastMeRecoverTs = 0
+
+function recoverIfDegraded() {
+    const now = Date.now()
+    if (recoveringMe) return
+    if (now - lastMeRecoverTs < ME_RECOVER_MIN_INTERVAL_MS) return
+    recoveringMe = true
+    getLoggedinUser()
+    .then(user => {
+        if (user) {
+            chrome.storage.local.remove('error_status', () => {
+                updateBadgeUnseenCount()
+            })
+        }
+    })
+    .finally(() => {
+        recoveringMe = false
+        lastMeRecoverTs = Date.now()
+    })
+}
 // Keep stored Reddit cookies up-to-date automatically
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === 'complete' && tab && tab.url && tab.url.match(/^https?:\/\/[^/]*\.reddit\.com\//)) {
         storeRedditCookies()
         .then(() => {
-            // If in a degraded state, try to recover by fetching the logged-in user
+            // If in a degraded state, try to recover by fetching the logged-in user (throttled)
             chrome.storage.local.get(['error_status'], (result) => {
                 if (result && result.error_status) {
-                    getLoggedinUser()
-                    .then(user => {
-                        if (user) {
-                            chrome.storage.local.remove('error_status', () => {
-                                updateBadgeUnseenCount()
-                            })
-                        }
-                    })
+                    recoverIfDegraded()
                 }
             })
         })
@@ -72,17 +88,10 @@ chrome.cookies.onChanged.addListener((changeInfo) => {
     if (cookie && cookie.domain && cookie.domain.replace(/^\./, '').endsWith('reddit.com')) {
         storeRedditCookies()
         .then(() => {
-            // If in a degraded state, try to recover as soon as cookies change
+            // If in a degraded state, try to recover as soon as cookies change (throttled)
             chrome.storage.local.get(['error_status'], (result) => {
                 if (result && result.error_status) {
-                    getLoggedinUser()
-                    .then(user => {
-                        if (user) {
-                            chrome.storage.local.remove('error_status', () => {
-                                updateBadgeUnseenCount()
-                            })
-                        }
-                    })
+                    recoverIfDegraded()
                 }
             })
         })
