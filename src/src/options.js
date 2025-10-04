@@ -44,7 +44,7 @@ $('#advanced-btn').click((ev) => {
     $('#advanced').show()
     $(ev.target).hide()
     return false
-})
+});
 
 ['removed', 'locked'].forEach(type => {
     $(`#${type}_notify`).change(function() {
@@ -57,7 +57,7 @@ $('#advanced-btn').click((ev) => {
             $(`#${type}_notify`).prop('checked', false)
         }
     });
-})
+});
 
 function resetDefaults() {
     $('#interval').val(INTERVAL_DEFAULT);
