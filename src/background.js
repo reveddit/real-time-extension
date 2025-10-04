@@ -173,6 +173,7 @@ chrome.runtime.onMessageExternal.addListener(
                 sendResponse({version: chrome.runtime.getManifest().version})
                 break
         }
+        return true
     }
 )
 
@@ -207,13 +208,26 @@ function subscribeToLoggedInUser_or_promptForUser() {
             browser.tabs.create({url: `https://www.reddit.com/user/me`})
             .then(tab => {
                 // try to make request via content page instead (works for firefox)
-                setTimeout(() => {
+                // Wait for the tab to complete so content scripts are injected
+                const sendQuery = () => {
                     browser.tabs.sendMessage(tab.id, {action: 'query-user'})
                     .catch(err => {
-                        // Receiving end does not exist → show warning badge instead of throwing
+                        // Receiving end does not exist → expected sometimes if content is not ready
                         console.log('Error sending message to new tab:', err)
                     })
-                }, 2000)
+                }
+                const onUpdated = (updatedTabId, changeInfo) => {
+                    if (updatedTabId === tab.id && changeInfo.status === 'complete') {
+                        chrome.tabs.onUpdated.removeListener(onUpdated)
+                        sendQuery()
+                    }
+                }
+                chrome.tabs.onUpdated.addListener(onUpdated)
+                // Fallback if the event is missed or slow
+                setTimeout(() => {
+                    try { chrome.tabs.onUpdated.removeListener(onUpdated) } catch (e) {}
+                    sendQuery()
+                }, 5000)
             })
         }
     })
