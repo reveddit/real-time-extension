@@ -84,6 +84,10 @@ const checkForChanges_loggedInUser = async (auth, storage) => {
             console.log('No logged-in user found, skipping user monitoring')
             return
         }
+        // Remember the last detected logged-in user for popup display without extra network calls
+        try {
+            chrome.storage.local.set({last_logged_in_user: loggedInUser})
+        } catch (e) {}
         
         // Always monitor the currently logged-in user, regardless of subscription status
         // Ensure storage keys exist for the logged-in user

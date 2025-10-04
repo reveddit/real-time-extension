@@ -3,7 +3,6 @@ import {getSubscribedUsers_withSeenAndUnseenIDs,
         subscribeId, unsubscribeId,
         markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen} from './storage.js'
 import {setCurrentStateForId} from './monitoring.js'
-import {getLoggedinUser} from './requests.js'
 import browser from 'webextension-polyfill'
 
 
@@ -55,28 +54,27 @@ function populatePopup() {
         // Reserve space and show loading state for the current user section
         const $currentUserContainer = $('<div id="current-user-section"><span class="loading">loading...</span></div>').appendTo('#popup')
 
-        // Get the current logged-in user and display their content (non-blocking)
-        getLoggedinUser().then(loggedInUser => {
-            $currentUserContainer.empty()
-            if (loggedInUser) {
-                // Check if we have data for this user
-                const userData = users[loggedInUser]
-                if (userData) {
-                    const unseenIDs = userData['unseen']
-                    displayUserInPopup(loggedInUser, unseenIDs, $currentUserContainer)
+        // Use last saved logged-in user from local storage instead of calling /me.json
+        try {
+            chrome.storage.local.get(['last_logged_in_user'], (result) => {
+                $currentUserContainer.empty()
+                const loggedInUser = result && result.last_logged_in_user
+                if (loggedInUser) {
+                    const userData = users[loggedInUser]
+                    if (userData) {
+                        const unseenIDs = userData['unseen']
+                        displayUserInPopup(loggedInUser, unseenIDs, $currentUserContainer)
+                    } else {
+                        displayUserInPopup(loggedInUser, [], $currentUserContainer)
+                    }
                 } else {
-                    // User not in storage yet, show them with 0 unseen
-                    displayUserInPopup(loggedInUser, [], $currentUserContainer)
+                    $('<div class="no-user-message">No logged-in Reddit user detected</div>').appendTo($currentUserContainer)
                 }
-            } else {
-                // No logged-in user found
-                $('<div class="no-user-message">No logged-in Reddit user detected</div>').appendTo($currentUserContainer)
-            }
-        }).catch(() => {
-            // Error getting logged-in user
+            })
+        } catch (e) {
             $currentUserContainer.empty()
             $('<div class="no-user-message">Unable to detect logged-in Reddit user</div>').appendTo($currentUserContainer)
-        })
+        }
         
         $('<hr>').appendTo('#popup')
         displayOtherInPopup(other['unseen'], Object.keys(storage.other_subscriptions).length)
