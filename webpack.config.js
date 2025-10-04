@@ -45,6 +45,7 @@ function modify(buffer) {
             'https://*.reddit.com/*', 'https://*.reveddit.com/*',
         )
         delete manifest.host_permissions
+        delete manifest.externally_connectable
         manifest.manifest_version = 2
         manifest.background.scripts = [manifest.background.service_worker]
         manifest.background.persistent = true
@@ -54,9 +55,12 @@ function modify(buffer) {
         manifest.content_security_policy = manifest.content_security_policy.extension_pages
     }
     if (mode === 'development' || process.env.STAGING) {
-        manifest[host_permissions_location].push("http://localhost:*/*")
-        manifest.content_scripts[0].matches.push("http://localhost:*/*")
-        manifest.externally_connectable.matches.push('http://localhost:*/*')
+		const localhostPattern = browserIsFirefox ? "http://localhost/*" : "http://localhost:*/*"
+		manifest[host_permissions_location].push(localhostPattern)
+		manifest.content_scripts[0].matches.push(localhostPattern)
+        if (manifest.externally_connectable && manifest.externally_connectable.matches) {
+            manifest.externally_connectable.matches.push(localhostPattern)
+        }
     }
     // pretty print to JSON with two spaces
     return JSON.stringify(manifest, null, 2);
