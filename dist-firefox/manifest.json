@@ -1,7 +1,7 @@
 {
   "name": "reveddit real-time",
   "description": "reveddit notifies you when any of your content on reddit has been removed.",
-  "version": "0.0.3.2",
+  "version": "0.0.3.3",
   "permissions": [
     "cookies",
     "notifications",
@@ -14,11 +14,6 @@
     "https://*.reddit.com/*",
     "https://*.reveddit.com/*"
   ],
-  "externally_connectable": {
-    "matches": [
-      "https://*.reveddit.com/*"
-    ]
-  },
   "icons": {
     "16": "icons/16.png",
     "48": "icons/48.png",
