@@ -125,12 +125,20 @@ export const sortDict_by_numberValuedAttribute = (dict, numberValuedAttribute) =
 }
 
 export class ItemForStorage {
-    constructor(created_utc, unseen) {
-        this.c = created_utc
-        this.u = unseen
+    constructor(created_utc, unseen, post_id = undefined, object = null) {
+        if (object) {
+            this.c = object.c
+            this.u = object.u
+            if (typeof object.p !== 'undefined') this.p = object.p
+        } else {
+            this.c = created_utc
+            this.u = unseen
+            if (typeof post_id !== 'undefined') this.p = post_id
+        }
     }
     getCreatedUTC() { return this.c }
     getUnseen() { return this.u }
+    getPostID() { return this.p }
 }
 
 export class ChangeForStorage {
@@ -170,6 +178,7 @@ export class LocalStorageItem {
             this.o = object.o
             this.c = object.c
             this.n = object.n || 0 // seen_count, which increments when the same status is observed
+            if (typeof object.p !== 'undefined') this.p = object.p
         } else {
             let text = ''
             if (isComment(item.name)) {
@@ -181,6 +190,10 @@ export class LocalStorageItem {
             this.o = observed_utc
             this.c = item.created_utc
             this.n = 0
+            // store compact post id for comments when available
+            if (isComment(item.name) && item.link_id) {
+                this.p = item.link_id
+            }
         }
     }
     setText(text) {this.t = reformatRedditText(text)}
@@ -189,6 +202,7 @@ export class LocalStorageItem {
     getCreatedUTC() { return this.c }
     resetSeenCount() { this.n = 0 }
     getSeenCount() { return this.n }
+    getPostID() { return this.p }
     incrementSeenCount() {
         if (typeof this.n === 'undefined') {
             this.n = 0

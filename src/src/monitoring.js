@@ -4,7 +4,7 @@ import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
         MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, MAX_SYNC_STORAGE_CHANGES, SEEN_COUNT_DEFAULT,
         getObjectNamesForThing, getUserInit } from './storage.js'
 import {createNotification, updateBadgeUnseenCount, trimDict_by_numberValuedAttribute,
-        isUserDeletedItem, isRemovedItem,
+        isUserDeletedItem, isRemovedItem, isComment,
         ItemForStorage, LocalStorageItem, ChangeForStorage, setWarningBadge} from './common.js'
 import browser from 'webextension-polyfill'
 
@@ -356,7 +356,11 @@ function markChanges (alert_current_list, alert_type, alert_text, alert_known_ha
                  subscribedFrom === SUBSCRIBED_FROM_REVEDDIT) {
                 markUnseen = false
             }
-            alert_known_hash[name] = new ItemForStorage(item.created_utc, markUnseen)
+            alert_known_hash[name] = new ItemForStorage(
+                item.created_utc,
+                markUnseen,
+                (isComment(item.name) && item.link_id) ? item.link_id : undefined
+            )
             delete normal_known_hash[name]
             if (markUnseen) {
                 let alert_type_var = alert_type
@@ -391,7 +395,11 @@ function markChanges (alert_current_list, alert_type, alert_text, alert_known_ha
                 // only notify about the second observed change in status back to 'normal' (approved/unlocked)
                 // if a higher threshold of consecutive normal statuses has been observed
                 if (! change_is_previously_recorded || seen_count >= TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE) {
-                    normal_known_hash[name] = new ItemForStorage(item.created_utc, true)
+                    normal_known_hash[name] = new ItemForStorage(
+                        item.created_utc,
+                        true,
+                        (isComment(item.name) && item.link_id) ? item.link_id : undefined
+                    )
                     delete alert_known_hash[name]
 
                     changes.push(new ChangeForStorage({id: name, observed_utc: now, change_type: normal_type, seen_count}))
@@ -405,7 +413,11 @@ function markChanges (alert_current_list, alert_type, alert_text, alert_known_ha
                 newLocalStorageItems[name] = this_localStorageItem
             }
         } else {
-            normal_known_hash[name] = new ItemForStorage(item.created_utc, false)
+            normal_known_hash[name] = new ItemForStorage(
+                item.created_utc,
+                false,
+                (isComment(item.name) && item.link_id) ? item.link_id : undefined
+            )
         }
     })
     const num_changes = alert_unseen_ids.length + normal_unseen_ids.length + alert_userDeleted_unseen_ids.length

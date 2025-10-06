@@ -52,13 +52,49 @@ const showChanges = (allChanges, localStorage) => {
         $('<td>').text(contentType).appendTo(row)
         //author
         $('<td>').text(user).appendTo(row)
-        var href;
-        if (isUser) {
-            href = `https://www.reddit.com/user/${user}`
+        // Always prefer direct Reddit links; resolve missing post IDs at click time via Reddit api/info
+        const postId = item_localStorage && item_localStorage.getPostID && item_localStorage.getPostID()
+        let href;
+        if (isComment(id)) {
+            if (postId) {
+                const shortPost = postId.substring(3)
+                const shortComment = id.substring(3)
+                href = `https://www.reddit.com/comments/${shortPost}/-/${shortComment}?context=3`
+            } else {
+                href = '#'
+            }
         } else {
-            href = `https://www.reveddit.com/info?id=${id}&removal_status=all`
+            const shortPost = id.substring(3)
+            href = `https://www.reddit.com/comments/${shortPost}`
         }
         var linkedText = $('<a/>', {href:href, text: text})
+        if (isComment(id) && ! postId) {
+            // Resolve post ID on click using Reddit's api/info, then redirect to the comment in context
+            linkedText.on('click', function(e) {
+                e.preventDefault()
+                const apiUrl = `https://www.reddit.com/api/info.json?id=${encodeURIComponent(id)}`
+                fetch(apiUrl, {credentials: 'omit'})
+                .then(r => r.json())
+                .then(json => {
+                    const children = (json && json.data && Array.isArray(json.data.children)) ? json.data.children : []
+                    const match = children.find(ch => ch && ch.data && ch.data.name === id) || (children[0] && children[0].data ? children[0] : null)
+                    const data = match && match.data ? match.data : null
+                    const linkId = data && (data.link_id || (data.parent_id && data.parent_id.substr(0,3) === 't3_' ? data.parent_id : null))
+                    if (linkId && linkId.substr(0,3) === 't3_') {
+                        const shortPost = linkId.substring(3)
+                        const shortComment = id.substring(3)
+                        const url = `https://www.reddit.com/comments/${shortPost}/-/${shortComment}?context=3`
+                        window.location.href = url
+                    } else {
+                        // Last resort: show Reddit api response
+                        window.location.href = apiUrl
+                    }
+                })
+                .catch(() => {
+                    window.location.href = `https://www.reddit.com/api/info.json?id=${encodeURIComponent(id)}`
+                })
+            })
+        }
         //link
         $('<td>').append(linkedText).appendTo(row)
         table.append(row)
