@@ -47,14 +47,16 @@ export const checkForChanges = () => {
         const needsOAuth = storage.options.custom_clientid && storage.options.custom_clientid !== ''
         const authPromise = needsOAuth ? getAuth(storage.tempVar_monitor_quarantined) : Promise.resolve('none')
         
+        let cachedAuth
         authPromise.then((auth) => {
+            cachedAuth = auth
             // Always check for logged-in user, regardless of subscription status
             return checkForChanges_loggedInUser(auth, storage)
         })
         .then(() => {
             // Also check other subscriptions if any exist
             if (other.length) {
-                return checkForChanges_other(auth, storage)
+                return checkForChanges_other(cachedAuth, storage)
             }
         })
         .then(() => {
