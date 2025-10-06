@@ -72,8 +72,9 @@ const showChanges = (allChanges, localStorage) => {
             // Resolve post ID on click using Reddit's api/info, then redirect to the comment in context
             linkedText.on('click', function(e) {
                 e.preventDefault()
-                const apiUrl = `https://www.reddit.com/api/info.json?id=${encodeURIComponent(id)}`
-                fetch(apiUrl, {credentials: 'omit'})
+                const apiJsonUrl = `https://www.reddit.com/api/info.json?id=${encodeURIComponent(id)}`
+                const apiPageUrl = `https://www.reddit.com/api/info?id=${encodeURIComponent(id)}`
+                fetch(apiJsonUrl, {credentials: 'omit'})
                 .then(r => r.json())
                 .then(json => {
                     const children = (json && json.data && Array.isArray(json.data.children)) ? json.data.children : []
@@ -86,12 +87,12 @@ const showChanges = (allChanges, localStorage) => {
                         const url = `https://www.reddit.com/comments/${shortPost}/-/${shortComment}?context=3`
                         window.location.href = url
                     } else {
-                        // Last resort: show Reddit api response
-                        window.location.href = apiUrl
+                        // Last resort: guide user to Reddit api/info page (non-JSON)
+                        window.location.href = apiPageUrl
                     }
                 })
                 .catch(() => {
-                    window.location.href = `https://www.reddit.com/api/info.json?id=${encodeURIComponent(id)}`
+                    window.location.href = `https://www.reddit.com/api/info?id=${encodeURIComponent(id)}`
                 })
             })
         }
