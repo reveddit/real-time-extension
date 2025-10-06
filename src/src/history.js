@@ -78,8 +78,12 @@ const showChanges = (allChanges, localStorage) => {
                 .then(r => r.json())
                 .then(json => {
                     const children = (json && json.data && Array.isArray(json.data.children)) ? json.data.children : []
-                    const match = children.find(ch => ch && ch.data && ch.data.name === id) || (children[0] && children[0].data ? children[0] : null)
-                    const data = match && match.data ? match.data : null
+                    const data = (children[0] && children[0].data) ? children[0].data : (children.find(ch => ch && ch.data && ch.data.name === id) || {}).data
+                    if (data && data.permalink) {
+                        const url = `https://www.reddit.com${data.permalink}?context=3`
+                        window.location.href = url
+                        return
+                    }
                     const linkId = data && (data.link_id || (data.parent_id && data.parent_id.substr(0,3) === 't3_' ? data.parent_id : null))
                     if (linkId && linkId.substr(0,3) === 't3_') {
                         const shortPost = linkId.substring(3)
