@@ -207,6 +207,13 @@ export const initStorage = (callback) => {
 
 export const getSubscribedUsers_withSeenAndUnseenIDs = (callback) => {
     chrome.storage.sync.get(null, (storage) => {
+        // Defensive check: ensure storage has required properties
+        if (!storage || !storage.user_subscriptions) {
+            storage = storage || {}
+            storage.user_subscriptions = storage.user_subscriptions || {}
+            storage.other_subscriptions = storage.other_subscriptions || {}
+            storage.options = storage.options || {removal_status: {track: true}, lock_status: {track: true}}
+        }
         const users = Object.keys(storage.user_subscriptions);
         const users_withIDs = {}
         users.forEach(user => {
@@ -235,8 +242,12 @@ export const getUnseenIDs_thing = (thing, isUser, storage) => {
 
 // Get IDs of items whose status has changed
 export const getIDs_thing = (thing, isUser, storage) => {
-    const track_removal = storage.options.removal_status.track
-    const track_lock = storage.options.lock_status.track
+    // Defensive checks for options
+    const options = storage.options || {}
+    const removal_status = options.removal_status || {}
+    const lock_status = options.lock_status || {}
+    const track_removal = removal_status.track !== false
+    const track_lock = lock_status.track !== false
     const unseenIDs = {}
     const seenIDs = {}
     let types = []
@@ -245,9 +256,10 @@ export const getIDs_thing = (thing, isUser, storage) => {
     if (track_lock) types.push(keys['locked'], keys['unlocked'])
 
     types.forEach(type => {
-        Object.keys(storage[type]).forEach(id => {
-            const item = storage[type][id]
-            if (item.u) unseenIDs[id] = true
+        const storageType = storage[type] || {}
+        Object.keys(storageType).forEach(id => {
+            const item = storageType[id]
+            if (item && item.u) unseenIDs[id] = true
             else seenIDs[id] = true
         })
     })

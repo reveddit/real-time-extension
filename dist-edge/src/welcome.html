@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>Welcome to Reveddit Real-Time</title>
+        <link rel="stylesheet" href="welcome.css" />
+    </head>
+    <body>
+        <div class="welcome-container">
+            <div class="header">
+                <img src="/icons/128.png" alt="Reveddit" class="logo" />
+                <h1>Welcome to Reveddit Real-Time</h1>
+            </div>
+
+            <div class="content">
+                <p class="description">
+                    This extension monitors your Reddit comments and posts in
+                    real-time, notifying you when content is removed by
+                    moderators.
+                </p>
+
+                <div class="status-box" id="status-box">
+                    <div id="status-message" class="status-message">
+                        Checking Reddit connection...
+                    </div>
+                </div>
+
+                <div class="instructions" id="instructions">
+                    <h2>Getting Started</h2>
+                    <ol>
+                        <li>
+                            Open
+                            <a
+                                href="https://www.reddit.com"
+                                target="_blank"
+                                class="blue-link"
+                                >www.reddit.com</a
+                            >
+                            or
+                            <a
+                                href="https://old.reddit.com"
+                                target="_blank"
+                                class="blue-link"
+                                >old.reddit.com</a
+                            >
+                            in a new tab
+                        </li>
+                        <li>Log in to your Reddit account</li>
+                        <li>Come back here and click the button below</li>
+                    </ol>
+                </div>
+
+                <div class="actions">
+                    <button id="check-connection" class="primary-btn">
+                        Check Connection
+                    </button>
+                </div>
+
+                <div class="footer">
+                    <a
+                        href="https://www.reveddit.com/about/faq/"
+                        target="_blank"
+                        class="blue-link"
+                        >Learn more about Reveddit</a
+                    >
+                </div>
+            </div>
+        </div>
+
+        <script src="/lib/jquery-3.2.1.min.js"></script>
+        <script src="welcome.js"></script>
+    </body>
+</html>

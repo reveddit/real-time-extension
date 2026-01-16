@@ -205,30 +205,8 @@ function subscribeToLoggedInUser_or_promptForUser() {
                 chrome.tabs.create({url: `https://www.reveddit.com/user/${user}?all=true`})
             })
         } else {
-            browser.tabs.create({url: `https://www.reddit.com/user/me`})
-            .then(tab => {
-                // try to make request via content page instead (works for firefox)
-                // Wait for the tab to complete so content scripts are injected
-                const sendQuery = () => {
-                    browser.tabs.sendMessage(tab.id, {action: 'query-user'})
-                    .catch(err => {
-                        // Receiving end does not exist → expected sometimes if content is not ready
-                        console.log('Error sending message to new tab:', err)
-                    })
-                }
-                const onUpdated = (updatedTabId, changeInfo) => {
-                    if (updatedTabId === tab.id && changeInfo.status === 'complete') {
-                        chrome.tabs.onUpdated.removeListener(onUpdated)
-                        sendQuery()
-                    }
-                }
-                chrome.tabs.onUpdated.addListener(onUpdated)
-                // Fallback if the event is missed or slow
-                setTimeout(() => {
-                    try { chrome.tabs.onUpdated.removeListener(onUpdated) } catch (e) {}
-                    sendQuery()
-                }, 5000)
-            })
+            // User not logged in - show welcome/onboarding page
+            chrome.tabs.create({url: chrome.runtime.getURL('src/welcome.html')})
         }
     })
 }

@@ -27,6 +27,13 @@ function populatePopup() {
     
     $('#go-to-options').click(goToOptions);
 
+    // Check for session disconnection and show warning if needed
+    chrome.storage.local.get(['error_status'], (result) => {
+        if (result && result.error_status) {
+            $('<div class="warning-message">⚠️ Session may be disconnected. Open or reload a Reddit tab to reconnect.</div>').prependTo('#popup')
+        }
+    })
+
     getSubscribedUsers_withSeenAndUnseenIDs(async (users, storage) => {
         const other = users['other']
         delete users['other']
@@ -68,12 +75,12 @@ function populatePopup() {
                         displayUserInPopup(loggedInUser, [], $currentUserContainer)
                     }
                 } else {
-                    $('<div class="no-user-message">No logged-in Reddit user detected</div>').appendTo($currentUserContainer)
+                    $('<div class="no-user-message">Log in to www.reddit.com or old.reddit.com to get started.</div>').appendTo($currentUserContainer)
                 }
             })
         } catch (e) {
             $currentUserContainer.empty()
-            $('<div class="no-user-message">Unable to detect logged-in Reddit user</div>').appendTo($currentUserContainer)
+            $('<div class="no-user-message">Log in to www.reddit.com or old.reddit.com to get started.</div>').appendTo($currentUserContainer)
         }
         
         $('<hr>').appendTo('#popup')

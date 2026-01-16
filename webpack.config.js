@@ -80,6 +80,7 @@ const extensionPages = {
     popup: ['@babel/polyfill', './src/src/popup.js'],
     history: ['@babel/polyfill', './src/src/history.js'],
     other: ['@babel/polyfill', './src/src/other.js'],
+    welcome: ['@babel/polyfill', './src/src/welcome.js'],
     parse: ['@babel/polyfill', './src/src/parse_html/common.js', './src/src/parse_html/old.js'],
 }
 

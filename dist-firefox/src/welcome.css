@@ -1,0 +1,127 @@
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+        Ubuntu, sans-serif;
+    background-color: #1a1a1b;
+    color: #d7dadc;
+    margin: 0;
+    padding: 40px 20px;
+    min-height: 100vh;
+    box-sizing: border-box;
+}
+
+.welcome-container {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.logo {
+    width: 80px;
+    height: 80px;
+    margin-bottom: 15px;
+}
+
+h1 {
+    font-size: 1.8em;
+    margin: 0;
+    color: #fff;
+}
+
+h2 {
+    font-size: 1.2em;
+    margin: 20px 0 15px;
+    color: #fff;
+}
+
+.description {
+    font-size: 1.1em;
+    line-height: 1.6;
+    text-align: center;
+    color: #b0b3b8;
+}
+
+.status-box {
+    background-color: #272729;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 25px 0;
+    text-align: center;
+}
+
+.status-message {
+    font-size: 1.1em;
+}
+
+.status-message.checking {
+    color: #818384;
+}
+
+.status-message.success {
+    color: #46d160;
+}
+
+.status-message.error {
+    color: #ff6b6b;
+}
+
+.instructions {
+    background-color: #272729;
+    border-radius: 8px;
+    padding: 20px 30px;
+    margin: 20px 0;
+}
+
+.instructions ol {
+    padding-left: 20px;
+    margin: 0;
+    line-height: 2;
+}
+
+.instructions li {
+    margin: 8px 0;
+}
+
+.actions {
+    text-align: center;
+    margin: 30px 0;
+}
+
+.primary-btn {
+    background-color: #ff4500;
+    color: #fff;
+    border: none;
+    padding: 14px 40px;
+    font-size: 1.1em;
+    border-radius: 24px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.primary-btn:hover {
+    background-color: #ff5722;
+}
+
+.primary-btn:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+}
+
+.footer {
+    text-align: center;
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px solid #343536;
+}
+
+.blue-link {
+    color: rgb(63, 154, 222);
+    text-decoration: none;
+}
+
+.blue-link:hover {
+    text-decoration: underline;
+}
