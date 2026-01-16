@@ -53,6 +53,37 @@ import browser from 'webextension-polyfill'
                 console.log('Error fetching logged-in user items:', error)
                 return null
             })
+        } else if (message.action === 'fetch-api-info-public') {
+            // Fetch /api/info WITHOUT credentials to get "public" view
+            // This is key for detecting removed content - we need to see what logged-out users see
+            const ids = message.ids
+            const url = `https://old.reddit.com/api/info.json?id=${ids}&raw_json=1`
+            
+            return fetch(url, {
+                credentials: 'omit',
+                headers: {
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Content script fetch failed: ${response.status}`)
+                }
+                return response.json()
+            })
+            .then(data => {
+                if (data && data.data && data.data.children) {
+                    return {success: true, items: data.data.children}
+                }
+                throw new Error('Invalid data format')
+            })
+            .catch(error => {
+                console.log('Content script fetch-api-info-public error:', error)
+                return {success: false, error: error.message}
+            })
         }
     }
     $.extend($.expr[":"], {

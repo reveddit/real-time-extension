@@ -52,6 +52,76 @@ body, input, button {
     text-align: center;
 }
 
+.warning-container {
+    margin-bottom: 10px;
+}
+
+.warning-hint {
+    color: #856404;
+    font-size: 0.85em;
+    text-align: center;
+    padding: 4px 8px;
+}
+
+.reconnect-btn {
+    display: block;
+    width: 100%;
+    margin-top: 6px;
+    padding: 8px;
+    background-color: #ff4500;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.95em;
+}
+
+.reconnect-btn:hover {
+    background-color: #ff5722;
+}
+
+.reconnect-btn:disabled {
+    background-color: #999;
+    cursor: wait;
+}
+
+.success-message {
+    background-color: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+    padding: 8px;
+    margin: 5px 0;
+    border-radius: 4px;
+    font-size: 0.9em;
+    text-align: center;
+}
+
+.connect-container {
+    margin: 5px 0;
+}
+
+.connect-btn {
+    display: block;
+    width: 100%;
+    margin-top: 6px;
+    padding: 8px;
+    background-color: #ff4500;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.95em;
+}
+
+.connect-btn:hover {
+    background-color: #ff5722;
+}
+
+.connect-btn:disabled {
+    background-color: #999;
+    cursor: wait;
+}
+
 .no-user-message {
     background-color: #f8f9fa;
     border: 1px solid #dee2e6;

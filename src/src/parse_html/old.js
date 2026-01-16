@@ -521,6 +521,43 @@ const getCommentsInfo_fromOld = async (ids) => {
   return info_items
 }
 
+// Exported function for lookupItemsByID fallback - parses HTML from old.reddit.com/api/info
+// Returns array of {data: item} to match JSON API format
+export const getItemsById_fromOldHTML = async (ids) => {
+  const idsArray = Array.isArray(ids) ? ids : ids.split(',')
+  const url = oldReddit + '/api/info?id=' + idsArray.join(',')
+  const response = await fetch(url, {
+    headers: {
+      'Accept-Language': 'en',
+      'Cookie': 'over18=1;',
+      'User-Agent': 'extension',
+    },
+    credentials: 'omit',
+  })
+  if (!response.ok) {
+    throw new Error(`old.reddit.com HTML request failed: ${response.status}`)
+  }
+  const itemsObj = new Items(url)
+  const rewriter = new HTMLRewriter()
+  // Handle both posts (.link) and comments (.comment)
+  .on('#siteTable .thing', itemsObj)
+  .on('#siteTable .thing.deleted', new AuthorDeleted(itemsObj))
+  .on('#siteTable .thing .entry .usertext-body .md *', new InnerHTML(itemsObj, 'body'))
+  .on('#siteTable .thing .tagline .score.unvoted', new Score(itemsObj))
+  .on('#siteTable .thing .tagline time', new Times(itemsObj))
+  .on('#siteTable .thing .tagline .locked-tagline', new OneField(itemsObj, 'locked', true))
+  await consume(rewriter.transform(response).body)
+  itemsObj.fillInDefaultValues()
+  // Convert body HTML to markdown
+  itemsObj.items.forEach(item => {
+    if (item.body) {
+      item.body = getMarkdownFromHTMLString(item.body)
+    }
+  })
+  // Return in same format as JSON API: array of {data: item}
+  return itemsObj.items.map(item => ({data: item}))
+}
+
 export const getPost_fromOld = async (path) => {
   const url = oldReddit + path
   const response = await fetch(url, redditHTMLRequestOptions)

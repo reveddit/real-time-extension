@@ -1,5 +1,6 @@
 import {getOptions} from './storage.js'
 import browser from 'webextension-polyfill'
+import {getItemsById_fromOldHTML} from './parse_html/old.js'
 
 const clientID = 'SEw1uvRd6kxFEw'
 const oauth_reddit = 'https://oauth.reddit.com/'
@@ -16,11 +17,39 @@ export const lookupItemsByID = (ids, auth, monitor_quarantined = false, monitor_
     }
     const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
 
-    return lookupItemsByID_withFallback('api/info', search, auth, monitor_quarantined, monitor_quarantined_remote)
+    return lookupItemsByID_withFallback('api/info', search, auth, monitor_quarantined, monitor_quarantined_remote, ids)
 }
 
-// New function that tries www.reddit.com first, then falls back to OAuth if needed
-export const lookupItemsByID_withFallback = (path, search, auth, monitor_quarantined = false, monitor_quarantined_remote = false) => {
+// Helper to try fetching via content script on a Reddit tab
+const tryContentScriptFetch = async (ids) => {
+    // Find a Reddit tab to use for the fetch
+    const tabs = await browser.tabs.query({url: ['*://*.reddit.com/*']})
+    const supportedTabs = tabs.filter(tab => {
+        try {
+            const hostname = new URL(tab.url).hostname
+            return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
+        } catch (e) { return false }
+    })
+    
+    if (supportedTabs.length === 0) {
+        throw new Error('No Reddit tab available for content script fetch')
+    }
+    
+    // Try to send message to the first available Reddit tab
+    const response = await browser.tabs.sendMessage(supportedTabs[0].id, {
+        action: 'fetch-api-info-public',
+        ids: ids
+    })
+    
+    if (response && response.success) {
+        return response.items
+    } else {
+        throw new Error(response?.error || 'Content script fetch failed')
+    }
+}
+
+// Function that tries multiple fallbacks: www JSON -> content script -> old HTML -> OAuth
+export const lookupItemsByID_withFallback = (path, search, auth, monitor_quarantined = false, monitor_quarantined_remote = false, ids = '') => {
     // First try www.reddit.com without authentication
     const wwwUrl = www_reddit + path + '.json' + search
     const wwwOptions = {credentials: 'omit'}
@@ -40,15 +69,28 @@ export const lookupItemsByID_withFallback = (path, search, auth, monitor_quarant
         throw new Error('Invalid data format from www.reddit.com')
     })
     .catch(error => {
-        console.log('www.reddit.com request failed, trying OAuth fallback:', error.message)
+        console.log('www.reddit.com JSON failed, trying content script fallback:', error.message)
         
-        // Fall back to OAuth if www.reddit.com fails and auth is available
-        if (auth && auth !== 'none') {
-            return fetch_forReddit(...getFetchParams(path, search, auth, monitor_quarantined_remote), monitor_quarantined)
-        } else {
-            console.log('No OAuth auth available for fallback')
-            throw error
-        }
+        // Second: try content script fetch (credentials: omit from reddit.com origin)
+        return tryContentScriptFetch(ids)
+        .catch(contentError => {
+            console.log('Content script fallback failed:', contentError.message)
+            
+            // Third: try old.reddit.com HTML parsing
+            return getItemsById_fromOldHTML(ids)
+            .catch(htmlError => {
+                console.log('old.reddit.com HTML fallback failed:', htmlError.message)
+                
+                // Fourth: Fall back to OAuth if available
+                if (auth && auth !== 'none') {
+                    console.log('Trying OAuth fallback')
+                    return fetch_forReddit(...getFetchParams(path, search, auth, monitor_quarantined_remote), monitor_quarantined)
+                } else {
+                    console.log('No OAuth auth available for fallback')
+                    throw htmlError
+                }
+            })
+        })
     })
 }
 

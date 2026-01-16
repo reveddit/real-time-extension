@@ -21,7 +21,7 @@ if (__BUILT_FOR__ !== 'chrome') {
     browser.webRequest.onBeforeSendHeaders.addListener(function(details){
         //chrome uses details.initiator, but since chrome doesn't support webRequest anymore,
         //only need to check the value supported by firefox
-        if (details.originUrl.match(/^https?:\/\/(www.reveddit.com|localhost:[0-9]*)(\/.*)?$/)) {
+        if (details.originUrl && details.originUrl.match(/^https?:\/\/(www.reveddit.com|localhost:[0-9]*)(\/.*)?$/)) {
             var newCookie = '_options={%22pref_quarantine_optin%22:true};'
             var gotCookie = false
             for (var n in details.requestHeaders) {
@@ -156,6 +156,37 @@ chrome.runtime.onMessage.addListener(
                 triggerImmediateLookupOnce(user)
             }
             sendResponse({response: 'done'})
+            return true
+        } else if (request.action === 'try-reconnect') {
+            // Manual reconnect attempt from popup - subscribe user and trigger lookup
+            storeRedditCookies()
+            .then(() => getLoggedinUser())
+            .then(user => {
+                if (user) {
+                    // Subscribe the user (if not already subscribed)
+                    subscribeUser(user, () => {
+                        // Trigger immediate lookup
+                        triggerImmediateLookupOnce(user)
+                        chrome.storage.local.remove('error_status', () => {
+                            updateBadgeUnseenCount()
+                            sendResponse({success: true, user})
+                        })
+                    }, () => {
+                        // Already subscribed - still trigger lookup and clear error
+                        triggerImmediateLookupOnce(user)
+                        chrome.storage.local.remove('error_status', () => {
+                            updateBadgeUnseenCount()
+                            sendResponse({success: true, user})
+                        })
+                    })
+                } else {
+                    sendResponse({success: false})
+                }
+            })
+            .catch(err => {
+                console.log('try-reconnect error:', err)
+                sendResponse({success: false})
+            })
             return true
         }
 })

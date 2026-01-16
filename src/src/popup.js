@@ -27,10 +27,46 @@ function populatePopup() {
     
     $('#go-to-options').click(goToOptions);
 
-    // Check for session disconnection and show warning if needed
+    // Check for session disconnection and show reconnect UI if needed
     chrome.storage.local.get(['error_status'], (result) => {
         if (result && result.error_status) {
-            $('<div class="warning-message">⚠️ Session may be disconnected. Open or reload a Reddit tab to reconnect.</div>').prependTo('#popup')
+            const $warningContainer = $('<div class="warning-container"></div>')
+            $('<div class="warning-message">⚠️ Session may be disconnected.</div>').appendTo($warningContainer)
+            
+            // Check if Reddit tab is open to enable/disable reconnect button
+            chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
+                const supportedTabs = tabs.filter(tab => {
+                    try {
+                        const hostname = new URL(tab.url).hostname
+                        return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
+                    } catch (e) { return false }
+                })
+                
+                if (supportedTabs.length > 0) {
+                    const $btn = $('<button id="reconnect-btn" class="reconnect-btn">Reconnect</button>')
+                    $btn.on('click', function() {
+                        $(this).prop('disabled', true).text('Checking...')
+                        chrome.runtime.sendMessage({action: 'store-reddit-cookies'})
+                        // Give cookies time to store, then check connection
+                        setTimeout(() => {
+                            chrome.runtime.sendMessage({action: 'try-reconnect'}, (response) => {
+                                if (response && response.success) {
+                                    $warningContainer.html('<div class="success-message">✓ Connected!</div>')
+                                    setTimeout(() => populatePopup(), 1000)
+                                } else {
+                                    $btn.prop('disabled', false).text('Reconnect')
+                                    $warningContainer.find('.warning-message').text('⚠️ Still disconnected. Try logging into Reddit again.')
+                                }
+                            })
+                        }, 500)
+                    })
+                    $btn.appendTo($warningContainer)
+                } else {
+                    $('<div class="warning-hint">Open a Reddit tab first, then click here to reconnect.</div>').appendTo($warningContainer)
+                }
+            })
+            
+            $warningContainer.prependTo('#popup')
         }
     })
 
@@ -75,7 +111,36 @@ function populatePopup() {
                         displayUserInPopup(loggedInUser, [], $currentUserContainer)
                     }
                 } else {
-                    $('<div class="no-user-message">Log in to www.reddit.com or old.reddit.com to get started.</div>').appendTo($currentUserContainer)
+                    // No user detected - check if Reddit tab is open to show Connect button
+                    chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
+                        const supportedTabs = tabs.filter(tab => {
+                            try {
+                                const hostname = new URL(tab.url).hostname
+                                return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
+                            } catch (e) { return false }
+                        })
+                        
+                        const $container = $('<div class="connect-container"></div>')
+                        $('<div class="no-user-message">Log in to www.reddit.com or old.reddit.com to get started.</div>').appendTo($container)
+                        
+                        if (supportedTabs.length > 0) {
+                            const $btn = $('<button class="connect-btn">Connect</button>')
+                            $btn.on('click', function() {
+                                $(this).prop('disabled', true).text('Connecting...')
+                                chrome.runtime.sendMessage({action: 'try-reconnect'}, (response) => {
+                                    if (response && response.success) {
+                                        $container.html('<div class="success-message">✓ Connected as ' + response.user + '!</div>')
+                                        setTimeout(() => populatePopup(), 1000)
+                                    } else {
+                                        $btn.prop('disabled', false).text('Connect')
+                                        $container.find('.no-user-message').text('Could not detect user. Make sure you are logged in to Reddit.')
+                                    }
+                                })
+                            })
+                            $btn.appendTo($container)
+                        }
+                        $container.appendTo($currentUserContainer)
+                    })
                 }
             })
         } catch (e) {
