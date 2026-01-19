@@ -44,11 +44,16 @@
         "publish:chrome": "node scripts/publishing/publish-chrome.js",
         "publish:firefox": "node scripts/publishing/publish-firefox.js",
         "publish:firefox:text": "node scripts/publishing/publish-firefox.js --text-only",
-        "publish:all": "yarn publish:chrome && yarn publish:firefox"
+        "publish:edge": "node scripts/publishing/publish-edge.js",
+        "publish:all": "yarn publish:chrome && yarn publish:firefox && yarn publish:edge"
     },
     "dependencies": {
+        "@plasmohq/edge-addons-api": "^2.0.0",
         "@worker-tools/html-rewriter": "^0.1.0-pre.19",
         "arrive": "^2.4.1",
+        "axios": "^1.13.2",
+        "clipboardy": "^5.0.2",
+        "form-data": "^4.0.5",
         "googleapis": "^170.1.0",
         "jsonwebtoken": "^9.0.3",
         "linkedom": "^0.18.0",
