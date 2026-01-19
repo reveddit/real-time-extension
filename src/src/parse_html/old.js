@@ -523,8 +523,19 @@ const getCommentsInfo_fromOld = async (ids) => {
 
 // Exported function for lookupItemsByID fallback - parses HTML from old.reddit.com/api/info
 // Returns array of {data: item} to match JSON API format
-export const getItemsById_fromOldHTML = async (ids) => {
+export const getItemsById_fromOldHTML = async (ids, addToPendingPostQueue = null) => {
   const idsArray = Array.isArray(ids) ? ids : ids.split(',')
+  
+  // Separate posts (t3_) from comments (t1_)
+  const postIds = idsArray.filter(id => id.startsWith('t3_'))
+  const commentIds = idsArray.filter(id => id.startsWith('t1_'))
+  
+  // For posts, we need to fetch individual pages because /api/info HTML doesn't contain removal status
+  if (postIds.length > 0 && addToPendingPostQueue) {
+    // Add posts to a pending queue for throttled lookup
+    addToPendingPostQueue(postIds)
+  }
+
   const url = oldReddit + '/api/info?id=' + idsArray.join(',')
   const response = await fetch(url, {
     headers: {

@@ -2,11 +2,13 @@ import {lookupItemsByID, lookupItemsByUser, lookupItemsByLoggedInUser, lookupIte
 import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
         addLocalStorageItems, getLocalStorageItems,
         MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, MAX_SYNC_STORAGE_CHANGES, SEEN_COUNT_DEFAULT,
-        getObjectNamesForThing, getUserInit } from './storage.js'
+        getObjectNamesForThing, getUserInit,
+        getNextPendingPost, removeFromPendingPostQueue } from './storage.js'
 import {createNotification, updateBadgeUnseenCount, trimDict_by_numberValuedAttribute,
         isUserDeletedItem, isRemovedItem, isComment,
         ItemForStorage, LocalStorageItem, ChangeForStorage, setWarningBadge} from './common.js'
 import browser from 'webextension-polyfill'
+import {getPost_fromOld} from './parse_html/old.js'
 
 
 const SUBSCRIBED_FROM_REDDIT = 0
@@ -14,6 +16,48 @@ const SUBSCRIBED_FROM_REVEDDIT = 1
 const SUBSCRIBED_FROM_NA = 2
 
 const TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE = Math.floor(Math.random() * 60)+60
+
+const fetchItemFromApiInfo = async (id) => {
+    try {
+         const response = await fetch(`https://www.reddit.com/api/info.json?id=${id}`)
+         const json = await response.json()
+         return json.data.children[0].data
+    } catch(e) { return null }
+}
+
+// Process one pending post from the queue each alarm cycle
+const processPendingPost = async (storage) => {
+    const postId = await getNextPendingPost()
+    if (!postId) return
+    
+    try {
+        const postPath = '/comments/' + postId.substring(3) + '/'
+        const result = await getPost_fromOld(postPath)
+
+        if (result && result.is_removed) {
+             const itemData = await fetchItemFromApiInfo(postId) 
+             if (itemData) {
+                 itemData.removed = true 
+                 itemData.banned_by = true 
+                 
+                 const author = itemData.author
+                 const isUser = (storage.user_subscriptions && (author in storage.user_subscriptions))
+                 const thing = isUser ? author : 'other'
+                 
+                 console.log(`Detected removed post ${postId} (author: ${author}), updating status...`)
+                 
+                 const itemLookup = {[postId]: itemData}
+                 
+                 await checkForChanges_thing_byId([postId], thing, isUser, null, storage, SUBSCRIBED_FROM_NA, itemLookup, [], [itemData])
+             }
+        } else {
+             console.log(`Pending post lookup: ${postId} is not removed.`)
+        }
+    } catch (e) { console.log('Error processing pending post:', e) }
+    
+    await removeFromPendingPostQueue(postId)
+}
+
 
 export const setCurrentStateForId = (id, subscribedFromURL) => {
     let subscribedFrom = SUBSCRIBED_FROM_REDDIT
@@ -58,6 +102,10 @@ export const checkForChanges = () => {
             if (other.length) {
                 return checkForChanges_other(cachedAuth, storage)
             }
+        })
+        .then(() => {
+            // Process one pending post per alarm cycle (throttled)
+            return processPendingPost(storage)
         })
         .then(() => {
             const newStorage = {last_check: now}
@@ -219,10 +267,12 @@ function checkForChanges_other(auth, storage) {
     }
 }
 
-const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, subscribedFrom, itemLookup = {}, quarantined_subreddits = []) => {
+const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, subscribedFrom, itemLookup = {}, quarantined_subreddits = [], preFetchedItems = null) => {
     let promise
     const monitor_quarantined = storage.options.monitor_quarantined
-    if (location.protocol.match(/^http/)) {
+    if (preFetchedItems) {
+        promise = Promise.resolve(preFetchedItems)
+    } else if (location.protocol.match(/^http/)) {
         // this condition is for when the code is activated via a content script (e.g. the subscribe button) and browser.cookies is unavailable
         promise = browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids, monitor_quarantined})
     } else {

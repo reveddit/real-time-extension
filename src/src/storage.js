@@ -349,3 +349,35 @@ export const saveOptions = (seen_count, interval, custom_clientid, removed_track
                             }},
                             callback)
 }
+
+// Pending post queue for throttled HTML lookups when JSON API fails
+const PENDING_POSTS_KEY = 'pending_post_lookups'
+
+export const addToPendingPostQueue = async (postIds) => {
+    const result = await browser.storage.local.get({[PENDING_POSTS_KEY]: []})
+    const existingQueue = result[PENDING_POSTS_KEY]
+    const newQueue = [...new Set([...existingQueue, ...postIds])]
+    await browser.storage.local.set({[PENDING_POSTS_KEY]: newQueue})
+}
+
+export const getNextPendingPost = async () => {
+    const result = await browser.storage.local.get({[PENDING_POSTS_KEY]: []})
+    const queue = result[PENDING_POSTS_KEY]
+    if (queue.length === 0) return null
+    return queue[0]
+}
+
+export const removeFromPendingPostQueue = async (postId) => {
+    const result = await browser.storage.local.get({[PENDING_POSTS_KEY]: []})
+    const queue = result[PENDING_POSTS_KEY]
+    const newQueue = queue.filter(id => id !== postId)
+    await browser.storage.local.set({[PENDING_POSTS_KEY]: newQueue})
+}
+
+export const removeMultipleFromPendingPostQueue = async (postIds) => {
+    const result = await browser.storage.local.get({[PENDING_POSTS_KEY]: []})
+    const queue = result[PENDING_POSTS_KEY]
+    const idsToRemove = new Set(postIds)
+    const newQueue = queue.filter(id => !idsToRemove.has(id))
+    await browser.storage.local.set({[PENDING_POSTS_KEY]: newQueue})
+}

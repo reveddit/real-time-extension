@@ -1,4 +1,4 @@
-import {getOptions} from './storage.js'
+import {getOptions, addToPendingPostQueue} from './storage.js'
 import browser from 'webextension-polyfill'
 import {getItemsById_fromOldHTML} from './parse_html/old.js'
 
@@ -77,7 +77,7 @@ export const lookupItemsByID_withFallback = (path, search, auth, monitor_quarant
             console.log('Content script fallback failed:', contentError.message)
             
             // Third: try old.reddit.com HTML parsing
-            return getItemsById_fromOldHTML(ids)
+            return getItemsById_fromOldHTML(ids, addToPendingPostQueue)
             .catch(htmlError => {
                 console.log('old.reddit.com HTML fallback failed:', htmlError.message)
                 
