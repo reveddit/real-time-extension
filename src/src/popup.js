@@ -151,7 +151,8 @@ function populatePopup() {
         $('<hr>').appendTo('#popup')
         displayOtherInPopup(other['unseen'], Object.keys(storage.other_subscriptions).length)
         $('<hr>').appendTo('#popup')
-        $('<a target="_blank" class="blue-link" id="go-to-history" href="/src/history.html">history</a>')
+        const historyUrl = chrome.runtime.getURL('src/history.html')
+        $(`<a target="_blank" class="blue-link" id="go-to-history" href="${historyUrl}">history</a>`)
             .click(openAndClose).wrap('<div id="bottom">').parent().appendTo('#popup')
         $('<hr>').appendTo('#popup')
         $('<button id="test-notification" style="margin-top:6px">Test notification</button>').appendTo('#popup')
@@ -182,7 +183,7 @@ function populatePopup() {
 
 const openAndClose = (ev) => {
     ev.preventDefault()
-    window.open(ev.target.href)
+    chrome.tabs.create({url: ev.target.href})
     window.close()
 }
 
