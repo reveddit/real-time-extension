@@ -12,9 +12,13 @@
         "@babel/register": "^7.22.5",
         "babel-loader": "^9.1.2",
         "babel-plugin-add-module-exports": "^1.0.4",
+        "chrome-webstore-upload": "^4.0.3",
+        "chrome-webstore-upload-cli": "^3.5.0",
         "copy-webpack-plugin": "^11.0.0",
+        "dotenv": "^17.2.3",
         "rimraf": "^5.0.1",
         "terser-webpack-plugin": "^5.3.9",
+        "web-ext": "^9.2.0",
         "webpack": "^5.88.0",
         "webpack-cli": "^5.1.4",
         "webpack-ext-reloader": "^1.1.12"
@@ -36,11 +40,17 @@
         "build-chrome-staging": "(export  NODE_ENV=production BROWSER=chrome STAGING=true;    yarn run-webpack)",
         "build-firefox-staging": "(export NODE_ENV=production BROWSER=firefox STAGING=true;   yarn run-webpack)",
         "run-webpack": "node clean.js && webpack && yarn wasm-safe",
-        "wasm-safe": "node wasm_compatibility_replace.js"
+        "wasm-safe": "node wasm_compatibility_replace.js",
+        "publish:chrome": "node scripts/publishing/publish-chrome.js",
+        "publish:firefox": "node scripts/publishing/publish-firefox.js",
+        "publish:firefox:text": "node scripts/publishing/publish-firefox.js --text-only",
+        "publish:all": "yarn publish:chrome && yarn publish:firefox"
     },
     "dependencies": {
         "@worker-tools/html-rewriter": "^0.1.0-pre.19",
         "arrive": "^2.4.1",
+        "googleapis": "^170.1.0",
+        "jsonwebtoken": "^9.0.3",
         "linkedom": "^0.18.0",
         "turndown": "^7.2.0",
         "webextension-polyfill": "^0.10.0"

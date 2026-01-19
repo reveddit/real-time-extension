@@ -1,0 +1,109 @@
+Features:
+
+★ Automatic notification of mod-removed, reapproved, locked or unlocked reddit content
+★ Monitor usernames or selected comments and posts
+★ Works with both new and old reddit layouts
+★ Show removal status of posts on their reddit.com comments pages, including for private subreddits, on both new and old reddit
+★ Show locked status of posts on reddit.com subreddit pages
+★ View the history of observed changes
+
+Reveddit real-time tracks the content you post and notifies you when something is removed, locked, reapproved or unlocked. Upon installing the extension, it will automatically subscribe to your username. To subscribe to additional usernames, create a separate browser profile, log into reddit as another username, and install the extension there.
+
+To monitor additional comments or posts, click the subscribe button beneath the item, or right-click on a link and choose `reveddit subscribe`. Note that subscribing to a post does not subscribe to its comments, only the post itself.
+
+Reveddit real-time is developed independently and is not officially endorsed by or affiliated with reddit. Enhancements will be added as they are developed. You can support this work through a non-tax-deductible donation:
+
+https://www.reveddit.com/about/donate
+
+Note, the extension is not able to track content from private subreddits.
+
+VERSION HISTORY:
+
+2026/01/19 - 0.0.3.8
+- fix status check for posts
+
+2026/01/16 - 0.0.3.7
+- enhance request handling and error recovery
+
+2025/10/06 - 0.0.3.6
+- better comment links when post id was not saved
+
+2025/10/05 - 0.0.3.5
+- history link fallback to rendered api/info
+
+2025/10/05 - 0.0.3.4
+- history entries now link to relevant comment or post
+
+2025/10/04 - 0.0.3.3
+- fix excessive /me queries
+
+2025/09/21 - 0.0.3.2
+- lookup content from logged-in profile
+
+2024/12/28 - 0.0.3.1
+- display removal notices on new "sh" Reddit
+
+2023/07/15 - 0.0.3.0
+- stop using shared ID for oauth in accordance with recent Reddit API changes
+
+2023/03/03 - 0.0.2.9
+- auto-subscribe to current user if not subscribed and never unsubscribed
+
+2023/03/01 - 0.0.2.8
+- add Reveddit links for removed comments on new Reddit redesign
+
+2023/02/20 - 0.0.2.7
+- notify about Reddit removals indicated by removal_reason field
+
+2023/02/16 - 0.0.2.6
+- bug fix: post removal note was appearing on comment-link pages of unremoved posts
+
+2023/02/14 - 0.0.2.5
+- fix notifications for browsers set to use a non-english language
+
+2023/02/14 - 0.0.2.4
+- fix missing removal notice for 4+ year old posts on new Reddit redesign
+
+2023-02-12 - 0.0.2.3
+- fix repeat notifications, approved status must be repeatedly observed consecutively before notification
+
+2023-01-21 - 0.0.2.2
+- fix an incorrectly named function that may have introduced errors for long-time users with logs of over 500 removed items
+
+2023-01-11 - 0.0.2.1
+- add option to avoid repeat notifications, "same-status count before alert"
+
+2022-10-28 - 0.0.2.0
+- fix issue where notifications were only happening once per hour due to a newly imposed cache
+
+2022-05-22 - 0.0.1.9
+- make it more clear that post removal notices are created by this extension, not the website
+
+2021-07-09 - 0.0.1.8
+- remove comment ID from link to new reddit in extension's removal notices on old reddit. New reddit does not show post removal notices when viewing a link to a comment
+
+2021-05-28 - 0.0.1.7
+- fix issue that appeared to cause occasional logouts
+- made monitoring quarantined content optional
+
+2021-02-26 - 0.0.1.6
+- add option to hide subscribe button
+- using chrome manifest v3
+
+2021-01-09 - 0.0.1.5
+- only add quarantine cookie for reveddit.com requests
+
+2021-01-03 - 0.0.1.4
+- update to work with new reveddit website paths
+
+2020-11-01 - 0.0.1.3
+- prepare for chrome manifest v3
+
+2020-04-19 - 0.0.1.2
+- fixes the old.reddit.com removal notice on posts for deleted/removed crossposts
+
+2020-04-19 - 0.0.1.1
+- updates the notice that appears on deleted posts on old.reddit.com to handle html/css changes
+
+2019-12-11 - 0.0.1.0
+- initial release
