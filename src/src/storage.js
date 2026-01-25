@@ -43,6 +43,14 @@ export const getObjectNamesForThing = (thing, isUser=true) => {
     return names
 }
 
+export const getOldestDateKey = (thing, isUser) => {
+    if (isUser) {
+        return 'oldest_date_u_' + thing
+    } else {
+        return 'oldest_date_' + thing
+    }
+}
+
 export const getUserInit = (user) => {
     const result = {}
     addTrackTypes(result, user, true)

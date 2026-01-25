@@ -2,7 +2,7 @@ import {lookupItemsByID, lookupItemsByUser, lookupItemsByLoggedInUser, lookupIte
 import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
         addLocalStorageItems, getLocalStorageItems,
         MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, MAX_SYNC_STORAGE_CHANGES, SEEN_COUNT_DEFAULT,
-        getObjectNamesForThing, getUserInit,
+        getObjectNamesForThing, getUserInit, getOldestDateKey,
         getNextPendingPost, removeFromPendingPostQueue } from './storage.js'
 import {createNotification, updateBadgeUnseenCount, trimDict_by_numberValuedAttribute,
         isUserDeletedItem, isRemovedItem, isComment,
@@ -16,6 +16,34 @@ const SUBSCRIBED_FROM_REVEDDIT = 1
 const SUBSCRIBED_FROM_NA = 2
 
 const TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE = Math.floor(Math.random() * 60)+60
+
+const FULL_RESPONSE_ITEM_COUNT = 100
+
+const updateOldestDateThreshold = (items, itemLookup, thing, isUser) => {
+    if (items.length < FULL_RESPONSE_ITEM_COUNT) {
+        return Promise.resolve(null)
+    }
+
+    const timestamps = items.map(itemWrap => {
+        const item = itemWrap.data || itemLookup[itemWrap.name] || itemWrap
+        return item.created_utc
+    }).filter(ts => typeof ts === 'number' && ts > 0)
+
+    if (timestamps.length === 0) {
+        return Promise.resolve(null)
+    }
+
+    timestamps.sort((a, b) => a - b)
+    const oldestDate = timestamps[0]
+
+    const key = getOldestDateKey(thing, isUser)
+    return browser.storage.local.set({[key]: oldestDate}).then(() => oldestDate)
+}
+
+const getOldestDateThreshold = (thing, isUser) => {
+    const key = getOldestDateKey(thing, isUser)
+    return browser.storage.local.get({[key]: null}).then(result => result[key])
+}
 
 const fetchItemFromApiInfo = async (id) => {
     try {
@@ -313,6 +341,9 @@ const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, sub
                 unlocked.push(item.name)
             }
         })
+
+        updateOldestDateThreshold(items, itemLookup, thing, isUser)
+
         // mark items that do not exist in arrays
         // change happens if:
         //      tracking removals && item is removed
@@ -321,21 +352,24 @@ const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, sub
 
         const changeTypes = []
         let num_changes = 0
-        return getLocalStorageItems(thing, isUser)
-        .then(existingLocalStorageItems => {
+        return Promise.all([
+            getLocalStorageItems(thing, isUser),
+            getOldestDateThreshold(thing, isUser)
+        ])
+        .then(([existingLocalStorageItems, oldestDateThreshold]) => {
             if (removal_status.track) {
                 num_changes += markChanges(removed, REMOVED, 'mod removed', known_removed,
                                            approved, APPROVED, 'approved', known_approved,
                                            changes, itemLookup, removal_status.notify,
                                            newLocalStorageItems, changeTypes, isUser, subscribedFrom,
-                                           existingLocalStorageItems, target_seen_count)
+                                           existingLocalStorageItems, target_seen_count, oldestDateThreshold)
             }
             if (lock_status.track) {
                 num_changes += markChanges(locked, LOCKED, 'locked', known_locked,
                                            unlocked, UNLOCKED, 'unlocked', known_unlocked,
                                            changes, itemLookup, lock_status.notify,
                                            newLocalStorageItems, changeTypes, isUser, subscribedFrom,
-                                           existingLocalStorageItems, target_seen_count)
+                                           existingLocalStorageItems, target_seen_count, oldestDateThreshold)
             }
             if (num_changes && changeTypes.length) {
                 console.log(`Creating notification for ${thing}: ${num_changes} changes of type ${changeTypes.join(', ')}`)
@@ -376,7 +410,7 @@ const changeIsPreviouslyRecorded = (name, change_type, changes) => {
 function markChanges (alert_current_list, alert_type, alert_text, alert_known_hash,
                       normal_current_list, normal_type, normal_text, normal_known_hash,
                       changes, itemLookup, notify, newLocalStorageItems, changeTypes,
-                      isUser, subscribedFrom, existingLocalStorageItems, target_seen_count) {
+                      isUser, subscribedFrom, existingLocalStorageItems, target_seen_count, oldestDateThreshold) {
     const alert_unseen_ids = [],
           normal_unseen_ids = [],
           alert_userDeleted_unseen_ids = [],
@@ -398,7 +432,10 @@ function markChanges (alert_current_list, alert_type, alert_text, alert_known_ha
             newLocalStorageItem.resetSeenCount()
             newLocalStorageItems[name] = newLocalStorageItem
         }
-        if (! (name in alert_known_hash)) {
+        const itemCreatedUtc = item.created_utc
+        const isTooOld = oldestDateThreshold && itemCreatedUtc && itemCreatedUtc < oldestDateThreshold
+
+        if (! (name in alert_known_hash) && !isTooOld) {
             // markUnseen is always true except when subscribing via a reddit (not reveddit) page to a new ID for 'other'
             // subscriptions. As long as the item is not 'removed', the current state is stored as 'seen' (unseen=false).
             // It is assumed that users subscribing from reveddit pages will already have seen all the current mod actions,
@@ -465,11 +502,15 @@ function markChanges (alert_current_list, alert_type, alert_text, alert_known_ha
                 newLocalStorageItems[name] = this_localStorageItem
             }
         } else {
-            normal_known_hash[name] = new ItemForStorage(
-                item.created_utc,
-                false,
-                (isComment(item.name) && item.link_id) ? item.link_id : undefined
-            )
+            const itemCreatedUtc = item.created_utc
+            const isTooOld = oldestDateThreshold && itemCreatedUtc && itemCreatedUtc < oldestDateThreshold
+            if (!isTooOld) {
+                normal_known_hash[name] = new ItemForStorage(
+                    item.created_utc,
+                    false,
+                    (isComment(item.name) && item.link_id) ? item.link_id : undefined
+                )
+            }
         }
     })
     const num_changes = alert_unseen_ids.length + normal_unseen_ids.length + alert_userDeleted_unseen_ids.length

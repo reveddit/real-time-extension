@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/01/25 - 0.0.3.9
+- filter out alerts for content older than the most recent 100 items
+
 2026/01/19 - 0.0.3.8
 - fix status check for posts
 
