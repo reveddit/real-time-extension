@@ -4,9 +4,8 @@ import path from 'path';
 import FormData from 'form-data';
 import open from 'open';
 import readline from 'readline';
-import clipboardy from 'clipboardy';
 import dotenv from 'dotenv';
-import { getManifest, readDescription } from './common.js';
+import { getManifest, readDescription, copyToClipboard } from './common.js';
 
 dotenv.config();
 
@@ -108,16 +107,13 @@ async function main() {
     console.log('\n\x1b[33m[2/3] Manual Description Verification\x1b[0m');
     const description = readDescription();
     if (description) {
-        try {
-            clipboardy.writeSync(description);
-            console.log('\x1b[32m✔ Description copied to clipboard!\x1b[0m');
-        } catch (e) {
-             console.log('\x1b[33m⚠ Skipped clipboard copy.\x1b[0m');
-        }
+        copyToClipboard(description, 'Description');
     }
     
     // Open Dashboard
-    await open(`https://partner.microsoft.com/en-us/dashboard/microsoftedge/${productId}/listings`);
+    const edgeUrl = `https://partner.microsoft.com/en-us/dashboard/microsoftedge/${productId}/listings`;
+    console.log(`\n\x1b[35m📋 Edge Dashboard URL:\x1b[0m\n${edgeUrl}\n`);
+    await open(edgeUrl);
     await askQuestion('\x1b[36mPress ENTER once you have verified/updated the store listing...\x1b[0m');
 
     // 3. Submit

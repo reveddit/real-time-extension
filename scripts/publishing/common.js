@@ -2,6 +2,7 @@
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import clipboardy from 'clipboardy';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,4 +30,20 @@ export function readDescription() {
 
 export function getManifest() {
     return JSON.parse(fs.readFileSync(CONFIG.manifestFile, 'utf8'));
+}
+
+/**
+ * Copy text to clipboard with console feedback
+ * @param {string} text - The text to copy
+ * @param {string} label - Label for the success message (e.g., "Description", "URL")
+ */
+export function copyToClipboard(text, label = 'Text') {
+    try {
+        clipboardy.writeSync(text);
+        console.log(`\x1b[32m✔ ${label} copied to clipboard!\x1b[0m`);
+        return true;
+    } catch (e) {
+        console.log(`\x1b[33m⚠ Could not copy ${label.toLowerCase()} to clipboard.\x1b[0m`);
+        return false;
+    }
 }

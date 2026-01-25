@@ -3,8 +3,7 @@ import chromeWebstoreUpload from 'chrome-webstore-upload';
 import open from 'open';
 import readline from 'readline';
 import dotenv from 'dotenv';
-import clipboardy from 'clipboardy';
-import { CONFIG, readDescription, getManifest } from './common.js';
+import { CONFIG, readDescription, getManifest, copyToClipboard } from './common.js';
 
 
 
@@ -60,22 +59,19 @@ async function main() {
         console.log('\n\x1b[33m[2/3] Verifying Store Listing...\x1b[0m');
         const description = readDescription();
         if (description) {
-            try {
-                clipboardy.writeSync(description);
-                console.log('\x1b[32m✔ Description copied to clipboard!\x1b[0m');
-            } catch (e) {
-                console.log('\x1b[33m⚠ Could not copy to clipboard, skipping.\x1b[0m');
-            }
+            copyToClipboard(description, 'Description');
             console.log('Local description file found.');
         } else {
              console.log('No local description file found (skipped).');
         }
 
         console.log('Automated text updates are not supported by the Chrome Web Store API.');
-        console.log('Opening the Developer Dashboard for you to verify/paste the description...');
-        
+
         // Open the URL specific to this extension's listing
-        await open(`https://chrome.google.com/u/1/webstore/devconsole/${process.env.CHROME_DASHBOARD_ID}/${process.env.CHROME_EXTENSION_ID}/edit`);
+        const chromeUrl = `https://chrome.google.com/u/1/webstore/devconsole/${process.env.CHROME_DASHBOARD_ID}/${process.env.CHROME_EXTENSION_ID}/edit`;
+        console.log(`\n\x1b[35m📋 Chrome Dashboard URL:\x1b[0m\n${chromeUrl}\n`);
+        console.log('Opening the Developer Dashboard for you to verify/paste the description...');
+        await open(chromeUrl);
         
         await askConfirmation();
 
