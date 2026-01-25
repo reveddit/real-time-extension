@@ -91,7 +91,7 @@ VERSION HISTORY:
 
 2021-02-26 - 0.0.1.6
 - add option to hide subscribe button
-- using chrome manifest v3
+- using manifest v3
 
 2021-01-09 - 0.0.1.5
 - only add quarantine cookie for reveddit.com requests
@@ -100,7 +100,7 @@ VERSION HISTORY:
 - update to work with new reveddit website paths
 
 2020-11-01 - 0.0.1.3
-- prepare for chrome manifest v3
+- prepare for manifest v3
 
 2020-04-19 - 0.0.1.2
 - fixes the old.reddit.com removal notice on posts for deleted/removed crossposts
