@@ -5,8 +5,9 @@ import path from 'path';
 import fs from 'fs';
 import jwt from 'jsonwebtoken';
 import { execSync } from 'child_process';
-import { CONFIG, readDescription, getManifest } from './common.js';
+import { CONFIG, readDescription, getManifest, setupAbortHandler } from './common.js';
 
+setupAbortHandler();
 dotenv.config();
 
 const requiredEnvVars = [

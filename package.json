@@ -45,7 +45,7 @@
         "publish:firefox": "node scripts/publishing/publish-firefox.js",
         "publish:firefox:text": "node scripts/publishing/publish-firefox.js --text-only",
         "publish:edge": "node scripts/publishing/publish-edge.js",
-        "publish:all": "yarn publish:chrome && yarn publish:firefox && yarn publish:edge"
+        "publish:all": "node scripts/publishing/publish-all.js"
     },
     "dependencies": {
         "@plasmohq/edge-addons-api": "^2.0.0",

@@ -1,6 +1,7 @@
 
 import path from 'path';
 import fs from 'fs';
+import readline from 'readline';
 import { fileURLToPath } from 'url';
 import clipboardy from 'clipboardy';
 
@@ -46,4 +47,40 @@ export function copyToClipboard(text, label = 'Text') {
         console.log(`\x1b[33m⚠ Could not copy ${label.toLowerCase()} to clipboard.\x1b[0m`);
         return false;
     }
+}
+
+/**
+ * Setup handler for Ctrl+C to exit with code 130 (SIGINT)
+ */
+export function setupAbortHandler() {
+    process.on('SIGINT', () => {
+        console.log('\n\x1b[31m✖ Aborted\x1b[0m');
+        process.exit(130);
+    });
+}
+
+/**
+ * Prompt user for input, properly handling Ctrl+C
+ * @param {string} query - The prompt to display
+ * @returns {Promise<string>} - The user's input
+ */
+export function prompt(query) {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    });
+
+    return new Promise((resolve) => {
+        // Handle Ctrl+C at the readline level
+        rl.on('SIGINT', () => {
+            rl.close();
+            console.log('\n\x1b[31m✖ Aborted\x1b[0m');
+            process.exit(130);
+        });
+
+        rl.question(query, (answer) => {
+            rl.close();
+            resolve(answer);
+        });
+    });
 }

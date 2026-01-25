@@ -1,12 +1,10 @@
 
 import chromeWebstoreUpload from 'chrome-webstore-upload';
 import open from 'open';
-import readline from 'readline';
 import dotenv from 'dotenv';
-import { CONFIG, readDescription, getManifest, copyToClipboard } from './common.js';
+import { CONFIG, readDescription, getManifest, copyToClipboard, setupAbortHandler, prompt } from './common.js';
 
-
-
+setupAbortHandler();
 dotenv.config();
 
 const requiredEnvVars = [
@@ -73,7 +71,7 @@ async function main() {
         console.log('Opening the Developer Dashboard for you to verify/paste the description...');
         await open(chromeUrl);
         
-        await askConfirmation();
+        await prompt('\n\x1b[1mPress ENTER once you have verified/updated the store listing description in the browser > \x1b[0m');
 
         // 3. Publish
         console.log('\n\x1b[33m[3/3] Publishing to Store...\x1b[0m');
@@ -89,20 +87,6 @@ async function main() {
         console.error('\x1b[31mAn unexpected error occurred:\x1b[0m', error);
         process.exit(1);
     }
-}
-
-function askConfirmation() {
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
-
-    return new Promise(resolve => {
-        rl.question('\n\x1b[1mPress ENTER once you have verified/updated the store listing description in the browser > \x1b[0m', () => {
-            rl.close();
-            resolve();
-        });
-    });
 }
 
 main();

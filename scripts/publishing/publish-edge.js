@@ -3,10 +3,10 @@ import fs from 'fs';
 import path from 'path';
 import FormData from 'form-data';
 import open from 'open';
-import readline from 'readline';
 import dotenv from 'dotenv';
-import { getManifest, readDescription, copyToClipboard } from './common.js';
+import { getManifest, readDescription, copyToClipboard, setupAbortHandler, prompt } from './common.js';
 
+setupAbortHandler();
 dotenv.config();
 
 const requiredEnvVars = ['EDGE_PRODUCT_ID', 'EDGE_CLIENT_ID', 'EDGE_API_KEY'];
@@ -17,17 +17,6 @@ function checkEnv() {
         console.error(`\x1b[31mError: Missing environment variables: ${missing.join(', ')}\x1b[0m`);
         process.exit(1);
     }
-}
-
-function askQuestion(query) {
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-    });
-    return new Promise(resolve => rl.question(query, ans => {
-        rl.close();
-        resolve(ans);
-    }));
 }
 
 async function main() {
@@ -114,7 +103,7 @@ async function main() {
     const edgeUrl = `https://partner.microsoft.com/en-us/dashboard/microsoftedge/${productId}/listings`;
     console.log(`\n\x1b[35m📋 Edge Dashboard URL:\x1b[0m\n${edgeUrl}\n`);
     await open(edgeUrl);
-    await askQuestion('\x1b[36mPress ENTER once you have verified/updated the store listing...\x1b[0m');
+    await prompt('\x1b[36mPress ENTER once you have verified/updated the store listing...\x1b[0m');
 
     // 3. Submit
     console.log('\n\x1b[33m[3/3] Submitting for Certification...\x1b[0m');
