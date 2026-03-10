@@ -90,7 +90,7 @@ export const isUserDeletedComment = (item) => {
             item.author.replace(/\\/g, '') === '[deleted]')
 }
 export const isUserDeletedPost = (item) => {
-    return (! item.is_robot_indexable) && item.author.replace(/\\/g, '') === '[deleted]'
+    return (item.is_robot_indexable === false) && item.author.replace(/\\/g, '') === '[deleted]'
 }
 export const isUserDeletedItem = (item) => {
     if (isComment(item.name)) {
@@ -100,7 +100,7 @@ export const isUserDeletedItem = (item) => {
     }
 }
 export const isRemovedPost = (item) => {
-    return ! item.is_robot_indexable
+    return item.is_robot_indexable === false
 }
 
 export const trimDict_by_numberValuedAttribute = (dict, maxNumItems, numberValuedAttribute) => {
@@ -178,6 +178,7 @@ export class LocalStorageItem {
             this.o = object.o
             this.c = object.c
             this.n = object.n || 0 // seen_count, which increments when the same status is observed
+            this.r = object.r || 0 // removal_count, consecutive times observed as removed
             if (typeof object.p !== 'undefined') this.p = object.p
         } else {
             let text = ''
@@ -190,6 +191,7 @@ export class LocalStorageItem {
             this.o = observed_utc
             this.c = item.created_utc
             this.n = 0
+            this.r = 0
             // store compact post id for comments when available
             if (isComment(item.name) && item.link_id) {
                 this.p = item.link_id
@@ -203,6 +205,13 @@ export class LocalStorageItem {
     resetSeenCount() { this.n = 0 }
     getSeenCount() { return this.n }
     getPostID() { return this.p }
+    incrementRemovalCount() {
+        if (typeof this.r === 'undefined') this.r = 0
+        this.r += 1
+        return this.r
+    }
+    resetRemovalCount() { this.r = 0 }
+    getRemovalCount() { return this.r || 0 }
     incrementSeenCount() {
         if (typeof this.n === 'undefined') {
             this.n = 0

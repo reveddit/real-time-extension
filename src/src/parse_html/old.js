@@ -85,6 +85,8 @@ const POST_DEFAULTS = {
   author_flair_text: null,
   pinned: false,
   removed_by_category: null,
+  is_robot_indexable: true, // /api/info HTML has no removal indicator for posts, so default to not-removed.
+                            // Removed posts are detected separately via individual page lookup (processPendingPost).
 }
 // classes whose presence indicate the field should be true, and false for their absence
 const BINARY_FIELD_TO_CLASS_REGEXES = {

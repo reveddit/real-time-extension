@@ -17,6 +17,11 @@ const SUBSCRIBED_FROM_NA = 2
 
 const TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE = Math.floor(Math.random() * 60)+60
 
+// Require multiple consecutive observations of "removed" status before alerting,
+// to prevent false removal notifications from transient API failures or intermittent responses.
+// Randomized per extension instance (3-5 cycles) to thwart potential anti-extension fingerprinting.
+const REMOVAL_CONFIRMATION_THRESHOLD = Math.floor(Math.random() * 3) + 3
+
 const FULL_RESPONSE_ITEM_COUNT = 100
 
 const updateOldestDateThreshold = (items, itemLookup, thing, isUser) => {
@@ -65,8 +70,7 @@ const processPendingPost = async (storage) => {
         if (result && result.is_removed) {
              const itemData = await fetchItemFromApiInfo(postId) 
              if (itemData) {
-                 itemData.removed = true 
-                 itemData.banned_by = true 
+                 itemData.is_robot_indexable = false
                  
                  const author = itemData.author
                  const isUser = (storage.user_subscriptions && (author in storage.user_subscriptions))
@@ -76,7 +80,7 @@ const processPendingPost = async (storage) => {
                  
                  const itemLookup = {[postId]: itemData}
                  
-                 await checkForChanges_thing_byId([postId], thing, isUser, null, storage, SUBSCRIBED_FROM_NA, itemLookup, [], [itemData])
+                 await checkForChanges_thing_byId([postId], thing, isUser, null, storage, SUBSCRIBED_FROM_NA, itemLookup, [], [{data: itemData}])
              }
         } else {
              console.log(`Pending post lookup: ${postId} is not removed.`)
@@ -430,7 +434,14 @@ function markChanges (alert_current_list, alert_type, alert_text, alert_known_ha
             // Note: The var seen_count is really a 'seen as normal' count, but we don't need an alert_seen_count
             const newLocalStorageItem = new LocalStorageItem({object: existingLocalStorageItem})
             newLocalStorageItem.resetSeenCount()
+            // Track how many consecutive times this item has been observed as removed.
+            // Only fire a removal alert after REMOVAL_CONFIRMATION_THRESHOLD consecutive observations,
+            // which prevents false alerts from transient API failures or intermittent data.
+            const removal_count = newLocalStorageItem.incrementRemovalCount()
             newLocalStorageItems[name] = newLocalStorageItem
+            if (removal_count < REMOVAL_CONFIRMATION_THRESHOLD && ! (name in alert_known_hash)) {
+                return // skip this item — not yet confirmed as genuinely removed
+            }
         }
         const itemCreatedUtc = item.created_utc
         const isTooOld = oldestDateThreshold && itemCreatedUtc && itemCreatedUtc < oldestDateThreshold
@@ -471,6 +482,18 @@ function markChanges (alert_current_list, alert_type, alert_text, alert_known_ha
         // save original text for all non-userpage-tracked items since comment text can disappear
         if (! isUser && ! existingLocalStorageItems[name]) {
             newLocalStorageItems[name] = new LocalStorageItem({item: item, observed_utc: now})
+        }
+        // Reset removal confirmation count when item appears approved,
+        // so transient false removals don't accumulate across separate incidents
+        if (existingLocalStorageItems[name]) {
+            const lsi = new LocalStorageItem({object: existingLocalStorageItems[name]})
+            if (lsi.getRemovalCount() > 0) {
+                lsi.resetRemovalCount()
+                // Preserve this in newLocalStorageItems so it gets saved
+                if (! newLocalStorageItems[name]) {
+                    newLocalStorageItems[name] = lsi
+                }
+            }
         }
         if (name in alert_known_hash) {
             const this_localStorageItem = new LocalStorageItem({object: existingLocalStorageItems[name]})
