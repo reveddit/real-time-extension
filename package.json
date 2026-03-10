@@ -41,6 +41,7 @@
         "build-firefox-staging": "(export NODE_ENV=production BROWSER=firefox STAGING=true;   yarn run-webpack)",
         "run-webpack": "node clean.js && webpack && yarn wasm-safe",
         "wasm-safe": "node wasm_compatibility_replace.js",
+        "refresh:chrome": "node scripts/publishing/refresh-chrome-token.js",
         "publish:chrome": "node scripts/publishing/publish-chrome.js",
         "publish:firefox": "node scripts/publishing/publish-firefox.js",
         "publish:firefox:text": "node scripts/publishing/publish-firefox.js --text-only",
