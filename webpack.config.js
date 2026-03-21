@@ -66,22 +66,22 @@ function modify(buffer) {
     return JSON.stringify(manifest, null, 2);
 }
 const contentScripts = {
-    common: './src/src/common.js',
-    content: ['@babel/polyfill', './src/src/content.js'],
-    'content-reddit': './src/src/content-reddit.js',
-    'content-revddit': './src/src/content-revddit.js',
-    'content-common': './src/src/content-common.js',
-    contextMenus: './src/src/contextMenus.js',
-    requests: './src/src/requests.js',
-    storage: './src/src/storage.js'
+    common: './src/src/common.ts',
+    content: ['@babel/polyfill', './src/src/content.ts'],
+    'content-reddit': './src/src/content-reddit.ts',
+    'content-revddit': './src/src/content-revddit.ts',
+    'content-common': './src/src/content-common.ts',
+    contextMenus: './src/src/contextMenus.ts',
+    requests: './src/src/requests.ts',
+    storage: './src/src/storage.ts'
 }
 const extensionPages = {
-    options: ['@babel/polyfill', './src/src/options.js'],
-    popup: ['@babel/polyfill', './src/src/popup.js'],
-    history: ['@babel/polyfill', './src/src/history.js'],
-    other: ['@babel/polyfill', './src/src/other.js'],
-    welcome: ['@babel/polyfill', './src/src/welcome.js'],
-    parse: ['@babel/polyfill', './src/src/parse_html/common.js', './src/src/parse_html/old.js'],
+    options: ['@babel/polyfill', './src/src/options.ts'],
+    popup: ['@babel/polyfill', './src/src/popup.ts'],
+    history: ['@babel/polyfill', './src/src/history.ts'],
+    other: ['@babel/polyfill', './src/src/other.ts'],
+    welcome: ['@babel/polyfill', './src/src/welcome.ts'],
+    parse: ['@babel/polyfill', './src/src/parse_html/common.ts', './src/src/parse_html/old.ts'],
 }
 
 
@@ -135,7 +135,7 @@ export default {
         })],
     },
     entry: {
-        background: ['@babel/polyfill', './src/background.js'],
+        background: ['@babel/polyfill', './src/background.ts'],
         ...contentScripts,
         ...extensionPages
     },
@@ -156,7 +156,10 @@ export default {
             {
                 test: /\.ts$/,
                 exclude: /node_modules/,
-                use: 'ts-loader'
+                use: {
+                    loader: 'ts-loader',
+                    options: { transpileOnly: true }
+                }
             },
             {
                 test: /\.js?$/,

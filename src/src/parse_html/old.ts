@@ -1,6 +1,6 @@
 import { consume,
   oldReddit, redditHTMLRequestOptions, ErrorCollector,
-} from './common.js'
+} from './common'
 import {DOMParser} from 'linkedom/worker'
 import TurndownService from 'turndown'
 import { HTMLRewriter } from '@worker-tools/html-rewriter'
@@ -8,7 +8,7 @@ import { HTMLRewriter } from '@worker-tools/html-rewriter'
 const turndownService = new TurndownService()
 const domParser = new DOMParser()
 
-const getMarkdownFromHTMLString = (string) => {
+const getMarkdownFromHTMLString = (string: string): string => {
   // Must specify text/html. Without specifying, parser does not include links and messes up spacing
   return turndownService.turndown(domParser.parseFromString(string, 'text/html'))
 }
@@ -36,13 +36,16 @@ turndownService.addRule('listItem', {
 
 
 class AttributeMapping {
-  constructor(field, attribute, func) {
+  field: string
+  attribute: string
+  func?: (value: any) => any
+  constructor(field: string, attribute: string, func?: (value: any) => any) {
     this.field = field
     this.attribute = attribute
     this.func = func
   }
 }
-const stringJavascriptEpochSecondsToNumericEpoch = (n) => Number(n) / 1000
+const stringJavascriptEpochSecondsToNumericEpoch = (n: string): number => Number(n) / 1000
 const attribute_mappings = [
   new AttributeMapping('name', 'data-fullname'),
   new AttributeMapping('subreddit', 'data-subreddit'),
@@ -61,7 +64,7 @@ const attribute_mappings = [
 
 const WWW_REDDIT_COM = 'https://www.reddit.com'
 const leftSpaceBoundary = '(^|\\s)', rightSpaceBoundary = '($|\\s)'
-const regexWithSpaceOnLeftAndRight = (middle) => new RegExp(leftSpaceBoundary+middle+rightSpaceBoundary)
+const regexWithSpaceOnLeftAndRight = (middle: string) => new RegExp(leftSpaceBoundary+middle+rightSpaceBoundary)
 const match_controversial = regexWithSpaceOnLeftAndRight('controversial')
 const match_stickied = regexWithSpaceOnLeftAndRight('stickied')
 const match_pinned = regexWithSpaceOnLeftAndRight('sticky-pinned')
@@ -93,21 +96,24 @@ const BINARY_FIELD_TO_CLASS_REGEXES = {
   'locked': regexWithSpaceOnLeftAndRight('locked'), // only detects submission locks. comment locks will overwrite the value here
 }
 
-const fullnameIsComment = (name) => name.substr(0,2) === 't1'
-const fullnameIsPost = (name) => name.substr(0,2) === 't3'
+const fullnameIsComment = (name: string) => name.substr(0,2) === 't1'
+const fullnameIsPost = (name: string) => name.substr(0,2) === 't3'
 
 // keep track of items and quarantined subreddits appearing on user page HTML of old reddit
 // based on solution from: https://stackoverflow.com/questions/68114819/access-nested-elements-in-htmlrewriter-cloudflare-workers
 class Items extends ErrorCollector {
-  constructor(url) {
+  items: Record<string, any>[]
+  ids_set: Set<string>
+  quarantined_subs: Set<string>
+  constructor(url: string) {
     super(url)
     this.items = []
     this.ids_set = new Set()
     this.quarantined_subs = new Set()
     this.url = url
   }
-  element(element) {
-    const item = {}
+  element(element: any) {
+    const item: Record<string, any> = {}
     for (const att_map of attribute_mappings) {
       let value = element.getAttribute(att_map.attribute)
       if (value !== null) {
@@ -150,7 +156,7 @@ class Items extends ErrorCollector {
     this.items.push(item)
     this.ids_set.add(item.name)
   }
-  addQuarantinedSub(sub) {
+  addQuarantinedSub(sub: string) {
     this.quarantined_subs.add(sub)
   }
   fillInDefaultValues() {
@@ -172,13 +178,16 @@ class Items extends ErrorCollector {
   }
 }
 class ItemsMeta {
-  constructor(itemsObj) {
+  itemsObj: Items
+  items: Record<string, any>[]
+  last: Record<string, any>
+  constructor(itemsObj: Items) {
     this.itemsObj = itemsObj
     this.items = itemsObj.items
     this.last = {}
   }
   // any extending class must call super.element(element) to define this.last
-  element(element) {
+  element(element: any) {
     if (this.items.length) {
       const last = this.items[this.items.length - 1]
       if (! last) {
@@ -190,28 +199,31 @@ class ItemsMeta {
   }
 }
 class OneField extends ItemsMeta {
-  constructor(itemsObj, field_name, value) {
+  field_name: string
+  value: any
+  constructor(itemsObj: Items, field_name: string, value?: any) {
     super(itemsObj)
     this.field_name = field_name
     this.value = value
   }
-  element(element, value = this.value) {
+  element(element: any, value = this.value) {
     super.element(element)
     this.last[this.field_name] = value
   }
 }
 
 class OneFieldAttribute extends OneField {
-  constructor(itemsObj, field_name, att_name) {
+  att_name: string
+  constructor(itemsObj: Items, field_name: string, att_name: string) {
     super(itemsObj, field_name)
     this.att_name = att_name
   }
-  element(element, func = (v) => v) {
+  element(element: any, func: (v: any) => any = (v) => v) {
     super.element(element, func(element.getAttribute(this.att_name)))
   }
 }
 
-const fixDoubleSlashPrefix = (url) => {
+const fixDoubleSlashPrefix = (url: string): string => {
   if (url.substr(0,2) === '//') {
     return 'https:'+url
   }
@@ -219,20 +231,21 @@ const fixDoubleSlashPrefix = (url) => {
 }
 
 class Thumbnail extends OneFieldAttribute {
-  constructor(itemsObj) {
+  constructor(itemsObj: Items) {
     super(itemsObj, 'thumbnail', 'src')
   }
-  element(element) {
+  element(element: any) {
     super.element(element, fixDoubleSlashPrefix)
   }
 }
 
 class IfClassesExistThenSetValue extends ItemsMeta {
-  constructor(itemsObj, classToFieldMaps) {
+  classToFieldMaps: ClassToFieldMap[]
+  constructor(itemsObj: Items, classToFieldMaps: ClassToFieldMap[]) {
     super(itemsObj)
     this.classToFieldMaps = classToFieldMaps
   }
-  element(element) {
+  element(element: any) {
     super.element(element)
     const classes = element.getAttribute('class')
     for (const map of this.classToFieldMaps) {
@@ -245,23 +258,27 @@ class IfClassesExistThenSetValue extends ItemsMeta {
 }
 
 class ClassToFieldMap {
-  constructor(class_name, field_name, value) {
+  class_name: string
+  field_name: string
+  value: any
+  constructor(class_name: string, field_name: string, value: any) {
     this.class_name = class_name, this.field_name = field_name, this.value = value
   }
 }
 
 // https://qwtel.com/posts/software/how-to-use-htmlrewriter-for-web-scraping/#extracting-html-subtrees
 class InnerHTML extends ItemsMeta {
-  constructor(itemsObj, field_name) {
+  field_name: string
+  constructor(itemsObj: Items, field_name: string) {
     super(itemsObj)
     this.field_name = field_name
   }
-  element(element) {
+  element(element: any) {
     super.element(element)
     if (! this.last[this.field_name]) {
       this.last[this.field_name] = ''
     }
-    const attrs = [...element.attributes].map(([k, v]) => ` ${k}="${v}"`).join('');
+    const attrs = [...element.attributes].map(([k, v]: [string, string]) => ` ${k}="${v}"`).join('');
     this.last[this.field_name] += `<${element.tagName}${attrs}>`
     // <br> tags can throw a "no end tag" error here.
     if (element.tagName !== 'br') {
@@ -275,32 +292,34 @@ class InnerHTML extends ItemsMeta {
       }
     }
   }
-  text({text}) {
+  text({text}: {text: string}) {
     this.last[this.field_name] += text
   }
 }
 
 class AuthorDeleted extends ItemsMeta {
-  constructor(itemsObj) {
+  constructor(itemsObj: Items) {
     super(itemsObj)
   }
-  element(element) {
+  element(element: any) {
     super.element(element)
     this.last['author'] = '[deleted]'
   }
 }
 
 class ValueFromText extends ItemsMeta {
-  constructor(itemsObj, field_name) {
+  temp_text_var_name: string
+  field_name: string
+  constructor(itemsObj: Items, field_name: string) {
     super(itemsObj)
     this.temp_text_var_name = field_name+'_text'
     this.field_name = field_name
   }
-  element(element) {
+  element(element: any) {
     super.element(element)
     this.last[this.temp_text_var_name] = ''
   }
-  text({text, lastInTextNode}, childFunc) {
+  text({text, lastInTextNode}: {text: string, lastInTextNode: boolean}, childFunc: () => void) {
     this.last[this.temp_text_var_name] += text
     if (lastInTextNode) {
       childFunc()
@@ -310,7 +329,7 @@ class ValueFromText extends ItemsMeta {
 }
 const REGEX_BEGINS_WITH_SLASH = new RegExp(/^\//)
 class LinkTitles extends ItemsMeta {
-  element(element) {
+  element(element: any) {
     super.element(element)
     const last = this.last
     last.link_url = element.getAttribute('href')
@@ -319,17 +338,17 @@ class LinkTitles extends ItemsMeta {
     }
     last.link_title = ''
   }
-  text({text}) {
+  text({text}: {text: string}) {
     this.last.link_title += text
   }
 }
 const match_reddit = new RegExp(/^https?:\/\/([^.]+\.)?reddit\.com\//)
 const match_domain_no_www = new RegExp(/https?:\/\/(?:www\.)?([^\/.]+\.[^\/]+)(\/.+)?/)
 class PostTitle extends ValueFromText {
-  constructor(itemsObj) {
+  constructor(itemsObj: Items) {
     super(itemsObj, 'title')
   }
-  element(element) {
+  element(element: any) {
     super.element(element)
     let href = element.getAttribute('href')
     if (href.match(REGEX_BEGINS_WITH_SLASH)) {
@@ -348,7 +367,7 @@ class PostTitle extends ValueFromText {
       this.last.url = href
     }
   }
-  text(props) {
+  text(props: {text: string, lastInTextNode: boolean}) {
     super.text(props, () => {
       this.last[this.field_name] = this.last[this.temp_text_var_name]
     })
@@ -358,7 +377,7 @@ class PostTitle extends ValueFromText {
 const user_fullname_match = new RegExp(/^id-t2_/)
 const user_fullname_replace = new RegExp(/^id-/)
 class LinkAuthor extends ItemsMeta {
-  element(element) {
+  element(element: any) {
     super.element(element)
     this.last.link_author = ''
     const link_author_fullname = element.getAttribute('class')
@@ -368,13 +387,13 @@ class LinkAuthor extends ItemsMeta {
       this.last.link_author_fullname = link_author_fullname.replace(user_fullname_replace, '')
     }
   }
-  text({text}) {
+  text({text}: {text: string}) {
     this.last.link_author += text
   }
 }
 const FULL_COMMENTS_REGEX = new RegExp(/full comments \(([0-9]+)\)/)
 class NumComments extends ValueFromText {
-  text(props) {
+  text(props: {text: string, lastInTextNode: boolean}) {
     super.text(props, () => {
       const matches = this.last[this.temp_text_var_name].match(FULL_COMMENTS_REGEX)
       if (matches) {
@@ -386,15 +405,15 @@ class NumComments extends ValueFromText {
 
 
 class Score extends OneField {
-  constructor(itemsObj) {
+  constructor(itemsObj: Items) {
     super(itemsObj, 'score')
   }
-  element(element) {
+  element(element: any) {
     super.element(element, Number(element.getAttribute('title')))
   }
 }
 
-const getEpochTimeFromDate = (dateString) => {
+const getEpochTimeFromDate = (dateString: string): number => {
   return new Date(dateString).getTime()/1000
 }
 
@@ -402,7 +421,7 @@ const match_created = regexWithSpaceOnLeftAndRight('live-timestamp')
 const match_edited = regexWithSpaceOnLeftAndRight('edited-timestamp')
 
 class Times extends ItemsMeta {
-  element(element) {
+  element(element: any) {
     super.element(element)
     const classes = element.getAttribute('class')
     let field
@@ -421,7 +440,7 @@ class Times extends ItemsMeta {
 }
 
 class Quarantined extends ItemsMeta {
-  element(element) {
+  element(element: any) {
     super.element(element)
     const last_sub = this.last.subreddit
     if (last_sub) {
@@ -434,26 +453,28 @@ class Quarantined extends ItemsMeta {
 }
 
 class MetaRobots extends ErrorCollector {
-  constructor(url) {
+  is_removed: boolean
+  constructor(url: string) {
     super(url)
     this.is_removed = false
   }
-  element(element) {
+  element(element: any) {
     this.is_removed = true
   }
 }
 
 class ThreadPageAuthor extends ErrorCollector {
-  constructor(url) {
+  author: string
+  constructor(url: string) {
     super(url)
     this.author = ''
   }
-  text({text}) {
+  text({text}: {text: string}) {
     this.author += text.trim()
   }
 }
 
-export const getItems_fromOld = async path => {
+export const getItems_fromOld = async (path: string) => {
   const url = oldReddit + path
 
   const response = await fetch(url, redditHTMLRequestOptions)
@@ -495,7 +516,7 @@ export const getItems_fromOld = async path => {
   }
 }
 
-const getCommentsInfo_fromOld = async (ids) => {
+const getCommentsInfo_fromOld = async (ids: string[]) => {
   const url = oldReddit + '/api/info?id='+ids.join(',')
   const response = await fetch(url, {
     'Accept-Language': 'en',
@@ -525,7 +546,7 @@ const getCommentsInfo_fromOld = async (ids) => {
 
 // Exported function for lookupItemsByID fallback - parses HTML from old.reddit.com/api/info
 // Returns array of {data: item} to match JSON API format
-export const getItemsById_fromOldHTML = async (ids, addToPendingPostQueue = null) => {
+export const getItemsById_fromOldHTML = async (ids: string | string[], addToPendingPostQueue: ((postIds: string[]) => void) | null = null) => {
   const idsArray = Array.isArray(ids) ? ids : ids.split(',')
   
   // Separate posts (t3_) from comments (t1_)
@@ -571,7 +592,7 @@ export const getItemsById_fromOldHTML = async (ids, addToPendingPostQueue = null
   return itemsObj.items.map(item => ({data: item}))
 }
 
-export const getPost_fromOld = async (path) => {
+export const getPost_fromOld = async (path: string) => {
   const url = oldReddit + path
   const response = await fetch(url, redditHTMLRequestOptions)
   if (! response.ok) {

@@ -1,8 +1,8 @@
-import {goToOptions, getFullIDsFromURL, createNotification} from './common.js'
+import {goToOptions, getFullIDsFromURL, createNotification} from './common'
 import {getSubscribedUsers_withSeenAndUnseenIDs,
         subscribeId, unsubscribeId,
-        markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen} from './storage.js'
-import {setCurrentStateForId} from './monitoring.js'
+        markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen} from './storage'
+import {setCurrentStateForId} from './monitoring'
 import browser from 'webextension-polyfill'
 
 

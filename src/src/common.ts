@@ -1,12 +1,28 @@
 import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
-        getSubscribedUsers_withUnseenIDs } from './storage.js'
+        getSubscribedUsers_withUnseenIDs } from './storage'
 import browser from 'webextension-polyfill'
+
+export interface RedditItem {
+    name: string
+    author: string
+    body?: string
+    title?: string
+    created_utc: number
+    is_robot_indexable?: boolean
+    removal_reason?: string | null
+    locked?: boolean
+    link_id?: string
+    subreddit?: string
+    quarantine?: boolean
+    permalink?: string
+    [key: string]: any
+}
 
 export const ALARM_NAME = 'notifyme'
 const maxRedditContentLength = 300
 const ACTION_API = __BUILT_FOR__ === 'chrome' ? 'action' : 'browserAction'
 
-export const setWarningBadge = (errorStatus) => {
+export const setWarningBadge = (errorStatus?: string) => {
     try {
         chrome[ACTION_API].setBadgeText({text: '!'})
         chrome[ACTION_API].setBadgeBackgroundColor({color: '#ffcc00'})
@@ -17,7 +33,7 @@ export const setWarningBadge = (errorStatus) => {
 }
 
 // https://stackoverflow.com/questions/25933556/chrome-extension-open-new-tab-when-browser-opened-in-background-mac/25933964#25933964
-export const createTab = (url) => {
+export const createTab = (url: string) => {
     chrome.tabs.create({url:url}, (tab) => {
         if(! tab) {
             // probably no window available
@@ -32,7 +48,7 @@ export const createTab = (url) => {
     })
 }
 
-export const getFullIDsFromURL = (url) => {
+export const getFullIDsFromURL = (url: string): [string | undefined, string | undefined, string | undefined, string | undefined] => {
     const path = url.replace(/https:\/\/[^/]*re(ve)?ddit.com/, '')
     return getFullIDsFromPath(path)
 }
@@ -40,7 +56,7 @@ export const getFullIDsFromURL = (url) => {
 const regex_pc = /^\/(v|r|user)\/([^/]+)\/comments\/([^/]+)\/[^/]*(?:\/([^/?&#]+))?/
 const regex_user = /^\/(?:user|y|u)\/([^/?&#]+)\/?/
 
-export const getFullIDsFromPath = (path) => {
+export const getFullIDsFromPath = (path: string): [string | undefined, string | undefined, string | undefined, string | undefined] => {
     let postID = undefined, commentID = undefined, user = undefined, subreddit = undefined
     const matches_pc = path.match(regex_pc)
     const matches_user = path.match(regex_user)
@@ -59,12 +75,12 @@ export const getFullIDsFromPath = (path) => {
     return [postID, commentID, user, subreddit]
 }
 
-export const reformatRedditText = (body) => {
+export const reformatRedditText = (body: string): string => {
     return body.replace(/&amp;/g, '&').replace(/&gt;/g, '>').replace(/&lt;/g, '<')
         .replace(/\s+/g, ' ').substr(0, maxRedditContentLength)
 }
 
-export const isRemovedItem = (item) => {
+export const isRemovedItem = (item: RedditItem): boolean => {
     if (item.removal_reason) {
         return true
     }
@@ -75,35 +91,35 @@ export const isRemovedItem = (item) => {
     }
 }
 
-export const isComment = (name) => {
+export const isComment = (name: string): boolean => {
     return name.substr(0,2) === 't1'
 }
 // Checking that author starts with '[' for userpage-driven content is sufficient to prove comment is removed.
 // This way, the check is indifferent to language, in case Accept-Language is not set to 'en'
 // Also check body because comments whose author account is deleted may have valid unremoved body
-export const isRemovedComment = (item) => {
+export const isRemovedComment = (item: RedditItem): boolean => {
     return (item.author.replace(/\\/g, '')[0] === '['
         &&    item.body.replace(/\\/g, '')[0] === '[')
 }
-export const isUserDeletedComment = (item) => {
+export const isUserDeletedComment = (item: RedditItem): boolean => {
     return (item.body.replace(/\\/g, '') === '[deleted]' &&
             item.author.replace(/\\/g, '') === '[deleted]')
 }
-export const isUserDeletedPost = (item) => {
+export const isUserDeletedPost = (item: RedditItem): boolean => {
     return (item.is_robot_indexable === false) && item.author.replace(/\\/g, '') === '[deleted]'
 }
-export const isUserDeletedItem = (item) => {
+export const isUserDeletedItem = (item: RedditItem): boolean => {
     if (isComment(item.name)) {
         return isUserDeletedComment(item)
     } else {
         return isUserDeletedPost(item)
     }
 }
-export const isRemovedPost = (item) => {
+export const isRemovedPost = (item: RedditItem): boolean => {
     return item.is_robot_indexable === false
 }
 
-export const trimDict_by_numberValuedAttribute = (dict, maxNumItems, numberValuedAttribute) => {
+export const trimDict_by_numberValuedAttribute = (dict: Record<string, any>, maxNumItems: number, numberValuedAttribute: string): Record<string, any> => {
     const array = sortDict_by_numberValuedAttribute(dict, numberValuedAttribute)
 
     const shortenedArray = array.slice(0, maxNumItems)
@@ -114,7 +130,7 @@ export const trimDict_by_numberValuedAttribute = (dict, maxNumItems, numberValue
     return newDict
 }
 
-export const sortDict_by_numberValuedAttribute = (dict, numberValuedAttribute) => {
+export const sortDict_by_numberValuedAttribute = (dict: Record<string, any>, numberValuedAttribute: string): [string, any][] => {
     let array = Object.keys(dict).map(key => {
         return [key, dict[key]]
     })
@@ -125,7 +141,10 @@ export const sortDict_by_numberValuedAttribute = (dict, numberValuedAttribute) =
 }
 
 export class ItemForStorage {
-    constructor(created_utc, unseen, post_id = undefined, object = null) {
+    c: number
+    u: boolean
+    p?: string
+    constructor(created_utc: number, unseen: boolean, post_id?: string, object: any = null) {
         if (object) {
             this.c = object.c
             this.u = object.u
@@ -142,7 +161,12 @@ export class ItemForStorage {
 }
 
 export class ChangeForStorage {
-    constructor({ id = null, observed_utc = null, change_type = null, seen_count = null, object = null }) {
+    i: string | null
+    o: number | null
+    g: number | null
+    n: number | null
+    user?: string
+    constructor({ id = null, observed_utc = null, change_type = null, seen_count = null, object = null }: { id?: string | null, observed_utc?: number | null, change_type?: number | null, seen_count?: number | null, object?: any }) {
         if (object) {
             this.i = object.i
             this.o = object.o
@@ -172,7 +196,13 @@ export class ChangeForStorage {
 }
 
 export class LocalStorageItem {
-    constructor({ item = null, observed_utc = null, object = null }) {
+    t: string
+    o: number | null
+    c: number
+    n: number
+    r: number
+    p?: string
+    constructor({ item = null, observed_utc = null, object = null }: { item?: RedditItem | null, observed_utc?: number | null, object?: any }) {
         if (object) {
             this.t = object.t
             this.o = object.o
@@ -198,7 +228,7 @@ export class LocalStorageItem {
             }
         }
     }
-    setText(text) {this.t = reformatRedditText(text)}
+    setText(text: string) {this.t = reformatRedditText(text)}
     getText() { return this.t }
     getObservedUTC() { return this.o }
     getCreatedUTC() { return this.c }
@@ -221,12 +251,12 @@ export class LocalStorageItem {
     }
 }
 
-export function setAlarm(periodInMinutes) {
+export function setAlarm(periodInMinutes: number) {
     chrome.alarms.clear(ALARM_NAME)
     chrome.alarms.create(ALARM_NAME, {delayInMinutes: 1, periodInMinutes: periodInMinutes})
 }
 
-export function alphaLowerSort (a, b) {
+export function alphaLowerSort (a: string, b: string): number {
     var textA = a.toLowerCase()
     var textB = b.toLowerCase()
 
@@ -245,17 +275,17 @@ export function goToOptions () {
 }
 
 
-export function showError(message, selector) {
+export function showError(message: string, selector: string) {
     $('<div class="rr-error">'+message+'</div>').appendTo(selector).delay(2400).fadeTo(400, 0, function() {$(this).remove()})
 }
 
 //noinspection JSUnusedLocalSymbols
-export function pprint(obj) {
+export function pprint(obj: any) {
     console.log(JSON.stringify(obj, null, '\t'))
 }
 
 
-export const getPrettyTimeLength = (seconds) => {
+export const getPrettyTimeLength = (seconds: number): string | undefined => {
     const thresholds = [[60, 'second', 'seconds'], [60, 'minute', 'minutes'], [24, 'hour', 'hours'], [7, 'day', 'days'],
     [365/12/7, 'week', 'weeks'], [12, 'month', 'months'], [10, 'year', 'years'],
     [10, 'decade', 'decades'], [10, 'century', 'centuries'], [10, 'millenium', 'millenia']]
@@ -288,12 +318,12 @@ export const getPrettyTimeLength = (seconds) => {
     }
 }
 
-export const getPrettyDate = (createdUTC) => {
+export const getPrettyDate = (createdUTC: number): string => {
     const seconds = Math.floor((new Date).getTime()/1000)-createdUTC
     return getPrettyTimeLength(seconds) + ' ago'
 }
 
-export const createNotification = ({notificationId, title, message}) => {
+export const createNotification = ({notificationId, title, message}: {notificationId: string, title: string, message: string}) => {
     console.log(`createNotification called: ${notificationId} - ${title} - ${message}`)
     if (location.protocol.match(/^http/)) {
         console.log('Sending notification via message passing')

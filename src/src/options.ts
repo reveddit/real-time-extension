@@ -1,12 +1,12 @@
-import {showError,countUnseen_updateBadge_background,saveSubscriptions} from './common.js'
-import {getOptions, INTERVAL_DEFAULT, SEEN_COUNT_DEFAULT, saveOptions} from './storage.js'
+import {showError,countUnseen_updateBadge_background,saveSubscriptions} from './common'
+import {getOptions, INTERVAL_DEFAULT, SEEN_COUNT_DEFAULT, saveOptions} from './storage'
 
-import {setAlarm, ALARM_NAME} from './common.js'
+import {setAlarm, ALARM_NAME} from './common'
 import browser from 'webextension-polyfill'
 
 
 
-getOptions((users, others, options) => {
+getOptions((users: string[], others: string[], options: Record<string, any>) => {
     displayOther()
     $('#interval').val(options.interval);
     $('#seen_count').val(options.seen_count || SEEN_COUNT_DEFAULT);

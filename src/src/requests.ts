@@ -1,6 +1,6 @@
-import {getOptions, addToPendingPostQueue} from './storage.js'
+import {getOptions, addToPendingPostQueue} from './storage'
 import browser from 'webextension-polyfill'
-import {getItemsById_fromOldHTML} from './parse_html/old.js'
+import {getItemsById_fromOldHTML} from './parse_html/old'
 
 const clientID = 'SEw1uvRd6kxFEw'
 const oauth_reddit = 'https://oauth.reddit.com/'
@@ -10,7 +10,7 @@ const WWW_REVEDDIT = 'https://wred.reveddit.com/'
 
 const NO_AUTH = 'none'
 
-export const lookupItemsByID = (ids, auth, monitor_quarantined = false, monitor_quarantined_remote = false, quarantined_subreddits = []) => {
+export const lookupItemsByID = (ids: string | string[], auth: any, monitor_quarantined = false, monitor_quarantined_remote = false, quarantined_subreddits: string[] = []) => {
     const params = {id:ids, raw_json:1}
     if (monitor_quarantined_remote) {
         params.quarantined_subreddits = quarantined_subreddits.join(',')
@@ -21,7 +21,7 @@ export const lookupItemsByID = (ids, auth, monitor_quarantined = false, monitor_
 }
 
 // Helper to try fetching via content script on a Reddit tab
-const tryContentScriptFetch = async (ids) => {
+const tryContentScriptFetch = async (ids: string | string[]) => {
     // Find a Reddit tab to use for the fetch
     const tabs = await browser.tabs.query({url: ['*://*.reddit.com/*']})
     const supportedTabs = tabs.filter(tab => {
@@ -49,7 +49,7 @@ const tryContentScriptFetch = async (ids) => {
 }
 
 // Function that tries multiple fallbacks: www JSON -> content script -> old HTML -> OAuth
-export const lookupItemsByID_withFallback = (path, search, auth, monitor_quarantined = false, monitor_quarantined_remote = false, ids = '') => {
+export const lookupItemsByID_withFallback = (path: string, search: string, auth: any, monitor_quarantined = false, monitor_quarantined_remote = false, ids: string | string[] = '') => {
     // First try www.reddit.com without authentication
     const wwwUrl = www_reddit + path + '.json' + search
     const wwwOptions = {credentials: 'omit'}
@@ -98,7 +98,7 @@ const cookieDetails_redditSession = {name: 'reddit_session', url: 'https://reddi
 
 const acceptable_setCookieDetails = ['name', 'value', 'domain', 'path', 'secure', 'httpOnly', 'storeId']
 
-const getSettableCookie = (cookie, url = 'https://reddit.com') => {
+const getSettableCookie = (cookie: any, url = 'https://reddit.com') => {
     if (! cookie) {
         return cookie
     }
@@ -117,7 +117,7 @@ const getSettableCookie = (cookie, url = 'https://reddit.com') => {
 
 //monitor_quarantined -> when true, client sets cookie (used for every look up)
 //monitor_quarantined_remote -> when true, remote server sets cookie (used once in awhile)
-const fetch_forReddit = async (url, options, monitor_quarantined = false) => {
+const fetch_forReddit = async (url: string, options?: any, monitor_quarantined = false) => {
     let cookie_redditSession
     await browser.cookies.set({domain: 'reddit.com', url: 'https://reddit.com', name: '_options', value: '{%22pref_quarantine_optin%22:true}'})
     if (monitor_quarantined) {
@@ -146,7 +146,7 @@ const fetch_forReddit = async (url, options, monitor_quarantined = false) => {
     return result
 }
 
-export const lookupItemsByUser = (user, after, sort, timeSpan, monitor_quarantined, monitor_quarantined_remote, auth) => {
+export const lookupItemsByUser = (user: string, after: string, sort: string, timeSpan: string, monitor_quarantined: boolean, monitor_quarantined_remote: boolean, auth: any) => {
     const params = {limit: 100, sort, raw_json:1}
     if (after) params.after = after
     if (timeSpan) params.t = timeSpan
@@ -155,7 +155,7 @@ export const lookupItemsByUser = (user, after, sort, timeSpan, monitor_quarantin
     return fetch_forReddit(...getFetchParams(path, search, auth, monitor_quarantined_remote), monitor_quarantined)
 }
 
-export const lookupItemsByLoggedInUser = (after, sort, timeSpan, monitor_quarantined, monitor_quarantined_remote, auth) => {
+export const lookupItemsByLoggedInUser = (after: string, sort: string, timeSpan: string, monitor_quarantined: boolean, monitor_quarantined_remote: boolean, auth: any) => {
     const params = {limit: 100, sort, raw_json:1}
     if (after) params.after = after
     if (timeSpan) params.t = timeSpan
@@ -165,7 +165,7 @@ export const lookupItemsByLoggedInUser = (after, sort, timeSpan, monitor_quarant
 }
 
 // Alternative approach: use the same method as getLoggedinUser but with proper authentication
-export const lookupItemsByLoggedInUserWithAuth = (after, sort, timeSpan, monitor_quarantined, monitor_quarantined_remote, auth) => {
+export const lookupItemsByLoggedInUserWithAuth = (after: string, sort: string, timeSpan: string, monitor_quarantined: boolean, monitor_quarantined_remote: boolean, auth: any) => {
     const params = {limit: 100, sort, raw_json:1}
     if (after) params.after = after
     if (timeSpan) params.t = timeSpan
@@ -203,14 +203,14 @@ export const lookupItemsByLoggedInUserWithAuth = (after, sort, timeSpan, monitor
     })
 }
 
-export const handleFetchErrors = (response) => {
+export const handleFetchErrors = (response: Response) => {
     if (! response.ok) {
         throw Error(response.statusText)
     }
     return response.json()
 }
 
-const getRedditData = (data) => {
+const getRedditData = (data: any) => {
     if (data && data.user && data.user.items) { // format from cred2.reveddit.com
         return data
     }
@@ -220,7 +220,7 @@ const getRedditData = (data) => {
     return data.data.children
 }
 
-export const getRedditToken = (data) => {
+export const getRedditToken = (data: any) => {
     if (! data || ! data.access_token) {
         throw Error('access token is not defined')
     }
@@ -228,7 +228,7 @@ export const getRedditToken = (data) => {
 }
 
 export const getAuth = (monitor_quarantined_remote = false) => {
-    return getOptions((users, others, options) => {
+    return getOptions((users: string[], others: string[], options: Record<string, any>) => {
         var use_this_clientID = clientID
         if (options.custom_clientid) {
             use_this_clientID = options.custom_clientid
@@ -293,7 +293,7 @@ export const getLocalAuth = () => {
     })
 }
 
-export const getCookie = ({url, name}) => {
+export const getCookie = ({url, name}: {url: string, name: string}) => {
     if (location.protocol.match(/^http/)) {
         return browser.runtime.sendMessage({
             action: 'get-cookie',
@@ -308,7 +308,7 @@ export const getCookie = ({url, name}) => {
     }
 }
 
-const getFetchParams = (path, search, auth, monitor_quarantined_remote) => {
+const getFetchParams = (path: string, search: string, auth: any, monitor_quarantined_remote: boolean): [string, any?] => {
     if (! auth || auth === NO_AUTH) {
         let url = (monitor_quarantined_remote ? WWW_REVEDDIT : www_reddit)+path
         if (path === 'api/info') {
@@ -409,7 +409,7 @@ export const getLoggedinUser = () => {
     })
 }
 
-const getRedditUsername = (data) => {
+const getRedditUsername = (data: any) => {
     if (! data || ! data.data || ! data.data.name) {
         throw Error('reddit username is not defined')
     }

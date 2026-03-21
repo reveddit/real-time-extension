@@ -1,12 +1,12 @@
 import {goToOptions, setAlarm, ALARM_NAME,
-        createNotification, updateBadgeUnseenCount, createTab } from './src/common.js'
-import {checkForChanges} from './src/monitoring.js'
-import {lookupItemsByID, getLoggedinUser, getCookie, getAuth, storeRedditCookies} from './src/requests.js'
+        createNotification, updateBadgeUnseenCount, createTab } from './src/common'
+import {checkForChanges} from './src/monitoring'
+import {lookupItemsByID, getLoggedinUser, getCookie, getAuth, storeRedditCookies} from './src/requests'
 import {initStorage, INTERVAL_DEFAULT, subscribeUser,
-        getUnseenIDs_thing, markThingAsSeen } from './src/storage.js'
-import {setupContextualMenu} from './src/contextMenus.js'
+        getUnseenIDs_thing, markThingAsSeen } from './src/storage'
+import {setupContextualMenu} from './src/contextMenus'
 import browser from 'webextension-polyfill'
-import { getItems_fromOld, getPost_fromOld } from './src/parse_html/old.js'
+import { getItems_fromOld, getPost_fromOld } from './src/parse_html/old'
 setupContextualMenu()
 
 
@@ -242,7 +242,7 @@ function subscribeToLoggedInUser_or_promptForUser() {
     })
 }
 
-function triggerImmediateLookupOnce(user) {
+function triggerImmediateLookupOnce(user: string) {
     chrome.storage.sync.get(['user_initial_lookup_done'], (result) => {
         const lookupMap = result.user_initial_lookup_done || {}
         if (! lookupMap[user]) {
@@ -259,7 +259,7 @@ function triggerImmediateLookupOnce(user) {
     })
 }
 
-const notificationClicked = (thing) => {
+const notificationClicked = (thing: string) => {
     const isUser = thing === 'other' ? false : true
     chrome.storage.sync.get(null, (storage) => {
         const unseenIDs = getUnseenIDs_thing(thing, isUser, storage)

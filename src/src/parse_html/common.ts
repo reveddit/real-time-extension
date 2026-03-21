@@ -1,7 +1,7 @@
 // consume() from https://qwtel.com/posts/software/how-to-use-htmlrewriter-for-web-scraping/
 // also handy: https://blog.csdn.net/wk3368/article/details/129483898
 
-export const consume = async (stream) => {
+export const consume = async (stream: ReadableStream) => {
   const reader = stream.getReader()
   while (!(await reader.read()).done) { /* NOOP */ }
 }
@@ -18,11 +18,13 @@ export const redditHTMLRequestOptions = {
 }
 
 export class ErrorCollector {
-  constructor(url) {
+  errors: Record<string, number>
+  url: string
+  constructor(url: string) {
     this.errors = {}
     this.url = url
   }
-  addError(error_name) {
+  addError(error_name: string) {
     this.errors[error_name] = (this.errors[error_name] || 0) + 1
   }
   printErrors() {

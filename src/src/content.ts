@@ -1,13 +1,13 @@
-import {getSubscribedUsers_withSeenAndUnseenIDs, subscribeUser} from './storage.js'
-import {redditModifications} from './content-reddit.js'
-import {revdditModifications} from './content-revddit.js'
-import {getLoggedinUser} from './requests.js'
+import {getSubscribedUsers_withSeenAndUnseenIDs, subscribeUser} from './storage'
+import {redditModifications} from './content-reddit'
+import {revdditModifications} from './content-revddit'
+import {getLoggedinUser} from './requests'
 import browser from 'webextension-polyfill'
 
 (function () {
     const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
 
-    function queryUser (message, sender, response) {
+    function queryUser (message: any, sender: any, response: any) {
         if (message.action === 'query-user') {
             return getLoggedinUser()
             .then((user) => {

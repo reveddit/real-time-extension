@@ -13,7 +13,7 @@
         "forceConsistentCasingInFileNames": true,
         "resolveJsonModule": true,
         "isolatedModules": true,
-        "types": ["chrome-types"]
+        "types": ["chrome-types", "@types/jquery"]
     },
     "include": [
         "src/**/*.ts",

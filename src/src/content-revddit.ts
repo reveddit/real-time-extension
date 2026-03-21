@@ -1,10 +1,10 @@
-import {markIDsAsSeenIfSubscribed} from './storage.js'
-import {setTextAndFunction_subscribe,setTextAndFunction_unsubscribe} from './content-common.js'
+import {markIDsAsSeenIfSubscribed} from './storage'
+import {setTextAndFunction_subscribe,setTextAndFunction_unsubscribe} from './content-common'
 import browser from 'webextension-polyfill'
 
 const id_match = /^t[13]_.+/
 
-export const revdditModifications = (storage, user, isUserPage, isInfoPage) => {
+export const revdditModifications = (storage: Record<string, any>, user: string, isUserPage: boolean, isInfoPage: boolean) => {
     if (isUserPage || isInfoPage) {
         waitForAddedNode_withMinAttValue('numItemsLoaded',
                                          document.querySelector('.main'),
@@ -30,7 +30,7 @@ export const revdditModifications = (storage, user, isUserPage, isInfoPage) => {
 
 }
 
-const addSubscribeLinks_revddit_comments = (elements, subscriptions) => {
+const addSubscribeLinks_revddit_comments = (elements: any, subscriptions: Record<string, any>) => {
     $(elements).each((idx, targetedElement) => {
         const element = targetedElement.parentNode
         if (element.classList.contains('deleted')) return
@@ -49,7 +49,7 @@ const addSubscribeLinks_revddit_comments = (elements, subscriptions) => {
     })
 }
 
-const addSubscribeLinks_revddit_posts = (elements, subscriptions) => {
+const addSubscribeLinks_revddit_posts = (elements: any, subscriptions: Record<string, any>) => {
     $(elements).each((idx, element) => {
         const id = element.id
         const links = element.querySelector('.post-links')
@@ -61,7 +61,7 @@ const addSubscribeLinks_revddit_posts = (elements, subscriptions) => {
     })
 }
 
-function waitForAddedNode_withMinAttValue(id, parent, attribute, minAttributeValue, done) {
+function waitForAddedNode_withMinAttValue(id: string, parent: Element | null, attribute: string, minAttributeValue: number, done: () => void) {
     new MutationObserver(function(mutations) {
         var el = document.getElementById(id);
         if (el && el.getAttribute(attribute) >= minAttributeValue) {
@@ -74,7 +74,7 @@ function waitForAddedNode_withMinAttValue(id, parent, attribute, minAttributeVal
     });
 }
 
-function findIDsForUserAndMark(storage, user, isUserPage) {
+function findIDsForUserAndMark(storage: Record<string, any>, user: string, isUserPage: boolean) {
     const seen_removed_ids = getIDsHashFromSelector('.comment.removed, .post.removed, .comment.deleted, .post.deleted')
     const seen_approved_ids = getIDsHashFromSelector('.comment:not(.removed), .post:not(.removed)')
     const seen_locked_ids = getIDsHashFromSelector('.comment.locked, .post.locked')
@@ -89,7 +89,7 @@ function findIDsForUserAndMark(storage, user, isUserPage) {
     })
 }
 
-function getIDsHashFromSelector(selector) {
+function getIDsHashFromSelector(selector: string) {
     const hash = {}
     $(selector).each(function() {
         const id = this.getAttribute('id')

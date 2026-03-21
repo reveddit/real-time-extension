@@ -1,4 +1,4 @@
-import {alphaLowerSort, ItemForStorage, LocalStorageItem, trimDict_by_numberValuedAttribute} from './common.js'
+import {alphaLowerSort, ItemForStorage, LocalStorageItem, trimDict_by_numberValuedAttribute} from './common'
 import browser from 'webextension-polyfill'
 
 export const INTERVAL_DEFAULT = 1;
@@ -19,9 +19,9 @@ export const UNLOCKED = 4
 export const EDITED = 5
 export const DELETED = 6
 
-const trackTypes = {'changes': [], 'removed': {}, 'approved': {}, 'locked': {}, 'unlocked': {}};
+const trackTypes: Record<string, any[] | Record<string, any>> = {'changes': [], 'removed': {}, 'approved': {}, 'locked': {}, 'unlocked': {}};
 
-const getObjectName = (type, thing, isUser) => {
+const getObjectName = (type: string, thing: string, isUser: boolean): string => {
     if (isUser) {
         return type+'_u_'+thing
     } else {
@@ -29,13 +29,13 @@ const getObjectName = (type, thing, isUser) => {
     }
 }
 
-const addTrackTypes = (object, thing, isUser=true) => {
+const addTrackTypes = (object: Record<string, any>, thing: string, isUser=true) => {
     Object.keys(trackTypes).forEach(type => {
         object[getObjectName(type, thing, isUser)] = trackTypes[type]
     })
 }
 
-export const getObjectNamesForThing = (thing, isUser=true) => {
+export const getObjectNamesForThing = (thing: string, isUser=true): Record<string, string> => {
     const names = {}
     Object.keys(trackTypes).forEach(type => {
         names[type] = getObjectName(type, thing, isUser)
@@ -43,7 +43,7 @@ export const getObjectNamesForThing = (thing, isUser=true) => {
     return names
 }
 
-export const getOldestDateKey = (thing, isUser) => {
+export const getOldestDateKey = (thing: string, isUser: boolean): string => {
     if (isUser) {
         return 'oldest_date_u_' + thing
     } else {
@@ -51,7 +51,7 @@ export const getOldestDateKey = (thing, isUser) => {
     }
 }
 
-export const getUserInit = (user) => {
+export const getUserInit = (user: string): Record<string, any> => {
     const result = {}
     addTrackTypes(result, user, true)
     return result
@@ -90,7 +90,7 @@ export const markEverythingAsSeen = () => {
     })
 }
 
-export const markThingAsSeen = (storage, thing, isUser) => {
+export const markThingAsSeen = (storage: Record<string, any>, thing: string, isUser: boolean) => {
     const keys = getObjectNamesForThing(thing, isUser)
     delete keys['changes']
     const fullKeynames = []
@@ -104,7 +104,7 @@ export const markThingAsSeen = (storage, thing, isUser) => {
     })
 }
 
-export const setStorageUpdateBadge = (storage) => {
+export const setStorageUpdateBadge = (storage: Record<string, any>) => {
     return browser.storage.sync.set(storage)
     .then(res => {
         return browser.runtime.sendMessage({action: 'update-badge'})
@@ -112,7 +112,7 @@ export const setStorageUpdateBadge = (storage) => {
     .catch(() => {})
 }
 
-const markSeenForStorageKey = (storage, storage_keys, key, ids, is_user) => {
+const markSeenForStorageKey = (storage: Record<string, any>, storage_keys: Record<string, string>, key: string, ids: Record<string, any>, is_user: boolean) => {
     const storage_item = storage[storage_keys[key]]
     Object.keys(ids).forEach(id => {
         if (id in storage_item) {
@@ -123,7 +123,7 @@ const markSeenForStorageKey = (storage, storage_keys, key, ids, is_user) => {
     })
 }
 
-export const markIDsAsSeenIfSubscribed = (storage, user, is_user, removed_ids, approved_ids, locked_ids, unlocked_ids, callback = () => {}) => {
+export const markIDsAsSeenIfSubscribed = (storage: Record<string, any>, user: string, is_user: boolean, removed_ids: Record<string, any>, approved_ids: Record<string, any>, locked_ids: Record<string, any>, unlocked_ids: Record<string, any>, callback: () => void = () => {}) => {
     const storage_keys = getObjectNamesForThing(user, is_user)
     delete storage_keys['changes']
     const user_subscribed = storage.user_subscriptions[user]
@@ -137,7 +137,7 @@ export const markIDsAsSeenIfSubscribed = (storage, user, is_user, removed_ids, a
 
 }
 
-export const subscribeId = (id, callback = () => {}) => {
+export const subscribeId = (id: string, callback: () => void = () => {}) => {
     const key = 'other_subscriptions'
     chrome.storage.sync.get(key, (result) => {
         result[key][id] = {t: Math.floor(new Date().getTime()/1000)}
@@ -147,7 +147,7 @@ export const subscribeId = (id, callback = () => {}) => {
         chrome.storage.sync.set({[key]: itemsToSave}, callback)
     })
 }
-export const unsubscribeId = (id, callback = () => {}) => {
+export const unsubscribeId = (id: string, callback: () => void = () => {}) => {
     const mainKey = 'other_subscriptions'
     const otherKeys = getObjectNamesForThing('other', false)
     delete otherKeys['changes']
@@ -163,14 +163,14 @@ export const unsubscribeId = (id, callback = () => {}) => {
         })
     })
 }
-export const getSubscribedIds = (callback = () => {}) => {
+export const getSubscribedIds = (callback: (ids: string[]) => void = () => {}) => {
     const key = 'other_subscriptions'
     chrome.storage.sync.get(key, (result) => {
         callback(Object.keys(result[key]))
     })
 }
 
-export const subscribeUser = (user, callbackSuccess = () => {}, callbackError = () => {}) => {
+export const subscribeUser = (user: string, callbackSuccess: () => void = () => {}, callbackError: (msg: string) => void = () => {}) => {
     const userInit = getUserInit(user)
     chrome.storage.sync.get('user_subscriptions', (result) => {
         const user_subscriptions = result.user_subscriptions
@@ -187,7 +187,7 @@ export const subscribeUser = (user, callbackSuccess = () => {}, callbackError = 
     })
 }
 
-export const unsubscribeUser = (user, callback) => {
+export const unsubscribeUser = (user: string, callback: () => void) => {
     const userKeys = Object.keys(getUserInit(user))
     chrome.storage.sync.get(['user_subscriptions', 'user_unsubscriptions'], (result) => {
         const {user_subscriptions, user_unsubscriptions = {}} = result
@@ -203,7 +203,7 @@ export const unsubscribeUser = (user, callback) => {
     })
 }
 
-export const initStorage = (callback) => {
+export const initStorage = (callback: () => void) => {
     chrome.storage.sync.get(null, (storage) => {
         if (Object.keys(storage).length === 0) {
             chrome.storage.sync.set(getStorageInit(), callback)
@@ -213,7 +213,7 @@ export const initStorage = (callback) => {
     })
 }
 
-export const getSubscribedUsers_withSeenAndUnseenIDs = (callback) => {
+export const getSubscribedUsers_withSeenAndUnseenIDs = (callback: (users_withIDs: Record<string, any>, storage: Record<string, any>) => void) => {
     chrome.storage.sync.get(null, (storage) => {
         // Defensive check: ensure storage has required properties
         if (!storage || !storage.user_subscriptions) {
@@ -232,7 +232,7 @@ export const getSubscribedUsers_withSeenAndUnseenIDs = (callback) => {
     })
 }
 
-export const getSubscribedUsers_withUnseenIDs = (callback) => {
+export const getSubscribedUsers_withUnseenIDs = (callback: (users_withIDs: Record<string, any>) => void) => {
     chrome.storage.sync.get(null, (storage) => {
         const users = Object.keys(storage.user_subscriptions);
         const users_withIDs = {}
@@ -244,12 +244,12 @@ export const getSubscribedUsers_withUnseenIDs = (callback) => {
     })
 }
 
-export const getUnseenIDs_thing = (thing, isUser, storage) => {
+export const getUnseenIDs_thing = (thing: string, isUser: boolean, storage: Record<string, any>) => {
     return getIDs_thing(thing, isUser, storage)['unseen']
 }
 
 // Get IDs of items whose status has changed
-export const getIDs_thing = (thing, isUser, storage) => {
+export const getIDs_thing = (thing: string, isUser: boolean, storage: Record<string, any>) => {
     // Defensive checks for options
     const options = storage.options || {}
     const removal_status = options.removal_status || {}
@@ -274,7 +274,7 @@ export const getIDs_thing = (thing, isUser, storage) => {
     return {unseen: Object.keys(unseenIDs), seen: Object.keys(seenIDs)}
 }
 
-export const getLocalStorageItems = (thing, isUser) => {
+export const getLocalStorageItems = (thing: string, isUser: boolean) => {
     const key_localStorage = getObjectName('items', thing, isUser)
     return browser.storage.local.get({[key_localStorage]: {}})
     .then(localStorageItems => {
@@ -282,12 +282,12 @@ export const getLocalStorageItems = (thing, isUser) => {
     })
 }
 
-export const saveLocalStorageItems = (thing, isUser, itemsToSave) => {
+export const saveLocalStorageItems = (thing: string, isUser: boolean, itemsToSave: Record<string, any>) => {
     const key_localStorage = getObjectName('items', thing, isUser)
     return browser.storage.local.set({[key_localStorage]: itemsToSave})
 }
 
-export const addLocalStorageItems = (items, thing, isUser) => {
+export const addLocalStorageItems = (items: Record<string, any>, thing: string, isUser: boolean) => {
     const key_localStorage = getObjectName('items', thing, isUser)
     return chrome.storage.local.get({[key_localStorage]: {}}, (localStorageItems) => {
         const storedItems = localStorageItems[key_localStorage]
@@ -302,7 +302,7 @@ export const addLocalStorageItems = (items, thing, isUser) => {
     })
 }
 
-export const getItemFromLocalStorage = (thing, isUser, id, localStorage) => {
+export const getItemFromLocalStorage = (thing: string, isUser: boolean, id: string, localStorage: Record<string, any>) => {
     const key = getObjectName('items', thing, isUser)
     if (key in localStorage) {
         if (id in localStorage[key]) {
@@ -312,7 +312,7 @@ export const getItemFromLocalStorage = (thing, isUser, id, localStorage) => {
     return ''
 }
 
-export const getAllChanges = (callback) => {
+export const getAllChanges = (callback: (changesByUser: Record<string, any[]>) => void) => {
     chrome.storage.sync.get('user_subscriptions', (result) => {
         const keys = [getObjectName('changes', 'other', false)]
         const keyToUser_lookup = {changes_other: 'other'}
@@ -334,7 +334,7 @@ export const getAllChanges = (callback) => {
     })
 }
 
-export const getOptions = (callback) => {
+export const getOptions = (callback: (users: string[], others: string[], options: Record<string, any>) => any) => {
     return browser.storage.sync.get(['user_subscriptions', 'other_subscriptions', 'options'])
     .then(result => {
         const users = Object.keys(result.user_subscriptions)
@@ -344,8 +344,8 @@ export const getOptions = (callback) => {
     })
     .catch(console.log)
 }
-export const saveOptions = (seen_count, interval, custom_clientid, removed_track, removed_notify, locked_track, locked_notify,
-                            hide_subscribe, monitor_quarantined, callback) => {
+export const saveOptions = (seen_count: number, interval: number, custom_clientid: string, removed_track: boolean, removed_notify: boolean, locked_track: boolean, locked_notify: boolean,
+                            hide_subscribe: boolean, monitor_quarantined: boolean, callback: () => void) => {
     chrome.storage.sync.set({options: {
                                 seen_count,
                                 interval,
@@ -361,7 +361,7 @@ export const saveOptions = (seen_count, interval, custom_clientid, removed_track
 // Pending post queue for throttled HTML lookups when JSON API fails
 const PENDING_POSTS_KEY = 'pending_post_lookups'
 
-export const addToPendingPostQueue = async (postIds) => {
+export const addToPendingPostQueue = async (postIds: string[]) => {
     const result = await browser.storage.local.get({[PENDING_POSTS_KEY]: []})
     const existingQueue = result[PENDING_POSTS_KEY]
     const newQueue = [...new Set([...existingQueue, ...postIds])]
@@ -375,14 +375,14 @@ export const getNextPendingPost = async () => {
     return queue[0]
 }
 
-export const removeFromPendingPostQueue = async (postId) => {
+export const removeFromPendingPostQueue = async (postId: string) => {
     const result = await browser.storage.local.get({[PENDING_POSTS_KEY]: []})
     const queue = result[PENDING_POSTS_KEY]
     const newQueue = queue.filter(id => id !== postId)
     await browser.storage.local.set({[PENDING_POSTS_KEY]: newQueue})
 }
 
-export const removeMultipleFromPendingPostQueue = async (postIds) => {
+export const removeMultipleFromPendingPostQueue = async (postIds: string[]) => {
     const result = await browser.storage.local.get({[PENDING_POSTS_KEY]: []})
     const queue = result[PENDING_POSTS_KEY]
     const idsToRemove = new Set(postIds)

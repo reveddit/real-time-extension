@@ -1,11 +1,11 @@
-import {subscribeUser} from './storage.js'
-import {getLoggedinUser} from './requests.js'
+import {subscribeUser} from './storage'
+import {getLoggedinUser} from './requests'
 
 const $statusMessage = $('#status-message')
 const $instructions = $('#instructions')
 const $checkBtn = $('#check-connection')
 
-function setStatus(message, type) {
+function setStatus(message: string, type: string) {
     $statusMessage.text(message)
     $statusMessage.removeClass('checking success error').addClass(type)
 }

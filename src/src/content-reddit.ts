@@ -1,8 +1,8 @@
-import {getAuth, lookupItemsByID} from './requests.js'
-import {getFullIDsFromPath} from './common.js'
-import {setTextAndFunction_subscribe,setTextAndFunction_unsubscribe} from './content-common.js'
+import {getAuth, lookupItemsByID} from './requests'
+import {getFullIDsFromPath} from './common'
+import {setTextAndFunction_subscribe,setTextAndFunction_unsubscribe} from './content-common'
 import browser from 'webextension-polyfill'
-import {subscribeUser, MAX_SUBSCRIPTIONS} from './storage.js'
+import {subscribeUser, MAX_SUBSCRIPTIONS} from './storage'
 
 const USER_DELETED = 'rev-user-deleted'
 const MOD_REMOVED = 'rev-mod-removed'
@@ -10,10 +10,10 @@ const id_match_comment = /^t1_.+/
 const id_match_post = /^t3_.+/
 const defaultNewRedditTarget = 'shreddit-post'
 
-export const redditModifications = (other_subscriptions, hide_subscribe, monitor_quarantined, subscribed_users_lowercase, unsubscribed_users_lowercase) => {
+export const redditModifications = (other_subscriptions: Record<string, any>, hide_subscribe: boolean, monitor_quarantined: boolean, subscribed_users_lowercase: string[], unsubscribed_users_lowercase: string[]) => {
     const isNewReddit = Boolean(document.querySelector('head').getAttribute('prefix'))
     ifThreadPage_showRemovalStatus(isNewReddit, monitor_quarantined)
-    const subscribeIfNotUnsubscribed = (user) => {
+    const subscribeIfNotUnsubscribed = (user: string) => {
         const user_lc = user.toLowerCase()
         if (subscribed_users_lowercase.length < MAX_SUBSCRIPTIONS &&
             ! subscribed_users_lowercase.includes(user_lc) &&
@@ -92,7 +92,7 @@ const addDirectLinks_newReddit_comments = () => {
     setTimeout(processCommentsOnPageLoad, 10000)
 }
 
-const ifThreadPage_showRemovalStatus = (isNewReddit, monitor_quarantined, newRedditTarget = defaultNewRedditTarget, postData = {}) => {
+const ifThreadPage_showRemovalStatus = (isNewReddit: boolean, monitor_quarantined: boolean, newRedditTarget: string | Element = defaultNewRedditTarget, postData: Record<string, any> = {}) => {
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     // links to comments on new reddit do not have robots noindex,nofollow, so need to lookup data if haven't already
     // as of 2022/2023: older posts e.g. t3_9emzhp no longer have noindex,nofollow, so always need to look up data for new reddit
@@ -115,7 +115,7 @@ const ifThreadPage_showRemovalStatus = (isNewReddit, monitor_quarantined, newRed
 
 }
 
-const showRemovalStatus = ({isNewReddit, newRedditTarget = defaultNewRedditTarget, postData = {}}) => {
+const showRemovalStatus = ({isNewReddit, newRedditTarget = defaultNewRedditTarget, postData = {}}: {isNewReddit: boolean, newRedditTarget?: string | Element, postData?: Record<string, any>}) => {
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     let className = undefined, message_1 = undefined
     if (postID) {
@@ -160,7 +160,7 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = defaultNewRedditTarge
     }
 }
 
-const showRemovalStatusForThreadOverlay = (element, monitor_quarantined) => {
+const showRemovalStatusForThreadOverlay = (element: HTMLElement, monitor_quarantined: boolean) => {
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     // built for Chrome, i.e., incognito mode is 'split' and CORB applies
     if (__BUILT_FOR__ === 'chrome') {
@@ -187,7 +187,7 @@ const showRemovalStatusForThreadOverlay = (element, monitor_quarantined) => {
     }
 }
 
-const getID_newReddit = (element, id_match) => {
+const getID_newReddit = (element: HTMLElement, id_match: RegExp) => {
     let id = element.id
     if (id && id.match(id_match)) return id
     id = $(element).attr('class').split(/\s+/).filter(c => c.match(id_match))[0]
@@ -198,7 +198,7 @@ const getID_newReddit = (element, id_match) => {
     return id
 }
 
-const addSubscribeLinks_newReddit_comments = (elements, subscriptions) => {
+const addSubscribeLinks_newReddit_comments = (elements: any, subscriptions: Record<string, any>) => {
     $(elements).each((idx, targetedElement) => {
         const element = $(targetedElement).closest('.Comment')[0]
         const id = getID_newReddit(element, id_match_comment)
@@ -227,11 +227,11 @@ const addSubscribeLinks_newReddit_comments = (elements, subscriptions) => {
     })
 }
 
-const getButton = (element, button_search_text) => {
+const getButton = (element: HTMLElement, button_search_text: string) => {
     return $(element).find(`button:equalsi("${button_search_text}")`).first()
 }
 
-const addSubscribeLinks_newReddit_posts = (elements, subscriptions) => {
+const addSubscribeLinks_newReddit_posts = (elements: any, subscriptions: Record<string, any>) => {
     $(elements).each((idx, element) => {
         const id = getID_newReddit(element, id_match_post)
         if (! id || ! id.match(id_match_post)) return
@@ -247,7 +247,7 @@ const addSubscribeLinks_newReddit_posts = (elements, subscriptions) => {
     })
 }
 
-const addSubscribeLinks_oldReddit = (elements, subscriptions) => {
+const addSubscribeLinks_oldReddit = (elements: any, subscriptions: Record<string, any>) => {
     $(elements).each((idx, element) => {
         let id = element.getAttribute('data-fullname')
         if (! id) {

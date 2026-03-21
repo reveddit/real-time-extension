@@ -1,14 +1,14 @@
-import {lookupItemsByID, lookupItemsByUser, lookupItemsByLoggedInUser, lookupItemsByLoggedInUserWithAuth, getAuth, getLoggedinUser, storeRedditCookies} from './requests.js'
+import {lookupItemsByID, lookupItemsByUser, lookupItemsByLoggedInUser, lookupItemsByLoggedInUserWithAuth, getAuth, getLoggedinUser, storeRedditCookies} from './requests'
 import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
         addLocalStorageItems, getLocalStorageItems,
         MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, MAX_SYNC_STORAGE_CHANGES, SEEN_COUNT_DEFAULT,
         getObjectNamesForThing, getUserInit, getOldestDateKey,
-        getNextPendingPost, removeFromPendingPostQueue } from './storage.js'
+        getNextPendingPost, removeFromPendingPostQueue } from './storage'
 import {createNotification, updateBadgeUnseenCount, trimDict_by_numberValuedAttribute,
         isUserDeletedItem, isRemovedItem, isComment,
-        ItemForStorage, LocalStorageItem, ChangeForStorage, setWarningBadge} from './common.js'
+        ItemForStorage, LocalStorageItem, ChangeForStorage, setWarningBadge} from './common'
 import browser from 'webextension-polyfill'
-import {getPost_fromOld} from './parse_html/old.js'
+import {getPost_fromOld} from './parse_html/old'
 
 
 const SUBSCRIBED_FROM_REDDIT = 0
@@ -24,7 +24,7 @@ const REMOVAL_CONFIRMATION_THRESHOLD = Math.floor(Math.random() * 3) + 3
 
 const FULL_RESPONSE_ITEM_COUNT = 100
 
-const updateOldestDateThreshold = (items, itemLookup, thing, isUser) => {
+const updateOldestDateThreshold = (items: any[], itemLookup: Record<string, any>, thing: string, isUser: boolean) => {
     if (items.length < FULL_RESPONSE_ITEM_COUNT) {
         return Promise.resolve(null)
     }
@@ -45,12 +45,12 @@ const updateOldestDateThreshold = (items, itemLookup, thing, isUser) => {
     return browser.storage.local.set({[key]: oldestDate}).then(() => oldestDate)
 }
 
-const getOldestDateThreshold = (thing, isUser) => {
+const getOldestDateThreshold = (thing: string, isUser: boolean) => {
     const key = getOldestDateKey(thing, isUser)
     return browser.storage.local.get({[key]: null}).then(result => result[key])
 }
 
-const fetchItemFromApiInfo = async (id) => {
+const fetchItemFromApiInfo = async (id: string) => {
     try {
          const response = await fetch(`https://www.reddit.com/api/info.json?id=${id}`)
          const json = await response.json()
@@ -59,7 +59,7 @@ const fetchItemFromApiInfo = async (id) => {
 }
 
 // Process one pending post from the queue each alarm cycle
-const processPendingPost = async (storage) => {
+const processPendingPost = async (storage: Record<string, any>) => {
     const postId = await getNextPendingPost()
     if (!postId) return
     
@@ -91,7 +91,7 @@ const processPendingPost = async (storage) => {
 }
 
 
-export const setCurrentStateForId = (id, subscribedFromURL) => {
+export const setCurrentStateForId = (id: string, subscribedFromURL: string) => {
     let subscribedFrom = SUBSCRIBED_FROM_REDDIT
     if (subscribedFromURL.match(/^https:\/\/www.reveddit.com/)) {
         subscribedFrom = SUBSCRIBED_FROM_REVEDDIT
@@ -158,7 +158,7 @@ export const checkForChanges = () => {
     })
 }
 
-const checkForChanges_loggedInUser = async (auth, storage) => {
+const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, any>) => {
     // First get the current logged-in user
     return getLoggedinUser()
     .then(loggedInUser => {
@@ -292,14 +292,14 @@ const checkForChanges_loggedInUser = async (auth, storage) => {
     })
 }
 
-function checkForChanges_other(auth, storage) {
+function checkForChanges_other(auth: any, storage: Record<string, any>) {
     const ids = Object.keys(storage.other_subscriptions)
     if (ids.length) {
         checkForChanges_thing_byId(ids, 'other', false, auth, storage, SUBSCRIBED_FROM_NA)
     }
 }
 
-const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, subscribedFrom, itemLookup = {}, quarantined_subreddits = [], preFetchedItems = null) => {
+const checkForChanges_thing_byId = async (ids: string[], thing: string, isUser: boolean, auth: any, storage: Record<string, any>, subscribedFrom: number, itemLookup: Record<string, any> = {}, quarantined_subreddits: string[] = [], preFetchedItems: any[] | null = null) => {
     let promise
     const monitor_quarantined = storage.options.monitor_quarantined
     if (preFetchedItems) {
@@ -396,7 +396,7 @@ const checkForChanges_thing_byId = async (ids, thing, isUser, auth, storage, sub
     })
 }
 
-const changeIsPreviouslyRecorded = (name, change_type, changes) => {
+const changeIsPreviouslyRecorded = (name: string, change_type: number | string, changes: any[]) => {
     for (const change of changes) {
         let change_obj = change
         if (! (change_obj instanceof ChangeForStorage)) {
@@ -411,10 +411,10 @@ const changeIsPreviouslyRecorded = (name, change_type, changes) => {
 
 
 // newLocalStorageItems operates as a return value
-function markChanges (alert_current_list, alert_type, alert_text, alert_known_hash,
-                      normal_current_list, normal_type, normal_text, normal_known_hash,
-                      changes, itemLookup, notify, newLocalStorageItems, changeTypes,
-                      isUser, subscribedFrom, existingLocalStorageItems, target_seen_count, oldestDateThreshold) {
+function markChanges (alert_current_list: string[], alert_type: number, alert_text: string, alert_known_hash: Record<string, any>,
+                      normal_current_list: string[], normal_type: number, normal_text: string, normal_known_hash: Record<string, any>,
+                      changes: any[], itemLookup: Record<string, any>, notify: boolean, newLocalStorageItems: Record<string, any>, changeTypes: string[],
+                      isUser: boolean, subscribedFrom: number, existingLocalStorageItems: Record<string, any>, target_seen_count: number, oldestDateThreshold: number | null) {
     const alert_unseen_ids = [],
           normal_unseen_ids = [],
           alert_userDeleted_unseen_ids = [],

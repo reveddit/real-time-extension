@@ -1,5 +1,5 @@
-import { getItemFromLocalStorage, unsubscribeId, getIDs_thing } from './storage.js'
-import { getPrettyDate, isComment, sortDict_by_numberValuedAttribute } from './common.js'
+import { getItemFromLocalStorage, unsubscribeId, getIDs_thing } from './storage'
+import { getPrettyDate, isComment, sortDict_by_numberValuedAttribute } from './common'
 import browser from 'webextension-polyfill'
 
 const key = 'other_subscriptions'

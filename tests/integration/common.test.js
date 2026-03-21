@@ -19,7 +19,7 @@ import {
     ItemForStorage,
     ChangeForStorage,
     LocalStorageItem,
-} from '../../src/src/common.js'
+} from '../../src/src/common.ts'
 
 describe('getFullIDsFromPath', () => {
     it('extracts post ID from a subreddit post URL', () => {

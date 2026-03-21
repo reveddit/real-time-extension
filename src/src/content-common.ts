@@ -1,6 +1,6 @@
-import {subscribeId, unsubscribeId, getLocalStorageItems, saveLocalStorageItems} from './storage.js'
-import {LocalStorageItem} from './common.js'
-import {setCurrentStateForId} from './monitoring.js'
+import {subscribeId, unsubscribeId, getLocalStorageItems, saveLocalStorageItems} from './storage'
+import {LocalStorageItem} from './common'
+import {setCurrentStateForId} from './monitoring'
 import browser from 'webextension-polyfill'
 
 let UNSUBSCRIBE_TEXT = 'unsubscribe-rev'
@@ -11,15 +11,15 @@ if (location.hostname.match(/reveddit\.com$/)) {
     SUBSCRIBE_TEXT = 'subscribe'
 }
 
-export const setTextAndFunction_subscribe = (id, element, commentBody) => {
+export const setTextAndFunction_subscribe = (id: string, element: HTMLElement, commentBody?: string) => {
     return $(element).text(SUBSCRIBE_TEXT).off('click').click((eventObj) => subscribeId_changeText(id, eventObj.target, commentBody))
 }
 
-export const setTextAndFunction_unsubscribe = (id, element, commentBody) => {
+export const setTextAndFunction_unsubscribe = (id: string, element: HTMLElement, commentBody?: string) => {
     return $(element).text(UNSUBSCRIBE_TEXT).off('click').click((eventObj) => unsubscribeId_changeText(id, eventObj.target, commentBody))
 }
 
-const subscribeId_changeText = (id, element, commentBody = '') => {
+const subscribeId_changeText = (id: string, element: HTMLElement, commentBody = '') => {
     subscribeId(id, async () => {
         setTextAndFunction_unsubscribe(id, element, commentBody)
         await setCurrentStateForId(id, window.location.href)
@@ -42,7 +42,7 @@ const subscribeId_changeText = (id, element, commentBody = '') => {
     return false
 }
 
-const unsubscribeId_changeText = (id, element, commentBody) => {
+const unsubscribeId_changeText = (id: string, element: HTMLElement, commentBody?: string) => {
     unsubscribeId(id, () => {
         setTextAndFunction_subscribe(id, element, commentBody)
     })

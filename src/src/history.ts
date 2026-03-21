@@ -1,8 +1,8 @@
-import { getAllChanges, getItemFromLocalStorage } from './storage.js'
-import { ChangeForStorage, LocalStorageItem, getPrettyDate, getPrettyTimeLength, alphaLowerSort, isComment } from './common.js'
+import { getAllChanges, getItemFromLocalStorage } from './storage'
+import { ChangeForStorage, LocalStorageItem, getPrettyDate, getPrettyTimeLength, alphaLowerSort, isComment } from './common'
 import browser from 'webextension-polyfill'
 
-const showChanges = (allChanges, localStorage) => {
+const showChanges = (allChanges: ChangeForStorage[], localStorage: Record<string, any>) => {
 
     var table = $('<table>').addClass('history')
     var headersRow = $('<tr>')

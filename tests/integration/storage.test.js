@@ -32,7 +32,7 @@ import {
     addToPendingPostQueue,
     getNextPendingPost,
     removeFromPendingPostQueue,
-} from '../../src/src/storage.js'
+} from '../../src/src/storage.ts'
 
 // Promisify callback-style functions for cleaner tests
 const initStorageP = () => new Promise((resolve) => initStorage(resolve))
