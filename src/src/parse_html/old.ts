@@ -22,7 +22,7 @@ turndownService.addRule('listItem', {
       .replace(/\n+$/, '\n') // replace trailing newlines with just a single one
       .replace(/\n/gm, '\n    '); // indent
     var prefix = options.bulletListMarker + ' ';
-    var parent = node.parentNode;
+    var parent = node.parentNode as Element;
     if (parent.nodeName === 'OL') {
       var start = parent.getAttribute('start');
       var index = Array.prototype.indexOf.call(parent.children, node);
@@ -284,7 +284,7 @@ class InnerHTML extends ItemsMeta {
     if (element.tagName !== 'br') {
       // If there are any other unclosed tags, it is better to ignore bad HTML w/try & catch than fail.
       try {
-        element.onEndTag(endTag => {
+        element.onEndTag((endTag: any) => {
           this.last[this.field_name] += `</${endTag.name}>`
         })
       } catch (error) {
@@ -382,7 +382,7 @@ class LinkAuthor extends ItemsMeta {
     this.last.link_author = ''
     const link_author_fullname = element.getAttribute('class')
                                  .replace(/ +/g, ' ').split(' ')
-                                 .filter(x => x.match(user_fullname_match))[0]
+                                 .filter((x: any) => x.match(user_fullname_match))[0]
     if (link_author_fullname) {
       this.last.link_author_fullname = link_author_fullname.replace(user_fullname_replace, '')
     }
@@ -500,7 +500,7 @@ export const getItems_fromOld = async (path: string) => {
   .on('#siteTable .thing ul.buttons li.first a[data-event-action="full_comments"]', new NumComments(itemsObj, 'num_comments'))
   .on('#siteTable .thing .quarantine-stamp', new Quarantined(itemsObj))
   .on('#siteTable .thing .thumbnail img', new Thumbnail(itemsObj))
-  await consume(rewriter.transform(response).body)
+  await consume(rewriter.transform(response).body!)
   const info_promise = getCommentsInfo_fromOld(Array.from(itemsObj.ids_set))
   itemsObj.fillInDefaultValues()
   itemsObj.printErrors()
@@ -523,7 +523,7 @@ const getCommentsInfo_fromOld = async (ids: string[]) => {
     'Cookie': 'over18=1;',
     'User-Agent': 'extension',
     'credentials': 'omit',
-  })
+  } as any)
   if (! response.ok) {
     console.error('request failed:', url)
     return {}
@@ -535,7 +535,7 @@ const getCommentsInfo_fromOld = async (ids: string[]) => {
   // That will be true as long as IDs given to this function come from user pages.
   // If user-deleted comments are present, must also check body==[removed]
   .on('#siteTable .comment.deleted', new AuthorDeleted(itemsObj))
-  await consume(rewriter.transform(response).body)
+  await consume(rewriter.transform(response).body!)
   const info_items = itemsObj.items.reduce((obj, item) => {
     item.name = 't1_'+item.permalink.split('/').slice(6,7)
     obj[item.name] = item
@@ -580,7 +580,7 @@ export const getItemsById_fromOldHTML = async (ids: string | string[], addToPend
   .on('#siteTable .thing .tagline .score.unvoted', new Score(itemsObj))
   .on('#siteTable .thing .tagline time', new Times(itemsObj))
   .on('#siteTable .thing .tagline .locked-tagline', new OneField(itemsObj, 'locked', true))
-  await consume(rewriter.transform(response).body)
+  await consume(rewriter.transform(response).body!)
   itemsObj.fillInDefaultValues()
   // Convert body HTML to markdown
   itemsObj.items.forEach(item => {
@@ -603,7 +603,7 @@ export const getPost_fromOld = async (path: string) => {
   const rewriter = new HTMLRewriter()
   .on('meta[name="robots"][content="noindex,nofollow"]', metaRobotsObj)
   .on('#siteTable .thing .tagline span', authorObj)
-  await consume(rewriter.transform(response).body)
+  await consume(rewriter.transform(response).body!)
   return {
     is_removed: metaRobotsObj.is_removed,
     ...(authorObj.author && {author: authorObj.author}),

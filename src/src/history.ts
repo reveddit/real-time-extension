@@ -23,18 +23,18 @@ const showChanges = (allChanges: ChangeForStorage[], localStorage: Record<string
         if (user === 'other') {
             isUser = false
         }
-        const item_localStorage = getItemFromLocalStorage(user, isUser, id, localStorage)
-        let contentType = isComment(id) ? 'comment' : 'post'
-        let text = id
+        const item_localStorage = getItemFromLocalStorage(user!, isUser, id!, localStorage)
+        let contentType = isComment(id!) ? 'comment' : 'post'
+        let text: string = id || ''
         let timeLength = 'n/a'
-        let formatted_createdUTC = ''
+        let formatted_createdUTC: string = ''
         if (item_localStorage) {
             const item_createdUTC = item_localStorage.getCreatedUTC()
             if (item_localStorage.getText().trim()) {
                 text = item_localStorage.getText().trim()
             }
-            timeLength = getPrettyTimeLength(change_observedUTC-item_createdUTC)
-            formatted_createdUTC = new Date(item_createdUTC*1000)
+            timeLength = getPrettyTimeLength(change_observedUTC!-item_createdUTC) || ''
+            formatted_createdUTC = new Date(item_createdUTC*1000).toString()
         }
         let seen_text = ''
         if (seen_count) {
@@ -42,43 +42,43 @@ const showChanges = (allChanges: ChangeForStorage[], localStorage: Record<string
         }
         var row = $('<tr>')
         //action
-        $('<td>').addClass('action-column').append(`<div class="action ${action}">${action.replace(/ /g,'&nbsp;')}</div>${seen_text}`).appendTo(row)
+        $('<td>').addClass('action-column').append(`<div class="action ${action!}">${action!.replace(/ /g,'&nbsp;')}</div>${seen_text}`).appendTo(row)
         //observed
-        const formatted_observedUTC = new Date(change_observedUTC*1000)
-        $('<td>').attr('title',formatted_observedUTC).text(getPrettyDate(change_observedUTC)).appendTo(row)
+        const formatted_observedUTC = new Date(change_observedUTC!*1000)
+        $('<td>').attr('title',formatted_observedUTC.toString()).text(getPrettyDate(change_observedUTC!)).appendTo(row)
         //duration
         $('<td>').attr('title',formatted_createdUTC).text(timeLength).appendTo(row)
         //type
         $('<td>').text(contentType).appendTo(row)
         //author
-        $('<td>').text(user).appendTo(row)
+        $('<td>').text(user || '').appendTo(row)
         // Always prefer direct Reddit links; resolve missing post IDs at click time via Reddit api/info
         const postId = item_localStorage && item_localStorage.getPostID && item_localStorage.getPostID()
-        let href;
-        if (isComment(id)) {
+        let href: string;
+        if (isComment(id!)) {
             if (postId) {
                 const shortPost = postId.substring(3)
-                const shortComment = id.substring(3)
+                const shortComment = id!.substring(3)
                 href = `https://www.reddit.com/comments/${shortPost}/-/${shortComment}?context=3`
             } else {
                 href = '#'
             }
         } else {
-            const shortPost = id.substring(3)
+            const shortPost = id!.substring(3)
             href = `https://www.reddit.com/comments/${shortPost}`
         }
         var linkedText = $('<a/>', {href:href, text: text})
-        if (isComment(id) && ! postId) {
+        if (isComment(id!) && ! postId) {
             // Resolve post ID on click using Reddit's api/info, then redirect to the comment in context
             linkedText.on('click', function(e) {
                 e.preventDefault()
-                const apiJsonUrl = `https://www.reddit.com/api/info.json?id=${encodeURIComponent(id)}`
-                const apiPageUrl = `https://www.reddit.com/api/info?id=${encodeURIComponent(id)}`
+                const apiJsonUrl = `https://www.reddit.com/api/info.json?id=${encodeURIComponent(id!)}`
+                const apiPageUrl = `https://www.reddit.com/api/info?id=${encodeURIComponent(id!)}`
                 fetch(apiJsonUrl, {credentials: 'omit'})
                 .then(r => r.json())
                 .then(json => {
                     const children = (json && json.data && Array.isArray(json.data.children)) ? json.data.children : []
-                    const data = (children[0] && children[0].data) ? children[0].data : (children.find(ch => ch && ch.data && ch.data.name === id) || {}).data
+                    const data = (children[0] && children[0].data) ? children[0].data : (children.find((ch: any) => ch && ch.data && ch.data.name === id) || {}).data
                     if (data && data.permalink) {
                         const url = `https://www.reddit.com${data.permalink}?context=3`
                         window.location.href = url
@@ -87,7 +87,7 @@ const showChanges = (allChanges: ChangeForStorage[], localStorage: Record<string
                     const linkId = data && (data.link_id || (data.parent_id && data.parent_id.substr(0,3) === 't3_' ? data.parent_id : null))
                     if (linkId && linkId.substr(0,3) === 't3_') {
                         const shortPost = linkId.substring(3)
-                        const shortComment = id.substring(3)
+                        const shortComment = id!.substring(3)
                         const url = `https://www.reddit.com/comments/${shortPost}/-/${shortComment}?context=3`
                         window.location.href = url
                     } else {
@@ -96,7 +96,7 @@ const showChanges = (allChanges: ChangeForStorage[], localStorage: Record<string
                     }
                 })
                 .catch(() => {
-                    window.location.href = `https://www.reddit.com/api/info?id=${encodeURIComponent(id)}`
+                    window.location.href = `https://www.reddit.com/api/info?id=${encodeURIComponent(id!)}`
                 })
             })
         }
@@ -108,9 +108,9 @@ const showChanges = (allChanges: ChangeForStorage[], localStorage: Record<string
 }
 
 getAllChanges(changesByUser => {
-    chrome.storage.local.get(null, localStorage => {
+    chrome.storage.local.get(undefined as any, localStorage => {
         let numChanges = 0
-        const allChanges = []
+        const allChanges: ChangeForStorage[] = []
         Object.keys(changesByUser).forEach(user => {
             changesByUser[user].forEach(changeObj => {
                 const change = new ChangeForStorage({object: changeObj})
@@ -119,7 +119,7 @@ getAllChanges(changesByUser => {
             })
         })
         allChanges.sort((a,b) => {
-            return b.getObservedUTC() - a.getObservedUTC()
+            return (b.getObservedUTC() || 0) - (a.getObservedUTC() || 0)
         })
 
         if (allChanges.length > 0) {

@@ -20,7 +20,7 @@ function populatePopup() {
 
     $('.clear-notifications').click(() => {
         markEverythingAsSeen()
-        .then(res => {
+        .then((res: any) => {
             populatePopup()
         })
     })
@@ -37,7 +37,7 @@ function populatePopup() {
             chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
                 const supportedTabs = tabs.filter(tab => {
                     try {
-                        const hostname = new URL(tab.url).hostname
+                        const hostname = new URL(tab.url!).hostname
                         return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
                     } catch (e) { return false }
                 })
@@ -49,7 +49,7 @@ function populatePopup() {
                         chrome.runtime.sendMessage({action: 'store-reddit-cookies'})
                         // Give cookies time to store, then check connection
                         setTimeout(() => {
-                            chrome.runtime.sendMessage({action: 'try-reconnect'}, (response) => {
+                            ;(chrome.runtime.sendMessage as any)({action: 'try-reconnect'}, (response: any) => {
                                 if (response && response.success) {
                                     $warningContainer.html('<div class="success-message">✓ Connected!</div>')
                                     setTimeout(() => populatePopup(), 1000)
@@ -77,7 +77,7 @@ function populatePopup() {
         // Check for supported Reddit subdomains
         chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
             const supportedTabs = tabs.filter(tab => {
-                const hostname = new URL(tab.url).hostname
+                const hostname = new URL(tab.url!).hostname
                 return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
             })
             
@@ -115,7 +115,7 @@ function populatePopup() {
                     chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
                         const supportedTabs = tabs.filter(tab => {
                             try {
-                                const hostname = new URL(tab.url).hostname
+                                const hostname = new URL(tab.url!).hostname
                                 return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
                             } catch (e) { return false }
                         })
@@ -127,7 +127,7 @@ function populatePopup() {
                             const $btn = $('<button class="connect-btn">Connect</button>')
                             $btn.on('click', function() {
                                 $(this).prop('disabled', true).text('Connecting...')
-                                chrome.runtime.sendMessage({action: 'try-reconnect'}, (response) => {
+                        ;(chrome.runtime.sendMessage as any)({action: 'try-reconnect'}, (response: any) => {
                                     if (response && response.success) {
                                         $container.html('<div class="success-message">✓ Connected as ' + response.user + '!</div>')
                                         setTimeout(() => populatePopup(), 1000)
@@ -165,29 +165,29 @@ function populatePopup() {
         })
     })
 
-    chrome.storage.sync.get(null, syncStorage => {
+    chrome.storage.sync.get(undefined as any, syncStorage => {
         chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
             const url = tabs[0].url
             if (url) {
                 const [postID, commentID] = getFullIDsFromURL(url)
                 if (commentID) {
-                    showToggleSubscribe({comment: commentID}, syncStorage, url)
+                    showToggleSubscribe({post: '', comment: commentID}, syncStorage, url)
                 }
                 if (postID) {
-                    showToggleSubscribe({post: postID}, syncStorage, url)
+                    showToggleSubscribe({post: postID, comment: ''}, syncStorage, url)
                 }
             }
         })
     });
 }
 
-const openAndClose = (ev) => {
+const openAndClose = (ev: any) => {
     ev.preventDefault()
     chrome.tabs.create({url: ev.target.href})
     window.close()
 }
 
-function showToggleSubscribe({post: post, comment: comment}, storage, url) {
+function showToggleSubscribe({post: post, comment: comment}: {post: any, comment: any}, storage: any, url: any) {
     let id = ''
     let type = ''
     if (comment) {
@@ -250,31 +250,31 @@ function showToggleSubscribe({post: post, comment: comment}, storage, url) {
     })
 }
 
-function displayUserInPopup(user, unseen, $parent) {
+function displayUserInPopup(user: any, unseen: any, $parent: any) {
     // Always point to the extension's history page for user content
     const url = chrome.runtime.getURL('src/history.html')
     addUnseenLink(user, true, `${unseen.length}`, url, $parent)
 }
 
-function displayOtherInPopup(unseen, total) {
+function displayOtherInPopup(unseen: any, total: any) {
     let url = '/src/other.html'
     if (unseen.length) {
         url = `https://www.reveddit.com/info?id=${unseen.join(',')}&removal_status=all`
     }
-    addUnseenLink('other', false, `${unseen.length} / ${total}`, url)
+    addUnseenLink('other', false, `${unseen.length} / ${total}`, url, null)
 }
 
 
-function addUnseenLink(thing, isUser, unseen_str, url, $parent) {
+function addUnseenLink(thing: any, isUser: any, unseen_str: any, url: any, $parent: any) {
     const $div = $(`<div><span class="unseen">${unseen_str} </span> </div>`)
     const $a = $(`<a class="blue-link" target="_blank" href="${url}">${thing}</a>`)
     $a.click((e) => {
         e.preventDefault()
-        chrome.storage.sync.get(null, (storage) => {
+        chrome.storage.sync.get(undefined as any, (storage) => {
             markThingAsSeen(storage, thing, isUser)
             setStorageUpdateBadge(storage)
             .then(res => {
-                chrome.tabs.create({url: e.target.href})
+                chrome.tabs.create({url: (e.target as HTMLAnchorElement).href})
                 window.close() // closes the popup which persists in FF
             })
         })

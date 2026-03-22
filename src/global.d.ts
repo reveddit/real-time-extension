@@ -5,12 +5,6 @@ declare const __BUILT_FOR__: 'chrome' | 'firefox' | 'edge'
 declare const $: JQueryStatic
 declare const jQuery: JQueryStatic
 
-// webextension-polyfill
-declare module 'webextension-polyfill' {
-    const browser: typeof import('webextension-polyfill')
-    export default browser
-}
-
 // arrive.js — adds .arrive() to jQuery/Document
 interface JQuery {
     arrive(selector: string, callback: (element: HTMLElement) => void): void

@@ -11,7 +11,7 @@ const WWW_REVEDDIT = 'https://wred.reveddit.com/'
 const NO_AUTH = 'none'
 
 export const lookupItemsByID = (ids: string | string[], auth: any, monitor_quarantined = false, monitor_quarantined_remote = false, quarantined_subreddits: string[] = []) => {
-    const params = {id:ids, raw_json:1}
+    const params: Record<string, any> = {id:ids, raw_json:1}
     if (monitor_quarantined_remote) {
         params.quarantined_subreddits = quarantined_subreddits.join(',')
     }
@@ -26,7 +26,7 @@ const tryContentScriptFetch = async (ids: string | string[]) => {
     const tabs = await browser.tabs.query({url: ['*://*.reddit.com/*']})
     const supportedTabs = tabs.filter(tab => {
         try {
-            const hostname = new URL(tab.url).hostname
+            const hostname = new URL(tab.url!).hostname
             return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
         } catch (e) { return false }
     })
@@ -36,10 +36,10 @@ const tryContentScriptFetch = async (ids: string | string[]) => {
     }
     
     // Try to send message to the first available Reddit tab
-    const response = await browser.tabs.sendMessage(supportedTabs[0].id, {
+    const response = await browser.tabs.sendMessage(supportedTabs[0].id!, {
         action: 'fetch-api-info-public',
         ids: ids
-    })
+    }) as any
     
     if (response && response.success) {
         return response.items
@@ -52,7 +52,7 @@ const tryContentScriptFetch = async (ids: string | string[]) => {
 export const lookupItemsByID_withFallback = (path: string, search: string, auth: any, monitor_quarantined = false, monitor_quarantined_remote = false, ids: string | string[] = '') => {
     // First try www.reddit.com without authentication
     const wwwUrl = www_reddit + path + '.json' + search
-    const wwwOptions = {credentials: 'omit'}
+    const wwwOptions: RequestInit = {credentials: 'omit'}
     
     return fetch(wwwUrl, wwwOptions)
     .then(response => {
@@ -109,7 +109,7 @@ const getSettableCookie = (cookie: any, url = 'https://reddit.com') => {
                 ...obj,
                 [key]: cookie[key]
             };
-        }, {});
+        }, {} as Record<string, any>);
     filtered.url = url
     return filtered
 }
@@ -147,7 +147,7 @@ const fetch_forReddit = async (url: string, options?: any, monitor_quarantined =
 }
 
 export const lookupItemsByUser = (user: string, after: string, sort: string, timeSpan: string, monitor_quarantined: boolean, monitor_quarantined_remote: boolean, auth: any) => {
-    const params = {limit: 100, sort, raw_json:1}
+    const params: Record<string, any> = {limit: 100, sort, raw_json:1}
     if (after) params.after = after
     if (timeSpan) params.t = timeSpan
     const path = `user/${user}/overview.json`
@@ -156,7 +156,7 @@ export const lookupItemsByUser = (user: string, after: string, sort: string, tim
 }
 
 export const lookupItemsByLoggedInUser = (after: string, sort: string, timeSpan: string, monitor_quarantined: boolean, monitor_quarantined_remote: boolean, auth: any) => {
-    const params = {limit: 100, sort, raw_json:1}
+    const params: Record<string, any> = {limit: 100, sort, raw_json:1}
     if (after) params.after = after
     if (timeSpan) params.t = timeSpan
     const path = `user/me.json`
@@ -166,7 +166,7 @@ export const lookupItemsByLoggedInUser = (after: string, sort: string, timeSpan:
 
 // Alternative approach: use the same method as getLoggedinUser but with proper authentication
 export const lookupItemsByLoggedInUserWithAuth = (after: string, sort: string, timeSpan: string, monitor_quarantined: boolean, monitor_quarantined_remote: boolean, auth: any) => {
-    const params = {limit: 100, sort, raw_json:1}
+    const params: Record<string, any> = {limit: 100, sort, raw_json:1}
     if (after) params.after = after
     if (timeSpan) params.t = timeSpan
     const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
@@ -174,7 +174,7 @@ export const lookupItemsByLoggedInUserWithAuth = (after: string, sort: string, t
     // First try www.reddit.com with rehydrated cookies
     return rehydrateStoredRedditCookies().then(() => {
         const url = `https://www.reddit.com/user/me.json${search}`
-        const options = {credentials: 'include', cache: 'reload'}
+        const options: RequestInit = {credentials: 'include', cache: 'reload'}
         return fetch(url, options)
         .then(response => {
             if (response.ok) {
@@ -299,7 +299,7 @@ export const getCookie = ({url, name}: {url: string, name: string}) => {
             action: 'get-cookie',
             options: {url, name}
         })
-        .then(response => {
+        .then((response: any) => {
             return response.cookie
         })
         .catch(() => null)
@@ -330,7 +330,7 @@ const getFetchParams = (path: string, search: string, auth: any, monitor_quarant
 
 export const getLocalOrAppAuth = () => {
     return getLocalAuth()
-    .then(auth => {
+    .then((auth: any) => {
         if (auth) return auth
         return getAuth()
     })
@@ -361,7 +361,7 @@ export const getLoggedinUser = () => {
                 // Find a supported subdomain first
                 const supportedTabs = tabs.filter(tab => {
                     try {
-                        const hostname = new URL(tab.url).hostname
+                        const hostname = new URL(tab.url!).hostname
                         return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
                     } catch (e) {
                         return false
@@ -370,7 +370,7 @@ export const getLoggedinUser = () => {
                 
                 if (supportedTabs.length > 0) {
                     try {
-                        const hostname = new URL(supportedTabs[0].url).hostname
+                        const hostname = new URL(supportedTabs[0].url!).hostname
                         targetUrl = `https://${hostname}/api/me.json`
                     } catch (e) {
                         // leave default targetUrl
@@ -429,7 +429,7 @@ export const storeRedditCookies = () => {
         chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
             const supportedTabs = tabs.filter(tab => {
                 try {
-                    const hostname = new URL(tab.url).hostname
+                    const hostname = new URL(tab.url!).hostname
                     return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
                 } catch (e) {
                     return false
@@ -440,7 +440,7 @@ export const storeRedditCookies = () => {
                 const tab = supportedTabs[0]
                 let hostname
                 try {
-                    hostname = new URL(tab.url).hostname
+                    hostname = new URL(tab.url!).hostname
                 } catch (e) {
                     console.log('storeRedditCookies: invalid tab url', tab && tab.url)
                     resolve(false)
@@ -449,8 +449,8 @@ export const storeRedditCookies = () => {
                 
                 // Get cookies for the Reddit parent domain so we include domain-scoped and host-only cookies
                 chrome.cookies.getAll({domain: 'reddit.com'}, (cookies) => {
-                    const cookieMap = {}
-                    const cookieObjects = []
+                    const cookieMap: Record<string, string> = {}
+                    const cookieObjects: any[] = []
                     cookies.forEach(cookie => {
                         // Save a simple map for backwards compatibility
                         cookieMap[cookie.name] = cookie.value

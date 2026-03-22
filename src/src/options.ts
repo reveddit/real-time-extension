@@ -1,4 +1,4 @@
-import {showError,countUnseen_updateBadge_background,saveSubscriptions} from './common'
+import {showError} from './common'
 import {getOptions, INTERVAL_DEFAULT, SEEN_COUNT_DEFAULT, saveOptions} from './storage'
 
 import {setAlarm, ALARM_NAME} from './common'
@@ -48,12 +48,12 @@ $('#advanced-btn').click((ev) => {
 
 ['removed', 'locked'].forEach(type => {
     $(`#${type}_notify`).change(function() {
-        if(this.checked) {
+        if((this as HTMLInputElement).checked) {
             $(`#${type}_track`).prop('checked', true)
         }
     });
     $(`#${type}_track`).change(function() {
-        if(! this.checked) {
+        if(! (this as HTMLInputElement).checked) {
             $(`#${type}_notify`).prop('checked', false)
         }
     });
@@ -68,7 +68,7 @@ function resetDefaults() {
 function saveAndCloseOptions() {
     const interval = Number($('#interval').val())
     const seen_count = Number($('#seen_count').val())
-    const custom_clientid = $('#clientid').val().trim()
+    const custom_clientid = String($('#clientid').val() || '').trim()
     const removed_track = $('#removed_track').prop('checked')
     const removed_notify = $('#removed_notify').prop('checked')
 

@@ -16,7 +16,7 @@ setupContextualMenu()
 
 // Can use this to check for firefox build:
 if (__BUILT_FOR__ !== 'chrome') {
-    const opt_extraInfoSpec = ['requestHeaders', 'blocking']
+    const opt_extraInfoSpec = ['requestHeaders', 'blocking'] as any
 
     browser.webRequest.onBeforeSendHeaders.addListener(function(details){
         //chrome uses details.initiator, but since chrome doesn't support webRequest anymore,
@@ -24,18 +24,18 @@ if (__BUILT_FOR__ !== 'chrome') {
         if (details.originUrl && details.originUrl.match(/^https?:\/\/(www.reveddit.com|localhost:[0-9]*)(\/.*)?$/)) {
             var newCookie = '_options={%22pref_quarantine_optin%22:true};'
             var gotCookie = false
-            for (var n in details.requestHeaders) {
-                const headerName = details.requestHeaders[n].name.toLowerCase()
+            for (var n in details.requestHeaders!) {
+                const headerName = details.requestHeaders![n as any].name.toLowerCase()
                 if (headerName === "cookie") {
-                    details.requestHeaders[n].value = details.requestHeaders[n].value.replace(/ ?reddit_session[^;]*;/,'')
-                    if (! details.requestHeaders[n].value.match(/pref_quarantine_optin/)) {
-                        details.requestHeaders[n].value = details.requestHeaders[n].value + `; ${newCookie}`
+                    details.requestHeaders![n as any].value = details.requestHeaders![n as any].value!.replace(/ ?reddit_session[^;]*;/,'')
+                    if (! details.requestHeaders![n as any].value!.match(/pref_quarantine_optin/)) {
+                        details.requestHeaders![n as any].value = details.requestHeaders![n as any].value + `; ${newCookie}`
                     }
                     gotCookie = true
                 }
             }
             if (! gotCookie) {
-                details.requestHeaders.push({name:"Cookie",value:newCookie})
+                details.requestHeaders!.push({name:"Cookie",value:newCookie})
             }
         }
         return {requestHeaders:details.requestHeaders}
@@ -161,7 +161,7 @@ chrome.runtime.onMessage.addListener(
             // Manual reconnect attempt from popup - subscribe user and trigger lookup
             storeRedditCookies()
             .then(() => getLoggedinUser())
-            .then(user => {
+            .then((user: any) => {
                 if (user) {
                     // Subscribe the user (if not already subscribed)
                     subscribeUser(user, () => {
@@ -229,7 +229,7 @@ chrome.runtime.onInstalled.addListener(function(details) {
 
 function subscribeToLoggedInUser_or_promptForUser() {
     getLoggedinUser()
-    .then((user) => {
+    .then((user: any) => {
         if (user) {
             subscribeUser(user, () => {
                 triggerImmediateLookupOnce(user)
@@ -261,7 +261,7 @@ function triggerImmediateLookupOnce(user: string) {
 
 const notificationClicked = (thing: string) => {
     const isUser = thing === 'other' ? false : true
-    chrome.storage.sync.get(null, (storage) => {
+    chrome.storage.sync.get(undefined as any, (storage) => {
         const unseenIDs = getUnseenIDs_thing(thing, isUser, storage)
         let url = null
         if (isUser && storage.user_subscriptions[thing]) {
@@ -292,7 +292,7 @@ chrome.notifications.onClicked.addListener((notificationId) => {
 
 // only need this while using registration.showNotification in common.js
 if (__BUILT_FOR__ === 'chrome') {
-    self.addEventListener('notificationclick', (event) => {
+    self.addEventListener('notificationclick', (event: any) => {
         notificationClicked(event.notification.data)
         event.notification.close()
     })

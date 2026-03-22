@@ -11,7 +11,7 @@ const id_match_post = /^t3_.+/
 const defaultNewRedditTarget = 'shreddit-post'
 
 export const redditModifications = (other_subscriptions: Record<string, any>, hide_subscribe: boolean, monitor_quarantined: boolean, subscribed_users_lowercase: string[], unsubscribed_users_lowercase: string[]) => {
-    const isNewReddit = Boolean(document.querySelector('head').getAttribute('prefix'))
+    const isNewReddit = Boolean(document.querySelector('head')?.getAttribute('prefix'))
     ifThreadPage_showRemovalStatus(isNewReddit, monitor_quarantined)
     const subscribeIfNotUnsubscribed = (user: string) => {
         const user_lc = user.toLowerCase()
@@ -61,13 +61,13 @@ export const redditModifications = (other_subscriptions: Record<string, any>, hi
 const removedByModeratorText = 'Comment removed by moderator'.toLowerCase().trim()
 const directLink_class = 'RevedditLink'
 const addDirectLinks_newReddit_comments = () => {
-    const processList = (elements) => {
+    const processList = (elements: any) => {
         for (const el of elements) {
             const closest_div_ancestor = $(el).closest('div').first()
             const revedditLink = $(closest_div_ancestor).parent().find(`.${directLink_class}`).length
             if (! revedditLink) {
                 const redditLink = $(closest_div_ancestor).find('a[href^="https://www.reddit.com"]').first().attr('href')
-                const url = new URL(redditLink)
+                const url = new URL(redditLink!)
                 url.searchParams.set('utm_source', 'reveddit-rt')
                 url.host = 'www.reveddit.com'
                 const newEl = $(el).clone()
@@ -97,8 +97,8 @@ const ifThreadPage_showRemovalStatus = (isNewReddit: boolean, monitor_quarantine
     // links to comments on new reddit do not have robots noindex,nofollow, so need to lookup data if haven't already
     // as of 2022/2023: older posts e.g. t3_9emzhp no longer have noindex,nofollow, so always need to look up data for new reddit
     if (isNewReddit && Object.keys(postData).length === 0) {
-        browser.runtime.sendMessage({action: 'get-from-old', path: `/r/${subreddit}/comments/${postID.substring(3)}/`})
-        .then(response => {
+        browser.runtime.sendMessage({action: 'get-from-old', path: `/r/${subreddit}/comments/${postID!.substring(3)}/`})
+        .then((response: any) => {
             if (! response) return
             showRemovalStatus({isNewReddit, newRedditTarget,
                 postData: {
@@ -154,7 +154,7 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = defaultNewRedditTarge
             $html_content.append($html_description)
             $html_content.append(reveddit_link)
             $html_wrap.append($html_content)
-            $(newRedditTarget).first().after($html_wrap)
+            $(newRedditTarget as any).first().after($html_wrap)
         }
         $(`#${optionsID}`).click(() => browser.runtime.sendMessage({action: 'open-options'}))
     }
@@ -165,10 +165,10 @@ const showRemovalStatusForThreadOverlay = (element: HTMLElement, monitor_quarant
     // built for Chrome, i.e., incognito mode is 'split' and CORB applies
     if (__BUILT_FOR__ === 'chrome') {
         browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids: [postID], monitor_quarantined})
-        .then(response => {
+        .then((response: any) => {
             if (! response || ! response.items || ! response.items.length) return
             const postData = response.items[0].data
-            ifThreadPage_showRemovalStatus(true, monitor_quarantined, element.parentNode, postData)
+            ifThreadPage_showRemovalStatus(true, monitor_quarantined, element.parentNode as Element, postData)
         })
         .catch(() => {})
     } else {
@@ -176,25 +176,25 @@ const showRemovalStatusForThreadOverlay = (element: HTMLElement, monitor_quarant
         // are allowed to send cross-origin requests
         getAuth()
         .then(auth => {
-            return lookupItemsByID([postID], auth, monitor_quarantined)
+            return lookupItemsByID([postID!], auth, monitor_quarantined)
         })
         .then(items => {
             // if request fails, items is null
             if (! items) return
             const postData = items[0].data
-            ifThreadPage_showRemovalStatus(true, monitor_quarantined, element.parentNode, postData)
+            ifThreadPage_showRemovalStatus(true, monitor_quarantined, element.parentNode as Element, postData)
         })
     }
 }
 
 const getID_newReddit = (element: HTMLElement, id_match: RegExp) => {
-    let id = element.id
+    let id: string = element.id
     if (id && id.match(id_match)) return id
-    id = $(element).attr('class').split(/\s+/).filter(c => c.match(id_match))[0]
+    id = $(element).attr('class')!.split(/\s+/).filter(c => c.match(id_match))[0]
     if (id && id.match(id_match)) return id
-    id = element.parentNode.id
+    id = (element.parentNode as HTMLElement)?.id
     if (id && id.match(id_match)) return id
-    id = $(element).closest('div[tabindex=-1]').attr('id')
+    id = $(element).closest('div[tabindex=-1]').attr('id')!
     return id
 }
 
@@ -220,9 +220,9 @@ const addSubscribeLinks_newReddit_comments = (elements: any, subscriptions: Reco
             commentBody = bodyElement.textContent
         }
         if (id in subscriptions) {
-            setTextAndFunction_unsubscribe(id, $button_clone, commentBody).appendTo(appendButtonTo)
+            setTextAndFunction_unsubscribe(id, $button_clone[0], commentBody).appendTo(appendButtonTo)
         } else {
-            setTextAndFunction_subscribe(id, $button_clone, commentBody).appendTo(appendButtonTo)
+            setTextAndFunction_subscribe(id, $button_clone[0], commentBody).appendTo(appendButtonTo)
         }
     })
 }
@@ -240,9 +240,9 @@ const addSubscribeLinks_newReddit_posts = (elements: any, subscriptions: Record<
         $button_clone.find('i.icon').first().parent().remove()
         const $last_button = $button.parent().children('button').last()
         if (id in subscriptions) {
-            setTextAndFunction_unsubscribe(id, $button_clone).insertAfter($last_button)
+            setTextAndFunction_unsubscribe(id, $button_clone[0]).insertAfter($last_button)
         } else {
-            setTextAndFunction_subscribe(id, $button_clone).insertAfter($last_button)
+            setTextAndFunction_subscribe(id, $button_clone[0]).insertAfter($last_button)
         }
     })
 }

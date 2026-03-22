@@ -62,9 +62,9 @@ const addSubscribeLinks_revddit_posts = (elements: any, subscriptions: Record<st
 }
 
 function waitForAddedNode_withMinAttValue(id: string, parent: Element | null, attribute: string, minAttributeValue: number, done: () => void) {
-    new MutationObserver(function(mutations) {
+    new MutationObserver(function(this: MutationObserver, mutations) {
         var el = document.getElementById(id);
-        if (el && el.getAttribute(attribute) >= minAttributeValue) {
+        if (el && Number(el.getAttribute(attribute)) >= minAttributeValue) {
             this.disconnect();
             done();
         }
@@ -78,22 +78,22 @@ function findIDsForUserAndMark(storage: Record<string, any>, user: string, isUse
     const seen_removed_ids = getIDsHashFromSelector('.comment.removed, .post.removed, .comment.deleted, .post.deleted')
     const seen_approved_ids = getIDsHashFromSelector('.comment:not(.removed), .post:not(.removed)')
     const seen_locked_ids = getIDsHashFromSelector('.comment.locked, .post.locked')
-    const seen_unlocked_ids = getIDsHashFromSelector('.comment:not(.locked)', '.post:not(.locked)')
+    const seen_unlocked_ids = getIDsHashFromSelector('.comment:not(.locked), .post:not(.locked)')
     markIDsAsSeenIfSubscribed(storage, user, isUserPage,
                               seen_removed_ids,
                               seen_approved_ids,
                               seen_locked_ids,
                               seen_unlocked_ids,
-                              (s) => {
+                              () => {
         chrome.runtime.sendMessage({action: 'update-badge'})
     })
 }
 
 function getIDsHashFromSelector(selector: string) {
-    const hash = {}
+    const hash: Record<string, any> = {}
     $(selector).each(function() {
         const id = this.getAttribute('id')
-        hash[id] = this.getAttribute('data-created_utc')
+        if (id) hash[id] = this.getAttribute('data-created_utc')
     })
     return hash
 }

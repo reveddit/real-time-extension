@@ -3,14 +3,14 @@ import { getPrettyDate, isComment, sortDict_by_numberValuedAttribute } from './c
 import browser from 'webextension-polyfill'
 
 const key = 'other_subscriptions'
-chrome.storage.local.get(null, localStorage => {
-    chrome.storage.sync.get(null, syncStorage => {
+chrome.storage.local.get(undefined as any, localStorage => {
+    chrome.storage.sync.get(undefined as any, syncStorage => {
         const {unseen, seen} = getIDs_thing('other', false, syncStorage)
         const subscriptions = syncStorage.other_subscriptions
         $("<p>&bull; The maximum number of subscriptions is 100 items. If the maximum number is reached, the least recently subscribed items are bumped off the list.</p>").appendTo('#main')
         $("<p>&bull; Subscribing to a post only tracks changes to the post itself, not the post's comments.</p>").appendTo('#main')
         if (unseen.length || seen.length) {
-            $(`<p><a href="https://www.reveddit.com/info?id=${$.unique($.merge(unseen, seen)).join(',')}&removal_status=all">View these items' current status on reveddit</a></p>`).appendTo('#main')
+            $(`<p><a href="https://www.reveddit.com/info?id=${($.unique as any)($.merge(unseen, seen)).join(',')}&removal_status=all">View these items' current status on reveddit</a></p>`).appendTo('#main')
         }
         var table = $('<table>')
         var headersRow = $('<tr>')
@@ -26,14 +26,14 @@ chrome.storage.local.get(null, localStorage => {
             const timeSubscribedUTC = item.t
             const row = $('<tr>')
             //index
-            $('<td>').append(index).appendTo(row)
+            $('<td>').text(index).appendTo(row)
             const item_localStorage = getItemFromLocalStorage('other', false, id, localStorage)
             let contentType = isComment(id) ? 'comment' : 'post'
             let text = id
             let timeLength = 'n/a'
             const formatted_subscribedUTC = new Date(timeSubscribedUTC*1000)
             // time subscribed
-            $('<td>').attr('title',formatted_subscribedUTC).text(getPrettyDate(timeSubscribedUTC)).appendTo(row)
+            $('<td>').attr('title',formatted_subscribedUTC.toString()).text(getPrettyDate(timeSubscribedUTC)).appendTo(row)
 
             let createdUTC_pretty = 'n/a'
             let formatted_createdUTC = ''
@@ -43,7 +43,7 @@ chrome.storage.local.get(null, localStorage => {
                     text = item_localStorage.getText().trim()
                 }
                 createdUTC_pretty = getPrettyDate(item_createdUTC)
-                formatted_createdUTC = new Date(item_createdUTC*1000)
+                formatted_createdUTC = new Date(item_createdUTC*1000).toString()
             }
             //item creation time
             $('<td>').attr('title',formatted_createdUTC).text(createdUTC_pretty).appendTo(row)

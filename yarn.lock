@@ -1522,6 +1522,11 @@
   resolved "https://registry.npmjs.org/@types/webextension-polyfill/-/webextension-polyfill-0.10.7.tgz"
   integrity sha512-10ql7A0qzBmFB+F+qAke/nP1PIonS0TXZAOMVOxEUsm+lGSW6uwVcISFNa0I4Oyj0884TZVWGGMIWeXOVSNFHw==
 
+"@types/webextension-polyfill@^0.12.5":
+  version "0.12.5"
+  resolved "https://registry.yarnpkg.com/@types/webextension-polyfill/-/webextension-polyfill-0.12.5.tgz#1d0c54ce83628b97eb7c2e31ec97500122a489c5"
+  integrity sha512-uKSAv6LgcVdINmxXMKBuVIcg/2m5JZugoZO8x20g7j2bXJkPIl/lVGQcDlbV+aXAiTyXT2RA5U5mI4IGCDMQeg==
+
 "@types/webpack-sources@^3.2.3":
   version "3.2.3"
   resolved "https://registry.npmjs.org/@types/webpack-sources/-/webpack-sources-3.2.3.tgz"

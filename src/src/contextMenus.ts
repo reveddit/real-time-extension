@@ -20,7 +20,7 @@ export const setupContextualMenu = () => {
     })
     chrome.contextMenus.onClicked.addListener(function(info, tab) {
         if (info.menuItemId == contextMenu_id) {
-            const url = info.linkUrl
+            const url = info.linkUrl!
             const text = 'link'
             const [postID, commentID, user] = getFullIDsFromURL(url)
             if (commentID) {

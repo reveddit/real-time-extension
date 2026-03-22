@@ -4,7 +4,7 @@
 import { __getSyncStorage, __getLocalStorage } from './webextension-polyfill.js'
 
 function applyDefaults(keys, storage) {
-    if (keys === null) return { ...storage }
+    if (keys === null || keys === undefined) return { ...storage }
     if (typeof keys === 'string') {
         return { [keys]: storage[keys] }
     }

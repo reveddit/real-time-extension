@@ -67,7 +67,7 @@ const processPendingPost = async (storage: Record<string, any>) => {
         const postPath = '/comments/' + postId.substring(3) + '/'
         const result = await getPost_fromOld(postPath)
 
-        if (result && result.is_removed) {
+        if (result && 'is_removed' in result && result.is_removed) {
              const itemData = await fetchItemFromApiInfo(postId) 
              if (itemData) {
                  itemData.is_robot_indexable = false
@@ -96,9 +96,9 @@ export const setCurrentStateForId = (id: string, subscribedFromURL: string) => {
     if (subscribedFromURL.match(/^https:\/\/www.reveddit.com/)) {
         subscribedFrom = SUBSCRIBED_FROM_REVEDDIT
     }
-    return chrome.storage.sync.get(null, function (storage) {
+    return chrome.storage.sync.get(undefined as any, function (storage: Record<string, any>) {
         getAuth()
-        .then((auth) => {
+        .then((auth: any) => {
             return checkForChanges_thing_byId([id], 'other', false, auth, storage, subscribedFrom, {})
         })
     })
@@ -107,9 +107,9 @@ export const setCurrentStateForId = (id: string, subscribedFromURL: string) => {
 const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 20*(60*60*24)
 
 export const checkForChanges = () => {
-    chrome.storage.sync.get(null, function (storage) {
+    chrome.storage.sync.get(undefined as any, function (storage: Record<string, any>) {
         var other = Object.keys(storage.other_subscriptions)
-        const now = Math.floor(new Date()/1000)
+        const now = Math.floor(Date.now()/1000)
         
         // check for quarantined content once in awhile and enable monitor_quarantined if some is found
         // because users may not know to enable this option
@@ -123,8 +123,8 @@ export const checkForChanges = () => {
         const needsOAuth = storage.options.custom_clientid && storage.options.custom_clientid !== ''
         const authPromise = needsOAuth ? getAuth(storage.tempVar_monitor_quarantined) : Promise.resolve('none')
         
-        let cachedAuth
-        authPromise.then((auth) => {
+        let cachedAuth: any
+        authPromise.then((auth: any) => {
             cachedAuth = auth
             // Always check for logged-in user, regardless of subscription status
             return checkForChanges_loggedInUser(auth, storage)
@@ -140,7 +140,7 @@ export const checkForChanges = () => {
             return processPendingPost(storage)
         })
         .then(() => {
-            const newStorage = {last_check: now}
+            const newStorage: Record<string, any> = {last_check: now}
             if (storage.tempVar_monitor_quarantined) {
                 newStorage.last_check_quarantined = now
             }
@@ -161,7 +161,7 @@ export const checkForChanges = () => {
 const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, any>) => {
     // First get the current logged-in user
     return getLoggedinUser()
-    .then(loggedInUser => {
+    .then((loggedInUser: any) => {
         if (!loggedInUser) {
             console.log('No logged-in user found, skipping user monitoring')
             return
@@ -175,7 +175,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
         // Ensure storage keys exist for the logged-in user
         const userInit = getUserInit(loggedInUser)
         chrome.storage.sync.get(Object.keys(userInit), (existingKeys) => {
-            const keysToCreate = {}
+            const keysToCreate: Record<string, any> = {}
             Object.keys(userInit).forEach(key => {
                 if (!(key in existingKeys)) {
                     keysToCreate[key] = userInit[key]
@@ -198,7 +198,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                 
                 // Check if we have a supported subdomain (www.reddit.com or old.reddit.com)
                 const supportedTabs = tabs.filter(tab => {
-                    const hostname = new URL(tab.url).hostname
+                    const hostname = new URL(tab.url!).hostname
                     return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
                 })
                 
@@ -215,10 +215,10 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                 // Store cookies for future use when no tabs are open
                 storeRedditCookies()
                 
-                chrome.tabs.sendMessage(tab.id, {action: 'get-logged-in-user-items'}, (response) => {
-                    if (chrome.runtime.lastError) {
+                ;(chrome.tabs.sendMessage as any)(tab.id!, {action: 'get-logged-in-user-items'}, (response: any) => {
+                    if ((chrome.runtime as any).lastError) {
                         // Receiving end does not exist, fall back gracefully and set warning badge
-                        console.log('Error sending message to content script:', chrome.runtime.lastError)
+                        console.log('Error sending message to content script:', (chrome.runtime as any).lastError)
                         setWarningBadge('needs_user')
                         resolve('use_stored_cookies')
                         return
@@ -240,13 +240,13 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                         setWarningBadge('needs_user')
                         return // handle expected errors
                     }
-                    var ids = []
+                    var ids: string[] = []
                     let quarantined_subreddits = new Set()
-                    const itemLookup = {}
-                    if (storedItems.user && storedItems.user.items) { // format from cred2.reveddit.com
-                        storedItems = storedItems.user.items
+                    const itemLookup: Record<string, any> = {}
+                    if ((storedItems as any).user && (storedItems as any).user.items) { // format from cred2.reveddit.com
+                        storedItems = (storedItems as any).user.items
                     }
-                    storedItems.forEach(item => {
+                    ;(storedItems as any[]).forEach((item: any) => {
                         if (item.data && item.data.name) { // format from reddit
                             item = item.data
                         }
@@ -257,17 +257,17 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                             storage.tempVar_quarantined_content_found = true
                         }
                     })
-                    return checkForChanges_thing_byId(ids, loggedInUser, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup, Array.from(quarantined_subreddits))
+                    return checkForChanges_thing_byId(ids, loggedInUser, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup, Array.from(quarantined_subreddits) as string[])
                 })
             }
             
-            var ids = []
+            var ids: string[] = []
             let quarantined_subreddits = new Set()
-            const itemLookup = {}
-            if (items.user && items.user.items) { // format from cred2.reveddit.com
-                items = items.user.items
+            const itemLookup: Record<string, any> = {}
+            if ((items as any).user && (items as any).user.items) { // format from cred2.reveddit.com
+                items = (items as any).user.items
             }
-            items.forEach(item => {
+            ;(items as any[]).forEach((item: any) => {
                 if (item.data && item.data.name) { // format from reddit
                     item = item.data
                 }
@@ -278,7 +278,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     storage.tempVar_quarantined_content_found = true
                 }
             })
-            return checkForChanges_thing_byId(ids, loggedInUser, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup, Array.from(quarantined_subreddits))
+            return checkForChanges_thing_byId(ids, loggedInUser, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup, Array.from(quarantined_subreddits) as string[])
         })
         .then(() => {
             // Clear warning badge and error state if we successfully processed items
@@ -328,8 +328,8 @@ const checkForChanges_thing_byId = async (ids: string[], thing: string, isUser: 
         if (! isUser) {
             itemLookup = {}
         }
-        const removed = [], approved = [], locked = [], unlocked = []
-        items.forEach(itemWrap => {
+        const removed: string[] = [], approved: string[] = [], locked: string[] = [], unlocked: string[] = []
+        items.forEach((itemWrap: any) => {
             const item = itemWrap.data
             if (! isUser) {
                 itemLookup[item.name] = item
@@ -354,13 +354,13 @@ const checkForChanges_thing_byId = async (ids: string[], thing: string, isUser: 
         //      tracking removals && item was in removed, now in approved
         const newLocalStorageItems = {}
 
-        const changeTypes = []
+        const changeTypes: string[] = []
         let num_changes = 0
         return Promise.all([
             getLocalStorageItems(thing, isUser),
             getOldestDateThreshold(thing, isUser)
         ])
-        .then(([existingLocalStorageItems, oldestDateThreshold]) => {
+        .then(([existingLocalStorageItems, oldestDateThreshold]: [any, any]) => {
             if (removal_status.track) {
                 num_changes += markChanges(removed, REMOVED, 'mod removed', known_removed,
                                            approved, APPROVED, 'approved', known_approved,
@@ -418,7 +418,7 @@ function markChanges (alert_current_list: string[], alert_type: number, alert_te
     const alert_unseen_ids = [],
           normal_unseen_ids = [],
           alert_userDeleted_unseen_ids = [],
-          now = Math.floor(new Date()/1000)
+          now = Math.floor(Date.now()/1000)
 
     alert_current_list.forEach(name => {
         const item = itemLookup[name]

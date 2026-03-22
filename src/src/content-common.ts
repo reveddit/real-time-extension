@@ -25,7 +25,7 @@ const subscribeId_changeText = (id: string, element: HTMLElement, commentBody = 
         await setCurrentStateForId(id, window.location.href)
         if (commentBody) {
             getLocalStorageItems('other', false)
-            .then(storedItems => {
+            .then((storedItems: any) => {
                 const item = storedItems[id]
                 // content from private subs won't be saved b/c
                 // no item is created for that (reddit returns no data for

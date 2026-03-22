@@ -15,7 +15,7 @@ function checkConnection() {
     setStatus('Checking Reddit connection...', 'checking')
     
     getLoggedinUser()
-    .then((user) => {
+    .then((user: any) => {
         if (user) {
             setStatus(`Connected as ${user}! Redirecting...`, 'success')
             $instructions.hide()

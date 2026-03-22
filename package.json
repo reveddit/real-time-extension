@@ -13,6 +13,7 @@
         "@eslint/js": "^10.0.1",
         "@playwright/test": "^1.58.2",
         "@types/jquery": "^4.0.0",
+        "@types/webextension-polyfill": "^0.12.5",
         "babel-loader": "^9.1.2",
         "babel-plugin-add-module-exports": "^1.0.4",
         "chrome-types": "^0.1.425",

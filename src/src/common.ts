@@ -24,8 +24,8 @@ const ACTION_API = __BUILT_FOR__ === 'chrome' ? 'action' : 'browserAction'
 
 export const setWarningBadge = (errorStatus?: string) => {
     try {
-        chrome[ACTION_API].setBadgeText({text: '!'})
-        chrome[ACTION_API].setBadgeBackgroundColor({color: '#ffcc00'})
+        (chrome as any)[ACTION_API].setBadgeText({text: '!'})
+        ;(chrome as any)[ACTION_API].setBadgeBackgroundColor({color: '#ffcc00'})
         if (errorStatus) {
             chrome.storage.local.set({error_status: errorStatus})
         }
@@ -39,7 +39,7 @@ export const createTab = (url: string) => {
             // probably no window available
             chrome.windows.create({url:url}, (win) => {
                 // better to focus after window creation callback
-                chrome.windows.update(win.id, {focused: true})
+                if (win?.id != null) chrome.windows.update(win.id, {focused: true})
             })
         } else {
             // better to focus after tab creation callback
@@ -99,10 +99,10 @@ export const isComment = (name: string): boolean => {
 // Also check body because comments whose author account is deleted may have valid unremoved body
 export const isRemovedComment = (item: RedditItem): boolean => {
     return (item.author.replace(/\\/g, '')[0] === '['
-        &&    item.body.replace(/\\/g, '')[0] === '[')
+        &&    (item.body || '').replace(/\\/g, '')[0] === '[')
 }
 export const isUserDeletedComment = (item: RedditItem): boolean => {
-    return (item.body.replace(/\\/g, '') === '[deleted]' &&
+    return ((item.body || '').replace(/\\/g, '') === '[deleted]' &&
             item.author.replace(/\\/g, '') === '[deleted]')
 }
 export const isUserDeletedPost = (item: RedditItem): boolean => {
@@ -123,7 +123,7 @@ export const trimDict_by_numberValuedAttribute = (dict: Record<string, any>, max
     const array = sortDict_by_numberValuedAttribute(dict, numberValuedAttribute)
 
     const shortenedArray = array.slice(0, maxNumItems)
-    const newDict = {}
+    const newDict: Record<string, any> = {}
     shortenedArray.forEach(item => {
         newDict[item[0]] = item[1]
     })
@@ -131,8 +131,8 @@ export const trimDict_by_numberValuedAttribute = (dict: Record<string, any>, max
 }
 
 export const sortDict_by_numberValuedAttribute = (dict: Record<string, any>, numberValuedAttribute: string): [string, any][] => {
-    let array = Object.keys(dict).map(key => {
-        return [key, dict[key]]
+    let array: [string, any][] = Object.keys(dict).map(key => {
+        return [key, dict[key]] as [string, any]
     })
     array.sort((a, b) => {
         return b[1][numberValuedAttribute] - a[1][numberValuedAttribute]
@@ -212,18 +212,18 @@ export class LocalStorageItem {
             if (typeof object.p !== 'undefined') this.p = object.p
         } else {
             let text = ''
-            if (isComment(item.name)) {
-                text = reformatRedditText(item.body)
-            } else {
-                text = item.title
+            if (item && isComment(item.name)) {
+                text = reformatRedditText(item.body || '')
+            } else if (item) {
+                text = item.title || ''
             }
             this.t = text
             this.o = observed_utc
-            this.c = item.created_utc
+            this.c = item ? item.created_utc : 0
             this.n = 0
             this.r = 0
             // store compact post id for comments when available
-            if (isComment(item.name) && item.link_id) {
+            if (item && isComment(item.name) && item.link_id) {
                 this.p = item.link_id
             }
         }
@@ -292,13 +292,13 @@ export const getPrettyTimeLength = (seconds: number): string | undefined => {
     if (seconds < 60) return seconds + ' seconds'
     let time = seconds
     for (var i=0; i<thresholds.length; i++) {
-        let divisor = thresholds[i][0]
-        let text = thresholds[i][1]
-        let textPlural = thresholds[i][2]
+        let divisor = thresholds[i][0] as number
+        let text: string = thresholds[i][1] as string
+        let textPlural = thresholds[i][2] as string
         if (time < divisor) {
             let extra = (time - Math.floor(time))
-            let prevUnitTime = Math.round(extra*thresholds[i-1][0])
-            if (thresholds[i-1][0] === prevUnitTime) {
+            let prevUnitTime = Math.round(extra*(thresholds[i-1][0] as number))
+            if ((thresholds[i-1][0] as number) === prevUnitTime) {
                 time += 1
                 prevUnitTime = 0
             }
@@ -314,7 +314,7 @@ export const getPrettyTimeLength = (seconds: number): string | undefined => {
             }
             return String(Math.floor(time)) + ' ' + text
         }
-        time = time / divisor
+        time = time / (divisor as number)
     }
 }
 
@@ -345,7 +345,8 @@ export const createNotification = ({notificationId, title, message}: {notificati
         }
         const fallbackShowNotification = () => {
             try {
-                const swRegistration = self && self.registration ? self.registration : null
+                const swSelf = self as any
+                const swRegistration = swSelf && swSelf.registration ? swSelf.registration : null
                 if (swRegistration && swRegistration.showNotification) {
                     swRegistration.showNotification(title, {
                         body: message,
@@ -358,9 +359,9 @@ export const createNotification = ({notificationId, title, message}: {notificati
             }
         }
         try {
-            chrome.notifications.create(uniqueId, options, () => {
-                if (chrome.runtime && chrome.runtime.lastError) {
-                    console.log('chrome.notifications.create error:', chrome.runtime.lastError.message)
+            chrome.notifications.create(uniqueId, options as chrome.notifications.NotificationOptions, () => {
+                if ((chrome.runtime as any)?.lastError) {
+                    console.log('chrome.notifications.create error:', (chrome.runtime as any).lastError.message)
                     fallbackShowNotification()
                 }
             })
@@ -376,7 +377,7 @@ export const updateBadgeUnseenCount = () => {
         chrome.runtime.sendMessage({
             action: 'update-badge'
         })
-        .catch?.(() => {})
+        .catch(() => {})
     } else {
         getSubscribedUsers_withUnseenIDs(usersUnseenIDs => {
             let total = 0
@@ -384,9 +385,9 @@ export const updateBadgeUnseenCount = () => {
                 total += ids.length
             })
             let text = total.toString()
-            if (total == 0) text = ''
-            chrome[ACTION_API].setBadgeBackgroundColor({color: "red"})
-            chrome[ACTION_API].setBadgeText({text: text})
+            if (total == 0) text = '';
+            (chrome as any)[ACTION_API].setBadgeBackgroundColor({color: "red"})
+            ;(chrome as any)[ACTION_API].setBadgeText({text: text})
         })
     }
 }

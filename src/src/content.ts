@@ -10,7 +10,7 @@ import browser from 'webextension-polyfill'
     function queryUser (message: any, sender: any, response: any) {
         if (message.action === 'query-user') {
             return getLoggedinUser()
-            .then((user) => {
+            .then((user: any): any => {
                 if (user) {
                     try { chrome.runtime.sendMessage({action: 'immediate-user-lookup', user}) } catch (e) {}
                     return subscribeUser(user, () => {
@@ -22,7 +22,7 @@ import browser from 'webextension-polyfill'
             })
         } else if (message.action === 'get-logged-in-user-items') {
             // Handle request for logged-in user's items from background script
-            const params = {limit: 100, sort: 'new', raw_json: 1}
+            const params: Record<string, any> = {limit: 100, sort: 'new', raw_json: 1}
             const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
             
             // Use the same subdomain as the current page to avoid cross-site issues
@@ -87,13 +87,13 @@ import browser from 'webextension-polyfill'
         }
     }
     $.extend($.expr[":"], {
-        "equalsi": (elem, i, match, array) => {
+        "equalsi": (elem: any, i: any, match: any, array: any) => {
             return (elem.textContent || elem.innerText || "").toLowerCase().trim() === match[3].toLowerCase().trim()
         }
     });
-    window.localStorage.setItem('hasSeenLanguageModal', true)
-    window.localStorage.setItem('hasNotifierExtension', true)
-    browser.runtime.onMessage.addListener(queryUser)
+    window.localStorage.setItem('hasSeenLanguageModal', 'true')
+    window.localStorage.setItem('hasNotifierExtension', 'true')
+    browser.runtime.onMessage.addListener(queryUser as any)
 
     const extensionSaysNoSubscriptions = 'extensionSaysNoSubscriptions'
     let user = 'other'
@@ -114,7 +114,7 @@ import browser from 'webextension-polyfill'
         getSubscribedUsers_withSeenAndUnseenIDs((users, storage) => {
             const subscribed_users_lowercase = Object.keys(users).filter(x => x !== 'other').map(x => x.toLowerCase())
             if (subscribed_users_lowercase.length === 0) {
-                window.localStorage.setItem(extensionSaysNoSubscriptions, true)
+                window.localStorage.setItem(extensionSaysNoSubscriptions, 'true')
             } else {
                 window.localStorage.removeItem(extensionSaysNoSubscriptions)
             }
