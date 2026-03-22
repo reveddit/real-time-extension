@@ -1,18 +1,6 @@
 // Webpack DefinePlugin global
 declare const __BUILT_FOR__: 'chrome' | 'firefox' | 'edge'
 
-// jQuery is loaded via <script> tag in extension pages (not imported)
-declare const $: JQueryStatic
-declare const jQuery: JQueryStatic
-
-// arrive.js — adds .arrive() to jQuery/Document
-interface JQuery {
-    arrive(selector: string, callback: (element: HTMLElement) => void): void
-}
-interface Document {
-    arrive(selector: string, callback: (element: HTMLElement) => void): void
-}
-
 // linkedom
 declare module 'linkedom/worker' {
     export class DOMParser {

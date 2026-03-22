@@ -9,7 +9,6 @@ import AfterEmitPlugin from './AfterEmitPlugin.js'
 
 const mode = process.env.NODE_ENV
 const distSrcPath = path.join(distPath, 'src')
-const distLibPath = path.join(distPath, 'lib')
 
 let built_for = '"chrome"', chromelike = true
 const browserIsFirefox = process.env.BROWSER === 'firefox'
@@ -76,11 +75,11 @@ const contentScripts = {
     storage: './src/src/storage.ts'
 }
 const extensionPages = {
-    options: ['@babel/polyfill', './src/src/options.ts'],
-    popup: ['@babel/polyfill', './src/src/popup.ts'],
-    history: ['@babel/polyfill', './src/src/history.ts'],
-    other: ['@babel/polyfill', './src/src/other.ts'],
-    welcome: ['@babel/polyfill', './src/src/welcome.ts'],
+    options: ['@babel/polyfill', './src/src/options.tsx'],
+    popup: ['@babel/polyfill', './src/src/popup.tsx'],
+    history: ['@babel/polyfill', './src/src/history.tsx'],
+    other: ['@babel/polyfill', './src/src/other.tsx'],
+    welcome: ['@babel/polyfill', './src/src/welcome.tsx'],
     parse: ['@babel/polyfill', './src/src/parse_html/common.ts', './src/src/parse_html/old.ts'],
 }
 
@@ -98,8 +97,6 @@ const plugins = [
         { from: "src/icons", to: path.join(distPath, 'icons') },
         { context: 'src/src/', from: "*.html", to: distSrcPath },
         { context: 'src/src/', from: "*.css", to: distSrcPath },
-        { context: 'lib/', from: "*", to: distLibPath },
-        { context: 'node_modules/arrive/src/', from: 'arrive.js', to: distLibPath }
     ]}),
     new webpack.DefinePlugin({
         __BUILT_FOR__: built_for
@@ -154,7 +151,7 @@ export default {
     module: {
         rules: [
             {
-                test: /\.ts$/,
+                test: /\.tsx?$/,
                 exclude: /node_modules/,
                 use: {
                     loader: 'ts-loader',
@@ -174,6 +171,6 @@ export default {
         ]
     },
     resolve: {
-        extensions: ['.ts', '.js']
+        extensions: ['.tsx', '.ts', '.js']
     }
 }

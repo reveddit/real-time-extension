@@ -37,7 +37,7 @@
     "content_scripts": [
         {
             "matches": ["https://*.reveddit.com/*", "https://*.reddit.com/*"],
-            "js": ["lib/jquery-3.2.1.min.js", "lib/arrive.js", "src/content.js"],
+            "js": ["src/content.js"],
             "css": ["src/content.css"]
         }
     ],

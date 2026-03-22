@@ -11,12 +11,22 @@ if (location.hostname.match(/reveddit\.com$/)) {
     SUBSCRIBE_TEXT = 'subscribe'
 }
 
-export const setTextAndFunction_subscribe = (id: string, element: HTMLElement, commentBody?: string) => {
-    return $(element).text(SUBSCRIBE_TEXT).off('click').click((eventObj) => subscribeId_changeText(id, eventObj.target, commentBody))
+export const setTextAndFunction_subscribe = (id: string, element: HTMLElement, commentBody?: string): HTMLElement => {
+    element.textContent = SUBSCRIBE_TEXT
+    element.onclick = (e) => {
+        e.preventDefault()
+        subscribeId_changeText(id, element, commentBody)
+    }
+    return element
 }
 
-export const setTextAndFunction_unsubscribe = (id: string, element: HTMLElement, commentBody?: string) => {
-    return $(element).text(UNSUBSCRIBE_TEXT).off('click').click((eventObj) => unsubscribeId_changeText(id, eventObj.target, commentBody))
+export const setTextAndFunction_unsubscribe = (id: string, element: HTMLElement, commentBody?: string): HTMLElement => {
+    element.textContent = UNSUBSCRIBE_TEXT
+    element.onclick = (e) => {
+        e.preventDefault()
+        unsubscribeId_changeText(id, element, commentBody)
+    }
+    return element
 }
 
 const subscribeId_changeText = (id: string, element: HTMLElement, commentBody = '') => {
@@ -27,9 +37,6 @@ const subscribeId_changeText = (id: string, element: HTMLElement, commentBody = 
             getLocalStorageItems('other', false)
             .then((storedItems: any) => {
                 const item = storedItems[id]
-                // content from private subs won't be saved b/c
-                // no item is created for that (reddit returns no data for
-                // non-logged-in authenticated apps)
                 if (item) {
                     const itemObj = new LocalStorageItem({object: item})
                     itemObj.setText(commentBody)
@@ -39,12 +46,10 @@ const subscribeId_changeText = (id: string, element: HTMLElement, commentBody = 
             })
         }
     })
-    return false
 }
 
 const unsubscribeId_changeText = (id: string, element: HTMLElement, commentBody?: string) => {
     unsubscribeId(id, () => {
         setTextAndFunction_subscribe(id, element, commentBody)
     })
-    return false
 }

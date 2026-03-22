@@ -1,5 +1,6 @@
 import {markIDsAsSeenIfSubscribed} from './storage'
 import {setTextAndFunction_subscribe,setTextAndFunction_unsubscribe} from './content-common'
+import {observe} from './dom-helpers'
 import browser from 'webextension-polyfill'
 
 const id_match = /^t[13]_.+/
@@ -17,47 +18,59 @@ export const revdditModifications = (storage: Record<string, any>, user: string,
 
     const selector_posts = '.post:not(.deleted)'
     const selector_comments = '.comment-body-and-links'
-    $(document).arrive(selector_comments, (element) => {
-        addSubscribeLinks_revddit_comments([element], storage.other_subscriptions)
+    observe(document, selector_comments, (element) => {
+        addSubscribeLinks_revddit_comments([element as HTMLElement], storage.other_subscriptions)
     })
-    addSubscribeLinks_revddit_comments($(selector_comments), storage.other_subscriptions)
-    $(document).arrive(selector_posts, (element) => {
-        addSubscribeLinks_revddit_posts([element], storage.other_subscriptions)
+    addSubscribeLinks_revddit_comments(
+        Array.from(document.querySelectorAll(selector_comments)) as HTMLElement[],
+        storage.other_subscriptions
+    )
+    observe(document, selector_posts, (element) => {
+        addSubscribeLinks_revddit_posts([element as HTMLElement], storage.other_subscriptions)
     })
     setTimeout(() => { // this delay is necessary to make button appear on thread-page post items, not sure why
-        addSubscribeLinks_revddit_posts($(selector_posts), storage.other_subscriptions)
+        addSubscribeLinks_revddit_posts(
+            Array.from(document.querySelectorAll(selector_posts)) as HTMLElement[],
+            storage.other_subscriptions
+        )
     }, 2000)
 
 }
 
-const addSubscribeLinks_revddit_comments = (elements: any, subscriptions: Record<string, any>) => {
-    $(elements).each((idx, targetedElement) => {
-        const element = targetedElement.parentNode
-        if (element.classList.contains('deleted')) return
+const addSubscribeLinks_revddit_comments = (elements: HTMLElement[], subscriptions: Record<string, any>) => {
+    elements.forEach(targetedElement => {
+        const element = targetedElement.parentElement
+        if (!element || element.classList.contains('deleted')) return
         const id = element.id
         const links = element.querySelector('.comment-links')
+        if (!links) return
         let commentBody = ''
-        let bodyElement = element.querySelector('.comment-body')
+        const bodyElement = element.querySelector('.comment-body')
         if (bodyElement && id.match(/^t1_/)) {
-            commentBody = bodyElement.textContent
+            commentBody = bodyElement.textContent || ''
         }
-        let $newLink = setTextAndFunction_subscribe(id, $(`<a href="">`)[0], commentBody)
+        const a = document.createElement('a')
+        a.href = ''
         if (id in subscriptions) {
-            $newLink = setTextAndFunction_unsubscribe(id, $(`<a href="">`)[0], commentBody)
+            links.appendChild(setTextAndFunction_unsubscribe(id, a, commentBody))
+        } else {
+            links.appendChild(setTextAndFunction_subscribe(id, a, commentBody))
         }
-        $(links).append($newLink)
     })
 }
 
-const addSubscribeLinks_revddit_posts = (elements: any, subscriptions: Record<string, any>) => {
-    $(elements).each((idx, element) => {
+const addSubscribeLinks_revddit_posts = (elements: HTMLElement[], subscriptions: Record<string, any>) => {
+    elements.forEach(element => {
         const id = element.id
         const links = element.querySelector('.post-links')
-        let $newLink = setTextAndFunction_subscribe(id, $(`<a href="">`)[0])
+        if (!links) return
+        const a = document.createElement('a')
+        a.href = ''
         if (id in subscriptions) {
-            $newLink = setTextAndFunction_unsubscribe(id, $(`<a href="">`)[0])
+            links.appendChild(setTextAndFunction_unsubscribe(id, a))
+        } else {
+            links.appendChild(setTextAndFunction_subscribe(id, a))
         }
-        $(links).append($newLink)
     })
 }
 
@@ -91,9 +104,9 @@ function findIDsForUserAndMark(storage: Record<string, any>, user: string, isUse
 
 function getIDsHashFromSelector(selector: string) {
     const hash: Record<string, any> = {}
-    $(selector).each(function() {
-        const id = this.getAttribute('id')
-        if (id) hash[id] = this.getAttribute('data-created_utc')
+    document.querySelectorAll(selector).forEach(el => {
+        const id = el.getAttribute('id')
+        if (id) hash[id] = el.getAttribute('data-created_utc')
     })
     return hash
 }

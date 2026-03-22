@@ -1,6 +1,7 @@
 import {getAuth, lookupItemsByID} from './requests'
 import {getFullIDsFromPath} from './common'
 import {setTextAndFunction_subscribe,setTextAndFunction_unsubscribe} from './content-common'
+import {observe, findByText} from './dom-helpers'
 import browser from 'webextension-polyfill'
 import {subscribeUser, MAX_SUBSCRIPTIONS} from './storage'
 
@@ -22,38 +23,49 @@ export const redditModifications = (other_subscriptions: Record<string, any>, hi
         }
     }
     if ( ! isNewReddit ) {
-        const username = $('#header .user a')[0]?.textContent
+        const username = document.querySelector('#header .user a')?.textContent
         if (username && ! username.match(/ /) && username.trim().toLowerCase() !== 'login') {
             subscribeIfNotUnsubscribed(username)
         }
         if (! hide_subscribe) {
             const selector = '.thing.link, .thing.comment'
-            addSubscribeLinks_oldReddit($(selector), other_subscriptions)
-            $(document).arrive(selector, (element) => {
-                addSubscribeLinks_oldReddit([element], other_subscriptions)
+            addSubscribeLinks_oldReddit(
+                Array.from(document.querySelectorAll(selector)) as HTMLElement[],
+                other_subscriptions
+            )
+            observe(document, selector, (element) => {
+                addSubscribeLinks_oldReddit([element as HTMLElement], other_subscriptions)
             })
         }
     } else {
-        const username = $('.header-user-dropdown span').toArray().map(x => x.textContent.trim()).filter(x => ! x.match(/ /))[0]
+        const username = Array.from(document.querySelectorAll('.header-user-dropdown span'))
+            .map(x => (x.textContent || '').trim())
+            .filter(x => ! x.match(/ /))[0]
         if (username) {
             subscribeIfNotUnsubscribed(username)
         }
         if (! hide_subscribe) {
             let selector_comments = '.Comment'
-            addSubscribeLinks_newReddit_comments($(selector_comments), other_subscriptions)
-            $(document).arrive(selector_comments, (element) => {
-                addSubscribeLinks_newReddit_comments([element], other_subscriptions)
+            addSubscribeLinks_newReddit_comments(
+                Array.from(document.querySelectorAll(selector_comments)) as HTMLElement[],
+                other_subscriptions
+            )
+            observe(document, selector_comments, (element) => {
+                addSubscribeLinks_newReddit_comments([element as HTMLElement], other_subscriptions)
             })
             const selector_posts = '.Post'
-            addSubscribeLinks_newReddit_posts($(selector_posts), other_subscriptions)
-            $(document).arrive(selector_posts, (element) => {
-                addSubscribeLinks_newReddit_posts([element], other_subscriptions)
+            addSubscribeLinks_newReddit_posts(
+                Array.from(document.querySelectorAll(selector_posts)) as HTMLElement[],
+                other_subscriptions
+            )
+            observe(document, selector_posts, (element) => {
+                addSubscribeLinks_newReddit_posts([element as HTMLElement], other_subscriptions)
             })
         }
         addDirectLinks_newReddit_comments()
         const selector_newPost = '.Post div[data-test-id="post-content"]'
-        $(document).arrive(selector_newPost, (element) => {
-            showRemovalStatusForThreadOverlay(element, monitor_quarantined)
+        observe(document, selector_newPost, (element) => {
+            showRemovalStatusForThreadOverlay(element as HTMLElement, monitor_quarantined)
         })
     }
 }
@@ -61,30 +73,43 @@ export const redditModifications = (other_subscriptions: Record<string, any>, hi
 const removedByModeratorText = 'Comment removed by moderator'.toLowerCase().trim()
 const directLink_class = 'RevedditLink'
 const addDirectLinks_newReddit_comments = () => {
-    const processList = (elements: any) => {
+    const processList = (elements: Element[]) => {
         for (const el of elements) {
-            const closest_div_ancestor = $(el).closest('div').first()
-            const revedditLink = $(closest_div_ancestor).parent().find(`.${directLink_class}`).length
-            if (! revedditLink) {
-                const redditLink = $(closest_div_ancestor).find('a[href^="https://www.reddit.com"]').first().attr('href')
-                const url = new URL(redditLink!)
-                url.searchParams.set('utm_source', 'reveddit-rt')
-                url.host = 'www.reveddit.com'
-                const newEl = $(el).clone()
-                $(newEl).html(`<a target="_blank" style="text-decoration: underline;" href="${url.toString()}">view on Reveddit</a>`)
-                const wrap = $(`<div class="${directLink_class}">${$(newEl)[0].outerHTML}</div>`)
-                wrap.insertAfter(closest_div_ancestor)
-            }
+            const closest_div_ancestor = el.closest('div')
+            if (!closest_div_ancestor) continue
+            const parent = closest_div_ancestor.parentElement
+            if (!parent) continue
+            const revedditLink = parent.querySelectorAll(`.${directLink_class}`).length
+            if (revedditLink) continue
+            const redditLinkEl = closest_div_ancestor.querySelector('a[href^="https://www.reddit.com"]')
+            const redditLink = redditLinkEl?.getAttribute('href')
+            if (!redditLink) continue
+            const url = new URL(redditLink)
+            url.searchParams.set('utm_source', 'reveddit-rt')
+            url.host = 'www.reveddit.com'
+
+            const newEl = el.cloneNode(true) as HTMLElement
+            const link = document.createElement('a')
+            link.target = '_blank'
+            link.style.textDecoration = 'underline'
+            link.href = url.toString()
+            link.textContent = 'view on Reveddit'
+            newEl.textContent = ''
+            newEl.appendChild(link)
+
+            const wrap = document.createElement('div')
+            wrap.className = directLink_class
+            wrap.appendChild(newEl)
+            closest_div_ancestor.after(wrap)
         }
     }
-    $(document).arrive('span', (element) => {
-        if (element.textContent.toLowerCase().trim() === removedByModeratorText) {
+    observe(document, 'span', (element) => {
+        if ((element.textContent || '').toLowerCase().trim() === removedByModeratorText) {
             processList([element])
         }
     })
     const processCommentsOnPageLoad = () => {
-        // this selector is not accessible to arrive.js
-        processList($(`span:equalsi("${removedByModeratorText}")`))
+        processList(findByText(document, 'span', removedByModeratorText))
     }
     processCommentsOnPageLoad()
     setTimeout(processCommentsOnPageLoad, 1000)
@@ -119,11 +144,14 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = defaultNewRedditTarge
     const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
     let className = undefined, message_1 = undefined
     if (postID) {
-        // Note: Do NOT add this here: meta[name="robots"][content="noindex"]
-        // That shows up on all pages that are permalinks to comments
-        if ($('meta[name="robots"][content="noindex,nofollow"]').length ||
+        if (document.querySelector('meta[name="robots"][content="noindex,nofollow"]') ||
             ('is_robot_indexable' in postData && ! postData.is_robot_indexable) ) {
-            const author = postData.author || $('.link .top-matter .author').first().text() || $('.link .top-matter .tagline span:contains("[deleted]")').text() || $('.Post span:contains("u/[deleted]")').first().text() || $('span[slot="authorName"]').first().text().trim()
+            const author = postData.author
+                || document.querySelector('.link .top-matter .author')?.textContent
+                || (Array.from(document.querySelectorAll('.link .top-matter .tagline span')).find(el => el.textContent?.includes('[deleted]'))?.textContent || '')
+                || Array.from(document.querySelectorAll('.Post span')).find(el => el.textContent?.includes('u/[deleted]'))?.textContent
+                || document.querySelector('span[slot="authorName"]')?.textContent?.trim()
+                || ''
             if ((author === '[deleted]' || author === 'u/[deleted]') && postData.removed_by_category !== 'moderator') {
                 className = USER_DELETED
                 message_1 = `This post was either deleted by the person who posted it, or removed by a moderator and then deleted by the person who posted it.`
@@ -142,21 +170,29 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = defaultNewRedditTarge
         const reveddit_link = `<p><a href="https://www.reveddit.com${post_path}/">View the post on Reveddit.com</a></p>`
         if (! isNewReddit) {
             message_1 += ` View the post <a href="https://sh.reddit.com${post_path}/">on new "sh" reddit</a> for more details.`
-            const $html_message = $(`<div class="reddit-infobar md-container-small ${className}">`)
-                .append(from)
-                .append(`<div class="md"><p>${message_1}${message_2}</p>${reveddit_link}</div>`)
-            $html_message.prependTo('div.content[role="main"]')
+            const infobar = document.createElement('div')
+            infobar.className = `reddit-infobar md-container-small ${className}`
+            infobar.innerHTML = `${from}<div class="md"><p>${message_1}${message_2}</p>${reveddit_link}</div>`
+            const contentMain = document.querySelector('div.content[role="main"]')
+            if (contentMain) {
+                contentMain.prepend(infobar)
+            }
         } else {
             message_1 += ` More details may appear in a message above from reddit.`
-            const $html_wrap = $(`<div class="rev-new-reddit-message-wrap ${className}">${from}</div>`)
-            const $html_content = $(`<div class="rev-new-reddit-message-content"></div>`)
-            const $html_description = $(`<div class="rev-new-reddit-message-content-description">${message_1}${message_2}</div>`)
-            $html_content.append($html_description)
-            $html_content.append(reveddit_link)
-            $html_wrap.append($html_content)
-            $(newRedditTarget as any).first().after($html_wrap)
+            const wrap = document.createElement('div')
+            wrap.className = `rev-new-reddit-message-wrap ${className}`
+            wrap.innerHTML = `${from}<div class="rev-new-reddit-message-content"><div class="rev-new-reddit-message-content-description">${message_1}${message_2}</div>${reveddit_link}</div>`
+            let target: Element | null
+            if (typeof newRedditTarget === 'string') {
+                target = document.querySelector(newRedditTarget)
+            } else {
+                target = newRedditTarget
+            }
+            if (target) {
+                target.after(wrap)
+            }
         }
-        $(`#${optionsID}`).click(() => browser.runtime.sendMessage({action: 'open-options'}))
+        document.getElementById(optionsID)?.addEventListener('click', () => browser.runtime.sendMessage({action: 'open-options'}))
     }
 }
 
@@ -190,66 +226,75 @@ const showRemovalStatusForThreadOverlay = (element: HTMLElement, monitor_quarant
 const getID_newReddit = (element: HTMLElement, id_match: RegExp) => {
     let id: string = element.id
     if (id && id.match(id_match)) return id
-    id = $(element).attr('class')!.split(/\s+/).filter(c => c.match(id_match))[0]
+    id = (element.className || '').split(/\s+/).filter(c => c.match(id_match))[0]
     if (id && id.match(id_match)) return id
     id = (element.parentNode as HTMLElement)?.id
     if (id && id.match(id_match)) return id
-    id = $(element).closest('div[tabindex=-1]').attr('id')!
+    id = element.closest('div[tabindex="-1"]')?.id || ''
     return id
 }
 
-const addSubscribeLinks_newReddit_comments = (elements: any, subscriptions: Record<string, any>) => {
-    $(elements).each((idx, targetedElement) => {
-        const element = $(targetedElement).closest('.Comment')[0]
+const addSubscribeLinks_newReddit_comments = (elements: HTMLElement[], subscriptions: Record<string, any>) => {
+    elements.forEach(targetedElement => {
+        const element = targetedElement.closest('.Comment') as HTMLElement
+        if (!element) return
         const id = getID_newReddit(element, id_match_comment)
         if (! id || ! id.match(id_match_comment)) return
-        let $button = getButton(element, 'save')
-        let appendButtonTo = $button.parent()
-        if (! $button.length) {
-            $button = getButton(element, 'share')
-            appendButtonTo = $button.parent()
-            // if (! $button.length) {
-            //     $button = $('<button>...</button>')
-            //     appendButtonTo = element
-            // }
+        let button = getButton(element, 'save')
+        let appendButtonTo = button?.parentElement
+        if (! button) {
+            button = getButton(element, 'share')
+            appendButtonTo = button?.parentElement
         }
-        const $button_clone = $button.clone()
+        if (!button || !appendButtonTo) return
+        const buttonClone = button.cloneNode(true) as HTMLElement
         let commentBody = ''
         const bodyElement = element.querySelector('.RichTextJSON-root')
         if (bodyElement) {
-            commentBody = bodyElement.textContent
+            commentBody = bodyElement.textContent || ''
         }
         if (id in subscriptions) {
-            setTextAndFunction_unsubscribe(id, $button_clone[0], commentBody).appendTo(appendButtonTo)
+            appendButtonTo.appendChild(setTextAndFunction_unsubscribe(id, buttonClone, commentBody))
         } else {
-            setTextAndFunction_subscribe(id, $button_clone[0], commentBody).appendTo(appendButtonTo)
+            appendButtonTo.appendChild(setTextAndFunction_subscribe(id, buttonClone, commentBody))
         }
     })
 }
 
-const getButton = (element: HTMLElement, button_search_text: string) => {
-    return $(element).find(`button:equalsi("${button_search_text}")`).first()
+const getButton = (element: Element, button_search_text: string): Element | null => {
+    return findByText(element, 'button', button_search_text)[0] || null
 }
 
-const addSubscribeLinks_newReddit_posts = (elements: any, subscriptions: Record<string, any>) => {
-    $(elements).each((idx, element) => {
+const addSubscribeLinks_newReddit_posts = (elements: HTMLElement[], subscriptions: Record<string, any>) => {
+    elements.forEach(element => {
         const id = getID_newReddit(element, id_match_post)
         if (! id || ! id.match(id_match_post)) return
-        const $button = $(element).find('button :equalsi("save")').first().parent()
-        const $button_clone = $button.clone()
-        $button_clone.find('i.icon').first().parent().remove()
-        const $last_button = $button.parent().children('button').last()
+        // Find a descendant of a button with text "save", then get its parent (the button)
+        const allButtonDescendants = element.querySelectorAll('button *')
+        const saveEl = Array.from(allButtonDescendants).find(
+            el => (el.textContent || '').toLowerCase().trim() === 'save'
+        )
+        const button = saveEl?.parentElement
+        if (!button) return
+        const buttonClone = button.cloneNode(true) as HTMLElement
+        const iconEl = buttonClone.querySelector('i.icon')
+        if (iconEl?.parentElement) {
+            iconEl.parentElement.remove()
+        }
+        const lastButton = Array.from(button.parentElement!.children).filter(el => el.tagName === 'BUTTON').pop()
         if (id in subscriptions) {
-            setTextAndFunction_unsubscribe(id, $button_clone[0]).insertAfter($last_button)
+            const btn = setTextAndFunction_unsubscribe(id, buttonClone)
+            if (lastButton) lastButton.after(btn)
         } else {
-            setTextAndFunction_subscribe(id, $button_clone[0]).insertAfter($last_button)
+            const btn = setTextAndFunction_subscribe(id, buttonClone)
+            if (lastButton) lastButton.after(btn)
         }
     })
 }
 
-const addSubscribeLinks_oldReddit = (elements: any, subscriptions: Record<string, any>) => {
-    $(elements).each((idx, element) => {
-        let id = element.getAttribute('data-fullname')
+const addSubscribeLinks_oldReddit = (elements: HTMLElement[], subscriptions: Record<string, any>) => {
+    elements.forEach(element => {
+        let id: string | null = element.getAttribute('data-fullname')
         if (! id) {
             const [postID, commentID, user, subreddit] = getFullIDsFromPath(element.getAttribute('data-permalink') || '')
             if (commentID) {
@@ -264,13 +309,19 @@ const addSubscribeLinks_oldReddit = (elements: any, subscriptions: Record<string
         let commentBody = ''
         const bodyElement = element.querySelector('.usertext-body')
         if (bodyElement && id.match(/^t1_/)) {
-            commentBody = bodyElement.textContent
+            commentBody = bodyElement.textContent || ''
         }
 
-        let $newButton = setTextAndFunction_subscribe(id, $(`<a href="">`)[0], commentBody)
+        const a = document.createElement('a')
+        a.href = ''
+        let newButton: HTMLElement
         if (id in subscriptions) {
-            $newButton = setTextAndFunction_unsubscribe(id, $(`<a href="">`)[0], commentBody)
+            newButton = setTextAndFunction_unsubscribe(id, a, commentBody)
+        } else {
+            newButton = setTextAndFunction_subscribe(id, a, commentBody)
         }
-        $(buttons).append($newButton.wrap('<li>').parent())
+        const li = document.createElement('li')
+        li.appendChild(newButton)
+        buttons.appendChild(li)
     })
 }

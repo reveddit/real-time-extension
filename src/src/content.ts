@@ -86,11 +86,6 @@ import browser from 'webextension-polyfill'
             })
         }
     }
-    $.extend($.expr[":"], {
-        "equalsi": (elem: any, i: any, match: any, array: any) => {
-            return (elem.textContent || elem.innerText || "").toLowerCase().trim() === match[3].toLowerCase().trim()
-        }
-    });
     window.localStorage.setItem('hasSeenLanguageModal', 'true')
     window.localStorage.setItem('hasNotifierExtension', 'true')
     browser.runtime.onMessage.addListener(queryUser as any)
@@ -100,7 +95,7 @@ import browser from 'webextension-polyfill'
     let isUserPage = false
     let isInfoPage = false
     let isReddit = false
-    jQuery(document).ready(() => {
+    const main = () => {
         if (matches) {
             isReddit = matches[1] === 'reddit.com'
             const pathParts = window.location.pathname.split('/')
@@ -124,5 +119,10 @@ import browser from 'webextension-polyfill'
                 revdditModifications(storage, user, isUserPage, isInfoPage)
             }
         })
-    });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', main)
+    } else {
+        main()
+    }
 })();

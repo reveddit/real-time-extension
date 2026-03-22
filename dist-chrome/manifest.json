@@ -47,8 +47,6 @@
         "https://*.reddit.com/*"
       ],
       "js": [
-        "lib/jquery-3.2.1.min.js",
-        "lib/arrive.js",
         "src/content.js"
       ],
       "css": [

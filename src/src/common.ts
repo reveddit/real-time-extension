@@ -276,7 +276,18 @@ export function goToOptions () {
 
 
 export function showError(message: string, selector: string) {
-    $('<div class="rr-error">'+message+'</div>').appendTo(selector).delay(2400).fadeTo(400, 0, function() {$(this).remove()})
+    const div = document.createElement('div')
+    div.className = 'rr-error'
+    div.textContent = message
+    const parent = document.querySelector(selector)
+    if (parent) {
+        parent.appendChild(div)
+        setTimeout(() => {
+            div.style.transition = 'opacity 400ms'
+            div.style.opacity = '0'
+            setTimeout(() => div.remove(), 400)
+        }, 2400)
+    }
 }
 
 //noinspection JSUnusedLocalSymbols
