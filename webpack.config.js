@@ -96,7 +96,7 @@ const plugins = [
         },
         { from: "src/icons", to: path.join(distPath, 'icons') },
         { context: 'src/src/', from: "*.html", to: distSrcPath },
-        { context: 'src/src/', from: "*.css", to: distSrcPath },
+        { context: 'src/src/', from: "content.css", to: distSrcPath },
     ]}),
     new webpack.DefinePlugin({
         __BUILT_FOR__: built_for
