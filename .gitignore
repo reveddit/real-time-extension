@@ -11,3 +11,4 @@ package-lock.json
 yarn-error.log
 .amo-upload-uuid
 web-ext-artifacts/
+.claude-mcp/playwright-mcp.json
