@@ -159,7 +159,7 @@ export const unsubscribeId = (id: string, callback: () => void = () => {}) => {
             }
         })
         chrome.storage.sync.set(result, () => {
-            chrome.runtime.sendMessage({action: 'update-badge'}).then(callback)
+            chrome.runtime.sendMessage({action: 'update-badge'}).then(callback).catch(() => callback())
         })
     })
 }
