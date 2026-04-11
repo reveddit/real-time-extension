@@ -16,12 +16,12 @@ const ActionColumn = styled.td`
   text-align: center;
 `
 
-const ActionBadge = styled.div<{ action: string }>`
+const ActionBadge = styled.div<{ variant: string }>`
   border-radius: 10px;
   font-weight: 700;
   padding: 7px;
   ${p => {
-    switch (p.action) {
+    switch (p.variant) {
       case 'removed': return 'background: rgb(199,3,0); color: white;'
       case 'deleted': return 'background: #00007d; color: white;'
       case 'approved': return 'background: green; color: white;'
@@ -111,8 +111,9 @@ function History() {
             href = `https://www.reddit.com/comments/${shortPost}`
           }
 
-          // Map display action to CSS class
-          const actionClass = action.replace(/ /g, '-').split('-')[0]
+          const actionClass =
+            action === 'mod removed' ? 'removed' :
+            action === 'user deleted' ? 'deleted' : action
 
           return {
             id,
@@ -190,7 +191,7 @@ function History() {
                 {changes.map((row, idx) => (
                   <tr key={idx}>
                     <ActionColumn>
-                      <ActionBadge action={row.actionClass}>
+                      <ActionBadge variant={row.actionClass}>
                         {row.action.replace(/ /g, '\u00a0')}
                       </ActionBadge>
                       {row.seenCount ? <SeenCount>seen {row.seenCount}x</SeenCount> : null}
