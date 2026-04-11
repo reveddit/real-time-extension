@@ -15,6 +15,7 @@ export const setTextAndFunction_subscribe = (id: string, element: HTMLElement, c
     element.textContent = SUBSCRIBE_TEXT
     element.onclick = (e) => {
         e.preventDefault()
+        e.stopPropagation()
         subscribeId_changeText(id, element, commentBody)
     }
     return element
@@ -24,6 +25,7 @@ export const setTextAndFunction_unsubscribe = (id: string, element: HTMLElement,
     element.textContent = UNSUBSCRIBE_TEXT
     element.onclick = (e) => {
         e.preventDefault()
+        e.stopPropagation()
         unsubscribeId_changeText(id, element, commentBody)
     }
     return element
