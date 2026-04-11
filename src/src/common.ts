@@ -279,11 +279,11 @@ export function showError(message: string, selector: string) {
     const div = document.createElement('div')
     div.className = 'rr-error'
     div.textContent = message
+    div.style.transition = 'opacity 400ms'
     const parent = document.querySelector(selector)
     if (parent) {
         parent.appendChild(div)
         setTimeout(() => {
-            div.style.transition = 'opacity 400ms'
             div.style.opacity = '0'
             setTimeout(() => div.remove(), 400)
         }, 2400)
