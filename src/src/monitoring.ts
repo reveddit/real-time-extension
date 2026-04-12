@@ -1,21 +1,47 @@
-import {lookupItemsByID, lookupItemsByLoggedInUserWithAuth, getAuth, getLoggedinUser, storeRedditCookies} from './requests'
-import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED,
-        addLocalStorageItems, getLocalStorageItems,
-        MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, MAX_SYNC_STORAGE_CHANGES, SEEN_COUNT_DEFAULT,
-        getObjectNamesForThing, getUserInit, getOldestDateKey,
-        getNextPendingPost, removeFromPendingPostQueue } from './storage'
-import {createNotification, updateBadgeUnseenCount, trimDict_by_numberValuedAttribute,
-        isUserDeletedItem, isRemovedItem, isComment,
-        ItemForStorage, LocalStorageItem, ChangeForStorage, setWarningBadge} from './common'
+import {
+    lookupItemsByID,
+    lookupItemsByLoggedInUserWithAuth,
+    getAuth,
+    getLoggedinUser,
+    storeRedditCookies,
+} from './requests'
+import {
+    REMOVED,
+    DELETED,
+    APPROVED,
+    LOCKED,
+    UNLOCKED,
+    addLocalStorageItems,
+    getLocalStorageItems,
+    MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
+    MAX_SYNC_STORAGE_CHANGES,
+    SEEN_COUNT_DEFAULT,
+    getObjectNamesForThing,
+    getUserInit,
+    getOldestDateKey,
+    getNextPendingPost,
+    removeFromPendingPostQueue,
+} from './storage'
+import {
+    createNotification,
+    updateBadgeUnseenCount,
+    trimDict_by_numberValuedAttribute,
+    isUserDeletedItem,
+    isRemovedItem,
+    isComment,
+    ItemForStorage,
+    LocalStorageItem,
+    ChangeForStorage,
+    setWarningBadge,
+} from './common'
 import browser from 'webextension-polyfill'
-import {getPost_fromOld} from './parse_html/old'
-
+import { getPost_fromOld } from './parse_html/old'
 
 const SUBSCRIBED_FROM_REDDIT = 0
 const SUBSCRIBED_FROM_REVEDDIT = 1
 const SUBSCRIBED_FROM_NA = 2
 
-const TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE = Math.floor(Math.random() * 60)+60
+const TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE = Math.floor(Math.random() * 60) + 60
 
 // Require multiple consecutive observations of "removed" status before alerting,
 // to prevent false removal notifications from transient API failures or intermittent responses.
@@ -29,10 +55,12 @@ const updateOldestDateThreshold = (items: any[], itemLookup: Record<string, any>
         return Promise.resolve(null)
     }
 
-    const timestamps = items.map(itemWrap => {
-        const item = itemWrap.data || itemLookup[itemWrap.name] || itemWrap
-        return item.created_utc
-    }).filter(ts => typeof ts === 'number' && ts > 0)
+    const timestamps = items
+        .map(itemWrap => {
+            const item = itemWrap.data || itemLookup[itemWrap.name] || itemWrap
+            return item.created_utc
+        })
+        .filter(ts => typeof ts === 'number' && ts > 0)
 
     if (timestamps.length === 0) {
         return Promise.resolve(null)
@@ -42,54 +70,67 @@ const updateOldestDateThreshold = (items: any[], itemLookup: Record<string, any>
     const oldestDate = timestamps[0]
 
     const key = getOldestDateKey(thing, isUser)
-    return browser.storage.local.set({[key]: oldestDate}).then(() => oldestDate)
+    return browser.storage.local.set({ [key]: oldestDate }).then(() => oldestDate)
 }
 
 const getOldestDateThreshold = (thing: string, isUser: boolean) => {
     const key = getOldestDateKey(thing, isUser)
-    return browser.storage.local.get({[key]: null}).then(result => result[key])
+    return browser.storage.local.get({ [key]: null }).then(result => result[key])
 }
 
 const fetchItemFromApiInfo = async (id: string) => {
     try {
-         const response = await fetch(`https://www.reddit.com/api/info.json?id=${id}`)
-         const json = await response.json()
-         return json.data.children[0].data
-    } catch { return null }
+        const response = await fetch(`https://www.reddit.com/api/info.json?id=${id}`)
+        const json = await response.json()
+        return json.data.children[0].data
+    } catch {
+        return null
+    }
 }
 
 // Process one pending post from the queue each alarm cycle
 const processPendingPost = async (storage: Record<string, any>) => {
     const postId = await getNextPendingPost()
     if (!postId) return
-    
+
     try {
         const postPath = '/comments/' + postId.substring(3) + '/'
         const result = await getPost_fromOld(postPath)
 
         if (result && 'is_removed' in result && result.is_removed) {
-             const itemData = await fetchItemFromApiInfo(postId) 
-             if (itemData) {
-                 itemData.is_robot_indexable = false
-                 
-                 const author = itemData.author
-                 const isUser = (storage.user_subscriptions && (author in storage.user_subscriptions))
-                 const thing = isUser ? author : 'other'
-                 
-                 console.log(`Detected removed post ${postId} (author: ${author}), updating status...`)
-                 
-                 const itemLookup = {[postId]: itemData}
-                 
-                 await checkForChanges_thing_byId([postId], thing, isUser, null, storage, SUBSCRIBED_FROM_NA, itemLookup, [], [{data: itemData}])
-             }
+            const itemData = await fetchItemFromApiInfo(postId)
+            if (itemData) {
+                itemData.is_robot_indexable = false
+
+                const author = itemData.author
+                const isUser = storage.user_subscriptions && author in storage.user_subscriptions
+                const thing = isUser ? author : 'other'
+
+                console.log(`Detected removed post ${postId} (author: ${author}), updating status...`)
+
+                const itemLookup = { [postId]: itemData }
+
+                await checkForChanges_thing_byId(
+                    [postId],
+                    thing,
+                    isUser,
+                    null,
+                    storage,
+                    SUBSCRIBED_FROM_NA,
+                    itemLookup,
+                    [],
+                    [{ data: itemData }],
+                )
+            }
         } else {
-             console.log(`Pending post lookup: ${postId} is not removed.`)
+            console.log(`Pending post lookup: ${postId} is not removed.`)
         }
-    } catch { /* ignored */ }
-    
+    } catch {
+        /* ignored */
+    }
+
     await removeFromPendingPostQueue(postId)
 }
-
 
 export const setCurrentStateForId = (id: string, subscribedFromURL: string) => {
     let subscribedFrom = SUBSCRIBED_FROM_REDDIT
@@ -97,157 +138,207 @@ export const setCurrentStateForId = (id: string, subscribedFromURL: string) => {
         subscribedFrom = SUBSCRIBED_FROM_REVEDDIT
     }
     return chrome.storage.sync.get(undefined as any, function (storage: Record<string, any>) {
-        getAuth()
-        .then((auth: any) => {
+        getAuth().then((auth: any) => {
             return checkForChanges_thing_byId([id], 'other', false, auth, storage, subscribedFrom, {})
         })
     })
 }
 
-const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 20*(60*60*24)
+const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 20 * (60 * 60 * 24)
 
 export const checkForChanges = () => {
     chrome.storage.sync.get(undefined as any, function (storage: Record<string, any>) {
         const other = Object.keys(storage.other_subscriptions)
-        const now = Math.floor(Date.now()/1000)
-        
+        const now = Math.floor(Date.now() / 1000)
+
         // check for quarantined content once in awhile and enable monitor_quarantined if some is found
         // because users may not know to enable this option
         // the option is off by default because it can appear to cause an occasional logout
-        if (! storage.last_check_quarantined
-            || (now - storage.last_check_quarantined) > MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS ) {
+        if (
+            !storage.last_check_quarantined ||
+            now - storage.last_check_quarantined > MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS
+        ) {
             storage.tempVar_monitor_quarantined = true
         }
-        
+
         // Only get OAuth auth if user has provided a custom client ID
         const needsOAuth = storage.options.custom_clientid && storage.options.custom_clientid !== ''
         const authPromise = needsOAuth ? getAuth(storage.tempVar_monitor_quarantined) : Promise.resolve('none')
-        
+
         let cachedAuth: any
-        authPromise.then((auth: any) => {
-            cachedAuth = auth
-            // Always check for logged-in user, regardless of subscription status
-            return checkForChanges_loggedInUser(auth, storage)
-        })
-        .then(() => {
-            // Also check other subscriptions if any exist
-            if (other.length) {
-                return checkForChanges_other(cachedAuth, storage)
-            }
-        })
-        .then(() => {
-            // Process one pending post per alarm cycle (throttled)
-            return processPendingPost(storage)
-        })
-        .then(() => {
-            const newStorage: Record<string, any> = {last_check: now}
-            if (storage.tempVar_monitor_quarantined) {
-                newStorage.last_check_quarantined = now
-            }
-            if (storage.tempVar_quarantined_content_found) {
-                newStorage.options = storage.options
-                newStorage.options.monitor_quarantined = true
-            }
-            chrome.storage.sync.set(newStorage)
-        })
-        .catch(error => {
-            console.log('Error in checkForChanges:', error)
-            // Clear warning badge on error
-            updateBadgeUnseenCount()
-        })
+        authPromise
+            .then((auth: any) => {
+                cachedAuth = auth
+                // Always check for logged-in user, regardless of subscription status
+                return checkForChanges_loggedInUser(auth, storage)
+            })
+            .then(() => {
+                // Also check other subscriptions if any exist
+                if (other.length) {
+                    return checkForChanges_other(cachedAuth, storage)
+                }
+            })
+            .then(() => {
+                // Process one pending post per alarm cycle (throttled)
+                return processPendingPost(storage)
+            })
+            .then(() => {
+                const newStorage: Record<string, any> = { last_check: now }
+                if (storage.tempVar_monitor_quarantined) {
+                    newStorage.last_check_quarantined = now
+                }
+                if (storage.tempVar_quarantined_content_found) {
+                    newStorage.options = storage.options
+                    newStorage.options.monitor_quarantined = true
+                }
+                chrome.storage.sync.set(newStorage)
+            })
+            .catch(error => {
+                console.log('Error in checkForChanges:', error)
+                // Clear warning badge on error
+                updateBadgeUnseenCount()
+            })
     })
 }
 
 const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, any>) => {
     // First get the current logged-in user
     return getLoggedinUser()
-    .then((loggedInUser: any) => {
-        if (!loggedInUser) {
-            console.log('No logged-in user found, skipping user monitoring')
-            return
-        }
-        // Remember the last detected logged-in user for popup display without extra network calls
-        try {
-            chrome.storage.local.set({last_logged_in_user: loggedInUser})
-        } catch { /* ignored */ }
+        .then((loggedInUser: any) => {
+            if (!loggedInUser) {
+                console.log('No logged-in user found, skipping user monitoring')
+                return
+            }
+            // Remember the last detected logged-in user for popup display without extra network calls
+            try {
+                chrome.storage.local.set({ last_logged_in_user: loggedInUser })
+            } catch {
+                /* ignored */
+            }
 
-        // Always monitor the currently logged-in user, regardless of subscription status
-        // Ensure storage keys exist for the logged-in user
-        const userInit = getUserInit(loggedInUser)
-        chrome.storage.sync.get(Object.keys(userInit), (existingKeys) => {
-            const keysToCreate: Record<string, any> = {}
-            Object.keys(userInit).forEach(key => {
-                if (!(key in existingKeys)) {
-                    keysToCreate[key] = userInit[key]
+            // Always monitor the currently logged-in user, regardless of subscription status
+            // Ensure storage keys exist for the logged-in user
+            const userInit = getUserInit(loggedInUser)
+            chrome.storage.sync.get(Object.keys(userInit), existingKeys => {
+                const keysToCreate: Record<string, any> = {}
+                Object.keys(userInit).forEach(key => {
+                    if (!(key in existingKeys)) {
+                        keysToCreate[key] = userInit[key]
+                    }
+                })
+                if (Object.keys(keysToCreate).length > 0) {
+                    chrome.storage.sync.set(keysToCreate)
                 }
             })
-            if (Object.keys(keysToCreate).length > 0) {
-                chrome.storage.sync.set(keysToCreate)
-            }
-        })
-        
-        // Use message passing to get items from content script context
-        return new Promise((resolve) => {
-            // Try to find a Reddit tab to make the request from
-            chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
-                if (tabs.length === 0) {
-                    // Use stored cookies as fallback
-                    resolve('use_stored_cookies')
-                    return
-                }
-                
-                // Check if we have a supported subdomain (www.reddit.com or old.reddit.com)
-                const supportedTabs = tabs.filter(tab => {
-                    const hostname = new URL(tab.url!).hostname
-                    return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
-                })
-                
-                if (supportedTabs.length === 0) {
-                    console.log('No supported Reddit subdomains found (www.reddit.com or old.reddit.com)')
-                    // Try to use stored cookies as fallback
-                    resolve('use_stored_cookies')
-                    return
-                }
-                
-                // Use the first supported Reddit tab
-                const tab = supportedTabs[0]
-                
-                // Store cookies for future use when no tabs are open
-                storeRedditCookies()
-                
-                ;(chrome.tabs.sendMessage as any)(tab.id!, {action: 'get-logged-in-user-items'}, (response: any) => {
-                    if ((chrome.runtime as any).lastError) {
-                        // Receiving end does not exist, fall back gracefully and set warning badge
-                        console.log('Error sending message to content script:', (chrome.runtime as any).lastError)
-                        setWarningBadge('needs_user')
+
+            // Use message passing to get items from content script context
+            return new Promise(resolve => {
+                // Try to find a Reddit tab to make the request from
+                chrome.tabs.query({ url: ['*://*.reddit.com/*'] }, tabs => {
+                    if (tabs.length === 0) {
+                        // Use stored cookies as fallback
                         resolve('use_stored_cookies')
                         return
                     }
-                    resolve(response)
+
+                    // Check if we have a supported subdomain (www.reddit.com or old.reddit.com)
+                    const supportedTabs = tabs.filter(tab => {
+                        const hostname = new URL(tab.url!).hostname
+                        return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
+                    })
+
+                    if (supportedTabs.length === 0) {
+                        console.log('No supported Reddit subdomains found (www.reddit.com or old.reddit.com)')
+                        // Try to use stored cookies as fallback
+                        resolve('use_stored_cookies')
+                        return
+                    }
+
+                    // Use the first supported Reddit tab
+                    const tab = supportedTabs[0]
+
+                    // Store cookies for future use when no tabs are open
+                    storeRedditCookies()
+                    ;(chrome.tabs.sendMessage as any)(
+                        tab.id!,
+                        { action: 'get-logged-in-user-items' },
+                        (response: any) => {
+                            if ((chrome.runtime as any).lastError) {
+                                // Receiving end does not exist, fall back gracefully and set warning badge
+                                console.log(
+                                    'Error sending message to content script:',
+                                    (chrome.runtime as any).lastError,
+                                )
+                                setWarningBadge('needs_user')
+                                resolve('use_stored_cookies')
+                                return
+                            }
+                            resolve(response)
+                        },
+                    )
                 })
             })
-        })
-        .then(items => {
-            if (! items) return // handle expected errors
-            
-            // Handle stored cookies case
-            if (items === 'use_stored_cookies') {
-                // Try to fetch items using stored cookies
-                return lookupItemsByLoggedInUserWithAuth('', 'new', '', storage.options.monitor_quarantined, storage.tempVar_monitor_quarantined, auth)
-                .then(storedItems => {
-                    if (! storedItems) {
-                        // Stored cookies also failed → keep yellow badge to indicate attention needed
-                        setWarningBadge('needs_user')
-                        return // handle expected errors
+                .then(items => {
+                    if (!items) return // handle expected errors
+
+                    // Handle stored cookies case
+                    if (items === 'use_stored_cookies') {
+                        // Try to fetch items using stored cookies
+                        return lookupItemsByLoggedInUserWithAuth(
+                            '',
+                            'new',
+                            '',
+                            storage.options.monitor_quarantined,
+                            storage.tempVar_monitor_quarantined,
+                            auth,
+                        ).then(storedItems => {
+                            if (!storedItems) {
+                                // Stored cookies also failed → keep yellow badge to indicate attention needed
+                                setWarningBadge('needs_user')
+                                return // handle expected errors
+                            }
+                            const ids: string[] = []
+                            let quarantined_subreddits = new Set()
+                            const itemLookup: Record<string, any> = {}
+                            if ((storedItems as any).user && (storedItems as any).user.items) {
+                                // format from cred2.reveddit.com
+                                storedItems = (storedItems as any).user.items
+                            }
+                            ;(storedItems as any[]).forEach((item: any) => {
+                                if (item.data && item.data.name) {
+                                    // format from reddit
+                                    item = item.data
+                                }
+                                ids.push(item.name)
+                                itemLookup[item.name] = item
+                                if (item.quarantine) {
+                                    quarantined_subreddits.add(item.subreddit)
+                                    storage.tempVar_quarantined_content_found = true
+                                }
+                            })
+                            return checkForChanges_thing_byId(
+                                ids,
+                                loggedInUser,
+                                true,
+                                auth,
+                                storage,
+                                SUBSCRIBED_FROM_NA,
+                                itemLookup,
+                                Array.from(quarantined_subreddits) as string[],
+                            )
+                        })
                     }
+
                     const ids: string[] = []
                     let quarantined_subreddits = new Set()
                     const itemLookup: Record<string, any> = {}
-                    if ((storedItems as any).user && (storedItems as any).user.items) { // format from cred2.reveddit.com
-                        storedItems = (storedItems as any).user.items
+                    if ((items as any).user && (items as any).user.items) {
+                        // format from cred2.reveddit.com
+                        items = (items as any).user.items
                     }
-                    ;(storedItems as any[]).forEach((item: any) => {
-                        if (item.data && item.data.name) { // format from reddit
+                    ;(items as any[]).forEach((item: any) => {
+                        if (item.data && item.data.name) {
+                            // format from reddit
                             item = item.data
                         }
                         ids.push(item.name)
@@ -257,39 +348,27 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                             storage.tempVar_quarantined_content_found = true
                         }
                     })
-                    return checkForChanges_thing_byId(ids, loggedInUser, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup, Array.from(quarantined_subreddits) as string[])
+                    return checkForChanges_thing_byId(
+                        ids,
+                        loggedInUser,
+                        true,
+                        auth,
+                        storage,
+                        SUBSCRIBED_FROM_NA,
+                        itemLookup,
+                        Array.from(quarantined_subreddits) as string[],
+                    )
                 })
-            }
-            
-            const ids: string[] = []
-            let quarantined_subreddits = new Set()
-            const itemLookup: Record<string, any> = {}
-            if ((items as any).user && (items as any).user.items) { // format from cred2.reveddit.com
-                items = (items as any).user.items
-            }
-            ;(items as any[]).forEach((item: any) => {
-                if (item.data && item.data.name) { // format from reddit
-                    item = item.data
-                }
-                ids.push(item.name)
-                itemLookup[item.name] = item
-                if (item.quarantine) {
-                    quarantined_subreddits.add(item.subreddit)
-                    storage.tempVar_quarantined_content_found = true
-                }
-            })
-            return checkForChanges_thing_byId(ids, loggedInUser, true, auth, storage, SUBSCRIBED_FROM_NA, itemLookup, Array.from(quarantined_subreddits) as string[])
+                .then(() => {
+                    // Clear warning badge and error state if we successfully processed items
+                    chrome.storage.local.remove('error_status', () => {
+                        updateBadgeUnseenCount()
+                    })
+                })
         })
-        .then(() => {
-            // Clear warning badge and error state if we successfully processed items
-            chrome.storage.local.remove('error_status', () => {
-                updateBadgeUnseenCount()
-            })
+        .catch(error => {
+            console.log('Error in checkForChanges_loggedInUser:', error)
         })
-    })
-    .catch(error => {
-        console.log('Error in checkForChanges_loggedInUser:', error)
-    })
 }
 
 function checkForChanges_other(auth: any, storage: Record<string, any>) {
@@ -299,22 +378,37 @@ function checkForChanges_other(auth: any, storage: Record<string, any>) {
     }
 }
 
-const checkForChanges_thing_byId = async (ids: string[], thing: string, isUser: boolean, auth: any, storage: Record<string, any>, subscribedFrom: number, itemLookup: Record<string, any> = {}, quarantined_subreddits: string[] = [], preFetchedItems: any[] | null = null) => {
+const checkForChanges_thing_byId = async (
+    ids: string[],
+    thing: string,
+    isUser: boolean,
+    auth: any,
+    storage: Record<string, any>,
+    subscribedFrom: number,
+    itemLookup: Record<string, any> = {},
+    quarantined_subreddits: string[] = [],
+    preFetchedItems: any[] | null = null,
+) => {
     let promise
     const monitor_quarantined = storage.options.monitor_quarantined
     if (preFetchedItems) {
         promise = Promise.resolve(preFetchedItems)
     } else if (location.protocol.match(/^http/)) {
         // this condition is for when the code is activated via a content script (e.g. the subscribe button) and browser.cookies is unavailable
-        promise = browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids, monitor_quarantined})
+        promise = browser.runtime.sendMessage({ action: 'get-reddit-items-by-id', ids, monitor_quarantined })
     } else {
-        promise = lookupItemsByID(ids, auth, monitor_quarantined, storage.tempVar_monitor_quarantined, quarantined_subreddits)
+        promise = lookupItemsByID(
+            ids,
+            auth,
+            monitor_quarantined,
+            storage.tempVar_monitor_quarantined,
+            quarantined_subreddits,
+        )
     }
-    return promise
-    .then(result => {
-        if (! result) return // handle expected errors
+    return promise.then(result => {
+        if (!result) return // handle expected errors
         const items = Array.isArray(result) ? result : result.items
-        if (! items) return // handle expected errors from obj
+        if (!items) return // handle expected errors from obj
         const removal_status = storage.options.removal_status
         const lock_status = storage.options.lock_status
         const target_seen_count = storage.options.seen_count || SEEN_COUNT_DEFAULT
@@ -325,13 +419,16 @@ const checkForChanges_thing_byId = async (ids: string[], thing: string, isUser: 
         const known_locked = storage[keys['locked']] || {}
         const known_unlocked = storage[keys['unlocked']] || {}
         const changes = storage[keys['changes']] || []
-        if (! isUser) {
+        if (!isUser) {
             itemLookup = {}
         }
-        const removed: string[] = [], approved: string[] = [], locked: string[] = [], unlocked: string[] = []
+        const removed: string[] = [],
+            approved: string[] = [],
+            locked: string[] = [],
+            unlocked: string[] = []
         items.forEach((itemWrap: any) => {
             const item = itemWrap.data
-            if (! isUser) {
+            if (!isUser) {
                 itemLookup[item.name] = item
             }
             if (isRemovedItem(item)) {
@@ -356,51 +453,101 @@ const checkForChanges_thing_byId = async (ids: string[], thing: string, isUser: 
 
         const changeTypes: string[] = []
         let num_changes = 0
-        return Promise.all([
-            getLocalStorageItems(thing, isUser),
-            getOldestDateThreshold(thing, isUser)
-        ])
-        .then(([existingLocalStorageItems, oldestDateThreshold]: [any, any]) => {
-            if (removal_status.track) {
-                num_changes += markChanges(removed, REMOVED, 'mod removed', known_removed,
-                                           approved, APPROVED, 'approved', known_approved,
-                                           changes, itemLookup, removal_status.notify,
-                                           newLocalStorageItems, changeTypes, isUser, subscribedFrom,
-                                           existingLocalStorageItems, target_seen_count, oldestDateThreshold)
-            }
-            if (lock_status.track) {
-                num_changes += markChanges(locked, LOCKED, 'locked', known_locked,
-                                           unlocked, UNLOCKED, 'unlocked', known_unlocked,
-                                           changes, itemLookup, lock_status.notify,
-                                           newLocalStorageItems, changeTypes, isUser, subscribedFrom,
-                                           existingLocalStorageItems, target_seen_count, oldestDateThreshold)
-            }
-            if (num_changes && changeTypes.length) {
-                console.log(`Creating notification for ${thing}: ${num_changes} changes of type ${changeTypes.join(', ')}`)
-                createNotification(
-                    {notificationId: thing,
-                     title: thing,
-                     message: `${num_changes} new [${changeTypes.join(', ')}] actions, click to view`})
-            }
-            return chrome.storage.sync.set({
-                                     [keys['removed']]: trimDict_by_numberValuedAttribute(known_removed, MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c'),
-                                     [keys['approved']]: trimDict_by_numberValuedAttribute(known_approved, MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c'),
-                                     [keys['locked']]: trimDict_by_numberValuedAttribute(known_locked, MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c'),
-                                     [keys['unlocked']]: trimDict_by_numberValuedAttribute(known_unlocked, MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c'),
-                                     [keys['changes']]: changes.slice(-MAX_SYNC_STORAGE_CHANGES)
-                                    }, () => {
-                updateBadgeUnseenCount()
-                return addLocalStorageItems(newLocalStorageItems, thing, isUser)
-            })
-        })
+        return Promise.all([getLocalStorageItems(thing, isUser), getOldestDateThreshold(thing, isUser)]).then(
+            ([existingLocalStorageItems, oldestDateThreshold]: [any, any]) => {
+                if (removal_status.track) {
+                    num_changes += markChanges(
+                        removed,
+                        REMOVED,
+                        'mod removed',
+                        known_removed,
+                        approved,
+                        APPROVED,
+                        'approved',
+                        known_approved,
+                        changes,
+                        itemLookup,
+                        removal_status.notify,
+                        newLocalStorageItems,
+                        changeTypes,
+                        isUser,
+                        subscribedFrom,
+                        existingLocalStorageItems,
+                        target_seen_count,
+                        oldestDateThreshold,
+                    )
+                }
+                if (lock_status.track) {
+                    num_changes += markChanges(
+                        locked,
+                        LOCKED,
+                        'locked',
+                        known_locked,
+                        unlocked,
+                        UNLOCKED,
+                        'unlocked',
+                        known_unlocked,
+                        changes,
+                        itemLookup,
+                        lock_status.notify,
+                        newLocalStorageItems,
+                        changeTypes,
+                        isUser,
+                        subscribedFrom,
+                        existingLocalStorageItems,
+                        target_seen_count,
+                        oldestDateThreshold,
+                    )
+                }
+                if (num_changes && changeTypes.length) {
+                    console.log(
+                        `Creating notification for ${thing}: ${num_changes} changes of type ${changeTypes.join(', ')}`,
+                    )
+                    createNotification({
+                        notificationId: thing,
+                        title: thing,
+                        message: `${num_changes} new [${changeTypes.join(', ')}] actions, click to view`,
+                    })
+                }
+                return chrome.storage.sync.set(
+                    {
+                        [keys['removed']]: trimDict_by_numberValuedAttribute(
+                            known_removed,
+                            MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
+                            'c',
+                        ),
+                        [keys['approved']]: trimDict_by_numberValuedAttribute(
+                            known_approved,
+                            MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
+                            'c',
+                        ),
+                        [keys['locked']]: trimDict_by_numberValuedAttribute(
+                            known_locked,
+                            MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
+                            'c',
+                        ),
+                        [keys['unlocked']]: trimDict_by_numberValuedAttribute(
+                            known_unlocked,
+                            MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
+                            'c',
+                        ),
+                        [keys['changes']]: changes.slice(-MAX_SYNC_STORAGE_CHANGES),
+                    },
+                    () => {
+                        updateBadgeUnseenCount()
+                        return addLocalStorageItems(newLocalStorageItems, thing, isUser)
+                    },
+                )
+            },
+        )
     })
 }
 
 const changeIsPreviouslyRecorded = (name: string, change_type: number | string, changes: any[]) => {
     for (const change of changes) {
         let change_obj = change
-        if (! (change_obj instanceof ChangeForStorage)) {
-            change_obj = new ChangeForStorage({object: change})
+        if (!(change_obj instanceof ChangeForStorage)) {
+            change_obj = new ChangeForStorage({ object: change })
         }
         if (change_obj.getID() === name && change_type === change_obj.getChangeTypeInternal()) {
             return true
@@ -409,16 +556,31 @@ const changeIsPreviouslyRecorded = (name: string, change_type: number | string, 
     return false
 }
 
-
 // newLocalStorageItems operates as a return value
-function markChanges (alert_current_list: string[], alert_type: number, alert_text: string, alert_known_hash: Record<string, any>,
-                      normal_current_list: string[], normal_type: number, normal_text: string, normal_known_hash: Record<string, any>,
-                      changes: any[], itemLookup: Record<string, any>, notify: boolean, newLocalStorageItems: Record<string, any>, changeTypes: string[],
-                      isUser: boolean, subscribedFrom: number, existingLocalStorageItems: Record<string, any>, target_seen_count: number, oldestDateThreshold: number | null) {
+function markChanges(
+    alert_current_list: string[],
+    alert_type: number,
+    alert_text: string,
+    alert_known_hash: Record<string, any>,
+    normal_current_list: string[],
+    normal_type: number,
+    normal_text: string,
+    normal_known_hash: Record<string, any>,
+    changes: any[],
+    itemLookup: Record<string, any>,
+    notify: boolean,
+    newLocalStorageItems: Record<string, any>,
+    changeTypes: string[],
+    isUser: boolean,
+    subscribedFrom: number,
+    existingLocalStorageItems: Record<string, any>,
+    target_seen_count: number,
+    oldestDateThreshold: number | null,
+) {
     const alert_unseen_ids = [],
-          normal_unseen_ids = [],
-          alert_userDeleted_unseen_ids = [],
-          now = Math.floor(Date.now()/1000)
+        normal_unseen_ids = [],
+        alert_userDeleted_unseen_ids = [],
+        now = Math.floor(Date.now() / 1000)
 
     alert_current_list.forEach(name => {
         const item = itemLookup[name]
@@ -427,39 +589,41 @@ function markChanges (alert_current_list: string[], alert_type: number, alert_te
         // 2. in the case of userpage tracking (isUser=true), only need to save the text in local storage
         // when there is a change. user page lookup (itemLookup) will have original text
         const existingLocalStorageItem = existingLocalStorageItems[name]
-        if (! isUser && ! existingLocalStorageItem) {
-            newLocalStorageItems[name] = new LocalStorageItem({item: item, observed_utc: now})
+        if (!isUser && !existingLocalStorageItem) {
+            newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
         } else if (existingLocalStorageItem) {
             // reset seen_count so that items observed as approved/normal must be consecutively seen w/that state
             // Note: The var seen_count is really a 'seen as normal' count, but we don't need an alert_seen_count
-            const newLocalStorageItem = new LocalStorageItem({object: existingLocalStorageItem})
+            const newLocalStorageItem = new LocalStorageItem({ object: existingLocalStorageItem })
             newLocalStorageItem.resetSeenCount()
             // Track how many consecutive times this item has been observed as removed.
             // Only fire a removal alert after REMOVAL_CONFIRMATION_THRESHOLD consecutive observations,
             // which prevents false alerts from transient API failures or intermittent data.
             const removal_count = newLocalStorageItem.incrementRemovalCount()
             newLocalStorageItems[name] = newLocalStorageItem
-            if (removal_count < REMOVAL_CONFIRMATION_THRESHOLD && ! (name in alert_known_hash)) {
+            if (removal_count < REMOVAL_CONFIRMATION_THRESHOLD && !(name in alert_known_hash)) {
                 return // skip this item — not yet confirmed as genuinely removed
             }
         }
         const itemCreatedUtc = item.created_utc
         const isTooOld = oldestDateThreshold && itemCreatedUtc && itemCreatedUtc < oldestDateThreshold
 
-        if (! (name in alert_known_hash) && !isTooOld) {
+        if (!(name in alert_known_hash) && !isTooOld) {
             // markUnseen is always true except when subscribing via a reddit (not reveddit) page to a new ID for 'other'
             // subscriptions. As long as the item is not 'removed', the current state is stored as 'seen' (unseen=false).
             // It is assumed that users subscribing from reveddit pages will already have seen all the current mod actions,
             // and users subscribing from a reddit page will already know about locked items
             let markUnseen = true
-            if ((subscribedFrom === SUBSCRIBED_FROM_REDDIT && alert_type !== REMOVED) ||
-                 subscribedFrom === SUBSCRIBED_FROM_REVEDDIT) {
+            if (
+                (subscribedFrom === SUBSCRIBED_FROM_REDDIT && alert_type !== REMOVED) ||
+                subscribedFrom === SUBSCRIBED_FROM_REVEDDIT
+            ) {
                 markUnseen = false
             }
             alert_known_hash[name] = new ItemForStorage(
                 item.created_utc,
                 markUnseen,
-                (isComment(item.name) && item.link_id) ? item.link_id : undefined
+                isComment(item.name) && item.link_id ? item.link_id : undefined,
             )
             delete normal_known_hash[name]
             if (markUnseen) {
@@ -470,33 +634,33 @@ function markChanges (alert_current_list: string[], alert_type: number, alert_te
                 } else {
                     alert_unseen_ids.push(name)
                 }
-                changes.push(new ChangeForStorage({id: name, observed_utc: now, change_type: alert_type_var}))
+                changes.push(new ChangeForStorage({ id: name, observed_utc: now, change_type: alert_type_var }))
             }
             if (isUser) {
-                newLocalStorageItems[name] = new LocalStorageItem({item: item, observed_utc: now})
+                newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
             }
         }
     })
     normal_current_list.forEach(name => {
         const item = itemLookup[name]
         // save original text for all non-userpage-tracked items since comment text can disappear
-        if (! isUser && ! existingLocalStorageItems[name]) {
-            newLocalStorageItems[name] = new LocalStorageItem({item: item, observed_utc: now})
+        if (!isUser && !existingLocalStorageItems[name]) {
+            newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
         }
         // Reset removal confirmation count when item appears approved,
         // so transient false removals don't accumulate across separate incidents
         if (existingLocalStorageItems[name]) {
-            const lsi = new LocalStorageItem({object: existingLocalStorageItems[name]})
+            const lsi = new LocalStorageItem({ object: existingLocalStorageItems[name] })
             if (lsi.getRemovalCount() > 0) {
                 lsi.resetRemovalCount()
                 // Preserve this in newLocalStorageItems so it gets saved
-                if (! newLocalStorageItems[name]) {
+                if (!newLocalStorageItems[name]) {
                     newLocalStorageItems[name] = lsi
                 }
             }
         }
         if (name in alert_known_hash) {
-            const this_localStorageItem = new LocalStorageItem({object: existingLocalStorageItems[name]})
+            const this_localStorageItem = new LocalStorageItem({ object: existingLocalStorageItems[name] })
             // Track the seen count, aka 'observed same status' count
             // Doing so allows sending an alert only after N times a new status has been observed.
             // See: https://www.reddit.com/r/reveddit/comments/zc7tcm/reveddit_sending_repetitive_notifications/
@@ -506,18 +670,20 @@ function markChanges (alert_current_list: string[], alert_type: number, alert_te
                 // To prevent repeat notifications, whose non-deterministic cause I haven't yet figured out,
                 // only notify about the second observed change in status back to 'normal' (approved/unlocked)
                 // if a higher threshold of consecutive normal statuses has been observed
-                if (! change_is_previously_recorded || seen_count >= TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE) {
+                if (!change_is_previously_recorded || seen_count >= TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE) {
                     normal_known_hash[name] = new ItemForStorage(
                         item.created_utc,
                         true,
-                        (isComment(item.name) && item.link_id) ? item.link_id : undefined
+                        isComment(item.name) && item.link_id ? item.link_id : undefined,
                     )
                     delete alert_known_hash[name]
 
-                    changes.push(new ChangeForStorage({id: name, observed_utc: now, change_type: normal_type, seen_count}))
+                    changes.push(
+                        new ChangeForStorage({ id: name, observed_utc: now, change_type: normal_type, seen_count }),
+                    )
                     normal_unseen_ids.push(name)
 
-                    newLocalStorageItems[name] = new LocalStorageItem({item: item, observed_utc: now})
+                    newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
                 } else {
                     newLocalStorageItems[name] = this_localStorageItem
                 }
@@ -531,7 +697,7 @@ function markChanges (alert_current_list: string[], alert_type: number, alert_te
                 normal_known_hash[name] = new ItemForStorage(
                     item.created_utc,
                     false,
-                    (isComment(item.name) && item.link_id) ? item.link_id : undefined
+                    isComment(item.name) && item.link_id ? item.link_id : undefined,
                 )
             }
         }

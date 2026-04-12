@@ -1,6 +1,6 @@
-import {subscribeId, unsubscribeId, getLocalStorageItems, saveLocalStorageItems} from './storage'
-import {LocalStorageItem} from './common'
-import {setCurrentStateForId} from './monitoring'
+import { subscribeId, unsubscribeId, getLocalStorageItems, saveLocalStorageItems } from './storage'
+import { LocalStorageItem } from './common'
+import { setCurrentStateForId } from './monitoring'
 
 let UNSUBSCRIBE_TEXT = 'unsubscribe-rev'
 let SUBSCRIBE_TEXT = 'subscribe-rev'
@@ -12,7 +12,7 @@ if (location.hostname.match(/reveddit\.com$/)) {
 
 export const setTextAndFunction_subscribe = (id: string, element: HTMLElement, commentBody?: string): HTMLElement => {
     element.textContent = SUBSCRIBE_TEXT
-    element.onclick = (e) => {
+    element.onclick = e => {
         e.preventDefault()
         e.stopPropagation()
         subscribeId_changeText(id, element, commentBody)
@@ -22,7 +22,7 @@ export const setTextAndFunction_subscribe = (id: string, element: HTMLElement, c
 
 export const setTextAndFunction_unsubscribe = (id: string, element: HTMLElement, commentBody?: string): HTMLElement => {
     element.textContent = UNSUBSCRIBE_TEXT
-    element.onclick = (e) => {
+    element.onclick = e => {
         e.preventDefault()
         e.stopPropagation()
         unsubscribeId_changeText(id, element, commentBody)
@@ -35,11 +35,10 @@ const subscribeId_changeText = (id: string, element: HTMLElement, commentBody = 
         setTextAndFunction_unsubscribe(id, element, commentBody)
         await setCurrentStateForId(id, window.location.href)
         if (commentBody) {
-            getLocalStorageItems('other', false)
-            .then((storedItems: any) => {
+            getLocalStorageItems('other', false).then((storedItems: any) => {
                 const item = storedItems[id]
                 if (item) {
-                    const itemObj = new LocalStorageItem({object: item})
+                    const itemObj = new LocalStorageItem({ object: item })
                     itemObj.setText(commentBody)
                     storedItems[id] = itemObj
                     saveLocalStorageItems('other', false, storedItems)

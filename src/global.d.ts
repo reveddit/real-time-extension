@@ -12,7 +12,10 @@ declare module 'linkedom/worker' {
 declare module 'turndown' {
     export default class TurndownService {
         turndown(html: string | Document): string
-        addRule(key: string, rule: { filter: string; replacement: (content: string, node: Node, options: any) => string }): void
+        addRule(
+            key: string,
+            rule: { filter: string; replacement: (content: string, node: Node, options: any) => string },
+        ): void
     }
 }
 

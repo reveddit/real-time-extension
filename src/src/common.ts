@@ -1,5 +1,4 @@
-import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
-        getSubscribedUsers_withUnseenIDs } from './storage'
+import { REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED, getSubscribedUsers_withUnseenIDs } from './storage'
 
 export interface RedditItem {
     name: string
@@ -23,31 +22,35 @@ const ACTION_API = __BUILT_FOR__ === 'chrome' ? 'action' : 'browserAction'
 
 export const setWarningBadge = (errorStatus?: string) => {
     try {
-        (chrome as any)[ACTION_API].setBadgeText({text: '!'})
-        ;(chrome as any)[ACTION_API].setBadgeBackgroundColor({color: '#ffcc00'})
+        ;(chrome as any)[ACTION_API].setBadgeText({ text: '!' })
+        ;(chrome as any)[ACTION_API].setBadgeBackgroundColor({ color: '#ffcc00' })
         if (errorStatus) {
-            chrome.storage.local.set({error_status: errorStatus})
+            chrome.storage.local.set({ error_status: errorStatus })
         }
-    } catch { /* ignored */ }
+    } catch {
+        /* ignored */
+    }
 }
 
 // https://stackoverflow.com/questions/25933556/chrome-extension-open-new-tab-when-browser-opened-in-background-mac/25933964#25933964
 export const createTab = (url: string) => {
-    chrome.tabs.create({url:url}, (tab) => {
-        if(! tab) {
+    chrome.tabs.create({ url: url }, tab => {
+        if (!tab) {
             // probably no window available
-            chrome.windows.create({url:url}, (win) => {
+            chrome.windows.create({ url: url }, win => {
                 // better to focus after window creation callback
-                if (win?.id != null) chrome.windows.update(win.id, {focused: true})
+                if (win?.id != null) chrome.windows.update(win.id, { focused: true })
             })
         } else {
             // better to focus after tab creation callback
-            chrome.windows.update(tab.windowId, {focused: true})
+            chrome.windows.update(tab.windowId, { focused: true })
         }
     })
 }
 
-export const getFullIDsFromURL = (url: string): [string | undefined, string | undefined, string | undefined, string | undefined] => {
+export const getFullIDsFromURL = (
+    url: string,
+): [string | undefined, string | undefined, string | undefined, string | undefined] => {
     const path = url.replace(/https:\/\/[^/]*re(ve)?ddit.com/, '')
     return getFullIDsFromPath(path)
 }
@@ -55,8 +58,13 @@ export const getFullIDsFromURL = (url: string): [string | undefined, string | un
 const regex_pc = /^\/(v|r|user)\/([^/]+)\/comments\/([^/]+)\/[^/]*(?:\/([^/?&#]+))?/
 const regex_user = /^\/(?:user|y|u)\/([^/?&#]+)\/?/
 
-export const getFullIDsFromPath = (path: string): [string | undefined, string | undefined, string | undefined, string | undefined] => {
-    let postID = undefined, commentID = undefined, user = undefined, subreddit = undefined
+export const getFullIDsFromPath = (
+    path: string,
+): [string | undefined, string | undefined, string | undefined, string | undefined] => {
+    let postID = undefined,
+        commentID = undefined,
+        user = undefined,
+        subreddit = undefined
     const matches_pc = path.match(regex_pc)
     const matches_user = path.match(regex_user)
     if (matches_pc) {
@@ -66,8 +74,8 @@ export const getFullIDsFromPath = (path: string): [string | undefined, string | 
         } else {
             subreddit = matches_pc[2]
         }
-        if (matches_pc[3]) postID = 't3_'+matches_pc[3]
-        if (matches_pc[4]) commentID = 't1_'+matches_pc[4]
+        if (matches_pc[3]) postID = 't3_' + matches_pc[3]
+        if (matches_pc[4]) commentID = 't1_' + matches_pc[4]
     } else if (matches_user) {
         user = matches_user[1]
     }
@@ -75,8 +83,12 @@ export const getFullIDsFromPath = (path: string): [string | undefined, string | 
 }
 
 export const reformatRedditText = (body: string): string => {
-    return body.replace(/&amp;/g, '&').replace(/&gt;/g, '>').replace(/&lt;/g, '<')
-        .replace(/[^\S\n]+/g, ' ').substr(0, maxRedditContentLength)
+    return body
+        .replace(/&amp;/g, '&')
+        .replace(/&gt;/g, '>')
+        .replace(/&lt;/g, '<')
+        .replace(/[^\S\n]+/g, ' ')
+        .substr(0, maxRedditContentLength)
 }
 
 export const isRemovedItem = (item: RedditItem): boolean => {
@@ -91,21 +103,19 @@ export const isRemovedItem = (item: RedditItem): boolean => {
 }
 
 export const isComment = (name: string): boolean => {
-    return name.substr(0,2) === 't1'
+    return name.substr(0, 2) === 't1'
 }
 // Checking that author starts with '[' for userpage-driven content is sufficient to prove comment is removed.
 // This way, the check is indifferent to language, in case Accept-Language is not set to 'en'
 // Also check body because comments whose author account is deleted may have valid unremoved body
 export const isRemovedComment = (item: RedditItem): boolean => {
-    return (item.author.replace(/\\/g, '')[0] === '['
-        &&    (item.body || '').replace(/\\/g, '')[0] === '[')
+    return item.author.replace(/\\/g, '')[0] === '[' && (item.body || '').replace(/\\/g, '')[0] === '['
 }
 export const isUserDeletedComment = (item: RedditItem): boolean => {
-    return ((item.body || '').replace(/\\/g, '') === '[deleted]' &&
-            item.author.replace(/\\/g, '') === '[deleted]')
+    return (item.body || '').replace(/\\/g, '') === '[deleted]' && item.author.replace(/\\/g, '') === '[deleted]'
 }
 export const isUserDeletedPost = (item: RedditItem): boolean => {
-    return (item.is_robot_indexable === false) && item.author.replace(/\\/g, '') === '[deleted]'
+    return item.is_robot_indexable === false && item.author.replace(/\\/g, '') === '[deleted]'
 }
 export const isUserDeletedItem = (item: RedditItem): boolean => {
     if (isComment(item.name)) {
@@ -118,7 +128,11 @@ export const isRemovedPost = (item: RedditItem): boolean => {
     return item.is_robot_indexable === false
 }
 
-export const trimDict_by_numberValuedAttribute = (dict: Record<string, any>, maxNumItems: number, numberValuedAttribute: string): Record<string, any> => {
+export const trimDict_by_numberValuedAttribute = (
+    dict: Record<string, any>,
+    maxNumItems: number,
+    numberValuedAttribute: string,
+): Record<string, any> => {
     const array = sortDict_by_numberValuedAttribute(dict, numberValuedAttribute)
 
     const shortenedArray = array.slice(0, maxNumItems)
@@ -129,7 +143,10 @@ export const trimDict_by_numberValuedAttribute = (dict: Record<string, any>, max
     return newDict
 }
 
-export const sortDict_by_numberValuedAttribute = (dict: Record<string, any>, numberValuedAttribute: string): [string, any][] => {
+export const sortDict_by_numberValuedAttribute = (
+    dict: Record<string, any>,
+    numberValuedAttribute: string,
+): [string, any][] => {
     let array: [string, any][] = Object.keys(dict).map(key => {
         return [key, dict[key]] as [string, any]
     })
@@ -154,9 +171,15 @@ export class ItemForStorage {
             if (typeof post_id !== 'undefined') this.p = post_id
         }
     }
-    getCreatedUTC() { return this.c }
-    getUnseen() { return this.u }
-    getPostID() { return this.p }
+    getCreatedUTC() {
+        return this.c
+    }
+    getUnseen() {
+        return this.u
+    }
+    getPostID() {
+        return this.p
+    }
 }
 
 export class ChangeForStorage {
@@ -165,7 +188,19 @@ export class ChangeForStorage {
     g: number | null
     n: number | null
     user?: string
-    constructor({ id = null, observed_utc = null, change_type = null, seen_count = null, object = null }: { id?: string | null, observed_utc?: number | null, change_type?: number | null, seen_count?: number | null, object?: any }) {
+    constructor({
+        id = null,
+        observed_utc = null,
+        change_type = null,
+        seen_count = null,
+        object = null,
+    }: {
+        id?: string | null
+        observed_utc?: number | null
+        change_type?: number | null
+        seen_count?: number | null
+        object?: any
+    }) {
         if (object) {
             this.i = object.i
             this.o = object.o
@@ -178,20 +213,34 @@ export class ChangeForStorage {
             this.n = seen_count
         }
     }
-    getID() { return this.i }
-    getObservedUTC() { return this.o }
-    getChangeTypeInternal() { return this.g }
+    getID() {
+        return this.i
+    }
+    getObservedUTC() {
+        return this.o
+    }
+    getChangeTypeInternal() {
+        return this.g
+    }
     getChangeType() {
-        switch(this.g) {
-            case REMOVED: return 'mod removed'
-            case DELETED: return 'user deleted'
-            case APPROVED: return 'approved'
-            case LOCKED: return 'locked'
-            case UNLOCKED: return 'unlocked'
-            case EDITED: return 'edited'
+        switch (this.g) {
+            case REMOVED:
+                return 'mod removed'
+            case DELETED:
+                return 'user deleted'
+            case APPROVED:
+                return 'approved'
+            case LOCKED:
+                return 'locked'
+            case UNLOCKED:
+                return 'unlocked'
+            case EDITED:
+                return 'edited'
         }
     }
-    getSeenCount() { return this.n }
+    getSeenCount() {
+        return this.n
+    }
 }
 
 export class LocalStorageItem {
@@ -203,7 +252,15 @@ export class LocalStorageItem {
     p?: string
     b?: string // post selftext body (comments store body in `t`)
     s?: string // subreddit name
-    constructor({ item = null, observed_utc = null, object = null }: { item?: RedditItem | null, observed_utc?: number | null, object?: any }) {
+    constructor({
+        item = null,
+        observed_utc = null,
+        object = null,
+    }: {
+        item?: RedditItem | null
+        observed_utc?: number | null
+        object?: any
+    }) {
         if (object) {
             this.t = object.t
             this.o = object.o
@@ -238,22 +295,44 @@ export class LocalStorageItem {
             }
         }
     }
-    setText(text: string) {this.t = reformatRedditText(text)}
-    getText() { return this.t }
-    getBody() { return this.b }
-    getSubreddit() { return this.s }
-    getObservedUTC() { return this.o }
-    getCreatedUTC() { return this.c }
-    resetSeenCount() { this.n = 0 }
-    getSeenCount() { return this.n }
-    getPostID() { return this.p }
+    setText(text: string) {
+        this.t = reformatRedditText(text)
+    }
+    getText() {
+        return this.t
+    }
+    getBody() {
+        return this.b
+    }
+    getSubreddit() {
+        return this.s
+    }
+    getObservedUTC() {
+        return this.o
+    }
+    getCreatedUTC() {
+        return this.c
+    }
+    resetSeenCount() {
+        this.n = 0
+    }
+    getSeenCount() {
+        return this.n
+    }
+    getPostID() {
+        return this.p
+    }
     incrementRemovalCount() {
         if (typeof this.r === 'undefined') this.r = 0
         this.r += 1
         return this.r
     }
-    resetRemovalCount() { this.r = 0 }
-    getRemovalCount() { return this.r || 0 }
+    resetRemovalCount() {
+        this.r = 0
+    }
+    getRemovalCount() {
+        return this.r || 0
+    }
     incrementSeenCount() {
         if (typeof this.n === 'undefined') {
             this.n = 0
@@ -265,10 +344,10 @@ export class LocalStorageItem {
 
 export function setAlarm(periodInMinutes: number) {
     chrome.alarms.clear(ALARM_NAME)
-    chrome.alarms.create(ALARM_NAME, {delayInMinutes: 1, periodInMinutes: periodInMinutes})
+    chrome.alarms.create(ALARM_NAME, { delayInMinutes: 1, periodInMinutes: periodInMinutes })
 }
 
-export function alphaLowerSort (a: string, b: string): number {
+export function alphaLowerSort(a: string, b: string): number {
     const textA = a.toLowerCase()
     const textB = b.toLowerCase()
 
@@ -277,7 +356,7 @@ export function alphaLowerSort (a: string, b: string): number {
     return 0
 }
 
-export function goToOptions () {
+export function goToOptions() {
     if (chrome.runtime.openOptionsPage) {
         chrome.runtime.openOptionsPage()
         window.close() //closes the popup which persists in FF
@@ -285,7 +364,6 @@ export function goToOptions () {
         window.open(chrome.runtime.getURL('/src/options.html'))
     }
 }
-
 
 export function showError(message: string, selector: string) {
     const div = document.createElement('div')
@@ -307,21 +385,29 @@ export function pprint(obj: any) {
     console.log(JSON.stringify(obj, null, '\t'))
 }
 
-
 export const getPrettyTimeLength = (seconds: number): string | undefined => {
-    const thresholds = [[60, 'second', 'seconds'], [60, 'minute', 'minutes'], [24, 'hour', 'hours'], [7, 'day', 'days'],
-    [365/12/7, 'week', 'weeks'], [12, 'month', 'months'], [10, 'year', 'years'],
-    [10, 'decade', 'decades'], [10, 'century', 'centuries'], [10, 'millenium', 'millenia']]
+    const thresholds = [
+        [60, 'second', 'seconds'],
+        [60, 'minute', 'minutes'],
+        [24, 'hour', 'hours'],
+        [7, 'day', 'days'],
+        [365 / 12 / 7, 'week', 'weeks'],
+        [12, 'month', 'months'],
+        [10, 'year', 'years'],
+        [10, 'decade', 'decades'],
+        [10, 'century', 'centuries'],
+        [10, 'millenium', 'millenia'],
+    ]
     if (seconds < 60) return seconds + ' seconds'
     let time = seconds
-    for (let i=0; i<thresholds.length; i++) {
+    for (let i = 0; i < thresholds.length; i++) {
         let divisor = thresholds[i][0] as number
         let text: string = thresholds[i][1] as string
         let textPlural = thresholds[i][2] as string
         if (time < divisor) {
-            let extra = (time - Math.floor(time))
-            let prevUnitTime = Math.round(extra*(thresholds[i-1][0] as number))
-            if ((thresholds[i-1][0] as number) === prevUnitTime) {
+            let extra = time - Math.floor(time)
+            let prevUnitTime = Math.round(extra * (thresholds[i - 1][0] as number))
+            if ((thresholds[i - 1][0] as number) === prevUnitTime) {
                 time += 1
                 prevUnitTime = 0
             }
@@ -329,9 +415,9 @@ export const getPrettyTimeLength = (seconds: number): string | undefined => {
                 text = textPlural
             }
             if (i > 1 && prevUnitTime > 0) {
-                let remainText = thresholds[i-1][1]
+                let remainText = thresholds[i - 1][1]
                 if (prevUnitTime > 1) {
-                    remainText = thresholds[i-1][2]
+                    remainText = thresholds[i - 1][2]
                 }
                 text += ', ' + String(prevUnitTime) + ' ' + remainText
             }
@@ -342,17 +428,25 @@ export const getPrettyTimeLength = (seconds: number): string | undefined => {
 }
 
 export const getPrettyDate = (createdUTC: number): string => {
-    const seconds = Math.floor((new Date).getTime()/1000)-createdUTC
+    const seconds = Math.floor(new Date().getTime() / 1000) - createdUTC
     return getPrettyTimeLength(seconds) + ' ago'
 }
 
-export const createNotification = ({notificationId, title, message}: {notificationId: string, title: string, message: string}) => {
+export const createNotification = ({
+    notificationId,
+    title,
+    message,
+}: {
+    notificationId: string
+    title: string
+    message: string
+}) => {
     console.log(`createNotification called: ${notificationId} - ${title} - ${message}`)
     if (location.protocol.match(/^http/)) {
         console.log('Sending notification via message passing')
         chrome.runtime.sendMessage({
             action: 'create-notification',
-            options: {notificationId, title, message}
+            options: { notificationId, title, message },
         })
     } else {
         console.log('Creating notification directly with chrome.notifications.create')
@@ -364,7 +458,7 @@ export const createNotification = ({notificationId, title, message}: {notificati
             type: 'basic',
             iconUrl: chrome.runtime.getURL('icons/128.png'),
             title: title,
-            message: message
+            message: message,
         }
         const fallbackShowNotification = () => {
             try {
@@ -374,7 +468,7 @@ export const createNotification = ({notificationId, title, message}: {notificati
                     swRegistration.showNotification(title, {
                         body: message,
                         icon: chrome.runtime.getURL('icons/128.png'),
-                        data: baseId
+                        data: baseId,
                     })
                 }
             } catch (e) {
@@ -397,10 +491,11 @@ export const createNotification = ({notificationId, title, message}: {notificati
 
 export const updateBadgeUnseenCount = () => {
     if (location.protocol.match(/^http/)) {
-        chrome.runtime.sendMessage({
-            action: 'update-badge'
-        })
-        .catch(() => {})
+        chrome.runtime
+            .sendMessage({
+                action: 'update-badge',
+            })
+            .catch(() => {})
     } else {
         getSubscribedUsers_withUnseenIDs(usersUnseenIDs => {
             let total = 0
@@ -408,9 +503,9 @@ export const updateBadgeUnseenCount = () => {
                 total += ids.length
             })
             let text = total.toString()
-            if (total == 0) text = '';
-            (chrome as any)[ACTION_API].setBadgeBackgroundColor({color: "red"})
-            ;(chrome as any)[ACTION_API].setBadgeText({text: text})
+            if (total == 0) text = ''
+            ;(chrome as any)[ACTION_API].setBadgeBackgroundColor({ color: 'red' })
+            ;(chrome as any)[ACTION_API].setBadgeText({ text: text })
         })
     }
 }

@@ -1,6 +1,6 @@
-import {subscribeUser, subscribeId} from './storage'
-import {getFullIDsFromURL} from './common'
-import {setCurrentStateForId} from './monitoring'
+import { subscribeUser, subscribeId } from './storage'
+import { getFullIDsFromURL } from './common'
+import { setCurrentStateForId } from './monitoring'
 
 export const setupContextualMenu = () => {
     const contextMenu_id = 'reveddit-subscribe'
@@ -9,11 +9,15 @@ export const setupContextualMenu = () => {
             id: contextMenu_id,
             title: 'reveddit subscribe',
             contexts: ['link'],
-            targetUrlPatterns: ['https://*.reddit.com/r/*/comments/*', 'https://www.reveddit.com/r/*/comments/*',
-                                'https://*.reddit.com/user/*', 'https://www.reveddit.com/user/*']
+            targetUrlPatterns: [
+                'https://*.reddit.com/r/*/comments/*',
+                'https://www.reveddit.com/r/*/comments/*',
+                'https://*.reddit.com/user/*',
+                'https://www.reveddit.com/user/*',
+            ],
         })
     })
-    chrome.contextMenus.onClicked.addListener(function(info) {
+    chrome.contextMenus.onClicked.addListener(function (info) {
         if (info.menuItemId == contextMenu_id) {
             const url = info.linkUrl!
             const text = 'link'
@@ -30,5 +34,5 @@ export const setupContextualMenu = () => {
                 alert(`Unable to subscribe to this ${text}, it is not a comment, post or user.\n\n${url}`)
             }
         }
-    });
+    })
 }

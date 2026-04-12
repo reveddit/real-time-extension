@@ -1,37 +1,44 @@
-import {markIDsAsSeenIfSubscribed} from './storage'
-import {setTextAndFunction_subscribe,setTextAndFunction_unsubscribe} from './content-common'
-import {observe} from './dom-helpers'
+import { markIDsAsSeenIfSubscribed } from './storage'
+import { setTextAndFunction_subscribe, setTextAndFunction_unsubscribe } from './content-common'
+import { observe } from './dom-helpers'
 
-export const revdditModifications = (storage: Record<string, any>, user: string, isUserPage: boolean, isInfoPage: boolean) => {
+export const revdditModifications = (
+    storage: Record<string, any>,
+    user: string,
+    isUserPage: boolean,
+    isInfoPage: boolean,
+) => {
     if (isUserPage || isInfoPage) {
-        waitForAddedNode_withMinAttValue('numItemsLoaded',
-                                         document.querySelector('.main'),
-                                         'data-numitemsloaded',
-                                         1,
-                                         () => {
-                                             findIDsForUserAndMark(storage, user, isUserPage)
-                                         })
+        waitForAddedNode_withMinAttValue(
+            'numItemsLoaded',
+            document.querySelector('.main'),
+            'data-numitemsloaded',
+            1,
+            () => {
+                findIDsForUserAndMark(storage, user, isUserPage)
+            },
+        )
     }
 
     const selector_posts = '.post:not(.deleted)'
     const selector_comments = '.comment-body-and-links'
-    observe(document, selector_comments, (element) => {
+    observe(document, selector_comments, element => {
         addSubscribeLinks_revddit_comments([element as HTMLElement], storage.other_subscriptions)
     })
     addSubscribeLinks_revddit_comments(
         Array.from(document.querySelectorAll(selector_comments)) as HTMLElement[],
-        storage.other_subscriptions
+        storage.other_subscriptions,
     )
-    observe(document, selector_posts, (element) => {
+    observe(document, selector_posts, element => {
         addSubscribeLinks_revddit_posts([element as HTMLElement], storage.other_subscriptions)
     })
-    setTimeout(() => { // this delay is necessary to make button appear on thread-page post items, not sure why
+    setTimeout(() => {
+        // this delay is necessary to make button appear on thread-page post items, not sure why
         addSubscribeLinks_revddit_posts(
             Array.from(document.querySelectorAll(selector_posts)) as HTMLElement[],
-            storage.other_subscriptions
+            storage.other_subscriptions,
         )
     }, 2000)
-
 }
 
 const addSubscribeLinks_revddit_comments = (elements: HTMLElement[], subscriptions: Record<string, any>) => {
@@ -71,17 +78,23 @@ const addSubscribeLinks_revddit_posts = (elements: HTMLElement[], subscriptions:
     })
 }
 
-function waitForAddedNode_withMinAttValue(id: string, parent: Element | null, attribute: string, minAttributeValue: number, done: () => void) {
-    new MutationObserver(function(this: MutationObserver) {
-        const el = document.getElementById(id);
+function waitForAddedNode_withMinAttValue(
+    id: string,
+    parent: Element | null,
+    attribute: string,
+    minAttributeValue: number,
+    done: () => void,
+) {
+    new MutationObserver(function (this: MutationObserver) {
+        const el = document.getElementById(id)
         if (el && Number(el.getAttribute(attribute)) >= minAttributeValue) {
-            this.disconnect();
-            done();
+            this.disconnect()
+            done()
         }
     }).observe(parent || document, {
         childList: true,
-        subtree: true
-    });
+        subtree: true,
+    })
 }
 
 function findIDsForUserAndMark(storage: Record<string, any>, user: string, isUserPage: boolean) {
@@ -89,14 +102,18 @@ function findIDsForUserAndMark(storage: Record<string, any>, user: string, isUse
     const seen_approved_ids = getIDsHashFromSelector('.comment:not(.removed), .post:not(.removed)')
     const seen_locked_ids = getIDsHashFromSelector('.comment.locked, .post.locked')
     const seen_unlocked_ids = getIDsHashFromSelector('.comment:not(.locked), .post:not(.locked)')
-    markIDsAsSeenIfSubscribed(storage, user, isUserPage,
-                              seen_removed_ids,
-                              seen_approved_ids,
-                              seen_locked_ids,
-                              seen_unlocked_ids,
-                              () => {
-        chrome.runtime.sendMessage({action: 'update-badge'})
-    })
+    markIDsAsSeenIfSubscribed(
+        storage,
+        user,
+        isUserPage,
+        seen_removed_ids,
+        seen_approved_ids,
+        seen_locked_ids,
+        seen_unlocked_ids,
+        () => {
+            chrome.runtime.sendMessage({ action: 'update-badge' })
+        },
+    )
 }
 
 function getIDsHashFromSelector(selector: string) {

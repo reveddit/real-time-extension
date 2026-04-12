@@ -1,20 +1,23 @@
-import {getSubscribedUsers_withSeenAndUnseenIDs, subscribeUser} from './storage'
-import {redditModifications} from './content-reddit'
-import {revdditModifications} from './content-revddit'
-import {getLoggedinUser} from './requests'
+import { getSubscribedUsers_withSeenAndUnseenIDs, subscribeUser } from './storage'
+import { redditModifications } from './content-reddit'
+import { revdditModifications } from './content-revddit'
+import { getLoggedinUser } from './requests'
 import browser from 'webextension-polyfill'
 
-(function () {
+;(function () {
     const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
 
-    function queryUser (message: any, _sender: any, _response: any) {
+    function queryUser(message: any, _sender: any, _response: any) {
         if (message.action === 'query-user') {
-            return getLoggedinUser()
-            .then((user: any): any => {
+            return getLoggedinUser().then((user: any): any => {
                 if (user) {
-                    try { chrome.runtime.sendMessage({action: 'immediate-user-lookup', user}) } catch { /* ignored */ }
+                    try {
+                        chrome.runtime.sendMessage({ action: 'immediate-user-lookup', user })
+                    } catch {
+                        /* ignored */
+                    }
                     return subscribeUser(user, () => {
-                        window.location.href=`https://www.reveddit.com/user/${user}?all=true`
+                        window.location.href = `https://www.reveddit.com/user/${user}?all=true`
                     })
                 } else {
                     return Promise.resolve('failed')
@@ -22,68 +25,72 @@ import browser from 'webextension-polyfill'
             })
         } else if (message.action === 'get-logged-in-user-items') {
             // Handle request for logged-in user's items from background script
-            const params: Record<string, any> = {limit: 100, sort: 'new', raw_json: 1}
-            const search = '?'+Object.keys(params).map(k => `${k}=${params[k]}`).join('&')
-            
+            const params: Record<string, any> = { limit: 100, sort: 'new', raw_json: 1 }
+            const search =
+                '?' +
+                Object.keys(params)
+                    .map(k => `${k}=${params[k]}`)
+                    .join('&')
+
             // Use the same subdomain as the current page to avoid cross-site issues
             const currentHost = window.location.hostname
             const url = `https://${currentHost}/user/me.json${search}`
-            
+
             // Ask background to store cookies for future use when no tabs are open
             try {
-                chrome.runtime.sendMessage({action: 'store-reddit-cookies'})
+                chrome.runtime.sendMessage({ action: 'store-reddit-cookies' })
             } catch {
                 // ignore if not available
             }
-            
-            return fetch(url, {credentials: 'include'})
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`)
-                }
-                return response.json()
-            })
-            .then(data => {
-                if (data && data.data && data.data.children) {
-                    return data.data.children
-                }
-                throw new Error('reddit data is not defined')
-            })
-            .catch(error => {
-                console.log('Error fetching logged-in user items:', error)
-                return null
-            })
+
+            return fetch(url, { credentials: 'include' })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`)
+                    }
+                    return response.json()
+                })
+                .then(data => {
+                    if (data && data.data && data.data.children) {
+                        return data.data.children
+                    }
+                    throw new Error('reddit data is not defined')
+                })
+                .catch(error => {
+                    console.log('Error fetching logged-in user items:', error)
+                    return null
+                })
         } else if (message.action === 'fetch-api-info-public') {
             // Fetch /api/info WITHOUT credentials to get "public" view
             // This is key for detecting removed content - we need to see what logged-out users see
             const ids = message.ids
             const url = `https://old.reddit.com/api/info.json?id=${ids}&raw_json=1`
-            
+
             return fetch(url, {
                 credentials: 'omit',
                 headers: {
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                     'Accept-Language': 'en-US,en;q=0.5',
                     'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache',
-                }
+                    Pragma: 'no-cache',
+                },
             })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`Content script fetch failed: ${response.status}`)
-                }
-                return response.json()
-            })
-            .then(data => {
-                if (data && data.data && data.data.children) {
-                    return {success: true, items: data.data.children}
-                }
-                throw new Error('Invalid data format')
-            })
-            .catch(error => {
-                console.log('Content script fetch-api-info-public error:', error)
-                return {success: false, error: error.message}
-            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Content script fetch failed: ${response.status}`)
+                    }
+                    return response.json()
+                })
+                .then(data => {
+                    if (data && data.data && data.data.children) {
+                        return { success: true, items: data.data.children }
+                    }
+                    throw new Error('Invalid data format')
+                })
+                .catch(error => {
+                    console.log('Content script fetch-api-info-public error:', error)
+                    return { success: false, error: error.message }
+                })
         }
     }
     window.localStorage.setItem('hasSeenLanguageModal', 'true')
@@ -100,21 +107,29 @@ import browser from 'webextension-polyfill'
             isReddit = matches[1] === 'reddit.com'
             const pathParts = window.location.pathname.split('/')
             if (pathParts[1] === 'user' && pathParts.length >= 3 && pathParts[2]) {
-                user = window.location.pathname.split('/')[2];
+                user = window.location.pathname.split('/')[2]
                 isUserPage = true
             } else if (pathParts[1] === 'info') {
                 isInfoPage = true
             }
         }
         getSubscribedUsers_withSeenAndUnseenIDs((users, storage) => {
-            const subscribed_users_lowercase = Object.keys(users).filter(x => x !== 'other').map(x => x.toLowerCase())
+            const subscribed_users_lowercase = Object.keys(users)
+                .filter(x => x !== 'other')
+                .map(x => x.toLowerCase())
             if (subscribed_users_lowercase.length === 0) {
                 window.localStorage.setItem(extensionSaysNoSubscriptions, 'true')
             } else {
                 window.localStorage.removeItem(extensionSaysNoSubscriptions)
             }
             if (isReddit) {
-                redditModifications(storage.other_subscriptions, storage.options.hide_subscribe, storage.options.monitor_quarantined, subscribed_users_lowercase, Object.keys((storage.user_unsubscriptions || {})).map(x => x.toLowerCase()))
+                redditModifications(
+                    storage.other_subscriptions,
+                    storage.options.hide_subscribe,
+                    storage.options.monitor_quarantined,
+                    subscribed_users_lowercase,
+                    Object.keys(storage.user_unsubscriptions || {}).map(x => x.toLowerCase()),
+                )
             } else {
                 revdditModifications(storage, user, isUserPage, isInfoPage)
             }
@@ -125,4 +140,4 @@ import browser from 'webextension-polyfill'
     } else {
         main()
     }
-})();
+})()
