@@ -84,8 +84,10 @@ describe('reformatRedditText', () => {
         expect(reformatRedditText('hello &amp; world &gt; &lt;')).toBe('hello & world > <')
     })
 
-    it('collapses whitespace', () => {
-        expect(reformatRedditText('hello   \n  world')).toBe('hello world')
+    it('collapses horizontal whitespace but preserves newlines', () => {
+        expect(reformatRedditText('hello   \n  world')).toBe('hello \n world')
+        expect(reformatRedditText('a   b')).toBe('a b')
+        expect(reformatRedditText('* item1\n* item2')).toBe('* item1\n* item2')
     })
 
     it('truncates at maxRedditContentLength', () => {

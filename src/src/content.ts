@@ -3,7 +3,6 @@ import { redditModifications } from './content-reddit'
 import { revdditModifications } from './content-revddit'
 import { getLoggedinUser } from './requests'
 import browser from 'webextension-polyfill'
-
 ;(function () {
     const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
 
