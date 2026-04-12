@@ -1,7 +1,7 @@
 {
     "name": "reveddit real-time",
     "description": "reveddit notifies you when any of your content on reddit has been removed.",
-    "version": "0.0.4.1",
+    "version": "0.0.5.0",
     "permissions": [
         "cookies",
         "notifications",
@@ -31,7 +31,7 @@
         }
     },
     "web_accessible_resources": [{
-        "resources": ["src/history.html", "src/other.html"],
+        "resources": ["src/history.html", "src/other.html", "src/whatsnew.html"],
         "matches": []
     }],
     "content_scripts": [

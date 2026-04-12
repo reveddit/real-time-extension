@@ -19,7 +19,7 @@ export interface RedditItem {
 }
 
 export const ALARM_NAME = 'notifyme'
-const maxRedditContentLength = 300
+const maxRedditContentLength = 10000
 const ACTION_API = __BUILT_FOR__ === 'chrome' ? 'action' : 'browserAction'
 
 export const setWarningBadge = (errorStatus?: string) => {
@@ -202,6 +202,8 @@ export class LocalStorageItem {
     n: number
     r: number
     p?: string
+    b?: string // post selftext body (comments store body in `t`)
+    s?: string // subreddit name
     constructor({ item = null, observed_utc = null, object = null }: { item?: RedditItem | null, observed_utc?: number | null, object?: any }) {
         if (object) {
             this.t = object.t
@@ -210,6 +212,8 @@ export class LocalStorageItem {
             this.n = object.n || 0 // seen_count, which increments when the same status is observed
             this.r = object.r || 0 // removal_count, consecutive times observed as removed
             if (typeof object.p !== 'undefined') this.p = object.p
+            if (typeof object.b !== 'undefined') this.b = object.b
+            if (typeof object.s !== 'undefined') this.s = object.s
         } else {
             let text = ''
             if (item && isComment(item.name)) {
@@ -226,10 +230,19 @@ export class LocalStorageItem {
             if (item && isComment(item.name) && item.link_id) {
                 this.p = item.link_id
             }
+            // store selftext body for posts (comments already have body in `t`)
+            if (item && !isComment(item.name) && (item as any).selftext) {
+                this.b = reformatRedditText((item as any).selftext)
+            }
+            if (item && item.subreddit) {
+                this.s = item.subreddit
+            }
         }
     }
     setText(text: string) {this.t = reformatRedditText(text)}
     getText() { return this.t }
+    getBody() { return this.b }
+    getSubreddit() { return this.s }
     getObservedUTC() { return this.o }
     getCreatedUTC() { return this.c }
     resetSeenCount() { this.n = 0 }

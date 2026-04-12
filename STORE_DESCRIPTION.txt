@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/4/11 - 0.0.5.0
+- new ui to match reveddit.com
+
 2026/03/09 - 0.0.4.0
 - fix periodic false flagging of unremoved posts as removed
 

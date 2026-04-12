@@ -1,71 +1,97 @@
 import React, { useState, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
-import { Global, css } from '@emotion/react'
 import { getOptions, INTERVAL_DEFAULT, SEEN_COUNT_DEFAULT, saveOptions } from './storage'
 import { setAlarm } from './common'
-import { BlueLink } from './ui/components'
+import { AppGlobal, setThemeMode, THEME_STORAGE_KEY, ThemeMode } from './ui/global'
+import { BlueLink, Button, SectionHeader, MessageBanner } from './ui/components'
+import { tokens } from './ui/tokens'
 
-const globalStyles = css`
-  body {
-    margin: 10px;
-  }
+const Page = styled.div`
+  width: 380px;
+  min-height: 300px;
+  padding: ${tokens.space.lg};
 `
 
-const Row = styled.div`
-  clear: both;
-  text-align: right;
-  padding-bottom: 2em;
-
-  label {
-    margin-right: 0.5em;
-    float: left;
-    width: 15em;
-  }
-
-  input {
-    float: left;
-  }
-`
-
-const SaveBtnGroup = styled.div<{ align?: string }>`
+const TopBar = styled.div`
   display: flex;
-  justify-content: ${p => p.align === 'start' ? 'flex-start' : 'flex-end'};
+  align-items: center;
+  justify-content: space-between;
+  gap: ${tokens.space.md};
+  margin-bottom: ${tokens.space.md};
 `
 
-const Header = styled.h3`
-  font-weight: bold;
+const Title = styled.h1`
+  margin: 0;
+  font-size: 18px;
 `
 
-const Subscriptions = styled.div`
-  margin-bottom: 1.5em;
-
-  div {
-    margin-bottom: 0.5em;
+const Field = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: ${tokens.space.md};
+  padding: ${tokens.space.sm} 0;
+  border-bottom: 1px solid var(--border);
+  &:last-child { border-bottom: 0; }
+  & > label {
+    color: var(--text-primary);
+    flex: 1;
+  }
+  & > input[type='text'], & > input[type='number'], & > select {
+    width: 90px;
+    text-align: right;
   }
 `
 
-const ErrorDiv = styled.div`
-  color: red;
-  min-height: 2em;
-`
+const FieldStack = styled.div``
 
-const TableHeader = styled.td<{ type?: 'row' | 'col' }>`
-  font-weight: bold;
-  ${p => p.type === 'row' ? 'margin-bottom: 10px; text-align: right;' : 'margin-left: 10px;'}
-`
-
-const Table = styled.table`
-  border-collapse: separate;
-  border-spacing: 5px;
-
-  tr td {
+const TrackingGrid = styled.div`
+  display: grid;
+  grid-template-columns: 1fr 70px 70px;
+  align-items: center;
+  gap: ${tokens.space.xs} ${tokens.space.md};
+  padding: ${tokens.space.sm} 0;
+  & > .hcell {
+    color: var(--text-secondary);
+    font-size: 0.82em;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
     text-align: center;
   }
+  & > .rowlabel {
+    color: var(--text-primary);
+  }
+  & > .cbcell {
+    text-align: center;
+  }
+  & > .spacer { height: 4px; }
+`
+
+const Footer = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: ${tokens.space.lg};
+  padding-top: ${tokens.space.md};
+  border-top: 1px solid var(--border);
+  gap: ${tokens.space.md};
+`
+
+const AdvancedLink = styled.div`
+  margin-top: ${tokens.space.md};
+  font-size: 0.9em;
 `
 
 const AdvancedSection = styled.div<{ visible: boolean }>`
-  display: ${p => p.visible ? 'block' : 'none'};
+  display: ${p => (p.visible ? 'block' : 'none')};
+  margin-top: ${tokens.space.sm};
+`
+
+const Note = styled.p`
+  color: var(--text-secondary);
+  font-size: 0.88em;
+  margin: ${tokens.space.sm} 0;
 `
 
 function Options() {
@@ -79,21 +105,28 @@ function Options() {
   const [hideSubscribe, setHideSubscribe] = useState(false)
   const [monitorQuarantined, setMonitorQuarantined] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [themeMode, setThemeModeState] = useState<ThemeMode>('auto')
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     getOptions((_users: string[], _others: string[], options: Record<string, any>) => {
-      setInterval_(String(options.interval))
-      setSeenCount(String(options.seen_count || SEEN_COUNT_DEFAULT))
-      setClientId(options.custom_clientid || '')
-      setRemovedTrack(options.removal_status.track)
-      setRemovedNotify(options.removal_status.notify)
-      setLockedTrack(options.lock_status.track)
-      setLockedNotify(options.lock_status.notify)
-      setHideSubscribe(options.hide_subscribe)
-      setMonitorQuarantined(options.monitor_quarantined)
+      const opts = options || {}
+      const removal = opts.removal_status || {}
+      const lock = opts.lock_status || {}
+      setInterval_(String(opts.interval ?? INTERVAL_DEFAULT))
+      setSeenCount(String(opts.seen_count || SEEN_COUNT_DEFAULT))
+      setClientId(opts.custom_clientid || '')
+      setRemovedTrack(!!removal.track)
+      setRemovedNotify(!!removal.notify)
+      setLockedTrack(!!lock.track)
+      setLockedNotify(!!lock.notify)
+      setHideSubscribe(!!opts.hide_subscribe)
+      setMonitorQuarantined(!!opts.monitor_quarantined)
       setLoaded(true)
+    })
+    chrome.storage.local.get([THEME_STORAGE_KEY], res => {
+      setThemeModeState((res?.[THEME_STORAGE_KEY] as ThemeMode) || 'auto')
     })
   }, [])
 
@@ -112,6 +145,11 @@ function Options() {
   const handleLockedTrackChange = (checked: boolean) => {
     setLockedTrack(checked)
     if (!checked) setLockedNotify(false)
+  }
+
+  const handleThemeChange = (mode: ThemeMode) => {
+    setThemeModeState(mode)
+    setThemeMode(mode)
   }
 
   const resetDefaults = () => {
@@ -145,91 +183,136 @@ function Options() {
     })
   }
 
-  if (!loaded) return null
+  if (!loaded) return (
+    <>
+      <AppGlobal />
+      <Page>Loading…</Page>
+    </>
+  )
 
   return (
     <>
-      <Global styles={globalStyles} />
+      <AppGlobal />
+      <Page>
+        <TopBar>
+          <Title>Options</Title>
+          <Button variant="primary" onClick={saveAndClose}>save</Button>
+        </TopBar>
 
-      <SaveBtnGroup>
-        <button onClick={saveAndClose}>save</button>
-      </SaveBtnGroup>
+        <SectionHeader>Subscriptions</SectionHeader>
+        <FieldStack>
+          <Field>
+            <label>other subscriptions</label>
+            <BlueLink target="_blank" href="/src/other.html">manage ↗</BlueLink>
+          </Field>
+        </FieldStack>
 
-      <Header>Subscriptions</Header>
-      <Subscriptions>
-        <div>
-          <BlueLink target="_blank" href="/src/other.html">other</BlueLink>
-        </div>
-        <hr />
-      </Subscriptions>
+        <SectionHeader>Tracking &amp; notification</SectionHeader>
+        <TrackingGrid>
+          <div />
+          <div className="hcell">track</div>
+          <div className="hcell">notify</div>
 
-      <br /><br />
-      <Header>Tracking &amp; Notification</Header>
-      <Table>
-        <tbody>
-          <tr>
-            <td></td>
-            <TableHeader type="col">track</TableHeader>
-            <TableHeader type="col">notify</TableHeader>
-          </tr>
-          <tr>
-            <TableHeader type="row">removed</TableHeader>
-            <td><input type="checkbox" checked={removedTrack} onChange={e => handleRemovedTrackChange(e.target.checked)} /></td>
-            <td><input type="checkbox" checked={removedNotify} onChange={e => handleRemovedNotifyChange(e.target.checked)} /></td>
-          </tr>
-          <tr>
-            <TableHeader type="row">locked</TableHeader>
-            <td><input type="checkbox" checked={lockedTrack} onChange={e => handleLockedTrackChange(e.target.checked)} /></td>
-            <td><input type="checkbox" checked={lockedNotify} onChange={e => handleLockedNotifyChange(e.target.checked)} /></td>
-          </tr>
-        </tbody>
-      </Table>
+          <div className="rowlabel">removed</div>
+          <div className="cbcell">
+            <input type="checkbox" checked={removedTrack}
+              onChange={e => handleRemovedTrackChange(e.target.checked)} />
+          </div>
+          <div className="cbcell">
+            <input type="checkbox" checked={removedNotify}
+              onChange={e => handleRemovedNotifyChange(e.target.checked)} />
+          </div>
 
-      <Header>Other</Header>
-      <Row>
-        <label>minutes between updates: </label>
-        <input type="text" value={interval} onChange={e => setInterval_(e.target.value)} />
-      </Row>
-      <Row>
-        <label>hide subscribe button: </label>
-        <input type="checkbox" checked={hideSubscribe} onChange={e => setHideSubscribe(e.target.checked)} />
-      </Row>
-      <Row>
-        <label>monitor quarantined content: </label>
-        <input type="checkbox" checked={monitorQuarantined} onChange={e => setMonitorQuarantined(e.target.checked)} />
-      </Row>
-      <Row>
-        <label>same-status count before alert: </label>
-        <input type="text" value={seenCount} onChange={e => setSeenCount(e.target.value)} />
-      </Row>
-      {monitorQuarantined && (
-        <p>Note: enabling &quot;monitor quarantined content&quot; may appear to cause an occasional logout. Refreshing the page should show you are still logged in. Increase &quot;minutes between updates&quot; to 5 or more to reduce this occurrence.</p>
-      )}
+          <div className="rowlabel">locked</div>
+          <div className="cbcell">
+            <input type="checkbox" checked={lockedTrack}
+              onChange={e => handleLockedTrackChange(e.target.checked)} />
+          </div>
+          <div className="cbcell">
+            <input type="checkbox" checked={lockedNotify}
+              onChange={e => handleLockedNotifyChange(e.target.checked)} />
+          </div>
+        </TrackingGrid>
 
-      <div>
-        {!showAdvanced && (
-          <BlueLink href="#" onClick={e => { e.preventDefault(); setShowAdvanced(true) }}>advanced</BlueLink>
+        <SectionHeader>Polling</SectionHeader>
+        <FieldStack>
+          <Field>
+            <label>minutes between updates</label>
+            <input type="text" value={interval} onChange={e => setInterval_(e.target.value)} />
+          </Field>
+          <Field>
+            <label>same-status count before alert</label>
+            <input type="text" value={seenCount} onChange={e => setSeenCount(e.target.value)} />
+          </Field>
+          <Field>
+            <label>monitor quarantined content</label>
+            <input type="checkbox" checked={monitorQuarantined}
+              onChange={e => setMonitorQuarantined(e.target.checked)} />
+          </Field>
+          <Field>
+            <label>hide subscribe button</label>
+            <input type="checkbox" checked={hideSubscribe}
+              onChange={e => setHideSubscribe(e.target.checked)} />
+          </Field>
+        </FieldStack>
+        {monitorQuarantined && (
+          <Note>
+            Enabling "monitor quarantined content" may appear to cause an occasional logout.
+            Refreshing the page should show you are still logged in. Increase "minutes between
+            updates" to 5 or more to reduce this occurrence.
+          </Note>
         )}
-        <AdvancedSection visible={showAdvanced}>
-          <Header>Advanced</Header>
-          <p>This option overrides the &quot;installed app&quot; client id from reddit &gt; preferences &gt; apps.</p>
-          <Row>
-            <label>custom client id: </label>
-            <input type="text" value={clientId} onChange={e => setClientId(e.target.value)}
-              placeholder="<default is blank>" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} />
-          </Row>
-        </AdvancedSection>
-      </div>
 
-      <Row>
-        <BlueLink href="#" onClick={e => { e.preventDefault(); resetDefaults() }}>reset to defaults</BlueLink>
-      </Row>
-      <div style={{ clear: 'both' }} />
-      {error && <ErrorDiv>{error}</ErrorDiv>}
-      <SaveBtnGroup align="end">
-        <button onClick={saveAndClose}>save</button>
-      </SaveBtnGroup>
-      <div style={{ clear: 'both' }} />
+        <SectionHeader>Appearance</SectionHeader>
+        <FieldStack>
+          <Field>
+            <label>theme</label>
+            <select value={themeMode} onChange={e => handleThemeChange(e.target.value as ThemeMode)}>
+              <option value="auto">auto</option>
+              <option value="dark">dark</option>
+              <option value="light">light</option>
+            </select>
+          </Field>
+        </FieldStack>
+
+        <AdvancedLink>
+          {!showAdvanced && (
+            <BlueLink href="#" onClick={e => { e.preventDefault(); setShowAdvanced(true) }}>
+              advanced
+            </BlueLink>
+          )}
+        </AdvancedLink>
+        <AdvancedSection visible={showAdvanced}>
+          <SectionHeader>Advanced</SectionHeader>
+          <Note>
+            This option overrides the "installed app" client id from reddit &gt; preferences &gt; apps.
+          </Note>
+          <FieldStack>
+            <Field>
+              <label>custom client id</label>
+              <input
+                type="text"
+                value={clientId}
+                onChange={e => setClientId(e.target.value)}
+                placeholder="<default is blank>"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+            </Field>
+          </FieldStack>
+        </AdvancedSection>
+
+        {error && <MessageBanner variant="warning">{error}</MessageBanner>}
+
+        <Footer>
+          <BlueLink href="#" onClick={e => { e.preventDefault(); resetDefaults() }}>
+            reset to defaults
+          </BlueLink>
+          <Button variant="primary" onClick={saveAndClose}>save</Button>
+        </Footer>
+      </Page>
     </>
   )
 }

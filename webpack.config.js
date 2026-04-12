@@ -80,6 +80,7 @@ const extensionPages = {
     history: ['@babel/polyfill', './src/src/history.tsx'],
     other: ['@babel/polyfill', './src/src/other.tsx'],
     welcome: ['@babel/polyfill', './src/src/welcome.tsx'],
+    whatsnew: ['@babel/polyfill', './src/src/whatsnew.tsx'],
     parse: ['@babel/polyfill', './src/src/parse_html/common.ts', './src/src/parse_html/old.ts'],
 }
 

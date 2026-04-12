@@ -88,9 +88,9 @@ describe('reformatRedditText', () => {
         expect(reformatRedditText('hello   \n  world')).toBe('hello world')
     })
 
-    it('truncates to 300 chars', () => {
-        const long = 'a'.repeat(400)
-        expect(reformatRedditText(long).length).toBe(300)
+    it('truncates at maxRedditContentLength', () => {
+        const long = 'a'.repeat(10001)
+        expect(reformatRedditText(long).length).toBe(10000)
     })
 })
 

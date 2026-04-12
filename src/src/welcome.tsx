@@ -1,135 +1,81 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
-import { Global, css } from '@emotion/react'
 import { subscribeUser } from './storage'
 import { getLoggedinUser } from './requests'
-import { colors } from './ui/theme'
-import { BlueLink } from './ui/components'
+import { AppGlobal } from './ui/global'
+import { BlueLink, Button, Card } from './ui/components'
+import { tokens } from './ui/tokens'
 
-const globalStyles = css`
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
-    background-color: #1a1a1b;
-    color: #d7dadc;
-    margin: 0;
-    padding: 40px 20px;
-    min-height: 100vh;
-    box-sizing: border-box;
-  }
-`
-
-const Container = styled.div`
-  max-width: 600px;
+const Page = styled.div`
+  max-width: 560px;
   margin: 0 auto;
+  padding: ${tokens.space.xl} ${tokens.space.lg};
 `
 
-const HeaderSection = styled.div`
+const Header = styled.div`
   text-align: center;
-  margin-bottom: 30px;
+  margin-bottom: ${tokens.space.lg};
 `
 
 const Logo = styled.img`
-  width: 80px;
-  height: 80px;
-  margin-bottom: 15px;
+  width: 72px;
+  height: 72px;
+  margin-bottom: ${tokens.space.sm};
 `
 
 const Title = styled.h1`
+  margin: 0 0 ${tokens.space.xs} 0;
   font-size: 1.8em;
+`
+
+const Subtitle = styled.p`
   margin: 0;
-  color: #fff;
+  color: var(--text-secondary);
+  line-height: 1.5;
 `
 
-const Description = styled.p`
-  font-size: 1.1em;
-  line-height: 1.6;
-  text-align: center;
-  color: #b0b3b8;
-`
-
-const StatusBox = styled.div`
-  background-color: #272729;
-  border-radius: 8px;
-  padding: 20px;
-  margin: 25px 0;
+const StatusCard = styled(Card)`
   text-align: center;
 `
 
-const StatusMessage = styled.div<{ statusType: 'checking' | 'success' | 'error' }>`
-  font-size: 1.1em;
-  color: ${p => p.statusType === 'checking' ? '#818384' : p.statusType === 'success' ? '#46d160' : '#ff6b6b'};
+const StatusText = styled.div<{ statusType: 'checking' | 'success' | 'error' }>`
+  font-size: 1.05em;
+  color: ${p =>
+    p.statusType === 'success'
+      ? 'var(--approved-border)'
+      : p.statusType === 'error'
+        ? 'var(--accent)'
+        : 'var(--text-secondary)'};
 `
 
-const InstructionsBox = styled.div`
-  background-color: #272729;
-  border-radius: 8px;
-  padding: 20px 30px;
-  margin: 20px 0;
-
-  h2 {
-    font-size: 1.2em;
-    margin: 20px 0 15px;
-    color: #fff;
+const InstructionsCard = styled(Card)`
+  & h2 {
+    font-size: 1.1em;
+    margin: 0 0 ${tokens.space.sm} 0;
   }
-
-  ol {
-    padding-left: 20px;
+  & ol {
     margin: 0;
-    line-height: 2;
+    padding-left: 1.4em;
+    line-height: 1.8;
+    color: var(--text-primary);
   }
-
-  li {
-    margin: 8px 0;
-  }
+  & li { margin: ${tokens.space.xs} 0; }
 `
 
 const Actions = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: ${tokens.space.sm};
+  margin: ${tokens.space.lg} 0;
+`
+
+const Footer = styled.div`
   text-align: center;
-  margin: 30px 0;
-`
-
-const PrimaryBtn = styled.button`
-  background-color: ${colors.redditOrange};
-  color: #fff;
-  border: none;
-  padding: 14px 40px;
-  font-size: 1.1em;
-  border-radius: 24px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-
-  &:hover {
-    background-color: ${colors.redditOrangeHover};
-  }
-
-  &:disabled {
-    background-color: #555;
-    cursor: not-allowed;
-  }
-`
-
-const SecondaryLink = styled.button`
-  background: none;
-  border: none;
-  color: ${colors.blue};
-  font-size: 0.95em;
-  cursor: pointer;
-  margin-top: 14px;
-  padding: 4px 8px;
-  text-decoration: underline;
-
-  &:disabled {
-    color: #555;
-    cursor: not-allowed;
-  }
-`
-
-const FooterSection = styled.div`
-  text-align: center;
-  margin-top: 30px;
-  padding-top: 20px;
-  border-top: 1px solid #343536;
+  margin-top: ${tokens.space.lg};
+  padding-top: ${tokens.space.md};
+  border-top: 1px solid var(--border);
 `
 
 function Welcome() {
@@ -153,7 +99,8 @@ function Welcome() {
     }
 
     getLoggedinUser()
-      .then((user: any) => {
+      .then((result) => {
+        const user = result as string | null
         inFlight.current = false
         if (user) {
           setSucceeded(true)
@@ -174,11 +121,12 @@ function Welcome() {
           subscribeUser(user, () => {
             try {
               chrome.runtime.sendMessage({ action: 'immediate-user-lookup', user })
-            } catch (e) {}
+            } catch (e) {
+              console.log('immediate-user-lookup send failed:', e)
+            }
             redirect()
           }, redirect)
         } else {
-          // After the first failed attempt, show instructions + waiting state.
           if (attemptCount.current === 1) {
             setStatusMessage("We couldn't detect your Reddit session yet. If you're already signed in, open a Reddit tab so the extension can read your session. Otherwise, sign in to Reddit below.")
           } else {
@@ -208,10 +156,8 @@ function Welcome() {
         }
         return
       }
-      // 2s for the first minute, 5s after that
       const elapsed = Date.now() - startedAt
       const interval = elapsed < 60000 ? 2000 : 5000
-      // setInterval tick is every 2s; after a minute, only fire every other tick
       if (interval === 5000 && Math.floor(elapsed / 2000) % 2 !== 0) return
       checkConnection()
     }, 2000)
@@ -221,68 +167,67 @@ function Welcome() {
         pollTimer.current = null
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [checkConnection, succeeded])
 
   const openReddit = () => {
     try {
       chrome.tabs.create({ url: 'https://www.reddit.com' })
     } catch (e) {
+      console.log('chrome.tabs.create failed, falling back to window.open:', e)
       window.open('https://www.reddit.com', '_blank')
     }
   }
 
   return (
     <>
-      <Global styles={globalStyles} />
-      <Container>
-        <HeaderSection>
+      <AppGlobal />
+      <Page>
+        <Header>
           <Logo src="/icons/128.png" alt="Reveddit" />
-          <Title>Welcome to Reveddit Real-Time</Title>
-        </HeaderSection>
-
-        <div>
-          <Description>
-            This extension monitors your Reddit comments and posts in real-time,
+          <Title>Welcome to reveddit real-time</Title>
+          <Subtitle>
+            This extension monitors your Reddit comments and posts in real time,
             notifying you when content is removed by moderators.
-          </Description>
+          </Subtitle>
+        </Header>
 
-          <StatusBox>
-            <StatusMessage statusType={statusType}>{statusMessage}</StatusMessage>
-          </StatusBox>
+        <StatusCard>
+          <StatusText statusType={statusType}>{statusMessage}</StatusText>
+        </StatusCard>
 
-          {showInstructions && (
-            <InstructionsBox>
-              <h2>Getting Started</h2>
-              <ol>
-                <li>
-                  Open <BlueLink href="https://www.reddit.com" target="_blank">www.reddit.com</BlueLink>
-                  {' '}or <BlueLink href="https://old.reddit.com" target="_blank">old.reddit.com</BlueLink>
-                </li>
-                <li>Log in to your Reddit account</li>
-                <li>We'll detect you automatically — no click needed.</li>
-              </ol>
-            </InstructionsBox>
-          )}
+        {showInstructions && (
+          <InstructionsCard>
+            <h2>Getting started</h2>
+            <ol>
+              <li>
+                Open <BlueLink href="https://www.reddit.com" target="_blank" rel="noreferrer">www.reddit.com</BlueLink>
+                {' '}or <BlueLink href="https://old.reddit.com" target="_blank" rel="noreferrer">old.reddit.com</BlueLink>
+              </li>
+              <li>Log in to your Reddit account</li>
+              <li>We'll detect you automatically — no click needed.</li>
+            </ol>
+          </InstructionsCard>
+        )}
 
-          {! succeeded && (
-            <Actions>
-              <PrimaryBtn onClick={openReddit}>Open Reddit</PrimaryBtn>
-              <div>
-                <SecondaryLink onClick={() => checkConnection(true)} disabled={inFlight.current}>
-                  Check connection now
-                </SecondaryLink>
-              </div>
-            </Actions>
-          )}
+        {!succeeded && (
+          <Actions>
+            <Button variant="primary" onClick={openReddit}>Open Reddit</Button>
+            <Button
+              variant="ghost"
+              onClick={() => checkConnection(true)}
+              disabled={inFlight.current}
+            >
+              Check connection now
+            </Button>
+          </Actions>
+        )}
 
-          <FooterSection>
-            <BlueLink href="https://www.reveddit.com/about/faq/" target="_blank">
-              Learn more about Reveddit
-            </BlueLink>
-          </FooterSection>
-        </div>
-      </Container>
+        <Footer>
+          <BlueLink href="https://www.reveddit.com/about/faq/" target="_blank" rel="noreferrer">
+            Learn more about reveddit
+          </BlueLink>
+        </Footer>
+      </Page>
     </>
   )
 }

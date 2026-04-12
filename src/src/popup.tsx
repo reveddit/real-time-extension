@@ -1,172 +1,193 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
-import { Global, css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification } from './common'
-import { colors } from './ui/theme'
-import { BlueLink, ActionBtn, MessageBanner } from './ui/components'
+import { AppGlobal } from './ui/global'
+import { BlueLink, ActionBtn, Button, MessageBanner, Card } from './ui/components'
+import { tokens } from './ui/tokens'
 import {
   getSubscribedUsers_withSeenAndUnseenIDs,
   subscribeId, unsubscribeId,
   markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen
 } from './storage'
 import { setCurrentStateForId } from './monitoring'
-
-const globalStyles = css`
-  body, input, button {
-    font-size: 1.3em;
-  }
-`
+import { fetchNews, getUnreadMessages, markNewsRead, NewsMessage } from './news'
+import { markdownToHTML } from './ui/markdown'
 
 const PopupContainer = styled.div`
-  width: 300px;
+  width: 320px;
+  padding: ${tokens.space.md};
+  font-size: 14px;
 `
 
-const WarningContainer = styled.div`
-  margin-bottom: 10px;
+const TopRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: ${tokens.space.sm};
+  gap: ${tokens.space.sm};
 `
 
-const WarningHint = styled.div`
-  color: #856404;
-  font-size: 0.85em;
+const Brand = styled.div`
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+`
+
+const TopLinks = styled.div`
+  display: flex;
+  gap: ${tokens.space.md};
+  font-size: 0.88em;
+`
+
+const SubsCard = styled(Card)`
+  padding: ${tokens.space.sm} ${tokens.space.md};
+  margin: ${tokens.space.sm} 0;
+`
+
+const SubRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  & + & { border-top: 1px solid var(--border); }
+`
+
+const UnseenPill = styled.span`
+  min-width: 2em;
   text-align: center;
-  padding: 4px 8px;
+  padding: 2px 8px;
+  border-radius: ${tokens.radius.pill};
+  background: var(--bg-surface-hover);
+  color: var(--text-secondary);
+  font-size: 0.82em;
+  font-weight: 600;
 `
 
-const ConnectContainer = styled.div`
-  margin: 5px 0;
+const UnseenPillActive = styled(UnseenPill)`
+  background: var(--accent);
+  color: var(--text-on-accent);
 `
 
-const Unseen = styled.span`
-  display: inline-block;
-  border-right: 1px solid lightgrey;
-  min-width: 2.5em;
-  margin-right: 0.6em;
-`
-
-const ClearNotifications = styled(BlueLink)`
-  font-size: small;
+const ClearLink = styled(BlueLink)`
+  font-size: 0.82em;
   cursor: pointer;
 `
 
-const BottomDiv = styled.div`
-  text-align: center;
-`
-
-const OptionsLink = styled(BlueLink)`
-  float: right;
-`
-
-/* Toggle switch styles */
 const SwitchRow = styled.div`
-  &::after {
-    content: '';
-    display: block;
-    clear: both;
-  }
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
 `
 
-const TextLabel = styled.span<{ active: boolean }>`
-  color: ${p => p.active ? colors.blue : 'rgb(204,204,204)'};
+const SwitchLabel = styled.span<{ active: boolean }>`
+  color: ${p => (p.active ? 'var(--text-primary)' : 'var(--text-secondary)')};
   cursor: pointer;
-
-  .un {
-    visibility: ${p => p.active ? 'hidden' : 'visible'};
-  }
+  font-size: 0.92em;
 `
 
-const SwitchWrapper = styled.div`
-  float: right;
-  margin-bottom: 5px;
-
-  input {
+const SwitchWrapper = styled.label`
+  position: relative;
+  display: inline-block;
+  width: 42px;
+  height: 22px;
+  & input { opacity: 0; width: 0; height: 0; }
+  & .slider {
     position: absolute;
-    margin-left: -9999px;
-    visibility: hidden;
-  }
-
-  input + label {
-    display: block;
-    position: relative;
     cursor: pointer;
-    outline: none;
-    user-select: none;
-    padding: 2px;
-    width: 60px;
-    height: 30px;
-    background-color: #dddddd;
-    border-radius: 30px;
-    transition: background 0.4s;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--button-bg);
+    border: 1px solid var(--border);
+    border-radius: ${tokens.radius.pill};
+    transition: 0.2s;
   }
-
-  input + label:before,
-  input + label:after {
-    display: block;
+  & .slider::before {
     position: absolute;
-    content: "";
-  }
-
-  input + label:before {
-    top: 2px;
+    content: '';
+    height: 16px;
+    width: 16px;
     left: 2px;
-    bottom: 2px;
-    right: 2px;
-    background-color: #fff;
-    border-radius: 30px;
-    transition: background 0.4s;
+    top: 2px;
+    background: var(--text-primary);
+    border-radius: 50%;
+    transition: 0.2s;
   }
-
-  input + label:after {
-    top: 4px;
-    left: 4px;
-    bottom: 4px;
-    width: 25px;
-    background-color: #dddddd;
-    border-radius: 25px;
-    transition: margin 0.4s, background 0.4s;
+  & input:checked + .slider {
+    background: var(--accent);
+    border-color: var(--accent);
   }
-
-  input:checked + label {
-    background-color: ${colors.blue};
-  }
-
-  input:checked + label:after {
-    margin-left: 30px;
-    background-color: ${colors.blue};
+  & input:checked + .slider::before {
+    transform: translateX(20px);
+    background: var(--text-on-accent);
   }
 `
 
-function ToggleSwitch({ id, type, checked, onToggle }: {
-  id: string
+const TestBtn = styled.button`
+  width: 100%;
+  margin-top: ${tokens.space.md};
+  padding: 8px 10px;
+  background: var(--button-bg);
+  color: var(--button-text);
+  border: 1px solid var(--border);
+  border-radius: ${tokens.radius.md};
+  cursor: pointer;
+  &:hover { background: var(--bg-surface-hover); }
+`
+
+const NewsCard = styled(Card)`
+  padding: ${tokens.space.sm} ${tokens.space.md};
+  background: var(--note-bg);
+  border-color: var(--border-light);
+  position: relative;
+  & h4 {
+    margin: 0 0 4px 0;
+    font-size: 0.92em;
+    color: var(--text-primary);
+  }
+  & .md-body { font-size: 0.85em; color: var(--text-primary); }
+  & .dismiss {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 6px;
+    &:hover { color: var(--text-primary); }
+  }
+`
+
+function ToggleSwitch({ type, checked, onToggle }: {
   type: string
   checked: boolean
   onToggle: (checked: boolean) => void
 }) {
-  const inputId = `toggle-${type}`
-
   return (
     <SwitchRow>
-      <TextLabel active={checked} onClick={() => onToggle(!checked)}>
-        <span className="un">un</span>subscribed {type}
-      </TextLabel>
+      <SwitchLabel active={checked} onClick={() => onToggle(!checked)}>
+        {checked ? 'subscribed' : 'subscribe'} to {type}
+      </SwitchLabel>
       <SwitchWrapper>
         <input
-          id={inputId}
-          className="cmn-toggle cmn-toggle-round-flat"
           type="checkbox"
           checked={checked}
           onChange={e => onToggle(e.target.checked)}
         />
-        <label htmlFor={inputId}></label>
+        <span className="slider" />
       </SwitchWrapper>
     </SwitchRow>
   )
 }
 
-function UnseenLink({ thing, isUser, unseenStr, url }: {
+function UnseenRow({ thing, isUser, unseenCount, totalStr, url }: {
   thing: string
   isUser: boolean
-  unseenStr: string
+  unseenCount: number
+  totalStr?: string
   url: string
 }) {
   const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -180,12 +201,26 @@ function UnseenLink({ thing, isUser, unseenStr, url }: {
     })
   }
 
+  const Pill = unseenCount > 0 ? UnseenPillActive : UnseenPill
+
   return (
-    <div>
-      <Unseen>{unseenStr} </Unseen>
-      {' '}
+    <SubRow>
       <BlueLink href={url} target="_blank" onClick={handleClick}>{thing}</BlueLink>
-    </div>
+      <Pill>{totalStr ?? unseenCount}</Pill>
+    </SubRow>
+  )
+}
+
+function NewsBanner({ message, onDismiss }: { message: NewsMessage; onDismiss: () => void }) {
+  return (
+    <NewsCard>
+      <button className="dismiss" onClick={onDismiss} aria-label="Dismiss">×</button>
+      <h4>{message.title}</h4>
+      <div
+        className="md-body"
+        dangerouslySetInnerHTML={{ __html: markdownToHTML(message.body_markdown) }}
+      />
+    </NewsCard>
   )
 }
 
@@ -206,6 +241,7 @@ function Popup() {
   const [connecting, setConnecting] = useState(false)
   const [connectResult, setConnectResult] = useState<{ success: boolean; user?: string } | null>(null)
   const [connectMessage, setConnectMessage] = useState<string | null>(null)
+  const [newsMessage, setNewsMessage] = useState<NewsMessage | null>(null)
 
   const loadData = useCallback(() => {
     setUserData(null)
@@ -264,14 +300,27 @@ function Popup() {
         }
       })
     })
+
+    // News feed: opportunistically refresh (6h throttled) then read top unread.
+    fetchNews().finally(() => {
+      getUnreadMessages().then(unread => {
+        setNewsMessage(unread[0] || null)
+      })
+    })
   }, [])
 
-  useEffect(() => {
-    loadData()
-  }, [loadData])
+  useEffect(() => { loadData() }, [loadData])
 
   const handleClearNotifications = () => {
     markEverythingAsSeen().then(() => loadData())
+  }
+
+  const handleDismissNews = () => {
+    if (!newsMessage) return
+    const id = newsMessage.id
+    markNewsRead(id).then(() => getUnreadMessages()).then(unread => {
+      setNewsMessage(unread[0] || null)
+    })
   }
 
   const handleReconnect = () => {
@@ -322,7 +371,6 @@ function Popup() {
     })
   }
 
-  // Determine which toggles to show
   const switches: { id: string; type: string; subscribed: boolean }[] = []
   if (syncStorage && activeTab) {
     if (activeTab.commentID) {
@@ -341,25 +389,37 @@ function Popup() {
     }
   }
 
-  // Current user info
-  let currentUserSection: React.ReactNode = <span>loading...</span>
+  const historyUrl = chrome.runtime.getURL('src/history.html')
+
+  let otherUrl = '/src/other.html'
+  if (userData && userData.otherUnseen.length) {
+    otherUrl = `https://www.reveddit.com/info?id=${userData.otherUnseen.join(',')}&removal_status=all`
+  }
+
+  // Current user section
+  let currentUserSection: React.ReactNode = null
   if (currentUser !== undefined && userData) {
     if (currentUser) {
       const userInfo = userData.users[currentUser]
       const unseenIDs = userInfo ? userInfo.unseen : []
-      const historyUrl = chrome.runtime.getURL('src/history.html')
       currentUserSection = (
-        <UnseenLink thing={currentUser} isUser={true} unseenStr={String(unseenIDs.length)} url={historyUrl} />
+        <UnseenRow
+          thing={currentUser}
+          isUser={true}
+          unseenCount={unseenIDs.length}
+          url={historyUrl}
+        />
       )
     } else {
-      // No user
       currentUserSection = (
-        <ConnectContainer>
+        <div>
           {connectResult?.success ? (
-            <MessageBanner variant="success">&#10003; Connected as {connectResult.user}!</MessageBanner>
+            <MessageBanner variant="success">✓ Connected as {connectResult.user}!</MessageBanner>
           ) : (
             <>
-              <MessageBanner variant="info">{connectMessage || 'Log in to www.reddit.com or old.reddit.com to get started.'}</MessageBanner>
+              <MessageBanner variant="info">
+                {connectMessage || 'Log in to www.reddit.com or old.reddit.com to get started.'}
+              </MessageBanner>
               {hasSupportedTabs && (
                 <ActionBtn onClick={handleConnect} disabled={connecting}>
                   {connecting ? 'Connecting...' : 'Connect'}
@@ -367,109 +427,93 @@ function Popup() {
               )}
             </>
           )}
-        </ConnectContainer>
+        </div>
       )
     }
   }
 
-  // "Other" section
-  let otherUrl = '/src/other.html'
-  if (userData && userData.otherUnseen.length) {
-    otherUrl = `https://www.reveddit.com/info?id=${userData.otherUnseen.join(',')}&removal_status=all`
-  }
-
-  const historyUrl = chrome.runtime.getURL('src/history.html')
-
   return (
     <>
-      <Global styles={globalStyles} />
+      <AppGlobal />
       <PopupContainer>
-        {/* Error/reconnect banner */}
+        <TopRow>
+          <Brand>reveddit real-time</Brand>
+          <TopLinks>
+            <BlueLink href="/src/options.html" onClick={e => { e.preventDefault(); goToOptions() }}>options</BlueLink>
+          </TopLinks>
+        </TopRow>
+
+        {newsMessage && <NewsBanner message={newsMessage} onDismiss={handleDismissNews} />}
+
         {errorStatus && (
-          <WarningContainer>
+          <div>
             {reconnectSuccess ? (
-              <MessageBanner variant="success">&#10003; Connected!</MessageBanner>
+              <MessageBanner variant="success">✓ Connected!</MessageBanner>
             ) : (
               <>
                 <MessageBanner variant="warning">
                   {reconnectSuccess === false
-                    ? '⚠️ Still disconnected. Try logging into Reddit again.'
-                    : '⚠️ Session may be disconnected.'}
+                    ? '⚠ Still disconnected. Try logging into Reddit again.'
+                    : '⚠ Session may be disconnected.'}
                 </MessageBanner>
                 {hasSupportedTabs ? (
                   <ActionBtn onClick={handleReconnect} disabled={reconnecting}>
                     {reconnecting ? 'Checking...' : 'Reconnect'}
                   </ActionBtn>
                 ) : (
-                  <WarningHint>Open a Reddit tab first, then click here to reconnect.</WarningHint>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.85em', textAlign: 'center', padding: '4px 8px' }}>
+                    Open a Reddit tab first, then click here to reconnect.
+                  </div>
                 )}
               </>
             )}
-          </WarningContainer>
+          </div>
         )}
 
-        {/* Toggle switches for current page items */}
-        <div id="switches">
-          {switches.map(sw => (
-            <ToggleSwitch
-              key={sw.id}
-              id={sw.id}
-              type={sw.type}
-              checked={sw.subscribed}
-              onToggle={checked => handleToggle(sw.id, checked, activeTab!.url)}
-            />
-          ))}
-        </div>
-
-        <div>
-          <OptionsLink href="/src/options.html" onClick={e => { e.preventDefault(); goToOptions() }}>options</OptionsLink>
-        </div>
-        <div style={{ clear: 'both' }} />
-        <div>
-          <ClearNotifications href="#" onClick={e => { e.preventDefault(); handleClearNotifications() }}>clear notifications</ClearNotifications>
-        </div>
-        <div style={{ clear: 'both' }} />
+        {switches.length > 0 && (
+          <Card style={{ padding: `${tokens.space.sm} ${tokens.space.md}`, margin: `${tokens.space.sm} 0` }}>
+            {switches.map(sw => (
+              <ToggleSwitch
+                key={sw.id}
+                type={sw.type}
+                checked={sw.subscribed}
+                onToggle={checked => handleToggle(sw.id, checked, activeTab!.url)}
+              />
+            ))}
+          </Card>
+        )}
 
         {showSubdomainWarning && (
-          <MessageBanner variant="warning">⚠️ User monitoring requires www.reddit.com or old.reddit.com</MessageBanner>
+          <MessageBanner variant="warning">⚠ User monitoring requires www.reddit.com or old.reddit.com</MessageBanner>
         )}
 
-        {/* Current user section */}
-        <div>{currentUserSection}</div>
+        <SubsCard>
+          {currentUserSection}
+          {userData && (
+            <UnseenRow
+              thing="other"
+              isUser={false}
+              unseenCount={userData.otherUnseen.length}
+              totalStr={`${userData.otherUnseen.length} / ${userData.otherTotal}`}
+              url={otherUrl}
+            />
+          )}
+        </SubsCard>
 
-        <hr />
-
-        {/* Other subscriptions */}
-        {userData && (
-          <UnseenLink
-            thing="other"
-            isUser={false}
-            unseenStr={`${userData.otherUnseen.length} / ${userData.otherTotal}`}
-            url={otherUrl}
-          />
-        )}
-
-        <hr />
-
-        <BottomDiv>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: tokens.space.sm }}>
+          <ClearLink href="#" onClick={e => { e.preventDefault(); handleClearNotifications() }}>
+            clear notifications
+          </ClearLink>
           <BlueLink
-            target="_blank"
             href={historyUrl}
-            onClick={e => {
-              e.preventDefault()
-              chrome.tabs.create({ url: historyUrl })
-              window.close()
-            }}
+            target="_blank"
+            onClick={e => { e.preventDefault(); chrome.tabs.create({ url: historyUrl }); window.close() }}
           >
             history
           </BlueLink>
-        </BottomDiv>
+        </div>
 
-        <hr />
-
-        <button id="test-notification" style={{ marginTop: '6px' }} onClick={handleTestNotification}>
-          Test notification
-        </button>
+        <TestBtn onClick={handleTestNotification}>Test notification</TestBtn>
       </PopupContainer>
     </>
   )

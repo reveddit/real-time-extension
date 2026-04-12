@@ -1,145 +1,211 @@
 import React, { useState, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
-import { Global } from '@emotion/react'
 import { getItemFromLocalStorage, unsubscribeId, getIDs_thing } from './storage'
-import { getPrettyDate, isComment, sortDict_by_numberValuedAttribute } from './common'
-import { tableGlobalStyles } from './ui/components'
+import { getPrettyDate, isComment, sortDict_by_numberValuedAttribute, LocalStorageItem } from './common'
+import { AppGlobal } from './ui/global'
+import {
+  Card, CardHeader, CardMeta, CardBody, CardActions,
+  BlueLink, MutedLink, Button,
+  Subreddit, PostTitle, MdBody,
+} from './ui/components'
+import { tokens } from './ui/tokens'
+import { markdownToHTML } from './ui/markdown'
 
-const Main = styled.div`
-  width: 800px;
+const Page = styled.div`
+  max-width: 820px;
   margin: 0 auto;
+  padding: ${tokens.space.xl} ${tokens.space.lg};
 `
 
-const Link = styled.a`
-  cursor: pointer;
-  color: rgb(0, 0, 238);
+const PageHeader = styled.div`
+  margin-bottom: ${tokens.space.lg};
+  & h1 { margin: 0 0 ${tokens.space.sm} 0; font-size: 22px; }
+  & p {
+    color: var(--text-secondary);
+    margin: ${tokens.space.xs} 0;
+  }
 `
 
-interface Subscription {
+const Empty = styled.div`
+  & p { margin: 0 0 ${tokens.space.sm} 0; }
+  & ul { margin: 0; padding-left: 1.4em; }
+  & li { margin: ${tokens.space.xs} 0; color: var(--text-secondary); }
+`
+
+interface SubscriptionRow {
   id: string
-  timeSubscribedUTC: number
-  contentType: string
-  text: string
-  createdUTC_pretty: string
-  formatted_subscribedUTC: string
-  formatted_createdUTC: string
+  contentType: 'comment' | 'post'
+  subreddit: string
+  title: string
+  body: string
+  subscribedUTC: number
+  createdUTC: number
+  formattedSubscribed: string
+  formattedSubscribedFull: string
+  formattedCreated: string
+  formattedCreatedFull: string
   href: string
+  revedditHref: string
+}
+
+function buildRedditHref(id: string, isCommentItem: boolean, postId?: string): string {
+  if (isCommentItem) {
+    if (postId) {
+      const shortPost = postId.substring(3)
+      const shortComment = id.substring(3)
+      return `https://www.reddit.com/comments/${shortPost}/-/${shortComment}?context=3`
+    }
+    return `https://www.reveddit.com/info?id=${encodeURIComponent(id)}`
+  }
+  const shortPost = id.substring(3)
+  return `https://www.reddit.com/comments/${shortPost}`
 }
 
 function Other() {
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([])
+  const [rows, setRows] = useState<SubscriptionRow[]>([])
   const [viewAllHref, setViewAllHref] = useState<string | null>(null)
-  const [isEmpty, setIsEmpty] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
-  useEffect(() => {
+  const load = () => {
     chrome.storage.local.get(undefined as any, localStorage => {
       chrome.storage.sync.get(undefined as any, syncStorage => {
+        const subs = syncStorage.other_subscriptions || {}
         const { unseen, seen } = getIDs_thing('other', false, syncStorage)
-        const subs = syncStorage.other_subscriptions
-
         const allIds = [...new Set([...unseen, ...seen])]
-        if (allIds.length) {
-          setViewAllHref(`https://www.reveddit.com/info?id=${allIds.join(',')}&removal_status=all`)
-        }
+        setViewAllHref(
+          allIds.length
+            ? `https://www.reveddit.com/info?id=${allIds.join(',')}&removal_status=all`
+            : null
+        )
 
-        const items: Subscription[] = []
-        sortDict_by_numberValuedAttribute(subs, 't').forEach(([id, item]) => {
-          const timeSubscribedUTC = item.t
-          const item_localStorage = getItemFromLocalStorage('other', false, id, localStorage)
-          const contentType = isComment(id) ? 'comment' : 'post'
-          let text = id
-          let createdUTC_pretty = 'n/a'
-          let formatted_createdUTC = ''
-          const formatted_subscribedUTC = new Date(timeSubscribedUTC * 1000).toString()
+        const next: SubscriptionRow[] = []
+        sortDict_by_numberValuedAttribute(subs, 't').forEach(([id, sub]: [string, any]) => {
+          const subscribedUTC = sub.t || 0
+          const item = getItemFromLocalStorage('other', false, id, localStorage)
+          const isCommentItem = isComment(id)
+          const contentType: 'comment' | 'post' = isCommentItem ? 'comment' : 'post'
 
-          if (item_localStorage) {
-            const item_createdUTC = item_localStorage.getCreatedUTC()
-            if (item_localStorage.getText().trim()) {
-              text = item_localStorage.getText().trim()
+          let title = ''
+          let body = ''
+          let subreddit = ''
+          let createdUTC = 0
+          let postId: string | undefined
+
+          if (item && typeof item !== 'string') {
+            const lsi = item as LocalStorageItem
+            const text = (lsi.getText() || '').trim()
+            const stored_body = (lsi.getBody?.() || '').trim()
+            subreddit = lsi.getSubreddit?.() || ''
+            createdUTC = lsi.getCreatedUTC() || 0
+            postId = lsi.getPostID?.()
+
+            if (isCommentItem) {
+              body = text
+            } else {
+              title = text
+              body = stored_body
             }
-            createdUTC_pretty = getPrettyDate(item_createdUTC)
-            formatted_createdUTC = new Date(item_createdUTC * 1000).toString()
           }
 
-          items.push({
+          next.push({
             id,
-            timeSubscribedUTC,
             contentType,
-            text,
-            createdUTC_pretty,
-            formatted_subscribedUTC,
-            formatted_createdUTC,
-            href: `https://www.reveddit.com/api/info?id=${id}&removal_status=all`
+            subreddit,
+            title,
+            body,
+            subscribedUTC,
+            createdUTC,
+            formattedSubscribed: getPrettyDate(subscribedUTC),
+            formattedSubscribedFull: new Date(subscribedUTC * 1000).toString(),
+            formattedCreated: createdUTC ? getPrettyDate(createdUTC) : '',
+            formattedCreatedFull: createdUTC ? new Date(createdUTC * 1000).toString() : '',
+            href: buildRedditHref(id, isCommentItem, postId),
+            revedditHref: `https://www.reveddit.com/info?id=${encodeURIComponent(id)}`,
           })
         })
 
-        setSubscriptions(items)
-        setIsEmpty(Object.keys(subs).length === 0)
+        setRows(next)
         setLoaded(true)
       })
     })
-  }, [])
+  }
+
+  useEffect(() => { load() }, [])
 
   const handleUnsubscribe = (id: string) => {
     unsubscribeId(id, () => {
-      setSubscriptions(prev => prev.filter(s => s.id !== id))
+      setRows(prev => prev.filter(r => r.id !== id))
     })
   }
 
-  if (!loaded) return null
-
   return (
     <>
-      <Global styles={tableGlobalStyles} />
-      <Main>
-        <h1>Other Subscriptions</h1>
-        <p>&bull; The maximum number of subscriptions is 100 items. If the maximum number is reached, the least recently subscribed items are bumped off the list.</p>
-        <p>&bull; Subscribing to a post only tracks changes to the post itself, not the post&apos;s comments.</p>
+      <AppGlobal />
+      <Page>
+        <PageHeader>
+          <h1>Other subscriptions</h1>
+          <p>
+            Up to 100 items. When the list is full, the least-recently subscribed items are dropped.
+            Subscribing to a post only tracks the post itself, not its comments.
+          </p>
+          {viewAllHref && (
+            <p>
+              <BlueLink href={viewAllHref} target="_blank" rel="noreferrer">
+                View all current statuses on reveddit ↗
+              </BlueLink>
+            </p>
+          )}
+        </PageHeader>
 
-        {viewAllHref && (
-          <p><a href={viewAllHref}>View these items&apos; current status on reveddit</a></p>
+        {loaded && rows.length === 0 && (
+          <Card>
+            <Empty>
+              <p>No &quot;other&quot; subscriptions yet. To subscribe:</p>
+              <ul>
+                <li>Click &quot;subscribe-rev&quot; beneath any comment or post</li>
+                <li>Right-click a Reddit or reveddit link and choose &quot;reveddit subscribe&quot;</li>
+                <li>Open the reveddit extension popup on a Reddit page and toggle &quot;subscribe to comment/post&quot;</li>
+              </ul>
+            </Empty>
+          </Card>
         )}
 
-        {subscriptions.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>index</th>
-                <th>time subscribed &#x25BC;</th>
-                <th>item creation time</th>
-                <th>type</th>
-                <th>text and link</th>
-                <th>unsubscribe</th>
-              </tr>
-            </thead>
-            <tbody>
-              {subscriptions.map((sub, idx) => (
-                <tr key={sub.id}>
-                  <td>{idx + 1}</td>
-                  <td title={sub.formatted_subscribedUTC}>{getPrettyDate(sub.timeSubscribedUTC)}</td>
-                  <td title={sub.formatted_createdUTC}>{sub.createdUTC_pretty}</td>
-                  <td>{sub.contentType}</td>
-                  <td><a href={sub.href}>{sub.text}</a></td>
-                  <td><Link onClick={() => handleUnsubscribe(sub.id)}>unsubscribe</Link></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-
-        {isEmpty && (
-          <div>
-            <p>No &quot;other&quot; subscriptions yet. To subscribe,</p>
-            <ul>
-              <li>click &quot;subscribe-rev&quot; beneath any comment or post</li>
-              <li>right-click on a reddit or reveddit link and select &quot;reveddit subscribe&quot;,</li>
-              <li>or, click the reveddit extension icon and click &quot;subscribe&quot; to subscribe to the current page item.</li>
-            </ul>
-          </div>
-        )}
-      </Main>
+        {rows.map(row => (
+          <Card key={row.id}>
+            <CardHeader>
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.9em' }}>
+                {row.contentType}
+                {row.subreddit && <> in <Subreddit>r/{row.subreddit}</Subreddit></>}
+              </span>
+            </CardHeader>
+            <CardMeta>
+              <span title={row.formattedSubscribedFull}>subscribed {row.formattedSubscribed}</span>
+              {row.formattedCreated && (
+                <span title={row.formattedCreatedFull}>created {row.formattedCreated}</span>
+              )}
+            </CardMeta>
+            {row.title && <PostTitle>{row.title}</PostTitle>}
+            {row.body && (
+              <CardBody>
+                <MdBody
+                  className="md-body"
+                  dangerouslySetInnerHTML={{ __html: markdownToHTML(row.body) }}
+                />
+              </CardBody>
+            )}
+            <CardActions>
+              <BlueLink href={row.href} target="_blank" rel="noreferrer">Open on Reddit ↗</BlueLink>
+              <MutedLink href={row.revedditHref} target="_blank" rel="noreferrer">
+                View on reveddit ↗
+              </MutedLink>
+              <Button variant="ghost" onClick={() => handleUnsubscribe(row.id)}>
+                unsubscribe
+              </Button>
+            </CardActions>
+          </Card>
+        ))}
+      </Page>
     </>
   )
 }

@@ -7,6 +7,9 @@ import {initStorage, INTERVAL_DEFAULT, subscribeUser,
 import {setupContextualMenu} from './src/contextMenus'
 import browser from 'webextension-polyfill'
 import { getItems_fromOld, getPost_fromOld } from './src/parse_html/old'
+import { fetchNews } from './src/news'
+
+const WHATSNEW_SHOWN_KEY = 'whatsnew_shown_version'
 setupContextualMenu()
 
 
@@ -222,6 +225,21 @@ chrome.runtime.onInstalled.addListener(function(details) {
         }
     } else if (details.reason == 'update') {
         updateBadgeUnseenCount()
+        // Open the what's new page once per version bump.
+        try {
+            const currentVersion = chrome.runtime.getManifest().version
+            chrome.storage.local.get(WHATSNEW_SHOWN_KEY, (res) => {
+                if (res && res[WHATSNEW_SHOWN_KEY] !== currentVersion) {
+                    chrome.storage.local.set({ [WHATSNEW_SHOWN_KEY]: currentVersion }, () => {
+                        createTab(chrome.runtime.getURL('src/whatsnew.html'))
+                    })
+                }
+            })
+        } catch (e) {
+            console.log('whatsnew open failed:', e)
+        }
+        // Refresh the news feed cache on update.
+        fetchNews({ force: true }).catch(() => {})
     }
 })
 
@@ -358,6 +376,9 @@ if (! chrome.extension.inIncognitoContext) {
         if (alarm.name == ALARM_NAME) {
             lastAlarm = Date.now() // part of WORKAROUND for broken alarms
             checkForChanges()
+            // Piggyback the news feed refresh on the alarm tick; fetchNews
+            // enforces its own 6-hour throttle internally.
+            fetchNews().catch(() => {})
         }
     })
 }
