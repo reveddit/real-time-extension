@@ -43,6 +43,8 @@
     "start": "yarn start-chrome",
     "start-chrome": "NODE_ENV=development   BROWSER=chrome  webpack --mode=development --watch",
     "start-firefox": "NODE_ENV=development  BROWSER=firefox webpack --mode=development --watch",
+    "run-android": "node scripts/run-android.js",
+    "dev-android": "ANDROID_DEV=1 yarn build-firefox-dev && (ANDROID_DEV=1 yarn start-firefox & yarn run-android)",
     "build-all": "yarn build-prod && yarn build-dev",
     "build-prod": "yarn build-chrome && yarn build-firefox && yarn build-edge",
     "build-chrome": "(export  NODE_ENV=production BROWSER=chrome;  yarn run-webpack && (cd dist-chrome  && zip -r ../chrome.zip .))",

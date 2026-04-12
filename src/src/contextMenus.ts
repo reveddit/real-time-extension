@@ -3,6 +3,7 @@ import { getFullIDsFromURL } from './common'
 import { setCurrentStateForId } from './monitoring'
 
 export const setupContextualMenu = () => {
+    if (!chrome.contextMenus) return
     const contextMenu_id = 'reveddit-subscribe'
     chrome.contextMenus.removeAll(() => {
         chrome.contextMenus.create({

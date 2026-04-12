@@ -13,6 +13,8 @@ import {
     UNLOCKED,
     addLocalStorageItems,
     getLocalStorageItems,
+    getPendingNotification,
+    setPendingNotification,
     MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
     MAX_SYNC_STORAGE_CHANGES,
     SEEN_COUNT_DEFAULT,
@@ -449,7 +451,7 @@ const checkForChanges_thing_byId = async (
         // change happens if:
         //      tracking removals && item is removed
         //      tracking removals && item was in removed, now in approved
-        const newLocalStorageItems = {}
+        const newLocalStorageItems: Record<string, any> = {}
 
         const changeTypes: string[] = []
         let num_changes = 0
@@ -499,6 +501,20 @@ const checkForChanges_thing_byId = async (
                         oldestDateThreshold,
                     )
                 }
+                console.log('[debug] post-markChanges', {
+                    thing,
+                    isUser,
+                    subscribedFrom,
+                    removed: removed.length,
+                    approved: approved.length,
+                    locked: locked.length,
+                    unlocked: unlocked.length,
+                    known_removed: Object.keys(known_removed).length,
+                    known_approved: Object.keys(known_approved).length,
+                    existingLS: Object.keys(existingLocalStorageItems || {}).length,
+                    num_changes,
+                    changeTypes,
+                })
                 if (num_changes && changeTypes.length) {
                     console.log(
                         `Creating notification for ${thing}: ${num_changes} changes of type ${changeTypes.join(', ')}`,
@@ -508,6 +524,33 @@ const checkForChanges_thing_byId = async (
                         title: thing,
                         message: `${num_changes} new [${changeTypes.join(', ')}] actions, click to view`,
                     })
+                    setPendingNotification(thing, {
+                        count: num_changes,
+                        types: changeTypes,
+                        firstAttemptAt: Date.now(),
+                        attempts: 1,
+                    }).catch(() => {})
+                } else {
+                    // No new changes this cycle — but retry any pending
+                    // notification from a prior cycle that may have silently
+                    // failed to display (e.g. install-time on Firefox Android).
+                    getPendingNotification(thing)
+                        .then(pending => {
+                            if (!pending) return
+                            const MAX_RETRY_ATTEMPTS = 5
+                            if (pending.attempts >= MAX_RETRY_ATTEMPTS) return
+                            console.log(`Retrying pending notification for ${thing} (attempt ${pending.attempts + 1})`)
+                            createNotification({
+                                notificationId: thing,
+                                title: thing,
+                                message: `${pending.count} new [${pending.types.join(', ')}] actions, click to view`,
+                            })
+                            setPendingNotification(thing, {
+                                ...pending,
+                                attempts: pending.attempts + 1,
+                            }).catch(() => {})
+                        })
+                        .catch(() => {})
                 }
                 return chrome.storage.sync.set(
                     {
@@ -535,6 +578,17 @@ const checkForChanges_thing_byId = async (
                     },
                     () => {
                         updateBadgeUnseenCount()
+                        console.log('[debug] addLocalStorageItems', {
+                            thing,
+                            isUser,
+                            keys: Object.keys(newLocalStorageItems),
+                            sample: Object.keys(newLocalStorageItems)
+                                .slice(0, 2)
+                                .map(k => ({
+                                    id: k,
+                                    t: newLocalStorageItems[k]?.t?.slice(0, 60),
+                                })),
+                        })
                         return addLocalStorageItems(newLocalStorageItems, thing, isUser)
                     },
                 )

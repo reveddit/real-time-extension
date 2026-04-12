@@ -8,7 +8,7 @@ import { tokens } from './ui/tokens'
 import {
   getSubscribedUsers_withSeenAndUnseenIDs,
   subscribeId, unsubscribeId,
-  markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen
+  markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen, clearPendingNotification
 } from './storage'
 import { setCurrentStateForId } from './monitoring'
 import { fetchNews, getUnreadMessages, markNewsRead, NewsMessage } from './news'
@@ -194,6 +194,7 @@ function UnseenRow({ thing, isUser, unseenCount, totalStr, url }: {
     e.preventDefault()
     chrome.storage.sync.get(undefined, storage => {
       markThingAsSeen(storage, thing, isUser)
+      clearPendingNotification(thing).catch(() => {})
       setStorageUpdateBadge(storage).then(() => {
         chrome.tabs.create({ url })
         window.close()
@@ -394,7 +395,7 @@ function Popup() {
 
   const historyUrl = chrome.runtime.getURL('src/history.html')
 
-  let otherUrl = '/src/other.html'
+  let otherUrl = chrome.runtime.getURL('src/other.html')
   if (userData && userData.otherUnseen.length) {
     otherUrl = `https://www.reveddit.com/info?id=${userData.otherUnseen.join(',')}&removal_status=all`
   }
@@ -464,9 +465,9 @@ function Popup() {
                     {reconnecting ? 'Checking...' : 'Reconnect'}
                   </ActionBtn>
                 ) : (
-                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.85em', textAlign: 'center', padding: '4px 8px' }}>
-                    Open a Reddit tab first, then click here to reconnect.
-                  </div>
+                  <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
+                    Open Reddit to reconnect
+                  </ActionBtn>
                 )}
               </>
             )}

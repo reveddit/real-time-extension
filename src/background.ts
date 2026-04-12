@@ -9,7 +9,14 @@ import {
 } from './src/common'
 import { checkForChanges } from './src/monitoring'
 import { lookupItemsByID, getLoggedinUser, getCookie, getAuth, storeRedditCookies } from './src/requests'
-import { initStorage, INTERVAL_DEFAULT, subscribeUser, getUnseenIDs_thing, markThingAsSeen } from './src/storage'
+import {
+    initStorage,
+    INTERVAL_DEFAULT,
+    subscribeUser,
+    getUnseenIDs_thing,
+    markThingAsSeen,
+    clearPendingNotification,
+} from './src/storage'
 import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
 import { getItems_fromOld, getPost_fromOld } from './src/parse_html/old'
@@ -183,6 +190,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             .then(() => getLoggedinUser())
             .then((user: any) => {
                 if (user) {
+                    chrome.storage.local.set({ last_logged_in_user: user })
                     // Subscribe the user (if not already subscribed)
                     subscribeUser(
                         user,
@@ -285,6 +293,23 @@ chrome.runtime.onStartup.addListener(() => {
     })
 })
 
+if (__DEV__) {
+    // Dev helper: from devtools console run `__replayInstall()` to rerun the
+    // install-time flow (clears storage, re-detects user, triggers lookup).
+    // Keeps web-ext/ADB session intact — no reconnect needed.
+    ;(globalThis as any).__replayInstall = async () => {
+        console.log('[dev] replaying install flow')
+        await new Promise<void>(r => chrome.storage.sync.clear(() => r()))
+        await new Promise<void>(r => chrome.storage.local.clear(() => r()))
+        initStorage(() => {
+            setAlarm(INTERVAL_DEFAULT)
+            subscribeToLoggedInUser_or_promptForUser()
+            updateBadgeUnseenCount()
+        })
+    }
+    console.log('[dev] __replayInstall() available from devtools console')
+}
+
 async function subscribeToLoggedInUser_or_promptForUser() {
     // Try to detect the logged-in user with a short, bounded retry loop.
     // getLoggedinUser() is already silent on failure (resolves null), so we retry
@@ -300,14 +325,17 @@ async function subscribeToLoggedInUser_or_promptForUser() {
 
     if (user) {
         subscribeUser(user, () => {
-            triggerImmediateLookupOnce(user)
-            chrome.tabs.create({ url: chrome.runtime.getURL('src/history.html?welcome=1') })
+            // Delay the initial lookup briefly so Android has time to dismiss
+            // the "extension was added" system dialog and grant notification
+            // permission before the first createNotification call.
+            setTimeout(() => triggerImmediateLookupOnce(user), 3000)
+            chrome.tabs.create({ url: chrome.runtime.getURL('src/history.html?welcome=1'), active: true })
         })
     } else {
         // Still no user - surface the disconnected state on the toolbar icon and
         // show the welcome/onboarding page so the user can finish the setup.
         setWarningBadge('needs_user')
-        chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome.html') })
+        chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome.html'), active: true })
     }
 }
 
@@ -337,7 +365,7 @@ const notificationClicked = (thing: string) => {
             // Always point to the extension's history page for user content
             url = chrome.runtime.getURL('src/history.html')
         } else if (!isUser) {
-            url = '/src/other.html'
+            url = chrome.runtime.getURL('src/other.html')
             if (unseenIDs.length) {
                 url = `https://www.reveddit.com/info?id=${unseenIDs.join(',')}&removal_status=all`
             }
@@ -346,6 +374,7 @@ const notificationClicked = (thing: string) => {
             markThingAsSeen(storage, thing, isUser)
             browser.storage.sync.set(storage).then(() => {
                 updateBadgeUnseenCount()
+                clearPendingNotification(thing).catch(() => {})
                 createTab(url)
             })
         }

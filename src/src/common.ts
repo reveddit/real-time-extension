@@ -34,6 +34,12 @@ export const setWarningBadge = (errorStatus?: string) => {
 
 // https://stackoverflow.com/questions/25933556/chrome-extension-open-new-tab-when-browser-opened-in-background-mac/25933964#25933964
 export const createTab = (url: string) => {
+    // chrome.windows is unavailable on Firefox Android (single-window browser);
+    // just open a tab and let the browser foreground it.
+    if (!chrome.windows) {
+        chrome.tabs.create({ url, active: true })
+        return
+    }
     chrome.tabs.create({ url: url }, tab => {
         if (!tab) {
             // probably no window available
@@ -357,7 +363,11 @@ export function alphaLowerSort(a: string, b: string): number {
 }
 
 export function goToOptions() {
-    if (chrome.runtime.openOptionsPage) {
+    const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+    if (isAndroid) {
+        chrome.tabs.create({ url: chrome.runtime.getURL('src/options.html'), active: true })
+        window.close()
+    } else if (chrome.runtime.openOptionsPage) {
         chrome.runtime.openOptionsPage()
         window.close() //closes the popup which persists in FF
     } else {

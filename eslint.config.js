@@ -19,6 +19,7 @@ export default [
                 $: 'readonly',
                 jQuery: 'readonly',
                 __BUILT_FOR__: 'readonly',
+                __DEV__: 'readonly',
                 self: 'readonly',
             },
         },

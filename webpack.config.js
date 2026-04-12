@@ -37,7 +37,8 @@ function modify(buffer) {
         host_permissions_location = 'permissions'
         let id = 'real-time-stable@reveddit.com'
         manifest.browser_specific_settings = {
-            "gecko": { id }
+            "gecko": { id },
+            "gecko_android": {}
         }
         manifest.permissions.push(
             'activeTab', 'webRequest', 'webRequestBlocking',
@@ -100,12 +101,13 @@ const plugins = [
         { context: 'src/src/', from: "content.css", to: distSrcPath },
     ]}),
     new webpack.DefinePlugin({
-        __BUILT_FOR__: built_for
+        __BUILT_FOR__: built_for,
+        __DEV__: JSON.stringify(mode !== 'production')
     }),
     new AfterEmitPlugin(),
 ]
 
-if (process.argv.indexOf("--watch") >= 0 && mode !== 'production') {
+if (process.argv.indexOf("--watch") >= 0 && mode !== 'production' && !process.env.ANDROID_DEV) {
   plugins.unshift(
     new ExtReloader({
         //manifest: manifestPath,

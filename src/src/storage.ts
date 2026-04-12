@@ -95,6 +95,39 @@ export const markEverythingAsSeen = () => {
     })
 }
 
+const PENDING_NOTIFICATIONS_KEY = 'pending_notifications'
+
+type PendingNotification = {
+    thing: string
+    count: number
+    types: string[]
+    firstAttemptAt: number
+    attempts: number
+}
+
+export const getPendingNotification = (thing: string): Promise<PendingNotification | null> => {
+    return browser.storage.local.get({ [PENDING_NOTIFICATIONS_KEY]: {} }).then((r: any) => {
+        const all = r[PENDING_NOTIFICATIONS_KEY] || {}
+        return all[thing] || null
+    })
+}
+
+export const setPendingNotification = (thing: string, data: Omit<PendingNotification, 'thing'>) => {
+    return browser.storage.local.get({ [PENDING_NOTIFICATIONS_KEY]: {} }).then((r: any) => {
+        const all = r[PENDING_NOTIFICATIONS_KEY] || {}
+        all[thing] = { thing, ...data }
+        return browser.storage.local.set({ [PENDING_NOTIFICATIONS_KEY]: all })
+    })
+}
+
+export const clearPendingNotification = (thing: string) => {
+    return browser.storage.local.get({ [PENDING_NOTIFICATIONS_KEY]: {} }).then((r: any) => {
+        const all = r[PENDING_NOTIFICATIONS_KEY] || {}
+        delete all[thing]
+        return browser.storage.local.set({ [PENDING_NOTIFICATIONS_KEY]: all })
+    })
+}
+
 export const markThingAsSeen = (storage: Record<string, any>, thing: string, isUser: boolean) => {
     const keys = getObjectNamesForThing(thing, isUser)
     delete keys['changes']
@@ -369,12 +402,16 @@ export const getOptions = (callback: (users: string[], others: string[], options
     return browser.storage.sync
         .get(['user_subscriptions', 'other_subscriptions', 'options'])
         .then((result: Record<string, any>) => {
-            const users = Object.keys(result.user_subscriptions || {})
-            const others = Object.keys(result.other_subscriptions || {})
-            const options = result.options
+            const r = result || {}
+            const users = Object.keys(r.user_subscriptions || {})
+            const others = Object.keys(r.other_subscriptions || {})
+            const options = r.options
             return callback(users, others, options)
         })
-        .catch(console.log)
+        .catch(err => {
+            console.log(err)
+            return callback([], [], {})
+        })
 }
 export const saveOptions = (
     seen_count: number,

@@ -1,5 +1,28 @@
+# Auto-fix formatting/lint first so fixes land in the commit.
 yarn lint:fix
 yarn format
 git add -u
-yarn typecheck
-yarn test
+
+# Run remaining checks in parallel; capture output so one failure
+# doesn't suppress another. Exit non-zero if any fail.
+tmp=$(mktemp -d)
+fail=0
+
+(yarn lint      > "$tmp/lint.log"      2>&1; echo $? > "$tmp/lint.code")      &
+(yarn typecheck > "$tmp/typecheck.log" 2>&1; echo $? > "$tmp/typecheck.code") &
+(yarn test      > "$tmp/test.log"      2>&1; echo $? > "$tmp/test.code")      &
+wait
+
+for name in lint typecheck test; do
+    code=$(cat "$tmp/$name.code")
+    if [ "$code" != "0" ]; then
+        echo "===== $name FAILED ====="
+        cat "$tmp/$name.log"
+        fail=1
+    else
+        echo "===== $name OK ====="
+    fi
+done
+
+rm -rf "$tmp"
+exit $fail
