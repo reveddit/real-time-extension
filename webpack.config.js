@@ -138,6 +138,7 @@ export default {
         ...extensionPages
     },
     output: {
+        publicPath: '',
         path: distPath,
         filename: (pathData) => {
             const filename = '[name].js'
