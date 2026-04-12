@@ -114,7 +114,7 @@ function Welcome() {
 
           const redirect = () => {
             setTimeout(() => {
-              window.location.href = `https://www.reveddit.com/user/${user}?all=true`
+              window.location.href = chrome.runtime.getURL('src/history.html?welcome=1')
             }, 1000)
           }
 

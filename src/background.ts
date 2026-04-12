@@ -10,6 +10,11 @@ import { getItems_fromOld, getPost_fromOld } from './src/parse_html/old'
 import { fetchNews } from './src/news'
 
 const WHATSNEW_SHOWN_KEY = 'whatsnew_shown_version'
+
+// Compare only the first 3 segments (e.g. "0.0.5") so that patch bumps like
+// 0.0.5.0 → 0.0.5.1 don't re-show the same what's-new page.
+const whatsnewGeneration = (version: string) => version.split('.').slice(0, 3).join('.')
+
 setupContextualMenu()
 
 
@@ -229,7 +234,7 @@ chrome.runtime.onInstalled.addListener(function(details) {
         try {
             const currentVersion = chrome.runtime.getManifest().version
             chrome.storage.local.get(WHATSNEW_SHOWN_KEY, (res) => {
-                if (res && res[WHATSNEW_SHOWN_KEY] !== currentVersion) {
+                if (res && whatsnewGeneration(res[WHATSNEW_SHOWN_KEY] || '') !== whatsnewGeneration(currentVersion)) {
                     chrome.storage.local.set({ [WHATSNEW_SHOWN_KEY]: currentVersion }, () => {
                         createTab(chrome.runtime.getURL('src/whatsnew.html'))
                     })
@@ -281,7 +286,7 @@ async function subscribeToLoggedInUser_or_promptForUser() {
     if (user) {
         subscribeUser(user, () => {
             triggerImmediateLookupOnce(user)
-            chrome.tabs.create({url: `https://www.reveddit.com/user/${user}?all=true`})
+            chrome.tabs.create({url: chrome.runtime.getURL('src/history.html?welcome=1')})
         })
     } else {
         // Still no user - surface the disconnected state on the toolbar icon and

@@ -76,7 +76,7 @@ export const getFullIDsFromPath = (path: string): [string | undefined, string | 
 
 export const reformatRedditText = (body: string): string => {
     return body.replace(/&amp;/g, '&').replace(/&gt;/g, '>').replace(/&lt;/g, '<')
-        .replace(/\s+/g, ' ').substr(0, maxRedditContentLength)
+        .replace(/[^\S\n]+/g, ' ').substr(0, maxRedditContentLength)
 }
 
 export const isRemovedItem = (item: RedditItem): boolean => {

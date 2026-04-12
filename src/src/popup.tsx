@@ -448,7 +448,7 @@ function Popup() {
 
         {newsMessage && <NewsBanner message={newsMessage} onDismiss={handleDismissNews} />}
 
-        {errorStatus && (
+        {errorStatus && currentUser && (
           <div>
             {reconnectSuccess ? (
               <MessageBanner variant="success">✓ Connected!</MessageBanner>

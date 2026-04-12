@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { getAllChanges, getItemFromLocalStorage } from './storage'
@@ -7,6 +7,41 @@ import { AppGlobal } from './ui/global'
 import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueLink, MutedLink, Author, Subreddit, PostTitle, MdBody } from './ui/components'
 import { tokens } from './ui/tokens'
 import { markdownToHTML } from './ui/markdown'
+
+const isWelcome = new URLSearchParams(window.location.search).get('welcome') === '1'
+
+const getPinInstructions = (): string => {
+  if (__BUILT_FOR__ === 'firefox') return 'Click the extensions puzzle icon in the toolbar, then pin reveddit real-time.'
+  if (__BUILT_FOR__ === 'edge') return 'Click the extensions icon in the toolbar, then pin reveddit real-time.'
+  return 'Click the puzzle piece icon in the toolbar, then pin reveddit real-time.'
+}
+
+const WelcomeBanner = styled(Card)`
+  margin-bottom: ${tokens.space.lg};
+  & h2 {
+    margin: 0 0 ${tokens.space.sm} 0;
+    font-size: 1.2em;
+  }
+  & p {
+    margin: ${tokens.space.xs} 0;
+    line-height: 1.6;
+    color: var(--text-primary);
+  }
+  & ul {
+    margin: ${tokens.space.sm} 0;
+    padding-left: 1.4em;
+    line-height: 1.8;
+    color: var(--text-primary);
+  }
+`
+
+const BannerActions = styled.div`
+  display: flex;
+  gap: ${tokens.space.sm};
+  align-items: center;
+  margin-top: ${tokens.space.md};
+  flex-wrap: wrap;
+`
 
 const Page = styled.div`
   max-width: 820px;
@@ -160,8 +195,13 @@ function History() {
   const [loaded, setLoaded] = useState(false)
   const [filter, setFilter] = useState<FilterValue>('all')
   const [sort, setSort] = useState<SortValue>('observed')
+  const [currentUser, setCurrentUser] = useState<string | null>(null)
+  const [bannerDismissed, setBannerDismissed] = useState(false)
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
+    chrome.storage.local.get(['last_logged_in_user'], result => {
+      setCurrentUser(result?.last_logged_in_user || null)
+    })
     getAllChanges(changesByUser => {
       chrome.storage.local.get(null, localStorage => {
         const all: ChangeForStorage[] = []
@@ -247,6 +287,28 @@ function History() {
     })
   }, [])
 
+  useEffect(() => {
+    loadData()
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    const debouncedLoad = () => {
+      if (debounceTimer) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(loadData, 500)
+    }
+    const onChange = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      const keys = Object.keys(changes)
+      if (area === 'sync' && keys.some(k => k.startsWith('changes_'))) {
+        debouncedLoad()
+      } else if (area === 'local' && keys.some(k => k.startsWith('items_'))) {
+        debouncedLoad()
+      }
+    }
+    chrome.storage.onChanged.addListener(onChange)
+    return () => {
+      chrome.storage.onChanged.removeListener(onChange)
+      if (debounceTimer) clearTimeout(debounceTimer)
+    }
+  }, [loadData])
+
   const handleResolve = (id: string) => {
     const apiJsonUrl = `https://www.reddit.com/api/info.json?id=${encodeURIComponent(id)}`
     const apiPageUrl = `https://www.reddit.com/api/info?id=${encodeURIComponent(id)}`
@@ -285,12 +347,38 @@ function History() {
     return sorted
   }, [changes, filter, sort])
 
+  const showFullBanner = isWelcome && !bannerDismissed
+  const showSlimBanner = !isWelcome && changes.length === 0 && loaded
+
   if (!loaded) return <AppGlobal />
 
   return (
     <>
       <AppGlobal />
       <Page>
+        {showFullBanner && (
+          <WelcomeBanner>
+            <h2>Monitoring is active{currentUser ? ` for u/${currentUser}` : ''}</h2>
+            <p>reveddit real-time is now watching your Reddit comments and posts. You'll be notified whenever content is removed by moderators, reapproved, locked, or unlocked.</p>
+            <ul>
+              <li>The extension's toolbar icon displays a badge count of removed comments and posts you haven't viewed yet.</li>
+              <li><strong>Pin the extension to your toolbar</strong> so you can always see this count. {getPinInstructions()}</li>
+            </ul>
+            {currentUser && (
+              <p>
+                You can also view your{' '}
+                <BlueLink href={`https://www.reveddit.com/user/${currentUser}?all=true`} target="_blank" rel="noreferrer">
+                  reveddit.com user page
+                </BlueLink>
+                , which can show orphaned and collapsed comments.
+              </p>
+            )}
+            <BannerActions>
+              <Button variant="secondary" onClick={() => setBannerDismissed(true)}>Got it</Button>
+            </BannerActions>
+          </WelcomeBanner>
+        )}
+
         <PageHeader>
           <h1 style={{ margin: 0 }}>History</h1>
           <Controls>
@@ -321,11 +409,31 @@ function History() {
             <ChangeCard key={`${row.id}-${idx}`} row={row} onResolve={handleResolve} />
           ))
         ) : (
-          <Empty>
-            {changes.length === 0
-              ? 'No actions observed since extension installation. Subscribe to a user or a post or comment to track changes.'
-              : 'No events match the current filter.'}
-          </Empty>
+          <>
+            {showSlimBanner && (
+              <WelcomeBanner>
+                <h2>Monitoring is active{currentUser ? ` for u/${currentUser}` : ''}</h2>
+                <p>No removed or changed content has been observed yet. You'll be notified when any of your comments or posts are removed by moderators.</p>
+                <p>The extension's toolbar icon will display a count of removed items you haven't viewed. Pin the extension to your toolbar to always see it. {getPinInstructions()}</p>
+                {currentUser && (
+                  <p>
+                    You can also check your{' '}
+                    <BlueLink href={`https://www.reveddit.com/user/${currentUser}?all=true`} target="_blank" rel="noreferrer">
+                      reveddit.com user page
+                    </BlueLink>
+                    {' '}for orphaned and collapsed comments.
+                  </p>
+                )}
+              </WelcomeBanner>
+            )}
+            {!showSlimBanner && (
+              <Empty>
+                {changes.length === 0
+                  ? 'No actions observed since extension installation.'
+                  : 'No events match the current filter.'}
+              </Empty>
+            )}
+          </>
         )}
       </Page>
     </>
