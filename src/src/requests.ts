@@ -1,6 +1,15 @@
 import { getOptions, addToPendingPostQueue } from './storage'
 import browser from 'webextension-polyfill'
 import { getItemsById_fromOldHTML } from './parse_html/old'
+import { setWarningBadge } from './common'
+
+const RATE_LIMIT_STATUSES = new Set([403, 429])
+const flagIfRateLimited = (err: Error) => {
+    const m = err.message.match(/request failed: (\d+)/)
+    if (m && RATE_LIMIT_STATUSES.has(Number(m[1]))) {
+        setWarningBadge('rate_limited')
+    }
+}
 
 const clientID = 'SEw1uvRd6kxFEw'
 const oauth_reddit = 'https://oauth.reddit.com/'
@@ -107,6 +116,7 @@ export const lookupItemsByID_withFallback = (
                         )
                     } else {
                         console.log('No OAuth auth available for fallback')
+                        flagIfRateLimited(error)
                         throw htmlError
                     }
                 })
@@ -263,6 +273,7 @@ export const lookupItemsByLoggedInUserWithAuth = (
                     )
                 } else {
                     console.log('No OAuth auth available for fallback')
+                    flagIfRateLimited(error)
                     throw error
                 }
             })

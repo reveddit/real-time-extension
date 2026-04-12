@@ -453,6 +453,10 @@ function Popup() {
           <div>
             {reconnectSuccess ? (
               <MessageBanner variant="success">✓ Connected!</MessageBanner>
+            ) : errorStatus === 'rate_limited' ? (
+              <MessageBanner variant="warning">
+                ⚠ Reddit is rate-limiting requests. Monitoring will resume automatically.
+              </MessageBanner>
             ) : (
               <>
                 <MessageBanner variant="warning">
