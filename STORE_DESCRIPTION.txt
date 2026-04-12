@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/4/12 - 0.0.5.2
+- notification of rate limiting
+
 2026/4/12 - 0.0.5.1
 - open history page on install instead of reveddit.com user page
 
