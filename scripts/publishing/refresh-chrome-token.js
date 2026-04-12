@@ -105,6 +105,7 @@ async function main() {
                 } catch (err) {
                     console.error("\x1b[31mFailed to fetch token:\x1b[0m", err);
                 } finally {
+                    server.closeAllConnections?.();
                     server.close(() => process.exit(0));
                 }
             } else {
