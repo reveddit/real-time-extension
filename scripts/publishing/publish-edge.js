@@ -19,8 +19,37 @@ function checkEnv() {
     }
 }
 
+function checkApiKeyExpiry() {
+    const expiry = process.env.EDGE_API_KEY_EXPIRY;
+    if (!expiry) {
+        console.warn('\x1b[33mWarning: EDGE_API_KEY_EXPIRY not set in .env — cannot check if key is still valid.\x1b[0m');
+        return;
+    }
+    const expiryDate = new Date(expiry);
+    if (isNaN(expiryDate)) {
+        console.warn(`\x1b[33mWarning: Could not parse EDGE_API_KEY_EXPIRY: "${expiry}"\x1b[0m`);
+        return;
+    }
+    const now = new Date();
+    const daysLeft = (expiryDate - now) / (1000 * 60 * 60 * 24);
+    if (daysLeft < 0) {
+        console.error(`\x1b[31mEdge API key expired on ${expiry}!\x1b[0m`);
+        printKeyRenewalInstructions();
+        process.exit(1);
+    } else if (daysLeft < 14) {
+        console.warn(`\x1b[33mWarning: Edge API key expires in ${Math.ceil(daysLeft)} day(s) (${expiry})\x1b[0m`);
+        printKeyRenewalInstructions();
+    }
+}
+
+function printKeyRenewalInstructions() {
+    console.error(`\nRenew your API key at:\n  https://partner.microsoft.com/en-us/dashboard/microsoftedge/publishapi\n`);
+    console.error(`Then update both EDGE_API_KEY and EDGE_API_KEY_EXPIRY in .env`);
+}
+
 async function main() {
     checkEnv();
+    checkApiKeyExpiry();
     const manifest = getManifest();
     console.log(`\n\x1b[36m🚀 Starting Edge Publish Flow for version ${manifest.version}...\x1b[0m`);
 
@@ -64,14 +93,8 @@ async function main() {
     try {
         const zipBuffer = fs.readFileSync(zipPath);
         
-        const requestHeaders = {
-            ...headers,
-            'Content-Type': 'application/zip'
-        };
-        console.log('Debug: Sending headers:', JSON.stringify(requestHeaders, null, 2));
-
         const response = await axios.post(uploadUrl, zipBuffer, {
-            headers: requestHeaders,
+            headers: { ...headers, 'Content-Type': 'application/zip' },
             maxBodyLength: Infinity,
             maxContentLength: Infinity
         });
@@ -85,10 +108,13 @@ async function main() {
         if (error.response) {
              console.error(`Status: ${error.response.status}`);
              console.error(`Data:`, error.response.data);
+             if (error.response.status === 401 || error.response.status === 403) {
+                 console.error(`\n\x1b[33mYour Edge API key is likely expired (they expire every ~2 months).\x1b[0m`);
+                 printKeyRenewalInstructions();
+             }
         } else {
             console.error(error.message);
         }
-        // If it fails with 401/403, we might need to debug headers.
         process.exit(1);
     }
 
