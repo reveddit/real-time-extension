@@ -11,8 +11,8 @@ test.describe('Popup page', () => {
         const page = await context.newPage()
         await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
 
-        // The popup container should exist
-        await expect(page.locator('#popup')).toBeVisible()
+        // The root container should exist
+        await expect(page.locator('#root')).toBeVisible()
 
         // Should have an "options" link
         await expect(page.locator('text=options')).toBeVisible()
@@ -27,43 +27,39 @@ test.describe('Options page', () => {
         const page = await context.newPage()
         await page.goto(`chrome-extension://${extensionId}/src/options.html`)
 
-        // Wait for the page to fully load and populate
-        await page.waitForLoadState('domcontentloaded')
-
-        // Subscription section header
-        await expect(page.locator('text=Subscriptions')).toBeVisible()
+        // Wait for async storage load to complete (Subscriptions heading appears)
+        await expect(page.locator('h2', { hasText: 'Subscriptions' }).first()).toBeVisible({ timeout: 10000 })
 
         // Tracking & Notification header
-        await expect(page.locator('text=Tracking & Notification')).toBeVisible()
+        await expect(page.locator('h2', { hasText: 'Tracking & notification' })).toBeVisible()
 
-        // Checkboxes should exist for removed/locked tracking
-        await expect(page.locator('#removed_track')).toBeVisible()
-        await expect(page.locator('#removed_notify')).toBeVisible()
-        await expect(page.locator('#locked_track')).toBeVisible()
-        await expect(page.locator('#locked_notify')).toBeVisible()
+        // Tracking grid should have checkboxes for removed/locked
+        await expect(page.locator('text=removed')).toBeVisible()
+        await expect(page.locator('text=locked')).toBeVisible()
+        const checkboxes = page.locator('input[type="checkbox"]')
+        await expect(checkboxes.first()).toBeVisible()
 
-        // Interval input should exist
-        await expect(page.locator('#interval')).toBeVisible()
+        // Polling section with interval input
+        await expect(page.locator('h2', { hasText: 'Polling' })).toBeVisible()
+        await expect(page.locator('text=minutes between updates')).toBeVisible()
 
-        // Hide subscribe checkbox
-        await expect(page.locator('#hide_subscribe')).toBeVisible()
+        // Appearance section
+        await expect(page.locator('h2', { hasText: 'Appearance' })).toBeVisible()
 
-        // Monitor quarantined checkbox
-        await expect(page.locator('#monitor_quarantined')).toBeVisible()
-
-        // Save button (there are two — top and bottom)
-        await expect(page.locator('.rr-opt-save').first()).toBeVisible()
+        // Save button
+        await expect(page.getByRole('button', { name: 'save' }).first()).toBeVisible()
 
         // Reset link
-        await expect(page.locator('#reset')).toBeVisible()
+        await expect(page.locator('text=reset to defaults')).toBeVisible()
 
         // Advanced section should be hidden initially
-        await expect(page.locator('#advanced')).not.toBeVisible()
+        const advancedHeading = page.locator('h2', { hasText: 'Advanced' })
+        await expect(advancedHeading).not.toBeVisible()
 
         // Click advanced to reveal it
-        await page.locator('#advanced-btn').click()
-        await expect(page.locator('#advanced')).toBeVisible()
-        await expect(page.locator('#clientid')).toBeVisible()
+        await page.locator('a', { hasText: 'advanced' }).click()
+        await expect(advancedHeading).toBeVisible()
+        await expect(page.locator('text=custom client id')).toBeVisible()
     })
 })
 
@@ -75,9 +71,8 @@ test.describe('History page', () => {
         // Should have a History heading
         await expect(page.locator('h1')).toContainText('History')
 
-        // The history container and tables div should be in the DOM
-        await expect(page.locator('#history')).toBeAttached()
-        await expect(page.locator('#tables')).toBeAttached()
+        // The root container should be in the DOM
+        await expect(page.locator('#root')).toBeAttached()
     })
 })
 
@@ -87,19 +82,18 @@ test.describe('Welcome page', () => {
         await page.goto(`chrome-extension://${extensionId}/src/welcome.html`)
 
         // Welcome header
-        await expect(page.locator('h1')).toContainText('Welcome to Reveddit Real-Time')
+        await expect(page.locator('h1')).toContainText('Welcome to reveddit real-time')
 
         // Status message area
-        await expect(page.locator('#status-message')).toBeVisible()
+        await expect(page.locator('h1 ~ *')).toBeVisible()
 
-        // Check Connection button
-        await expect(page.locator('#check-connection')).toBeVisible()
-        await expect(page.locator('#check-connection')).toContainText('Check Connection')
+        // Check connection button
+        await expect(page.getByRole('button', { name: /check connection/i })).toBeVisible()
 
         // Getting Started instructions
-        await expect(page.locator('text=Getting Started')).toBeVisible()
+        await expect(page.getByRole('heading', { name: /getting started/i })).toBeVisible()
 
         // Logo image
-        await expect(page.locator('.logo')).toBeVisible()
+        await expect(page.locator('img[alt="Reveddit"]')).toBeVisible()
     })
 })

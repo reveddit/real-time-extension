@@ -369,8 +369,8 @@ export const getOptions = (callback: (users: string[], others: string[], options
     return browser.storage.sync
         .get(['user_subscriptions', 'other_subscriptions', 'options'])
         .then((result: Record<string, any>) => {
-            const users = Object.keys(result.user_subscriptions)
-            const others = Object.keys(result.other_subscriptions)
+            const users = Object.keys(result.user_subscriptions || {})
+            const others = Object.keys(result.other_subscriptions || {})
             const options = result.options
             return callback(users, others, options)
         })
