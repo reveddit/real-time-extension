@@ -1,11 +1,6 @@
 import {subscribeUser, subscribeId} from './storage'
 import {getFullIDsFromURL} from './common'
 import {setCurrentStateForId} from './monitoring'
-import browser from 'webextension-polyfill'
-
-const regex_comment = /^\/r\/[^/]+\/comments\/[^/]+\/[^/]*\/([^/]+)/
-const regex_post = /^\/r\/[^/]+\/comments\/([^/]+)\/[^/]*\/?/
-const regex_user = /^\/user\/([^/]+)\/?/
 
 export const setupContextualMenu = () => {
     const contextMenu_id = 'reveddit-subscribe'
@@ -18,7 +13,7 @@ export const setupContextualMenu = () => {
                                 'https://*.reddit.com/user/*', 'https://www.reveddit.com/user/*']
         })
     })
-    chrome.contextMenus.onClicked.addListener(function(info, tab) {
+    chrome.contextMenus.onClicked.addListener(function(info) {
         if (info.menuItemId == contextMenu_id) {
             const url = info.linkUrl!
             const text = 'link'

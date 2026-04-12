@@ -1,6 +1,5 @@
 import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
         getSubscribedUsers_withUnseenIDs } from './storage'
-import browser from 'webextension-polyfill'
 
 export interface RedditItem {
     name: string
@@ -29,7 +28,7 @@ export const setWarningBadge = (errorStatus?: string) => {
         if (errorStatus) {
             chrome.storage.local.set({error_status: errorStatus})
         }
-    } catch (e) {}
+    } catch { /* ignored */ }
 }
 
 // https://stackoverflow.com/questions/25933556/chrome-extension-open-new-tab-when-browser-opened-in-background-mac/25933964#25933964
@@ -270,8 +269,8 @@ export function setAlarm(periodInMinutes: number) {
 }
 
 export function alphaLowerSort (a: string, b: string): number {
-    var textA = a.toLowerCase()
-    var textB = b.toLowerCase()
+    const textA = a.toLowerCase()
+    const textB = b.toLowerCase()
 
     if (textA < textB) return -1
     if (textA > textB) return 1
@@ -315,7 +314,7 @@ export const getPrettyTimeLength = (seconds: number): string | undefined => {
     [10, 'decade', 'decades'], [10, 'century', 'centuries'], [10, 'millenium', 'millenia']]
     if (seconds < 60) return seconds + ' seconds'
     let time = seconds
-    for (var i=0; i<thresholds.length; i++) {
+    for (let i=0; i<thresholds.length; i++) {
         let divisor = thresholds[i][0] as number
         let text: string = thresholds[i][1] as string
         let textPlural = thresholds[i][2] as string

@@ -1,9 +1,6 @@
 import {markIDsAsSeenIfSubscribed} from './storage'
 import {setTextAndFunction_subscribe,setTextAndFunction_unsubscribe} from './content-common'
 import {observe} from './dom-helpers'
-import browser from 'webextension-polyfill'
-
-const id_match = /^t[13]_.+/
 
 export const revdditModifications = (storage: Record<string, any>, user: string, isUserPage: boolean, isInfoPage: boolean) => {
     if (isUserPage || isInfoPage) {
@@ -75,8 +72,8 @@ const addSubscribeLinks_revddit_posts = (elements: HTMLElement[], subscriptions:
 }
 
 function waitForAddedNode_withMinAttValue(id: string, parent: Element | null, attribute: string, minAttributeValue: number, done: () => void) {
-    new MutationObserver(function(this: MutationObserver, mutations) {
-        var el = document.getElementById(id);
+    new MutationObserver(function(this: MutationObserver) {
+        const el = document.getElementById(id);
         if (el && Number(el.getAttribute(attribute)) >= minAttributeValue) {
             this.disconnect();
             done();

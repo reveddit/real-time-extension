@@ -1,4 +1,4 @@
-import {alphaLowerSort, ItemForStorage, LocalStorageItem, trimDict_by_numberValuedAttribute} from './common'
+import {ItemForStorage, LocalStorageItem, trimDict_by_numberValuedAttribute} from './common'
 import browser from 'webextension-polyfill'
 
 export const INTERVAL_DEFAULT = 1;
@@ -81,7 +81,6 @@ export const markEverythingAsSeen = () => {
     return (browser.storage.sync.get as any)(null)
     .then((storage: Record<string, any>) => {
         const users = Object.keys(storage.user_subscriptions);
-        const allKeys = []
         users.forEach(user => {
             markThingAsSeen(storage, user, true)
         })
@@ -106,7 +105,7 @@ export const markThingAsSeen = (storage: Record<string, any>, thing: string, isU
 
 export const setStorageUpdateBadge = (storage: Record<string, any>) => {
     return browser.storage.sync.set(storage)
-    .then(res => {
+    .then(() => {
         return browser.runtime.sendMessage({action: 'update-badge'})
     })
     .catch(() => {})

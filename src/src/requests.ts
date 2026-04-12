@@ -28,7 +28,7 @@ const tryContentScriptFetch = async (ids: string | string[]) => {
         try {
             const hostname = new URL(tab.url!).hostname
             return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
-        } catch (e) { return false }
+        } catch { return false }
     })
     
     if (supportedTabs.length === 0) {
@@ -52,7 +52,7 @@ const tryContentScriptFetch = async (ids: string | string[]) => {
 export const lookupItemsByID_withFallback = (path: string, search: string, auth: any, monitor_quarantined = false, monitor_quarantined_remote = false, ids: string | string[] = '') => {
     // First try www.reddit.com without authentication
     const wwwUrl = www_reddit + path + '.json' + search
-    const wwwOptions: RequestInit = {credentials: 'omit'}
+    const wwwOptions = {credentials: 'omit' as const}
     
     return fetch(wwwUrl, wwwOptions)
     .then(response => {
@@ -174,7 +174,7 @@ export const lookupItemsByLoggedInUserWithAuth = (after: string, sort: string, t
     // First try www.reddit.com with rehydrated cookies
     return rehydrateStoredRedditCookies().then(() => {
         const url = `https://www.reddit.com/user/me.json${search}`
-        const options: RequestInit = {credentials: 'include', cache: 'reload'}
+        const options = {credentials: 'include' as const, cache: 'reload' as const}
         return fetch(url, options)
         .then(response => {
             if (response.ok) {
@@ -229,7 +229,7 @@ export const getRedditToken = (data: any) => {
 
 export const getAuth = (monitor_quarantined_remote = false) => {
     return getOptions((users: string[], others: string[], options: Record<string, any>) => {
-        var use_this_clientID = clientID
+        let use_this_clientID = clientID
         if (options.custom_clientid) {
             use_this_clientID = options.custom_clientid
             if (use_this_clientID === 'testing') {
@@ -265,7 +265,7 @@ export const getAuth = (monitor_quarantined_remote = false) => {
 // discussion: https://www.reddit.com/r/redditdev/comments/5jf4yg/api_new_modmail/dbfnw98/
 export const getLocalAuth = () => {
     return fetch('https://mod.reddit.com/mail/all')
-    .then(result => {
+    .then(_result => {
         getCookie({url: 'https://mod.reddit.com', name: 'token'})
         .then(cookie => {
             if (cookie) {
@@ -359,7 +359,7 @@ export const getLoggedinUser = () => {
                 chrome.tabs.query({url: ['*://old.reddit.com/*']}, (tabs) => {
                     hostResolve(tabs && tabs.length > 0 ? 'old.reddit.com' : 'www.reddit.com')
                 })
-            } catch (e) {
+            } catch {
                 hostResolve('www.reddit.com')
             }
         })
@@ -417,17 +417,16 @@ export const storeRedditCookies = () => {
                 try {
                     const hostname = new URL(tab.url!).hostname
                     return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
-                } catch (e) {
+                } catch {
                     return false
                 }
             })
             
             if (supportedTabs.length > 0) {
                 const tab = supportedTabs[0]
-                let hostname
                 try {
-                    hostname = new URL(tab.url!).hostname
-                } catch (e) {
+                    new URL(tab.url!)
+                } catch {
                     console.log('storeRedditCookies: invalid tab url', tab && tab.url)
                     resolve(false)
                     return

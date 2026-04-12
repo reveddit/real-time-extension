@@ -25,9 +25,9 @@ if (__BUILT_FOR__ !== 'chrome') {
         //chrome uses details.initiator, but since chrome doesn't support webRequest anymore,
         //only need to check the value supported by firefox
         if (details.originUrl && details.originUrl.match(/^https?:\/\/(www.reveddit.com|localhost:[0-9]*)(\/.*)?$/)) {
-            var newCookie = '_options={%22pref_quarantine_optin%22:true};'
-            var gotCookie = false
-            for (var n in details.requestHeaders!) {
+            let newCookie = '_options={%22pref_quarantine_optin%22:true};'
+            let gotCookie = false
+            for (const n in details.requestHeaders!) {
                 const headerName = details.requestHeaders![n as any].name.toLowerCase()
                 if (headerName === "cookie") {
                     details.requestHeaders![n as any].value = details.requestHeaders![n as any].value!.replace(/ ?reddit_session[^;]*;/,'')
@@ -219,7 +219,7 @@ chrome.runtime.onInstalled.addListener(function(details) {
             subscribeToLoggedInUser_or_promptForUser()
             updateBadgeUnseenCount()
         })
-        var uninstallGoogleFormLink = 'https://docs.google.com/forms/d/e/1FAIpQLSejWHJAf8thfMdTnnEc5xZPlsdxA_dGUkbmnDq8PABVMkvARg/viewform'
+        const uninstallGoogleFormLink = 'https://docs.google.com/forms/d/e/1FAIpQLSejWHJAf8thfMdTnnEc5xZPlsdxA_dGUkbmnDq8PABVMkvARg/viewform'
         if (chrome.runtime.setUninstallURL) {
             chrome.runtime.setUninstallURL(uninstallGoogleFormLink)
         }
@@ -325,7 +325,7 @@ const notificationClicked = (thing: string) => {
         if (url) {
             markThingAsSeen(storage, thing, isUser)
             browser.storage.sync.set(storage)
-            .then(res => {
+            .then(() => {
                 updateBadgeUnseenCount()
                 createTab(url)
             })

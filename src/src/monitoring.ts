@@ -1,5 +1,5 @@
-import {lookupItemsByID, lookupItemsByUser, lookupItemsByLoggedInUser, lookupItemsByLoggedInUserWithAuth, getAuth, getLoggedinUser, storeRedditCookies} from './requests'
-import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED,
+import {lookupItemsByID, lookupItemsByLoggedInUserWithAuth, getAuth, getLoggedinUser, storeRedditCookies} from './requests'
+import {REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED,
         addLocalStorageItems, getLocalStorageItems,
         MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, MAX_SYNC_STORAGE_CHANGES, SEEN_COUNT_DEFAULT,
         getObjectNamesForThing, getUserInit, getOldestDateKey,
@@ -55,7 +55,7 @@ const fetchItemFromApiInfo = async (id: string) => {
          const response = await fetch(`https://www.reddit.com/api/info.json?id=${id}`)
          const json = await response.json()
          return json.data.children[0].data
-    } catch(e) { return null }
+    } catch { return null }
 }
 
 // Process one pending post from the queue each alarm cycle
@@ -85,7 +85,7 @@ const processPendingPost = async (storage: Record<string, any>) => {
         } else {
              console.log(`Pending post lookup: ${postId} is not removed.`)
         }
-    } catch (e) { console.log('Error processing pending post:', e) }
+    } catch { /* ignored */ }
     
     await removeFromPendingPostQueue(postId)
 }
@@ -108,7 +108,7 @@ const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 20*(60*60*24)
 
 export const checkForChanges = () => {
     chrome.storage.sync.get(undefined as any, function (storage: Record<string, any>) {
-        var other = Object.keys(storage.other_subscriptions)
+        const other = Object.keys(storage.other_subscriptions)
         const now = Math.floor(Date.now()/1000)
         
         // check for quarantined content once in awhile and enable monitor_quarantined if some is found
@@ -169,8 +169,8 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
         // Remember the last detected logged-in user for popup display without extra network calls
         try {
             chrome.storage.local.set({last_logged_in_user: loggedInUser})
-        } catch (e) {}
-        
+        } catch { /* ignored */ }
+
         // Always monitor the currently logged-in user, regardless of subscription status
         // Ensure storage keys exist for the logged-in user
         const userInit = getUserInit(loggedInUser)
@@ -187,7 +187,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
         })
         
         // Use message passing to get items from content script context
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
             // Try to find a Reddit tab to make the request from
             chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
                 if (tabs.length === 0) {
@@ -240,7 +240,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                         setWarningBadge('needs_user')
                         return // handle expected errors
                     }
-                    var ids: string[] = []
+                    const ids: string[] = []
                     let quarantined_subreddits = new Set()
                     const itemLookup: Record<string, any> = {}
                     if ((storedItems as any).user && (storedItems as any).user.items) { // format from cred2.reveddit.com
@@ -261,7 +261,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                 })
             }
             
-            var ids: string[] = []
+            const ids: string[] = []
             let quarantined_subreddits = new Set()
             const itemLookup: Record<string, any> = {}
             if ((items as any).user && (items as any).user.items) { // format from cred2.reveddit.com

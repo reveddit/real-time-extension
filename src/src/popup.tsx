@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { goToOptions, getFullIDsFromURL, createNotification } from './common'
 import { AppGlobal } from './ui/global'
-import { BlueLink, ActionBtn, Button, MessageBanner, Card } from './ui/components'
+import { BlueLink, ActionBtn, MessageBanner, Card } from './ui/components'
 import { tokens } from './ui/tokens'
 import {
   getSubscribedUsers_withSeenAndUnseenIDs,
@@ -192,7 +192,7 @@ function UnseenRow({ thing, isUser, unseenCount, totalStr, url }: {
 }) {
   const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault()
-    chrome.storage.sync.get(undefined as any, storage => {
+    chrome.storage.sync.get(null, storage => {
       markThingAsSeen(storage, thing, isUser)
       setStorageUpdateBadge(storage).then(() => {
         chrome.tabs.create({ url })
@@ -227,13 +227,14 @@ function NewsBanner({ message, onDismiss }: { message: NewsMessage; onDismiss: (
 function Popup() {
   const [errorStatus, setErrorStatus] = useState<string | null>(null)
   const [userData, setUserData] = useState<{
-    users: Record<string, any>
+    users: Record<string, {unseen: string[]; seen: string[]}>
     otherUnseen: string[]
     otherTotal: number
   } | null>(null)
   const [currentUser, setCurrentUser] = useState<string | null | undefined>(undefined)
   const [hasSupportedTabs, setHasSupportedTabs] = useState(false)
   const [showSubdomainWarning, setShowSubdomainWarning] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [syncStorage, setSyncStorage] = useState<Record<string, any> | null>(null)
   const [activeTab, setActiveTab] = useState<{ url: string; postID?: string; commentID?: string } | null>(null)
   const [reconnecting, setReconnecting] = useState(false)
@@ -290,7 +291,7 @@ function Popup() {
       })
     })
 
-    chrome.storage.sync.get(undefined as any, sync => {
+    chrome.storage.sync.get(null, sync => {
       setSyncStorage(sync)
       chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
         const url = tabs[0]?.url
@@ -327,7 +328,8 @@ function Popup() {
     setReconnecting(true)
     chrome.runtime.sendMessage({ action: 'store-reddit-cookies' })
     setTimeout(() => {
-      ;(chrome.runtime.sendMessage as any)({ action: 'try-reconnect' }, (response: any) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(chrome.runtime.sendMessage as any)({ action: 'try-reconnect' }, (response: {success?: boolean; user?: string}) => {
         if (response?.success) {
           setReconnectSuccess(true)
           setTimeout(() => loadData(), 1000)
@@ -341,7 +343,8 @@ function Popup() {
 
   const handleConnect = () => {
     setConnecting(true)
-    ;(chrome.runtime.sendMessage as any)({ action: 'try-reconnect' }, (response: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(chrome.runtime.sendMessage as any)({ action: 'try-reconnect' }, (response: {success?: boolean; user?: string}) => {
       if (response?.success) {
         setConnectResult({ success: true, user: response.user })
         setTimeout(() => loadData(), 1000)

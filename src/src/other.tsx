@@ -68,8 +68,8 @@ function Other() {
   const [loaded, setLoaded] = useState(false)
 
   const load = () => {
-    chrome.storage.local.get(undefined as any, localStorage => {
-      chrome.storage.sync.get(undefined as any, syncStorage => {
+    chrome.storage.local.get(null, localStorage => {
+      chrome.storage.sync.get(null, syncStorage => {
         const subs = syncStorage.other_subscriptions || {}
         const { unseen, seen } = getIDs_thing('other', false, syncStorage)
         const allIds = [...new Set([...unseen, ...seen])]
@@ -80,7 +80,7 @@ function Other() {
         )
 
         const next: SubscriptionRow[] = []
-        sortDict_by_numberValuedAttribute(subs, 't').forEach(([id, sub]: [string, any]) => {
+        sortDict_by_numberValuedAttribute(subs, 't').forEach(([id, sub]) => {
           const subscribedUTC = sub.t || 0
           const item = getItemFromLocalStorage('other', false, id, localStorage)
           const isCommentItem = isComment(id)

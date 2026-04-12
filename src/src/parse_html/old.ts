@@ -21,11 +21,11 @@ turndownService.addRule('listItem', {
       .replace(/^\n+/, '') // remove leading newlines
       .replace(/\n+$/, '\n') // replace trailing newlines with just a single one
       .replace(/\n/gm, '\n    '); // indent
-    var prefix = options.bulletListMarker + ' ';
-    var parent = node.parentNode as Element;
+    let prefix = options.bulletListMarker + ' ';
+    const parent = node.parentNode as Element;
     if (parent.nodeName === 'OL') {
-      var start = parent.getAttribute('start');
-      var index = Array.prototype.indexOf.call(parent.children, node);
+      const start = parent.getAttribute('start');
+      const index = Array.prototype.indexOf.call(parent.children, node);
       prefix = (start ? Number(start) + index : index + 1) + '. ';
     }
     return (
@@ -68,7 +68,7 @@ const regexWithSpaceOnLeftAndRight = (middle: string) => new RegExp(leftSpaceBou
 const match_controversial = regexWithSpaceOnLeftAndRight('controversial')
 const match_stickied = regexWithSpaceOnLeftAndRight('stickied')
 const match_pinned = regexWithSpaceOnLeftAndRight('sticky-pinned')
-const match_locked = regexWithSpaceOnLeftAndRight('locked')
+const _match_locked = regexWithSpaceOnLeftAndRight('locked')
 const NAME_UNDEFINED = 'name_undefined', LAST_UNDEFINED = 'last_undefined', PERMALINK_UNDEFINED = 'permalink_undefined',
       SUBREDDIT_UNDEFINED = 'subreddit_undefined'
 const COMMON_DEFAULTS = {
@@ -187,7 +187,7 @@ class ItemsMeta {
     this.last = {}
   }
   // any extending class must call super.element(element) to define this.last
-  element(element: any) {
+  element(_element: any) {
     if (this.items.length) {
       const last = this.items[this.items.length - 1]
       if (! last) {
@@ -262,7 +262,7 @@ class ClassToFieldMap {
   field_name: string
   value: any
   constructor(class_name: string, field_name: string, value: any) {
-    this.class_name = class_name, this.field_name = field_name, this.value = value
+    this.class_name = class_name; this.field_name = field_name; this.value = value
   }
 }
 
@@ -287,7 +287,7 @@ class InnerHTML extends ItemsMeta {
         element.onEndTag((endTag: any) => {
           this.last[this.field_name] += `</${endTag.name}>`
         })
-      } catch (error) {
+      } catch {
         this.itemsObj.addError('NO_END_TAG_'+element.tagName)
       }
     }
@@ -343,7 +343,7 @@ class LinkTitles extends ItemsMeta {
   }
 }
 const match_reddit = new RegExp(/^https?:\/\/([^.]+\.)?reddit\.com\//)
-const match_domain_no_www = new RegExp(/https?:\/\/(?:www\.)?([^\/.]+\.[^\/]+)(\/.+)?/)
+const match_domain_no_www = new RegExp(/https?:\/\/(?:www\.)?([^/.]+\.[^/]+)(\/.+)?/)
 class PostTitle extends ValueFromText {
   constructor(itemsObj: Items) {
     super(itemsObj, 'title')
@@ -355,7 +355,7 @@ class PostTitle extends ValueFromText {
       href = WWW_REDDIT_COM + href
     }
     if (fullnameIsPost(this.last.name) && ! ('domain' in this.last)) {
-      let domain = ''
+      let domain: string
       if (href.match(match_reddit)) {
         domain = 'self.'+this.last.subreddit
       } else {
@@ -458,7 +458,7 @@ class MetaRobots extends ErrorCollector {
     super(url)
     this.is_removed = false
   }
-  element(element: any) {
+  element(_element: any) {
     this.is_removed = true
   }
 }
@@ -551,8 +551,6 @@ export const getItemsById_fromOldHTML = async (ids: string | string[], addToPend
   
   // Separate posts (t3_) from comments (t1_)
   const postIds = idsArray.filter(id => id.startsWith('t3_'))
-  const commentIds = idsArray.filter(id => id.startsWith('t1_'))
-  
   // For posts, we need to fetch individual pages because /api/info HTML doesn't contain removal status
   if (postIds.length > 0 && addToPendingPostQueue) {
     // Add posts to a pending queue for throttled lookup

@@ -118,7 +118,7 @@ const addDirectLinks_newReddit_comments = () => {
 }
 
 const ifThreadPage_showRemovalStatus = (isNewReddit: boolean, monitor_quarantined: boolean, newRedditTarget: string | Element = defaultNewRedditTarget, postData: Record<string, any> = {}) => {
-    const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
+    const [postID, , , subreddit] = getFullIDsFromPath(window.location.pathname)
     // links to comments on new reddit do not have robots noindex,nofollow, so need to lookup data if haven't already
     // as of 2022/2023: older posts e.g. t3_9emzhp no longer have noindex,nofollow, so always need to look up data for new reddit
     if (isNewReddit && Object.keys(postData).length === 0) {
@@ -141,7 +141,7 @@ const ifThreadPage_showRemovalStatus = (isNewReddit: boolean, monitor_quarantine
 }
 
 const showRemovalStatus = ({isNewReddit, newRedditTarget = defaultNewRedditTarget, postData = {}}: {isNewReddit: boolean, newRedditTarget?: string | Element, postData?: Record<string, any>}) => {
-    const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
+    const [postID, , , subreddit] = getFullIDsFromPath(window.location.pathname)
     let className = undefined, message_1 = undefined
     if (postID) {
         if (document.querySelector('meta[name="robots"][content="noindex,nofollow"]') ||
@@ -197,7 +197,7 @@ const showRemovalStatus = ({isNewReddit, newRedditTarget = defaultNewRedditTarge
 }
 
 const showRemovalStatusForThreadOverlay = (element: HTMLElement, monitor_quarantined: boolean) => {
-    const [postID, commentID, user, subreddit] = getFullIDsFromPath(window.location.pathname)
+    const [postID] = getFullIDsFromPath(window.location.pathname)
     // built for Chrome, i.e., incognito mode is 'split' and CORB applies
     if (__BUILT_FOR__ === 'chrome') {
         browser.runtime.sendMessage({action: 'get-reddit-items-by-id', ids: [postID], monitor_quarantined})
@@ -296,7 +296,7 @@ const addSubscribeLinks_oldReddit = (elements: HTMLElement[], subscriptions: Rec
     elements.forEach(element => {
         let id: string | null = element.getAttribute('data-fullname')
         if (! id) {
-            const [postID, commentID, user, subreddit] = getFullIDsFromPath(element.getAttribute('data-permalink') || '')
+            const [postID, commentID] = getFullIDsFromPath(element.getAttribute('data-permalink') || '')
             if (commentID) {
                 id = commentID
             } else if (postID) {

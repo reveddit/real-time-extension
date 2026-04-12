@@ -163,10 +163,10 @@ function History() {
 
   useEffect(() => {
     getAllChanges(changesByUser => {
-      chrome.storage.local.get(undefined as any, localStorage => {
+      chrome.storage.local.get(null, localStorage => {
         const all: ChangeForStorage[] = []
         Object.keys(changesByUser).forEach(user => {
-          changesByUser[user].forEach((changeObj: any) => {
+          changesByUser[user].forEach((changeObj) => {
             const change = new ChangeForStorage({ object: changeObj })
             change.user = user
             all.push(change)
@@ -254,7 +254,8 @@ function History() {
       .then(r => r.json())
       .then(json => {
         const children = (json?.data?.children && Array.isArray(json.data.children)) ? json.data.children : []
-        const data = children[0]?.data || (children.find((ch: any) => ch?.data?.name === id) || {}).data
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = children[0]?.data || (children.find((ch: any) => ch?.data?.name === id) || {} as any).data
         if (data?.permalink) {
           window.open(`https://www.reddit.com${data.permalink}?context=3`, '_blank')
           return

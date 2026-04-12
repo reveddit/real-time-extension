@@ -7,12 +7,12 @@ import browser from 'webextension-polyfill'
 (function () {
     const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
 
-    function queryUser (message: any, sender: any, response: any) {
+    function queryUser (message: any, _sender: any, _response: any) {
         if (message.action === 'query-user') {
             return getLoggedinUser()
             .then((user: any): any => {
                 if (user) {
-                    try { chrome.runtime.sendMessage({action: 'immediate-user-lookup', user}) } catch (e) {}
+                    try { chrome.runtime.sendMessage({action: 'immediate-user-lookup', user}) } catch { /* ignored */ }
                     return subscribeUser(user, () => {
                         window.location.href=`https://www.reveddit.com/user/${user}?all=true`
                     })
@@ -32,7 +32,7 @@ import browser from 'webextension-polyfill'
             // Ask background to store cookies for future use when no tabs are open
             try {
                 chrome.runtime.sendMessage({action: 'store-reddit-cookies'})
-            } catch (e) {
+            } catch {
                 // ignore if not available
             }
             

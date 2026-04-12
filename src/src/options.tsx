@@ -110,7 +110,7 @@ function Options() {
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    getOptions((_users: string[], _others: string[], options: Record<string, any>) => {
+    getOptions((_users, _others, options) => {
       const opts = options || {}
       const removal = opts.removal_status || {}
       const lock = opts.lock_status || {}
