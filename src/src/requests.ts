@@ -338,7 +338,6 @@ export const getLocalOrAppAuth = () => {
 }
 
 export const getLoggedinUser = () => {
-    // Try to get the current subdomain from any open Reddit tab
     return new Promise((resolve) => {
         const isContentContext = (typeof chrome === 'undefined' || !chrome.tabs || typeof chrome.tabs.query !== 'function')
         // In a content script, chrome.tabs.query is not available. Use the current page's host.
@@ -353,58 +352,45 @@ export const getLoggedinUser = () => {
             return
         }
 
-        chrome.tabs.query({url: ['*://*.reddit.com/*']}, (tabs) => {
-            let targetUrl = 'https://www.reddit.com/api/me.json' // default fallback
-            let useStoredCookies = false
-            
-            if (tabs.length > 0) {
-                // Find a supported subdomain first
-                const supportedTabs = tabs.filter(tab => {
-                    try {
-                        const hostname = new URL(tab.url!).hostname
-                        return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
-                    } catch (e) {
-                        return false
-                    }
+        // Pick a host: prefer old.reddit.com if an old.reddit tab is open (quarantine
+        // opt-in lives there), otherwise default to www.reddit.com.
+        const pickHost = (): Promise<string> => new Promise((hostResolve) => {
+            try {
+                chrome.tabs.query({url: ['*://old.reddit.com/*']}, (tabs) => {
+                    hostResolve(tabs && tabs.length > 0 ? 'old.reddit.com' : 'www.reddit.com')
                 })
-                
-                if (supportedTabs.length > 0) {
-                    try {
-                        const hostname = new URL(supportedTabs[0].url!).hostname
-                        targetUrl = `https://${hostname}/api/me.json`
-                    } catch (e) {
-                        // leave default targetUrl
-                    }
-                }
-            } else {
-                // No Reddit tabs open, try to use stored cookies
-                useStoredCookies = true
+            } catch (e) {
+                hostResolve('www.reddit.com')
             }
-            
-            if (useStoredCookies) {
-                // Try to use stored cookies for authentication by rehydrating them first
+        })
+
+        const fetchUser = (targetUrl: string) =>
+            fetch(targetUrl, {credentials: 'include', cache: 'reload'})
+            .then(handleFetchErrors)
+            .then(getRedditUsername)
+
+        pickHost().then((host) => {
+            const targetUrl = `https://${host}/api/me.json`
+            // 1) Direct fetch. With `cookies` permission + reddit host_permissions the
+            //    browser includes the user's real session cookies even with no tab open.
+            fetchUser(targetUrl)
+            .then(resolve)
+            .catch(() => {
+                // 2) Fallback: rehydrate any previously-stored cookies and retry once.
                 rehydrateStoredRedditCookies()
                 .then(success => {
                     if (! success) {
-                        console.log('No stored cookies available')
-                        return Promise.reject(new Error('no-cookies'))
+                        resolve(null)
+                        return
                     }
-                    return fetch(targetUrl, {credentials: 'include', cache: 'reload'})
+                    fetchUser(targetUrl)
+                    .then(resolve)
+                    .catch(() => {
+                        console.log('Failed to authenticate with stored cookies')
+                        resolve(null)
+                    })
                 })
-                .then(handleFetchErrors)
-                .then(getRedditUsername)
-                .then(resolve)
-                .catch(() => {
-                    console.log('Failed to authenticate with stored cookies')
-                    resolve(null)
-                })
-            } else {
-                fetch(targetUrl, {credentials: 'include', cache: 'reload'})
-                .then(handleFetchErrors)
-                .then(getRedditUsername)
-                .then(resolve)
-                .catch(console.log)
-            }
+            })
         })
     })
 }

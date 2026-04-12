@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { Global, css } from '@emotion/react'
@@ -109,6 +109,22 @@ const PrimaryBtn = styled.button`
   }
 `
 
+const SecondaryLink = styled.button`
+  background: none;
+  border: none;
+  color: ${colors.blue};
+  font-size: 0.95em;
+  cursor: pointer;
+  margin-top: 14px;
+  padding: 4px 8px;
+  text-decoration: underline;
+
+  &:disabled {
+    color: #555;
+    cursor: not-allowed;
+  }
+`
+
 const FooterSection = styled.div`
   text-align: center;
   margin-top: 30px;
@@ -119,52 +135,102 @@ const FooterSection = styled.div`
 function Welcome() {
   const [statusMessage, setStatusMessage] = useState('Checking Reddit connection...')
   const [statusType, setStatusType] = useState<'checking' | 'success' | 'error'>('checking')
-  const [showInstructions, setShowInstructions] = useState(true)
-  const [btnDisabled, setBtnDisabled] = useState(false)
+  const [showInstructions, setShowInstructions] = useState(false)
+  const [succeeded, setSucceeded] = useState(false)
 
-  const checkConnection = useCallback(() => {
-    setBtnDisabled(true)
-    setStatusMessage('Checking Reddit connection...')
-    setStatusType('checking')
+  const inFlight = useRef(false)
+  const attemptCount = useRef(0)
+  const pollTimer = useRef<number | null>(null)
+
+  const checkConnection = useCallback((isManual: boolean = false) => {
+    if (inFlight.current || succeeded) return
+    inFlight.current = true
+    attemptCount.current += 1
+
+    if (isManual) {
+      setStatusMessage('Checking Reddit connection...')
+      setStatusType('checking')
+    }
 
     getLoggedinUser()
       .then((user: any) => {
+        inFlight.current = false
         if (user) {
+          setSucceeded(true)
           setStatusMessage(`Connected as ${user}! Redirecting...`)
           setStatusType('success')
           setShowInstructions(false)
+          if (pollTimer.current !== null) {
+            window.clearInterval(pollTimer.current)
+            pollTimer.current = null
+          }
+
+          const redirect = () => {
+            setTimeout(() => {
+              window.location.href = `https://www.reveddit.com/user/${user}?all=true`
+            }, 1000)
+          }
 
           subscribeUser(user, () => {
             try {
               chrome.runtime.sendMessage({ action: 'immediate-user-lookup', user })
             } catch (e) {}
-
-            setTimeout(() => {
-              window.location.href = `https://www.reveddit.com/user/${user}?all=true`
-            }, 1000)
-          }, () => {
-            setTimeout(() => {
-              window.location.href = `https://www.reveddit.com/user/${user}?all=true`
-            }, 1000)
-          })
+            redirect()
+          }, redirect)
         } else {
-          setStatusMessage('Not connected. Please log in to Reddit first.')
+          // After the first failed attempt, show instructions + waiting state.
+          if (attemptCount.current === 1) {
+            setStatusMessage("We couldn't detect your Reddit session yet. If you're already signed in, open a Reddit tab so the extension can read your session. Otherwise, sign in to Reddit below.")
+          } else {
+            setStatusMessage('Waiting for Reddit session… (we\'ll detect it automatically)')
+          }
           setStatusType('error')
           setShowInstructions(true)
-          setBtnDisabled(false)
         }
       })
       .catch((err) => {
+        inFlight.current = false
         console.log('Error checking connection:', err)
-        setStatusMessage('Connection check failed. Please try again.')
+        setStatusMessage('Waiting for Reddit session… (we\'ll detect it automatically)')
         setStatusType('error')
-        setBtnDisabled(false)
+        setShowInstructions(true)
       })
-  }, [])
+  }, [succeeded])
 
   useEffect(() => {
     checkConnection()
-  }, [checkConnection])
+    const startedAt = Date.now()
+    pollTimer.current = window.setInterval(() => {
+      if (succeeded) {
+        if (pollTimer.current !== null) {
+          window.clearInterval(pollTimer.current)
+          pollTimer.current = null
+        }
+        return
+      }
+      // 2s for the first minute, 5s after that
+      const elapsed = Date.now() - startedAt
+      const interval = elapsed < 60000 ? 2000 : 5000
+      // setInterval tick is every 2s; after a minute, only fire every other tick
+      if (interval === 5000 && Math.floor(elapsed / 2000) % 2 !== 0) return
+      checkConnection()
+    }, 2000)
+    return () => {
+      if (pollTimer.current !== null) {
+        window.clearInterval(pollTimer.current)
+        pollTimer.current = null
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const openReddit = () => {
+    try {
+      chrome.tabs.create({ url: 'https://www.reddit.com' })
+    } catch (e) {
+      window.open('https://www.reddit.com', '_blank')
+    }
+  }
 
   return (
     <>
@@ -192,19 +258,23 @@ function Welcome() {
                 <li>
                   Open <BlueLink href="https://www.reddit.com" target="_blank">www.reddit.com</BlueLink>
                   {' '}or <BlueLink href="https://old.reddit.com" target="_blank">old.reddit.com</BlueLink>
-                  {' '}in a new tab
                 </li>
                 <li>Log in to your Reddit account</li>
-                <li>Come back here and click the button below</li>
+                <li>We'll detect you automatically — no click needed.</li>
               </ol>
             </InstructionsBox>
           )}
 
-          <Actions>
-            <PrimaryBtn onClick={checkConnection} disabled={btnDisabled}>
-              Check Connection
-            </PrimaryBtn>
-          </Actions>
+          {! succeeded && (
+            <Actions>
+              <PrimaryBtn onClick={openReddit}>Open Reddit</PrimaryBtn>
+              <div>
+                <SecondaryLink onClick={() => checkConnection(true)} disabled={inFlight.current}>
+                  Check connection now
+                </SecondaryLink>
+              </div>
+            </Actions>
+          )}
 
           <FooterSection>
             <BlueLink href="https://www.reveddit.com/about/faq/" target="_blank">

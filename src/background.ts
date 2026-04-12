@@ -1,5 +1,5 @@
 import {goToOptions, setAlarm, ALARM_NAME,
-        createNotification, updateBadgeUnseenCount, createTab } from './src/common'
+        createNotification, updateBadgeUnseenCount, createTab, setWarningBadge } from './src/common'
 import {checkForChanges} from './src/monitoring'
 import {lookupItemsByID, getLoggedinUser, getCookie, getAuth, storeRedditCookies} from './src/requests'
 import {initStorage, INTERVAL_DEFAULT, subscribeUser,
@@ -225,21 +225,52 @@ chrome.runtime.onInstalled.addListener(function(details) {
     }
 })
 
-
-
-function subscribeToLoggedInUser_or_promptForUser() {
-    getLoggedinUser()
-    .then((user: any) => {
-        if (user) {
-            subscribeUser(user, () => {
-                triggerImmediateLookupOnce(user)
-                chrome.tabs.create({url: `https://www.reveddit.com/user/${user}?all=true`})
+// On browser startup, if no user is currently tracked, re-check connection and
+// surface a warning badge if Reddit can't be reached.
+chrome.runtime.onStartup.addListener(() => {
+    chrome.storage.local.get(['last_logged_in_user'], (result) => {
+        if (! result.last_logged_in_user) {
+            getLoggedinUser().then((user: any) => {
+                if (user) {
+                    subscribeUser(user, () => {
+                        chrome.storage.local.remove('error_status', () => updateBadgeUnseenCount())
+                    }, () => {
+                        chrome.storage.local.remove('error_status', () => updateBadgeUnseenCount())
+                    })
+                } else {
+                    setWarningBadge('needs_user')
+                }
             })
-        } else {
-            // User not logged in - show welcome/onboarding page
-            chrome.tabs.create({url: chrome.runtime.getURL('src/welcome.html')})
         }
     })
+})
+
+
+
+async function subscribeToLoggedInUser_or_promptForUser() {
+    // Try to detect the logged-in user with a short, bounded retry loop.
+    // getLoggedinUser() is already silent on failure (resolves null), so we retry
+    // at install time to cover race conditions where cookies aren't yet readable
+    // right at install (observed on Firefox with a Reddit tab already open).
+    let user: any = null
+    const MAX_ATTEMPTS = 3 // ~4s total; welcome page polls after that
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+        user = await getLoggedinUser()
+        if (user) break
+        if (i < MAX_ATTEMPTS - 1) await new Promise(r => setTimeout(r, 2000))
+    }
+
+    if (user) {
+        subscribeUser(user, () => {
+            triggerImmediateLookupOnce(user)
+            chrome.tabs.create({url: `https://www.reveddit.com/user/${user}?all=true`})
+        })
+    } else {
+        // Still no user - surface the disconnected state on the toolbar icon and
+        // show the welcome/onboarding page so the user can finish the setup.
+        setWarningBadge('needs_user')
+        chrome.tabs.create({url: chrome.runtime.getURL('src/welcome.html')})
+    }
 }
 
 function triggerImmediateLookupOnce(user: string) {
