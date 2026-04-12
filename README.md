@@ -30,6 +30,46 @@ Firefox: `yarn start-firefox`, load `dist-dev-firefox/`
 
 `yarn build-prod` builds Chrome and Firefox code and packages it into zip files.
 
+## Dev: Testing
+
+`yarn test` — unit and integration tests (Vitest)
+
+`yarn test:watch` — Vitest in watch mode
+
+`yarn test:e2e` — Playwright E2E tests against a real Chromium instance with the extension loaded. Requires a fresh build first:
+
+```bash
+yarn build-chrome-dev
+npx playwright install chromium   # first time only
+yarn test:e2e
+```
+
+`yarn test:all` — run both Vitest and Playwright suites
+
+`yarn preflight` — full pre-publish verification: typecheck, unit tests, dev build, then E2E
+
+## Dev: Code quality
+
+`yarn lint` / `yarn lint:fix` — ESLint
+
+`yarn format` / `yarn format:check` — Prettier
+
+`yarn typecheck` — TypeScript type checking
+
+## CI and pre-commit hooks
+
+[Husky](https://typicode.github.io/husky/) pre-commit hooks run automatically on each commit: lint:fix, format, typecheck, and unit tests.
+
+[GitHub Actions](.github/workflows/ci.yml) runs on push/PR to master/main: lint, typecheck, unit tests, and dev builds, followed by Playwright E2E in a separate job.
+
+## Smoke testing
+
+See [SMOKE_TESTS.md](SMOKE_TESTS.md) for the manual pre-release verification checklist.
+
+## Claude Code MCP browser integration
+
+Claude Code can drive a real Chromium instance with the extension loaded for visual verification via Playwright MCP. See [.claude-mcp/README.md](.claude-mcp/README.md) for per-machine setup instructions.
+
 ## Future work
 
 * Monitor parent comments / posts of subscribed users' comments + other subscribed comments
