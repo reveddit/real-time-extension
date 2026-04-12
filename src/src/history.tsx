@@ -203,7 +203,7 @@ function History() {
       setCurrentUser(result?.last_logged_in_user || null)
     })
     getAllChanges(changesByUser => {
-      chrome.storage.local.get(null, localStorage => {
+      chrome.storage.local.get(undefined, localStorage => {
         const all: ChangeForStorage[] = []
         Object.keys(changesByUser).forEach(user => {
           changesByUser[user].forEach((changeObj) => {

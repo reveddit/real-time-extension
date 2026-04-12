@@ -192,7 +192,7 @@ function UnseenRow({ thing, isUser, unseenCount, totalStr, url }: {
 }) {
   const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault()
-    chrome.storage.sync.get(null, storage => {
+    chrome.storage.sync.get(undefined, storage => {
       markThingAsSeen(storage, thing, isUser)
       setStorageUpdateBadge(storage).then(() => {
         chrome.tabs.create({ url })
@@ -291,7 +291,7 @@ function Popup() {
       })
     })
 
-    chrome.storage.sync.get(null, sync => {
+    chrome.storage.sync.get(undefined, sync => {
       setSyncStorage(sync)
       chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
         const url = tabs[0]?.url

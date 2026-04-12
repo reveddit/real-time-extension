@@ -68,8 +68,8 @@ function Other() {
   const [loaded, setLoaded] = useState(false)
 
   const load = () => {
-    chrome.storage.local.get(null, localStorage => {
-      chrome.storage.sync.get(null, syncStorage => {
+    chrome.storage.local.get(undefined, localStorage => {
+      chrome.storage.sync.get(undefined, syncStorage => {
         const subs = syncStorage.other_subscriptions || {}
         const { unseen, seen } = getIDs_thing('other', false, syncStorage)
         const allIds = [...new Set([...unseen, ...seen])]
