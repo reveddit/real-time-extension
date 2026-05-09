@@ -124,6 +124,18 @@ class Items extends ErrorCollector {
         for (const [field, regex] of Object.entries(BINARY_FIELD_TO_CLASS_REGEXES)) {
             item[field] = !!classes.match(regex)
         }
+        if (!item.name && item.permalink) {
+            const parts = item.permalink.split('/').filter(Boolean)
+            // Comment permalinks: /r/<sub>/comments/<post_id>/<slug>/<comment_id>/
+            // Post permalinks:    /r/<sub>/comments/<post_id>/<slug>/
+            if (parts.length >= 5 && parts[2] === 'comments') {
+                if (parts.length >= 6) {
+                    item.name = 't1_' + parts[5]
+                } else {
+                    item.name = 't3_' + parts[3]
+                }
+            }
+        }
         if (item.name) {
             item.id = item.name.replace(/^t[0-9]_/, '')
             //comments
@@ -150,6 +162,7 @@ class Items extends ErrorCollector {
             }
         } else {
             this.addError(NAME_UNDEFINED)
+            return
         }
         this.items.push(item)
         this.ids_set.add(item.name)
@@ -159,6 +172,7 @@ class Items extends ErrorCollector {
     }
     fillInDefaultValues() {
         for (const item of this.items) {
+            if (!item.name) continue
             let defaults
             if (fullnameIsComment(item.name)) {
                 defaults = COMMENT_DEFAULTS
