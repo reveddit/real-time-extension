@@ -48,8 +48,41 @@ async function runScript(scriptName) {
     });
 }
 
+function runCommand(command, args) {
+    return new Promise((resolve, reject) => {
+        currentProcess = spawn(command, args, {
+            stdio: 'inherit',
+            cwd: process.cwd(),
+            shell: true
+        });
+
+        currentProcess.on('close', (code) => {
+            currentProcess = null;
+            if (code === 0) {
+                resolve();
+            } else {
+                reject(new Error(`${command} ${args.join(' ')} exited with code ${code}`));
+            }
+        });
+
+        currentProcess.on('error', (err) => {
+            currentProcess = null;
+            reject(err);
+        });
+    });
+}
+
 async function main() {
     console.log('\x1b[36m🚀 Starting Publish All...\x1b[0m\n');
+
+    console.log('\x1b[33m[0/3] Building production packages...\x1b[0m');
+    try {
+        await runCommand('yarn', ['build-prod']);
+    } catch (error) {
+        console.error(`\x1b[31mBuild failed: ${error.message}\x1b[0m`);
+        process.exit(1);
+    }
+    console.log('\x1b[32m✔ Production build complete.\x1b[0m\n');
 
     for (const script of scripts) {
         if (aborted) break;
