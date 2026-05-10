@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
-import { getAllChanges, getItemFromLocalStorage } from './storage'
+import { getAllChanges, getItemFromLocalStorage, getPendingPostQueueSize } from './storage'
 import { ChangeForStorage, LocalStorageItem, getPrettyDate, getPrettyTimeLength, isComment } from './common'
 import { AppGlobal } from './ui/global'
-import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueLink, MutedLink, Author, Subreddit, PostTitle, MdBody } from './ui/components'
+import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueLink, MutedLink, Author, Subreddit, PostTitle, MdBody, MessageBanner } from './ui/components'
 import { tokens } from './ui/tokens'
 import { markdownToHTML } from './ui/markdown'
 
@@ -197,8 +197,10 @@ function History() {
   const [sort, setSort] = useState<SortValue>('observed')
   const [currentUser, setCurrentUser] = useState<string | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
+  const [pendingPostCount, setPendingPostCount] = useState(0)
 
   const loadData = useCallback(() => {
+    getPendingPostQueueSize().then(size => setPendingPostCount(size))
     chrome.storage.local.get(['last_logged_in_user'], result => {
       setCurrentUser(result?.last_logged_in_user || null)
     })
@@ -300,6 +302,10 @@ function History() {
         debouncedLoad()
       } else if (area === 'local' && keys.some(k => k.startsWith('items_'))) {
         debouncedLoad()
+      }
+      if (area === 'local' && changes.pending_post_lookups) {
+        const newQueue = changes.pending_post_lookups.newValue || []
+        setPendingPostCount(newQueue.length)
       }
     }
     chrome.storage.onChanged.addListener(onChange)
@@ -403,6 +409,10 @@ function History() {
             </label>
           </Controls>
         </PageHeader>
+
+        {pendingPostCount > 0 && (
+          <MessageBanner variant="info">Scanning {pendingPostCount} posts for removals. New results will appear here automatically.</MessageBanner>
+        )}
 
         {visible.length > 0 ? (
           visible.map((row, idx) => (

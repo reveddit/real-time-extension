@@ -356,7 +356,8 @@ function triggerImmediateLookupOnce(user: string) {
     })
 }
 
-const notificationClicked = (thing: string) => {
+const notificationClicked = (rawThing: string) => {
+    const thing = rawThing.replace(/_backlog$/, '')
     const isUser = thing === 'other' ? false : true
     chrome.storage.sync.get(undefined as any, storage => {
         const unseenIDs = getUnseenIDs_thing(thing, isUser, storage)

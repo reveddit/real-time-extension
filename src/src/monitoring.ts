@@ -21,7 +21,7 @@ import {
     getObjectNamesForThing,
     getUserInit,
     getOldestDateKey,
-    getNextPendingPost,
+    getNextPendingPosts,
     removeFromPendingPostQueue,
 } from './storage'
 import {
@@ -35,6 +35,7 @@ import {
     LocalStorageItem,
     ChangeForStorage,
     setWarningBadge,
+    getPrettyTimeLength,
 } from './common'
 import browser from 'webextension-polyfill'
 import { getPost_fromOld } from './parse_html/old'
@@ -51,6 +52,14 @@ const TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE = Math.floor(Math.random(
 const REMOVAL_CONFIRMATION_THRESHOLD = Math.floor(Math.random() * 3) + 3
 
 const FULL_RESPONSE_ITEM_COUNT = 100
+
+const BACKLOG_AGE_THRESHOLD_SECONDS = 48 * 60 * 60
+
+interface MarkChangesResult {
+    num_changes: number
+    realtimeChanges: { count: number; changeTypes: string[] }
+    backlogChanges: { count: number; changeTypes: string[]; ageRange: { min: number; max: number } }
+}
 
 const updateOldestDateThreshold = (items: any[], itemLookup: Record<string, any>, thing: string, isUser: boolean) => {
     if (items.length < FULL_RESPONSE_ITEM_COUNT) {
@@ -90,48 +99,77 @@ const fetchItemFromApiInfo = async (id: string) => {
     }
 }
 
-// Process one pending post from the queue each alarm cycle
-const processPendingPost = async (storage: Record<string, any>) => {
-    const postId = await getNextPendingPost()
-    if (!postId) return
+const PENDING_POST_BATCH_SIZE = 3
+const PENDING_POST_DELAY_MS = 2000
 
-    try {
-        const postPath = '/comments/' + postId.substring(3) + '/'
-        const result = await getPost_fromOld(postPath)
-
-        if (result && 'is_removed' in result && result.is_removed) {
-            const itemData = await fetchItemFromApiInfo(postId)
-            if (itemData) {
-                itemData.is_robot_indexable = false
-
-                const author = itemData.author
-                const isUser = storage.user_subscriptions && author in storage.user_subscriptions
-                const thing = isUser ? author : 'other'
-
-                console.log(`Detected removed post ${postId} (author: ${author}), updating status...`)
-
-                const itemLookup = { [postId]: itemData }
-
-                await checkForChanges_thing_byId(
-                    [postId],
-                    thing,
-                    isUser,
-                    null,
-                    storage,
-                    SUBSCRIBED_FROM_NA,
-                    itemLookup,
-                    [],
-                    [{ data: itemData }],
-                )
-            }
-        } else {
-            console.log(`Pending post lookup: ${postId} is not removed.`)
-        }
-    } catch {
-        /* ignored */
+const processPendingPosts = async (storage: Record<string, any>) => {
+    const { posts, totalRemaining } = await getNextPendingPosts(PENDING_POST_BATCH_SIZE)
+    if (posts.length === 0) {
+        await browser.storage.local.remove('pending_post_progress')
+        return
     }
 
-    await removeFromPendingPostQueue(postId)
+    const totalAtStart = totalRemaining
+    let processed = 0
+
+    for (const postId of posts) {
+        try {
+            const postPath = '/comments/' + postId.substring(3) + '/'
+            const result = await getPost_fromOld(postPath)
+
+            if (result && 'is_removed' in result && result.is_removed) {
+                const itemData = await fetchItemFromApiInfo(postId)
+                if (itemData) {
+                    itemData.is_robot_indexable = false
+
+                    const author = itemData.author
+                    const isUser = storage.user_subscriptions && author in storage.user_subscriptions
+                    const thing = isUser ? author : 'other'
+
+                    console.log(`Detected removed post ${postId} (author: ${author}), updating status...`)
+
+                    const itemLookup = { [postId]: itemData }
+
+                    await checkForChanges_thing_byId(
+                        [postId],
+                        thing,
+                        isUser,
+                        null,
+                        storage,
+                        SUBSCRIBED_FROM_NA,
+                        itemLookup,
+                        [],
+                        [{ data: itemData }],
+                        true,
+                    )
+                }
+            } else {
+                console.log(`Pending post lookup: ${postId} is not removed.`)
+            }
+        } catch {
+            /* ignored */
+        }
+
+        await removeFromPendingPostQueue(postId)
+        processed++
+
+        await browser.storage.local.set({
+            pending_post_progress: {
+                processed: totalAtStart - totalRemaining + processed,
+                total: totalAtStart,
+                lastUpdated: Date.now(),
+            },
+        })
+
+        if (processed < posts.length) {
+            await new Promise(r => setTimeout(r, PENDING_POST_DELAY_MS))
+        }
+    }
+
+    const remainingAfter = totalRemaining - processed
+    if (remainingAfter <= 0) {
+        await browser.storage.local.remove('pending_post_progress')
+    }
 }
 
 export const setCurrentStateForId = (id: string, subscribedFromURL: string) => {
@@ -182,7 +220,7 @@ export const checkForChanges = () => {
             })
             .then(() => {
                 // Process one pending post per alarm cycle (throttled)
-                return processPendingPost(storage)
+                return processPendingPosts(storage)
             })
             .then(() => {
                 const newStorage: Record<string, any> = { last_check: now }
@@ -390,6 +428,7 @@ const checkForChanges_thing_byId = async (
     itemLookup: Record<string, any> = {},
     quarantined_subreddits: string[] = [],
     preFetchedItems: any[] | null = null,
+    skipConfirmationThreshold = false,
 ) => {
     let promise
     const monitor_quarantined = storage.options.monitor_quarantined
@@ -455,50 +494,77 @@ const checkForChanges_thing_byId = async (
 
         const changeTypes: string[] = []
         let num_changes = 0
+        const mergedRealtime: { count: number; changeTypes: string[] } = { count: 0, changeTypes: [] }
+        const mergedBacklog: { count: number; changeTypes: string[]; ageRange: { min: number; max: number } } = {
+            count: 0,
+            changeTypes: [],
+            ageRange: { min: Infinity, max: 0 },
+        }
+        const mergeResult = (r: MarkChangesResult) => {
+            num_changes += r.num_changes
+            mergedRealtime.count += r.realtimeChanges.count
+            mergedBacklog.count += r.backlogChanges.count
+            for (const t of r.realtimeChanges.changeTypes) {
+                if (!mergedRealtime.changeTypes.includes(t)) mergedRealtime.changeTypes.push(t)
+            }
+            for (const t of r.backlogChanges.changeTypes) {
+                if (!mergedBacklog.changeTypes.includes(t)) mergedBacklog.changeTypes.push(t)
+            }
+            if (r.backlogChanges.count > 0) {
+                mergedBacklog.ageRange.min = Math.min(mergedBacklog.ageRange.min, r.backlogChanges.ageRange.min)
+                mergedBacklog.ageRange.max = Math.max(mergedBacklog.ageRange.max, r.backlogChanges.ageRange.max)
+            }
+        }
         return Promise.all([getLocalStorageItems(thing, isUser), getOldestDateThreshold(thing, isUser)]).then(
             ([existingLocalStorageItems, oldestDateThreshold]: [any, any]) => {
                 if (removal_status.track) {
-                    num_changes += markChanges(
-                        removed,
-                        REMOVED,
-                        'mod removed',
-                        known_removed,
-                        approved,
-                        APPROVED,
-                        'approved',
-                        known_approved,
-                        changes,
-                        itemLookup,
-                        removal_status.notify,
-                        newLocalStorageItems,
-                        changeTypes,
-                        isUser,
-                        subscribedFrom,
-                        existingLocalStorageItems,
-                        target_seen_count,
-                        oldestDateThreshold,
+                    mergeResult(
+                        markChanges(
+                            removed,
+                            REMOVED,
+                            'mod removed',
+                            known_removed,
+                            approved,
+                            APPROVED,
+                            'approved',
+                            known_approved,
+                            changes,
+                            itemLookup,
+                            removal_status.notify,
+                            newLocalStorageItems,
+                            changeTypes,
+                            isUser,
+                            subscribedFrom,
+                            existingLocalStorageItems,
+                            target_seen_count,
+                            oldestDateThreshold,
+                            skipConfirmationThreshold,
+                        ),
                     )
                 }
                 if (lock_status.track) {
-                    num_changes += markChanges(
-                        locked,
-                        LOCKED,
-                        'locked',
-                        known_locked,
-                        unlocked,
-                        UNLOCKED,
-                        'unlocked',
-                        known_unlocked,
-                        changes,
-                        itemLookup,
-                        lock_status.notify,
-                        newLocalStorageItems,
-                        changeTypes,
-                        isUser,
-                        subscribedFrom,
-                        existingLocalStorageItems,
-                        target_seen_count,
-                        oldestDateThreshold,
+                    mergeResult(
+                        markChanges(
+                            locked,
+                            LOCKED,
+                            'locked',
+                            known_locked,
+                            unlocked,
+                            UNLOCKED,
+                            'unlocked',
+                            known_unlocked,
+                            changes,
+                            itemLookup,
+                            lock_status.notify,
+                            newLocalStorageItems,
+                            changeTypes,
+                            isUser,
+                            subscribedFrom,
+                            existingLocalStorageItems,
+                            target_seen_count,
+                            oldestDateThreshold,
+                            skipConfirmationThreshold,
+                        ),
                     )
                 }
                 console.log('[debug] post-markChanges', {
@@ -514,23 +580,43 @@ const checkForChanges_thing_byId = async (
                     existingLS: Object.keys(existingLocalStorageItems || {}).length,
                     num_changes,
                     changeTypes,
+                    realtimeCount: mergedRealtime.count,
+                    backlogCount: mergedBacklog.count,
                 })
-                if (num_changes && changeTypes.length) {
+                if (mergedRealtime.count > 0 && mergedRealtime.changeTypes.length) {
                     console.log(
-                        `Creating notification for ${thing}: ${num_changes} changes of type ${changeTypes.join(', ')}`,
+                        `Creating realtime notification for ${thing}: ${mergedRealtime.count} changes of type ${mergedRealtime.changeTypes.join(', ')}`,
                     )
                     createNotification({
                         notificationId: thing,
                         title: thing,
-                        message: `${num_changes} new [${changeTypes.join(', ')}] actions, click to view`,
+                        message: `${mergedRealtime.count} new [${mergedRealtime.changeTypes.join(', ')}] actions, click to view`,
                     })
                     setPendingNotification(thing, {
-                        count: num_changes,
-                        types: changeTypes,
+                        count: mergedRealtime.count,
+                        types: mergedRealtime.changeTypes,
                         firstAttemptAt: Date.now(),
                         attempts: 1,
                     }).catch(() => {})
-                } else {
+                }
+                if (mergedBacklog.count > 0 && mergedBacklog.changeTypes.length) {
+                    const minAge = getPrettyTimeLength(mergedBacklog.ageRange.min)
+                    const maxAge = getPrettyTimeLength(mergedBacklog.ageRange.max)
+                    const ageStr = minAge === maxAge ? minAge : `${minAge} - ${maxAge}`
+                    console.log(`Creating backlog notification for ${thing}: ${mergedBacklog.count} older changes`)
+                    createNotification({
+                        notificationId: thing + '_backlog',
+                        title: thing,
+                        message: `${mergedBacklog.count} older [${mergedBacklog.changeTypes.join(', ')}] actions detected (${ageStr} old)`,
+                    })
+                    setPendingNotification(thing + '_backlog', {
+                        count: mergedBacklog.count,
+                        types: mergedBacklog.changeTypes,
+                        firstAttemptAt: Date.now(),
+                        attempts: 1,
+                    }).catch(() => {})
+                }
+                if (num_changes === 0) {
                     // No new changes this cycle — but retry any pending
                     // notification from a prior cycle that may have silently
                     // failed to display (e.g. install-time on Firefox Android).
@@ -630,10 +716,11 @@ function markChanges(
     existingLocalStorageItems: Record<string, any>,
     target_seen_count: number,
     oldestDateThreshold: number | null,
+    skipConfirmationThreshold = false,
 ) {
-    const alert_unseen_ids = [],
-        normal_unseen_ids = [],
-        alert_userDeleted_unseen_ids = [],
+    const alert_unseen_ids: string[] = [],
+        normal_unseen_ids: string[] = [],
+        alert_userDeleted_unseen_ids: string[] = [],
         now = Math.floor(Date.now() / 1000)
 
     alert_current_list.forEach(name => {
@@ -655,7 +742,11 @@ function markChanges(
             // which prevents false alerts from transient API failures or intermittent data.
             const removal_count = newLocalStorageItem.incrementRemovalCount()
             newLocalStorageItems[name] = newLocalStorageItem
-            if (removal_count < REMOVAL_CONFIRMATION_THRESHOLD && !(name in alert_known_hash)) {
+            if (
+                !skipConfirmationThreshold &&
+                removal_count < REMOVAL_CONFIRMATION_THRESHOLD &&
+                !(name in alert_known_hash)
+            ) {
                 return // skip this item — not yet confirmed as genuinely removed
             }
         }
@@ -756,11 +847,46 @@ function markChanges(
             }
         }
     })
-    const num_changes = alert_unseen_ids.length + normal_unseen_ids.length + alert_userDeleted_unseen_ids.length
+    const allUnseenIds = [...alert_unseen_ids, ...normal_unseen_ids, ...alert_userDeleted_unseen_ids]
+    const num_changes = allUnseenIds.length
     if (notify && num_changes) {
         if (alert_unseen_ids.length) changeTypes.push(alert_text)
         if (alert_userDeleted_unseen_ids.length) changeTypes.push('user deleted')
         if (normal_unseen_ids.length) changeTypes.push(normal_text)
     }
-    return num_changes
+
+    const realtimeChangeTypes: string[] = []
+    const backlogChangeTypes: string[] = []
+    const backlogAges: number[] = []
+    let realtimeCount = 0
+    let backlogCount = 0
+
+    for (const id of allUnseenIds) {
+        const item = itemLookup[id]
+        const age = item?.created_utc ? now - item.created_utc : 0
+        if (age > BACKLOG_AGE_THRESHOLD_SECONDS) {
+            backlogCount++
+            backlogAges.push(age)
+        } else {
+            realtimeCount++
+        }
+    }
+    if (realtimeCount > 0) {
+        realtimeChangeTypes.push(...changeTypes)
+    }
+    if (backlogCount > 0) {
+        backlogChangeTypes.push(...changeTypes)
+    }
+
+    return {
+        num_changes,
+        realtimeChanges: { count: realtimeCount, changeTypes: realtimeChangeTypes },
+        backlogChanges: {
+            count: backlogCount,
+            changeTypes: backlogChangeTypes,
+            ageRange: backlogAges.length
+                ? { min: Math.min(...backlogAges), max: Math.max(...backlogAges) }
+                : { min: 0, max: 0 },
+        },
+    } as MarkChangesResult
 }

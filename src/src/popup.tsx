@@ -8,7 +8,8 @@ import { tokens } from './ui/tokens'
 import {
   getSubscribedUsers_withSeenAndUnseenIDs,
   subscribeId, unsubscribeId,
-  markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen, clearPendingNotification
+  markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen, clearPendingNotification,
+  getPendingPostQueueSize,
 } from './storage'
 import { setCurrentStateForId } from './monitoring'
 import { fetchNews, getUnreadMessages, markNewsRead, NewsMessage } from './news'
@@ -244,6 +245,7 @@ function Popup() {
   const [connectResult, setConnectResult] = useState<{ success: boolean; user?: string } | null>(null)
   const [connectMessage, setConnectMessage] = useState<string | null>(null)
   const [newsMessage, setNewsMessage] = useState<NewsMessage | null>(null)
+  const [pendingPostCount, setPendingPostCount] = useState(0)
 
   const loadData = useCallback(() => {
     setUserData(null)
@@ -303,6 +305,8 @@ function Popup() {
       })
     })
 
+    getPendingPostQueueSize().then(size => setPendingPostCount(size))
+
     // News feed: opportunistically refresh (6h throttled) then read top unread.
     fetchNews().finally(() => {
       getUnreadMessages().then(unread => {
@@ -312,6 +316,17 @@ function Popup() {
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
+
+  useEffect(() => {
+    const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === 'local' && changes.pending_post_lookups) {
+        const newQueue = changes.pending_post_lookups.newValue || []
+        setPendingPostCount(newQueue.length)
+      }
+    }
+    chrome.storage.onChanged.addListener(listener)
+    return () => chrome.storage.onChanged.removeListener(listener)
+  }, [])
 
   const handleClearNotifications = () => {
     markEverythingAsSeen().then(() => loadData())
@@ -493,6 +508,10 @@ function Popup() {
 
         {showSubdomainWarning && (
           <MessageBanner variant="warning">⚠ User monitoring requires www.reddit.com or old.reddit.com</MessageBanner>
+        )}
+
+        {pendingPostCount > 0 && (
+          <MessageBanner variant="info">Scanning {pendingPostCount} posts for removals...</MessageBanner>
         )}
 
         <SubsCard>

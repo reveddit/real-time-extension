@@ -458,6 +458,17 @@ export const getNextPendingPost = async () => {
     return queue[0]
 }
 
+export const getNextPendingPosts = async (count: number) => {
+    const result = await browser.storage.local.get({ [PENDING_POSTS_KEY]: [] })
+    const queue = result[PENDING_POSTS_KEY] as string[]
+    return { posts: queue.slice(0, count), totalRemaining: queue.length }
+}
+
+export const getPendingPostQueueSize = async () => {
+    const result = await browser.storage.local.get({ [PENDING_POSTS_KEY]: [] })
+    return (result[PENDING_POSTS_KEY] as string[]).length
+}
+
 export const removeFromPendingPostQueue = async (postId: string) => {
     const result = await browser.storage.local.get({ [PENDING_POSTS_KEY]: [] })
     const queue = result[PENDING_POSTS_KEY] as string[]
