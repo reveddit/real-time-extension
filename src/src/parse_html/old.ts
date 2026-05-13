@@ -610,8 +610,9 @@ export const getItemsById_fromOldHTML = async (
             item.body = getMarkdownFromHTMLString(item.body)
         }
     })
-    // Return in same format as JSON API: array of {data: item}
-    return itemsObj.items.map(item => ({ data: item }))
+    // Return only comments — posts are excluded because /api/info HTML cannot
+    // determine post removal status. Posts are handled via the pending post queue.
+    return itemsObj.items.filter(item => !item.name || !item.name.startsWith('t3_')).map(item => ({ data: item }))
 }
 
 export const getPost_fromOld = async (path: string) => {

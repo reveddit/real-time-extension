@@ -113,6 +113,22 @@ const processPendingPosts = async (storage: Record<string, any>) => {
     let processed = 0
 
     for (const postId of posts) {
+        const isAlreadyKnownRemoved = (() => {
+            const users = storage.user_subscriptions ? Object.keys(storage.user_subscriptions) : []
+            const things = [...users.map(u => ({ thing: u, isUser: true })), { thing: 'other', isUser: false }]
+            for (const { thing, isUser } of things) {
+                const keys = getObjectNamesForThing(thing, isUser)
+                if (postId in (storage[keys['removed']] || {})) return true
+            }
+            return false
+        })()
+
+        if (isAlreadyKnownRemoved) {
+            await removeFromPendingPostQueue(postId)
+            processed++
+            continue
+        }
+
         try {
             const postPath = '/comments/' + postId.substring(3) + '/'
             const result = await getPost_fromOld(postPath)
@@ -625,6 +641,8 @@ const checkForChanges_thing_byId = async (
                             if (!pending) return
                             const MAX_RETRY_ATTEMPTS = 5
                             if (pending.attempts >= MAX_RETRY_ATTEMPTS) return
+                            const MIN_RETRY_DELAY_MS = 2 * 60 * 1000
+                            if (Date.now() - pending.firstAttemptAt < MIN_RETRY_DELAY_MS) return
                             console.log(`Retrying pending notification for ${thing} (attempt ${pending.attempts + 1})`)
                             createNotification({
                                 notificationId: thing,
