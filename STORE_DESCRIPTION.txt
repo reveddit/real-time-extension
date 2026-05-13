@@ -20,7 +20,7 @@ Note, the extension is not able to track content from private subreddits.
 VERSION HISTORY:
 
 2026/05/13 - 0.0.5.4
-- fix duplicate notifications for removed posts
+- fix duplicate notifications regression for removed posts
 
 2026/05/10 - 0.0.5.3
 - improve delayed post removal notifications with batching, age context, and progress UI
