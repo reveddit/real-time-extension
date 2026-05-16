@@ -1216,16 +1216,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@babel/polyfill@npm:^7.12.1":
-  version: 7.12.1
-  resolution: "@babel/polyfill@npm:7.12.1"
-  dependencies:
-    core-js: "npm:^2.6.5"
-    regenerator-runtime: "npm:^0.13.4"
-  checksum: 10c0/f5d233d2958582e8678838c32c42ba780965119ebb3771d9b9735f85efabc7b8b49161e7d908477486e0aaf8508410e957be764c27a6a828714fb9d1b7f80bc3
-  languageName: node
-  linkType: hard
-
 "@babel/preset-env@npm:^7.22.5":
   version: 7.22.5
   resolution: "@babel/preset-env@npm:7.22.5"
@@ -3991,13 +3981,6 @@ __metadata:
   dependencies:
     browserslist: "npm:^4.21.5"
   checksum: 10c0/09cca4c2565ddea1fb65324ef17c2dcc61e6c3ec089d8b343e6cbea2b42a9c3ae5e76a42c6faff3759a321c5e7165201db93b7b47912c4c2d1c3d6afad44f7fc
-  languageName: node
-  linkType: hard
-
-"core-js@npm:^2.6.5":
-  version: 2.6.12
-  resolution: "core-js@npm:2.6.12"
-  checksum: 10c0/00128efe427789120a06b819adc94cc72b96955acb331cb71d09287baf9bd37bebd191d91f1ee4939c893a050307ead4faea08876f09115112612b6a05684b63
   languageName: node
   linkType: hard
 
@@ -7712,13 +7695,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"regenerator-runtime@npm:^0.13.4":
-  version: 0.13.11
-  resolution: "regenerator-runtime@npm:0.13.11"
-  checksum: 10c0/12b069dc774001fbb0014f6a28f11c09ebfe3c0d984d88c9bced77fdb6fedbacbca434d24da9ae9371bfbf23f754869307fb51a4c98a8b8b18e5ef748677ca24
-  languageName: node
-  linkType: hard
-
 "regenerator-transform@npm:^0.15.1":
   version: 0.15.1
   resolution: "regenerator-transform@npm:0.15.1"
@@ -7916,7 +7892,6 @@ __metadata:
   resolution: "reveddit_real_time@workspace:."
   dependencies:
     "@babel/core": "npm:^7.22.5"
-    "@babel/polyfill": "npm:^7.12.1"
     "@babel/preset-env": "npm:^7.22.5"
     "@babel/register": "npm:^7.22.5"
     "@emotion/react": "npm:^11.14.0"
