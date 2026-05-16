@@ -67,7 +67,7 @@ function modify(buffer) {
 }
 const contentScripts = {
     common: './src/src/common.ts',
-    content: ['@babel/polyfill', './src/src/content.ts'],
+    content: './src/src/content.ts',
     'content-reddit': './src/src/content-reddit.ts',
     'content-revddit': './src/src/content-revddit.ts',
     'content-common': './src/src/content-common.ts',
@@ -76,15 +76,15 @@ const contentScripts = {
     storage: './src/src/storage.ts'
 }
 const extensionPages = {
-    options: ['@babel/polyfill', './src/src/options.tsx'],
-    popup: ['@babel/polyfill', './src/src/popup.tsx'],
-    history: ['@babel/polyfill', './src/src/history.tsx'],
-    other: ['@babel/polyfill', './src/src/other.tsx'],
-    welcome: ['@babel/polyfill', './src/src/welcome.tsx'],
-    whatsnew: ['@babel/polyfill', './src/src/whatsnew.tsx'],
-    parse: ['@babel/polyfill', './src/src/parse_html/common.ts', './src/src/parse_html/old.ts'],
+    options: './src/src/options.tsx',
+    popup: './src/src/popup.tsx',
+    history: './src/src/history.tsx',
+    other: './src/src/other.tsx',
+    welcome: './src/src/welcome.tsx',
+    whatsnew: './src/src/whatsnew.tsx',
+    parse: ['./src/src/parse_html/common.ts', './src/src/parse_html/old.ts'],
 }
-
+const extensionPageNames = Object.keys(extensionPages)
 
 const plugins = [
    new CopyWebpackPlugin({ patterns: [
@@ -133,9 +133,21 @@ export default {
         minimizer: [new TerserPlugin({
           extractComments: false,
         })],
+        splitChunks: {
+            chunks: (chunk) => extensionPageNames.includes(chunk.name),
+            cacheGroups: {
+                default: false,
+                defaultVendors: false,
+                vendor: {
+                    test: /[\\/]node_modules[\\/]/,
+                    name: 'vendor',
+                    enforce: true,
+                }
+            }
+        },
     },
     entry: {
-        background: ['@babel/polyfill', './src/background.ts'],
+        background: './src/background.ts',
         ...contentScripts,
         ...extensionPages
     },
