@@ -135,6 +135,23 @@ export const MessageBanner = styled.div<{ variant: BannerVariant }>`
     }}
 `
 
+export const MiniSpinner = styled.span`
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    vertical-align: middle;
+    margin-right: 6px;
+    animation: mini-spin 0.8s linear infinite;
+    @keyframes mini-spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+`
+
 export const Card = styled.div`
     background: var(--bg-surface);
     border: 1px solid var(--border);

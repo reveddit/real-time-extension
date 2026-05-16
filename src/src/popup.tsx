@@ -4,7 +4,7 @@ import styled from '@emotion/styled'
 import { css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification } from './common'
 import { AppGlobal, setThemeMode, THEME_STORAGE_KEY } from './ui/global'
-import { ActionBtn, MessageBanner, Card } from './ui/components'
+import { ActionBtn, MessageBanner, MiniSpinner, Card } from './ui/components'
 import { tokens } from './ui/tokens'
 import {
   getSubscribedUsers_withSeenAndUnseenIDs,
@@ -672,7 +672,7 @@ function Popup() {
         )}
 
         {pendingPostCount > 0 && (
-          <MessageBanner variant="info">Scanning {pendingPostCount} posts for removals...</MessageBanner>
+          <MessageBanner variant="info"><MiniSpinner />Scanning {pendingPostCount} posts for removals...</MessageBanner>
         )}
 
         <SubsCard>

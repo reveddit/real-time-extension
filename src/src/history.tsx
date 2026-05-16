@@ -4,7 +4,7 @@ import styled from '@emotion/styled'
 import { getAllChanges, getItemFromLocalStorage, getPendingPostQueueSize } from './storage'
 import { ChangeForStorage, LocalStorageItem, getPrettyDate, getPrettyTimeLength, isComment } from './common'
 import { AppGlobal } from './ui/global'
-import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueLink, MutedLink, Author, Subreddit, PostTitle, MdBody, MessageBanner } from './ui/components'
+import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueLink, MutedLink, Author, Subreddit, PostTitle, MdBody, MessageBanner, MiniSpinner } from './ui/components'
 import { tokens } from './ui/tokens'
 import { markdownToHTML } from './ui/markdown'
 
@@ -120,6 +120,17 @@ const Empty = styled.p`
   text-align: center;
   color: var(--text-secondary);
   padding: ${tokens.space.xl};
+`
+
+const Spinner = styled.div`
+  width: 48px;
+  height: 48px;
+  margin: 0 auto ${tokens.space.md};
+  border: 4px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  @keyframes spin { to { transform: rotate(360deg); } }
 `
 
 interface ChangeRow {
@@ -238,11 +249,15 @@ function History() {
     setBannerDismissed(true)
   }
   const [pendingPostCount, setPendingPostCount] = useState(0)
+  const [initialScanDone, setInitialScanDone] = useState(true)
 
   const loadData = useCallback(() => {
     getPendingPostQueueSize().then(size => setPendingPostCount(size))
     chrome.storage.local.get(['last_logged_in_user'], result => {
       setCurrentUser(result?.last_logged_in_user || null)
+    })
+    chrome.storage.sync.get(['last_check'], result => {
+      setInitialScanDone(result.last_check != null)
     })
     getAllChanges(changesByUser => {
       chrome.storage.local.get(undefined, localStorage => {
@@ -342,6 +357,9 @@ function History() {
         debouncedLoad()
       } else if (area === 'local' && keys.some(k => k.startsWith('items_'))) {
         debouncedLoad()
+      }
+      if (area === 'sync' && changes.last_check) {
+        setInitialScanDone(true)
       }
       if (area === 'local' && changes.pending_post_lookups) {
         const newQueue = changes.pending_post_lookups.newValue || []
@@ -459,7 +477,7 @@ function History() {
         </PageHeader>
 
         {pendingPostCount > 0 && (
-          <MessageBanner variant="info">Scanning {pendingPostCount} posts for removals. New results will appear here automatically.</MessageBanner>
+          <MessageBanner variant="info"><MiniSpinner />Scanning {pendingPostCount} posts for removals. New results will appear here automatically.</MessageBanner>
         )}
 
         {visible.length > 0 ? (
@@ -484,7 +502,13 @@ function History() {
                 )}
               </WelcomeBanner>
             )}
-            {!showSlimBanner && (
+            {!showSlimBanner && changes.length === 0 && !initialScanDone && (
+              <Empty>
+                <Spinner />
+                Scanning your recent posts and comments…
+              </Empty>
+            )}
+            {!showSlimBanner && (initialScanDone || changes.length > 0) && (
               <Empty>
                 {changes.length === 0
                   ? 'No actions observed since extension installation.'
