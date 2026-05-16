@@ -24,6 +24,7 @@ import {
     getNextPendingPosts,
     removeFromPendingPostQueue,
     getBacklogSummaryState,
+    markBacklogInitialNotified,
     markBacklogSummarySent,
     BACKLOG_SUMMARY_DELAY_MS,
 } from './storage'
@@ -935,11 +936,23 @@ const maybeFireBacklogSummary = async (storage: Record<string, any>): Promise<vo
     const state = await getBacklogSummaryState()
     if (state.summarySent) return
     if (state.installedAt == null) return
+
+    const count = countUnseenBacklogItems(storage)
+
+    if (!state.initialBacklogNotified) {
+        if (count === 0) return
+        await markBacklogInitialNotified()
+        createNotification({
+            notificationId: 'backlog_summary',
+            title: 'reveddit real-time',
+            message: `${count} older removed/locked posts or comments found in your history. Click to review.`,
+        })
+        return
+    }
+
     if (Date.now() - state.installedAt < BACKLOG_SUMMARY_DELAY_MS) return
 
     await markBacklogSummarySent()
-
-    const count = countUnseenBacklogItems(storage)
     if (count === 0) return
 
     createNotification({

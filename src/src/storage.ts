@@ -131,12 +131,16 @@ export const clearPendingNotification = (thing: string) => {
 const BACKLOG_SUMMARY_KEY = 'backlog_summary'
 export const BACKLOG_SUMMARY_DELAY_MS = 12 * 60 * 60 * 1000
 
-type BacklogSummaryState = { installedAt: number | null; summarySent: boolean }
+type BacklogSummaryState = { installedAt: number | null; initialBacklogNotified: boolean; summarySent: boolean }
 
 export const getBacklogSummaryState = (): Promise<BacklogSummaryState> => {
     return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
         const state = r[BACKLOG_SUMMARY_KEY] || {}
-        return { installedAt: state.installedAt ?? null, summarySent: !!state.summarySent }
+        return {
+            installedAt: state.installedAt ?? null,
+            initialBacklogNotified: !!state.initialBacklogNotified,
+            summarySent: !!state.summarySent,
+        }
     })
 }
 
@@ -148,9 +152,18 @@ export const setBacklogSummaryInstalledAt = (ts: number): Promise<void> => {
     })
 }
 
+export const markBacklogInitialNotified = (): Promise<void> => {
+    return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
+        const state = r[BACKLOG_SUMMARY_KEY] || {}
+        state.initialBacklogNotified = true
+        return browser.storage.local.set({ [BACKLOG_SUMMARY_KEY]: state }) as unknown as void
+    })
+}
+
 export const markBacklogSummarySent = (): Promise<void> => {
     return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
         const state = r[BACKLOG_SUMMARY_KEY] || {}
+        state.initialBacklogNotified = true
         state.summarySent = true
         return browser.storage.local.set({ [BACKLOG_SUMMARY_KEY]: state }) as unknown as void
     })
