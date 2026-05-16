@@ -211,10 +211,13 @@ const ActionRowBtn = styled.button`
   }
 `
 
-const TestLink = styled.a`
-  display: block;
-  margin: 8px auto 2px;
-  text-align: center;
+const FooterRow = styled.div`
+  display: flex;
+  justify-content: space-between;
+  margin: 8px 0 2px;
+`
+
+const FooterLink = styled.a`
   font-size: 0.78em;
   color: var(--text-muted);
   text-decoration: none;
@@ -659,9 +662,14 @@ function Popup() {
           </ActionRowBtn>
         </PopupActions>
 
-        <TestLink href="#" onClick={e => { e.preventDefault(); handleTestNotification() }}>
-          send a test notification
-        </TestLink>
+        <FooterRow>
+          <FooterLink href="#" onClick={e => { e.preventDefault(); handleTestNotification() }}>
+            send a test notification
+          </FooterLink>
+          <FooterLink href="https://www.reddit.com/r/reveddit" target="_blank" rel="noopener noreferrer">
+            feedback
+          </FooterLink>
+        </FooterRow>
       </PopupContainer>
     </>
   )
