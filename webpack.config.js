@@ -1,3 +1,4 @@
+import fs from 'fs'
 import { distPath, __filename, __dirname } from './common.js'
 import webpack from "webpack"
 import path from "path"
@@ -6,6 +7,29 @@ import babel_preset from "@babel/preset-env"
 import TerserPlugin from 'terser-webpack-plugin'
 import ExtReloader from 'webpack-ext-reloader'
 import AfterEmitPlugin from './AfterEmitPlugin.js'
+
+const latestRelease = (() => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'src', 'manifest.json'), 'utf8'))
+  const manifestVersion = manifest.version
+
+  const desc = fs.readFileSync(path.join(__dirname, 'STORE_DESCRIPTION.txt'), 'utf8')
+  const lines = desc.split('\n')
+  const histIdx = lines.findIndex(l => l.startsWith('VERSION HISTORY'))
+  if (histIdx === -1) throw new Error('STORE_DESCRIPTION.txt: could not find VERSION HISTORY section')
+
+  for (let i = histIdx + 1; i < lines.length; i++) {
+    const match = lines[i].trim().match(/^[\d/]+\s*-\s*(.+)$/)
+    if (match && match[1] === manifestVersion) {
+      const descLine = lines[i + 1]?.trim()
+      return { version: manifestVersion, description: descLine?.replace(/^-\s*/, '') || '' }
+    }
+  }
+
+  throw new Error(
+    `STORE_DESCRIPTION.txt has no changelog entry for manifest version ${manifestVersion}. ` +
+    `Add an entry before building.`
+  )
+})()
 
 const mode = process.env.NODE_ENV
 const distSrcPath = path.join(distPath, 'src')
@@ -102,7 +126,8 @@ const plugins = [
     ]}),
     new webpack.DefinePlugin({
         __BUILT_FOR__: built_for,
-        __DEV__: JSON.stringify(mode !== 'production')
+        __DEV__: JSON.stringify(mode !== 'production'),
+        __LATEST_RELEASE__: JSON.stringify(latestRelease),
     }),
     new AfterEmitPlugin(),
 ]

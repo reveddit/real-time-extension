@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
+import { css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification } from './common'
-import { AppGlobal } from './ui/global'
+import { AppGlobal, setThemeMode, THEME_STORAGE_KEY } from './ui/global'
 import { BlueLink, ActionBtn, MessageBanner, Card } from './ui/components'
 import { tokens } from './ui/tokens'
 import {
@@ -14,6 +15,8 @@ import {
 import { setCurrentStateForId } from './monitoring'
 import { fetchNews, getUnreadMessages, markNewsRead, NewsMessage } from './news'
 import { markdownToHTML } from './ui/markdown'
+
+declare const __LATEST_RELEASE__: { version: string; description: string } | null
 
 const PopupContainer = styled.div`
   width: 320px;
@@ -35,11 +38,6 @@ const Brand = styled.div`
   letter-spacing: 0.01em;
 `
 
-const TopLinks = styled.div`
-  display: flex;
-  gap: ${tokens.space.md};
-  font-size: 0.88em;
-`
 
 const SubsCard = styled(Card)`
   padding: ${tokens.space.sm} ${tokens.space.md};
@@ -70,10 +68,6 @@ const UnseenPillActive = styled(UnseenPill)`
   color: var(--text-on-accent);
 `
 
-const ClearLink = styled(BlueLink)`
-  font-size: 0.82em;
-  cursor: pointer;
-`
 
 const SwitchRow = styled.div`
   display: flex;
@@ -124,17 +118,6 @@ const SwitchWrapper = styled.label`
   }
 `
 
-const TestBtn = styled.button`
-  width: 100%;
-  margin-top: ${tokens.space.md};
-  padding: 8px 10px;
-  background: var(--button-bg);
-  color: var(--button-text);
-  border: 1px solid var(--border);
-  border-radius: ${tokens.radius.md};
-  cursor: pointer;
-  &:hover { background: var(--bg-surface-hover); }
-`
 
 const NewsCard = styled(Card)`
   padding: ${tokens.space.sm} ${tokens.space.md};
@@ -159,6 +142,86 @@ const NewsCard = styled(Card)`
     line-height: 1;
     padding: 2px 6px;
     &:hover { color: var(--text-primary); }
+  }
+`
+
+const ThemeToggleBtn = styled.button`
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 18px;
+  padding: 2px 4px;
+  line-height: 1;
+  transition: color 0.15s ease;
+  &:hover { color: var(--text-primary); }
+`
+
+const SubsCardFooter = styled.div`
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 6px;
+  text-align: right;
+`
+
+const MarkSeenLink = styled.a<{ $enabled: boolean }>`
+  font-size: 0.78em;
+  text-decoration: none;
+  transition: color 0.15s ease;
+  ${p =>
+    p.$enabled
+      ? css`
+          color: var(--link);
+          cursor: pointer;
+          &:hover {
+            color: var(--link-hover);
+            text-decoration: underline;
+          }
+        `
+      : css`
+          color: var(--text-muted);
+          cursor: default;
+          opacity: 0.55;
+          &:hover {
+            text-decoration: none;
+          }
+        `}
+`
+
+const PopupActions = styled.div`
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: ${tokens.space.sm};
+`
+
+const ActionRowBtn = styled.button`
+  padding: 7px 10px;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: 0;
+  border-radius: ${tokens.radius.md};
+  font-size: 0.88em;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  &:hover {
+    background: var(--accent-hover);
+  }
+`
+
+const TestLink = styled.a`
+  display: block;
+  margin: 8px auto 2px;
+  text-align: center;
+  font-size: 0.78em;
+  color: var(--text-muted);
+  text-decoration: none;
+  cursor: pointer;
+  &:hover {
+    color: var(--text-secondary);
+    text-decoration: underline;
   }
 `
 
@@ -246,6 +309,8 @@ function Popup() {
   const [connectMessage, setConnectMessage] = useState<string | null>(null)
   const [newsMessage, setNewsMessage] = useState<NewsMessage | null>(null)
   const [pendingPostCount, setPendingPostCount] = useState(0)
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [showRelease, setShowRelease] = useState(false)
 
   const loadData = useCallback(() => {
     setUserData(null)
@@ -328,6 +393,39 @@ function Popup() {
     return () => chrome.storage.onChanged.removeListener(listener)
   }, [])
 
+  useEffect(() => {
+    chrome.storage.local.get([THEME_STORAGE_KEY], result => {
+      const mode = result[THEME_STORAGE_KEY] || 'auto'
+      const resolved = mode === 'auto'
+        ? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+        : mode
+      setTheme(resolved)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (__LATEST_RELEASE__) {
+      chrome.storage.local.get(['dismissed_release_version'], result => {
+        if (result.dismissed_release_version !== __LATEST_RELEASE__!.version) {
+          setShowRelease(true)
+        }
+      })
+    }
+  }, [])
+
+  const handleToggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    setThemeMode(next)
+  }
+
+  const handleDismissRelease = () => {
+    setShowRelease(false)
+    if (__LATEST_RELEASE__) {
+      chrome.storage.local.set({ dismissed_release_version: __LATEST_RELEASE__.version })
+    }
+  }
+
   const handleClearNotifications = () => {
     markEverythingAsSeen().then(() => loadData())
   }
@@ -408,6 +506,10 @@ function Popup() {
     }
   }
 
+  const hasAnyUnseen =
+    (userData?.otherUnseen.length ?? 0) > 0 ||
+    Object.values(userData?.users ?? {}).some(u => u.unseen.length > 0)
+
   const historyUrl = chrome.runtime.getURL('src/history.html')
 
   let otherUrl = chrome.runtime.getURL('src/other.html')
@@ -457,10 +559,18 @@ function Popup() {
       <PopupContainer>
         <TopRow>
           <Brand>reveddit real-time</Brand>
-          <TopLinks>
-            <BlueLink href="/src/options.html" onClick={e => { e.preventDefault(); goToOptions() }}>options</BlueLink>
-          </TopLinks>
+          <ThemeToggleBtn onClick={handleToggleTheme} aria-label="Toggle theme">
+            {theme === 'dark' ? '\u{1F319}' : '\u{2600}\u{FE0F}'}
+          </ThemeToggleBtn>
         </TopRow>
+
+        {showRelease && __LATEST_RELEASE__ && (
+          <NewsCard>
+            <button className="dismiss" onClick={handleDismissRelease} aria-label="Dismiss">&times;</button>
+            <h4>v{__LATEST_RELEASE__.version} released</h4>
+            <div className="md-body">{__LATEST_RELEASE__.description}</div>
+          </NewsCard>
+        )}
 
         {newsMessage && <NewsBanner message={newsMessage} onDismiss={handleDismissNews} />}
 
@@ -525,22 +635,33 @@ function Popup() {
               url={otherUrl}
             />
           )}
+          <SubsCardFooter>
+            <MarkSeenLink
+              href="#"
+              $enabled={hasAnyUnseen}
+              aria-disabled={!hasAnyUnseen}
+              onClick={e => {
+                e.preventDefault()
+                if (hasAnyUnseen) handleClearNotifications()
+              }}
+            >
+              mark all as seen
+            </MarkSeenLink>
+          </SubsCardFooter>
         </SubsCard>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: tokens.space.sm }}>
-          <ClearLink href="#" onClick={e => { e.preventDefault(); handleClearNotifications() }}>
-            clear notifications
-          </ClearLink>
-          <BlueLink
-            href={historyUrl}
-            target="_blank"
-            onClick={e => { e.preventDefault(); chrome.tabs.create({ url: historyUrl }); window.close() }}
-          >
-            history
-          </BlueLink>
-        </div>
+        <PopupActions>
+          <ActionRowBtn onClick={() => { chrome.tabs.create({ url: historyUrl }); window.close() }}>
+            History
+          </ActionRowBtn>
+          <ActionRowBtn onClick={() => goToOptions()}>
+            Options
+          </ActionRowBtn>
+        </PopupActions>
 
-        <TestBtn onClick={handleTestNotification}>Test notification</TestBtn>
+        <TestLink href="#" onClick={e => { e.preventDefault(); handleTestNotification() }}>
+          send a test notification
+        </TestLink>
       </PopupContainer>
     </>
   )
