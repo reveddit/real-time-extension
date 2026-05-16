@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master, main]
 
+env:
+  # Validate the lockfile against the registry (detects lockfile tampering).
+  YARN_ENABLE_HARDENED_MODE: "1"
+
 jobs:
   lint-typecheck-test:
     runs-on: ubuntu-latest
@@ -17,7 +21,13 @@ jobs:
           node-version-file: '.nvmrc'
           cache: yarn
 
-      - run: yarn install --frozen-lockfile
+      - run: corepack enable
+
+      - run: yarn install --immutable
+
+      - name: Audit dependencies
+        run: yarn npm audit --all --recursive
+        continue-on-error: true
 
       - name: Lint
         run: yarn lint
@@ -45,13 +55,33 @@ jobs:
           node-version-file: '.nvmrc'
           cache: yarn
 
-      - run: yarn install --frozen-lockfile
+      - run: corepack enable
+
+      - run: yarn install --immutable
 
       - name: Build extension for E2E
         run: yarn build-chrome-dev
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: yarn playwright install --with-deps chromium
 
       - name: Run E2E tests
         run: xvfb-run --auto-servernum yarn test:e2e
+
+  socket-firewall:
+    # Install-time malware gate: blocks known-malicious packages before fetch.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: '.nvmrc'
+
+      - run: corepack enable
+
+      - name: Install Socket Firewall
+        run: npm install -g sfw
+
+      - name: Install dependencies through Socket Firewall
+        run: sfw yarn install --immutable

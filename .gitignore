@@ -13,3 +13,12 @@ yarn-error.log
 web-ext-artifacts/
 .claude-mcp/playwright-mcp.json
 .playwright-mcp/
+
+# Yarn Berry (node-modules linker) — keep releases, ignore caches/state
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.pnp.*
