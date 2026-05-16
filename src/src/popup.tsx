@@ -66,6 +66,7 @@ const SubRow = styled.a`
   &:hover {
     background: var(--bg-surface-hover);
     text-decoration: none;
+    & .sub-chev { color: var(--text-secondary); }
   }
   &:active {
     background: var(--bg-surface-hover);
@@ -93,10 +94,7 @@ const SubRowChev = styled.span`
   line-height: 1;
   margin-left: 2px;
   color: var(--text-muted);
-
-  ${SubRow}:hover & {
-    color: var(--text-secondary);
-  }
+  transition: color 0.12s ease;
 `
 
 const UnseenPill = styled.span`
@@ -322,7 +320,7 @@ function UnseenRow({ thing, isUser, unseenCount, totalStr, url }: {
     <SubRow href={url} target="_blank" onClick={handleClick}>
       <SubRowText>{thing}</SubRowText>
       <Pill>{totalStr ?? unseenCount}</Pill>
-      <SubRowChev aria-hidden="true">›</SubRowChev>
+      <SubRowChev className="sub-chev" aria-hidden="true">›</SubRowChev>
     </SubRow>
   )
 }

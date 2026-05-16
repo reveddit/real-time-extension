@@ -14,11 +14,12 @@ test.describe('Popup page', () => {
         // The root container should exist
         await expect(page.locator('#root')).toBeVisible()
 
-        // Should have an "options" link
-        await expect(page.locator('text=options')).toBeVisible()
+        // Should have History and Options action buttons
+        await expect(page.getByRole('button', { name: 'History' })).toBeVisible()
+        await expect(page.getByRole('button', { name: 'Options' })).toBeVisible()
 
-        // Should have a "clear notifications" link
-        await expect(page.locator('text=clear notifications')).toBeVisible()
+        // Should have "mark all as seen" link in subscriptions card
+        await expect(page.locator('text=mark all as seen')).toBeVisible()
     })
 })
 
