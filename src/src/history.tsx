@@ -10,10 +10,11 @@ import { markdownToHTML } from './ui/markdown'
 
 const searchParams = new URLSearchParams(window.location.search)
 const isWelcome = searchParams.get('welcome') === '1'
-const VALID_FILTERS = ['all', 'removed', 'deleted', 'approved', 'locked', 'unlocked', 'edited'] as const
-const initialFilter = (() => {
+const VALID_FILTERS = ['removed', 'deleted', 'approved', 'locked', 'unlocked', 'edited'] as const
+const initialFilter: FilterValue = (() => {
     const f = searchParams.get('filter')
-    return f && (VALID_FILTERS as readonly string[]).includes(f) ? f as typeof VALID_FILTERS[number] : 'all'
+    if (!f) return []
+    return f.split(',').filter((v): v is FilterOption => (VALID_FILTERS as readonly string[]).includes(v))
 })()
 
 const getPinInstructions = (): string => {
@@ -66,21 +67,43 @@ const PageHeader = styled.div`
 
 const Controls = styled.div`
   display: flex;
-  gap: ${tokens.space.md};
+  gap: ${tokens.space.lg};
+  align-items: baseline;
+  flex-wrap: wrap;
+`
+
+const ControlGroup = styled.div`
+  display: flex;
+  gap: ${tokens.space.sm};
   align-items: center;
   flex-wrap: wrap;
   & label {
     color: var(--text-secondary);
     font-size: 0.85em;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
   }
-  & select {
-    background: var(--input-bg);
-    color: var(--text-primary);
-    border: 1px solid var(--input-border);
-    border-radius: ${tokens.radius.sm};
-    padding: 5px 8px;
-    font: inherit;
-  }
+`
+
+const ControlLabel = styled.span`
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  font-weight: 500;
+  margin-right: ${tokens.space.xs};
+`
+
+const ResetButton = styled.button`
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: ${tokens.radius.sm};
+  color: var(--text-on-accent);
+  font-size: 0.8em;
+  cursor: pointer;
+  padding: 4px 8px;
+  &:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+  &:disabled { opacity: 0.4; cursor: default; }
 `
 
 const Empty = styled.p`
@@ -109,8 +132,9 @@ interface ChangeRow {
   seenCount: number | null
 }
 
-type FilterValue = 'all' | 'removed' | 'deleted' | 'approved' | 'locked' | 'unlocked' | 'edited'
-type SortValue = 'observed' | 'delta'
+type FilterOption = 'removed' | 'deleted' | 'approved' | 'locked' | 'unlocked' | 'edited'
+type FilterValue = FilterOption[]
+type SortValue = 'observed' | 'delta' | 'created'
 
 const variantFromAction = (action: string): ChangeRow['actionVariant'] => {
   if (action === 'mod removed') return 'removed'
@@ -123,14 +147,8 @@ const variantFromAction = (action: string): ChangeRow['actionVariant'] => {
 }
 
 const matchesFilter = (row: ChangeRow, filter: FilterValue): boolean => {
-  if (filter === 'all') return true
-  if (filter === 'removed') return row.actionVariant === 'removed'
-  if (filter === 'deleted') return row.actionVariant === 'deleted'
-  if (filter === 'approved') return row.actionVariant === 'approved'
-  if (filter === 'locked') return row.actionVariant === 'locked'
-  if (filter === 'unlocked') return row.actionVariant === 'unlocked'
-  if (filter === 'edited') return row.actionVariant === 'edited'
-  return true
+  if (filter.length === 0) return true
+  return filter.includes(row.actionVariant as FilterOption)
 }
 
 function ChangeCard({ row, onResolve }: { row: ChangeRow; onResolve: (id: string) => void }) {
@@ -353,6 +371,8 @@ function History() {
     const sorted = [...filtered]
     if (sort === 'observed') {
       sorted.sort((a, b) => b.observedUTC - a.observedUTC)
+    } else if (sort === 'created') {
+      sorted.sort((a, b) => b.createdUTC - a.createdUTC)
     } else {
       sorted.sort((a, b) => (b.observedUTC - b.createdUTC) - (a.observedUTC - a.createdUTC))
     }
@@ -394,25 +414,27 @@ function History() {
         <PageHeader>
           <h1 style={{ margin: 0 }}>History</h1>
           <Controls>
-            <label>
-              filter{' '}
-              <select value={filter} onChange={e => setFilter(e.target.value as FilterValue)}>
-                <option value="all">all</option>
-                <option value="removed">mod removed</option>
-                <option value="deleted">user deleted</option>
-                <option value="locked">locked</option>
-                <option value="unlocked">unlocked</option>
-                <option value="approved">approved</option>
-                <option value="edited">edited</option>
-              </select>
-            </label>
-            <label>
-              sort{' '}
-              <select value={sort} onChange={e => setSort(e.target.value as SortValue)}>
-                <option value="observed">observed time</option>
-                <option value="delta">time between creation and action</option>
-              </select>
-            </label>
+            <ControlGroup>
+              <ControlLabel>filter</ControlLabel>
+              {([['removed', 'mod removed'], ['deleted', 'user deleted'], ['locked', 'locked'], ['unlocked', 'unlocked'], ['approved', 'approved'], ['edited', 'edited']] as const).map(([value, label]) => (
+                <label key={value}>
+                  <input type="checkbox" checked={filter.includes(value)} onChange={e => {
+                    setFilter(e.target.checked ? [...filter, value] : filter.filter(f => f !== value))
+                  }} />
+                  {label}
+                </label>
+              ))}
+            </ControlGroup>
+            <ControlGroup>
+              <ControlLabel>sort</ControlLabel>
+              {([['observed', 'observed'], ['created', 'created'], ['delta', 'time to action']] as const).map(([value, label]) => (
+                <label key={value}>
+                  <input type="radio" name="sort" value={value} checked={sort === value} onChange={() => setSort(value)} />
+                  {label}
+                </label>
+              ))}
+            </ControlGroup>
+            <ResetButton disabled={filter.length === 0 && sort === 'observed'} onClick={() => { setFilter([]); setSort('observed') }}>reset</ResetButton>
           </Controls>
         </PageHeader>
 
