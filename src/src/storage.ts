@@ -128,6 +128,34 @@ export const clearPendingNotification = (thing: string) => {
     })
 }
 
+const BACKLOG_SUMMARY_KEY = 'backlog_summary'
+export const BACKLOG_SUMMARY_DELAY_MS = 12 * 60 * 60 * 1000
+
+type BacklogSummaryState = { installedAt: number | null; summarySent: boolean }
+
+export const getBacklogSummaryState = (): Promise<BacklogSummaryState> => {
+    return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
+        const state = r[BACKLOG_SUMMARY_KEY] || {}
+        return { installedAt: state.installedAt ?? null, summarySent: !!state.summarySent }
+    })
+}
+
+export const setBacklogSummaryInstalledAt = (ts: number): Promise<void> => {
+    return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
+        const state = r[BACKLOG_SUMMARY_KEY] || {}
+        state.installedAt = ts
+        return browser.storage.local.set({ [BACKLOG_SUMMARY_KEY]: state }) as unknown as void
+    })
+}
+
+export const markBacklogSummarySent = (): Promise<void> => {
+    return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
+        const state = r[BACKLOG_SUMMARY_KEY] || {}
+        state.summarySent = true
+        return browser.storage.local.set({ [BACKLOG_SUMMARY_KEY]: state }) as unknown as void
+    })
+}
+
 export const markThingAsSeen = (storage: Record<string, any>, thing: string, isUser: boolean) => {
     const keys = getObjectNamesForThing(thing, isUser)
     delete keys['changes']

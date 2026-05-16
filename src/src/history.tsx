@@ -8,7 +8,13 @@ import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueL
 import { tokens } from './ui/tokens'
 import { markdownToHTML } from './ui/markdown'
 
-const isWelcome = new URLSearchParams(window.location.search).get('welcome') === '1'
+const searchParams = new URLSearchParams(window.location.search)
+const isWelcome = searchParams.get('welcome') === '1'
+const VALID_FILTERS = ['all', 'removed', 'deleted', 'approved', 'locked', 'unlocked', 'edited'] as const
+const initialFilter = (() => {
+    const f = searchParams.get('filter')
+    return f && (VALID_FILTERS as readonly string[]).includes(f) ? f as typeof VALID_FILTERS[number] : 'all'
+})()
 
 const getPinInstructions = (): string => {
   if (__BUILT_FOR__ === 'firefox') return 'Click the extensions puzzle icon in the toolbar, then pin reveddit real-time.'
@@ -193,7 +199,7 @@ function ChangeCard({ row, onResolve }: { row: ChangeRow; onResolve: (id: string
 function History() {
   const [changes, setChanges] = useState<ChangeRow[]>([])
   const [loaded, setLoaded] = useState(false)
-  const [filter, setFilter] = useState<FilterValue>('all')
+  const [filter, setFilter] = useState<FilterValue>(initialFilter)
   const [sort, setSort] = useState<SortValue>('observed')
   const [currentUser, setCurrentUser] = useState<string | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)

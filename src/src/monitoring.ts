@@ -23,6 +23,9 @@ import {
     getOldestDateKey,
     getNextPendingPosts,
     removeFromPendingPostQueue,
+    getBacklogSummaryState,
+    markBacklogSummarySent,
+    BACKLOG_SUMMARY_DELAY_MS,
 } from './storage'
 import {
     createNotification,
@@ -35,7 +38,6 @@ import {
     LocalStorageItem,
     ChangeForStorage,
     setWarningBadge,
-    getPrettyTimeLength,
 } from './common'
 import browser from 'webextension-polyfill'
 import { getPost_fromOld } from './parse_html/old'
@@ -248,6 +250,7 @@ export const checkForChanges = () => {
                     newStorage.options.monitor_quarantined = true
                 }
                 chrome.storage.sync.set(newStorage)
+                return maybeFireBacklogSummary(storage)
             })
             .catch(error => {
                 console.log('Error in checkForChanges:', error)
@@ -615,22 +618,10 @@ const checkForChanges_thing_byId = async (
                         attempts: 1,
                     }).catch(() => {})
                 }
-                if (mergedBacklog.count > 0 && mergedBacklog.changeTypes.length) {
-                    const minAge = getPrettyTimeLength(mergedBacklog.ageRange.min)
-                    const maxAge = getPrettyTimeLength(mergedBacklog.ageRange.max)
-                    const ageStr = minAge === maxAge ? minAge : `${minAge} - ${maxAge}`
-                    console.log(`Creating backlog notification for ${thing}: ${mergedBacklog.count} older changes`)
-                    createNotification({
-                        notificationId: thing + '_backlog',
-                        title: thing,
-                        message: `${mergedBacklog.count} older [${mergedBacklog.changeTypes.join(', ')}] actions detected (${ageStr} old)`,
-                    })
-                    setPendingNotification(thing + '_backlog', {
-                        count: mergedBacklog.count,
-                        types: mergedBacklog.changeTypes,
-                        firstAttemptAt: Date.now(),
-                        attempts: 1,
-                    }).catch(() => {})
+                if (mergedBacklog.count > 0) {
+                    console.log(
+                        `Backlog for ${thing}: ${mergedBacklog.count} older changes collected (badge-only, no notification)`,
+                    )
                 }
                 if (num_changes === 0) {
                     // No new changes this cycle — but retry any pending
@@ -907,4 +898,53 @@ function markChanges(
                 : { min: 0, max: 0 },
         },
     } as MarkChangesResult
+}
+
+export const countUnseenBacklogItems = (storage: Record<string, any>): number => {
+    const now = Math.floor(Date.now() / 1000)
+    const options = storage.options || {}
+    const trackRemoval = (options.removal_status || {}).track !== false
+    const trackLock = (options.lock_status || {}).track !== false
+
+    const things: { thing: string; isUser: boolean }[] = [
+        ...Object.keys(storage.user_subscriptions || {}).map(u => ({ thing: u, isUser: true })),
+        { thing: 'other', isUser: false },
+    ]
+
+    let count = 0
+    for (const { thing, isUser } of things) {
+        const keys = getObjectNamesForThing(thing, isUser)
+        const typesToCount: string[] = []
+        if (trackRemoval) typesToCount.push(keys['removed'])
+        if (trackLock) typesToCount.push(keys['locked'])
+
+        for (const key of typesToCount) {
+            const obj = storage[key] || {}
+            for (const id of Object.keys(obj)) {
+                const item = obj[id]
+                if (item && item.u === true && item.c && now - item.c > BACKLOG_AGE_THRESHOLD_SECONDS) {
+                    count++
+                }
+            }
+        }
+    }
+    return count
+}
+
+const maybeFireBacklogSummary = async (storage: Record<string, any>): Promise<void> => {
+    const state = await getBacklogSummaryState()
+    if (state.summarySent) return
+    if (state.installedAt == null) return
+    if (Date.now() - state.installedAt < BACKLOG_SUMMARY_DELAY_MS) return
+
+    await markBacklogSummarySent()
+
+    const count = countUnseenBacklogItems(storage)
+    if (count === 0) return
+
+    createNotification({
+        notificationId: 'backlog_summary',
+        title: 'reveddit real-time',
+        message: `${count} older removed/locked posts or comments found in your history. Click to review.`,
+    })
 }

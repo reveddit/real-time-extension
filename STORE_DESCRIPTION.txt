@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/05/16 - 0.0.5.5
+- batch old content notifications
+
 2026/05/13 - 0.0.5.4
 - fix duplicate notifications regression for removed posts
 

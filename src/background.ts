@@ -16,6 +16,8 @@ import {
     getUnseenIDs_thing,
     markThingAsSeen,
     clearPendingNotification,
+    setBacklogSummaryInstalledAt,
+    markBacklogSummarySent,
 } from './src/storage'
 import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
@@ -241,6 +243,7 @@ chrome.runtime.onInstalled.addListener(function (details) {
     if (details.reason == 'install') {
         initStorage(() => {
             setAlarm(INTERVAL_DEFAULT)
+            setBacklogSummaryInstalledAt(Date.now())
             subscribeToLoggedInUser_or_promptForUser()
             updateBadgeUnseenCount()
         })
@@ -251,6 +254,7 @@ chrome.runtime.onInstalled.addListener(function (details) {
         }
     } else if (details.reason == 'update') {
         updateBadgeUnseenCount()
+        markBacklogSummarySent()
         // Open the what's new page once per version bump.
         try {
             const currentVersion = chrome.runtime.getManifest().version
@@ -358,27 +362,30 @@ function triggerImmediateLookupOnce(user: string) {
 
 const notificationClicked = (rawThing: string) => {
     const thing = rawThing.replace(/_backlog$/, '')
+
+    if (thing === 'backlog_summary') {
+        createTab(chrome.runtime.getURL('src/history.html?filter=removed'))
+        return
+    }
+
     const isUser = thing === 'other' ? false : true
     chrome.storage.sync.get(undefined as any, storage => {
         const unseenIDs = getUnseenIDs_thing(thing, isUser, storage)
-        let url = null
-        if (isUser && storage.user_subscriptions[thing]) {
-            // Always point to the extension's history page for user content
+        let url: string
+        if (isUser) {
             url = chrome.runtime.getURL('src/history.html')
-        } else if (!isUser) {
+        } else {
             url = chrome.runtime.getURL('src/other.html')
             if (unseenIDs.length) {
                 url = `https://www.reveddit.com/info?id=${unseenIDs.join(',')}&removal_status=all`
             }
         }
-        if (url) {
-            markThingAsSeen(storage, thing, isUser)
-            browser.storage.sync.set(storage).then(() => {
-                updateBadgeUnseenCount()
-                clearPendingNotification(thing).catch(() => {})
-                createTab(url)
-            })
-        }
+        markThingAsSeen(storage, thing, isUser)
+        browser.storage.sync.set(storage).then(() => {
+            updateBadgeUnseenCount()
+            clearPendingNotification(thing).catch(() => {})
+            createTab(url)
+        })
     })
 }
 
