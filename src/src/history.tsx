@@ -9,7 +9,6 @@ import { tokens } from './ui/tokens'
 import { markdownToHTML } from './ui/markdown'
 
 const searchParams = new URLSearchParams(window.location.search)
-const isWelcome = searchParams.get('welcome') === '1'
 const VALID_FILTERS = ['removed', 'deleted', 'approved', 'locked', 'unlocked', 'edited'] as const
 const initialFilter: FilterValue = (() => {
     const f = searchParams.get('filter')
@@ -92,6 +91,17 @@ const ControlLabel = styled.span`
   font-size: 0.85em;
   font-weight: 500;
   margin-right: ${tokens.space.xs};
+`
+
+const ShowWelcomeLink = styled.button`
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  cursor: pointer;
+  text-decoration: underline;
+  &:hover { color: var(--link-hover); }
 `
 
 const ResetButton = styled.button`
@@ -220,7 +230,13 @@ function History() {
   const [filter, setFilter] = useState<FilterValue>(initialFilter)
   const [sort, setSort] = useState<SortValue>('observed')
   const [currentUser, setCurrentUser] = useState<string | null>(null)
-  const [bannerDismissed, setBannerDismissed] = useState(false)
+  const [bannerDismissed, setBannerDismissed] = useState(() => {
+    return localStorage.getItem('history_banner_dismissed') === '1'
+  })
+  const dismissBanner = () => {
+    localStorage.setItem('history_banner_dismissed', '1')
+    setBannerDismissed(true)
+  }
   const [pendingPostCount, setPendingPostCount] = useState(0)
 
   const loadData = useCallback(() => {
@@ -379,8 +395,8 @@ function History() {
     return sorted
   }, [changes, filter, sort])
 
-  const showFullBanner = isWelcome && !bannerDismissed
-  const showSlimBanner = !isWelcome && changes.length === 0 && loaded
+  const showFullBanner = !bannerDismissed
+  const showSlimBanner = bannerDismissed && changes.length === 0 && loaded
 
   if (!loaded) return <AppGlobal />
 
@@ -388,7 +404,7 @@ function History() {
     <>
       <AppGlobal />
       <Page>
-        {showFullBanner && (
+        {showFullBanner ? (
           <WelcomeBanner>
             <h2>Monitoring is active{currentUser ? ` for u/${currentUser}` : ''}</h2>
             <p>reveddit real-time is now watching your Reddit comments and posts. You'll be notified whenever content is removed by moderators, reapproved, locked, or unlocked.</p>
@@ -406,9 +422,13 @@ function History() {
               </p>
             )}
             <BannerActions>
-              <Button variant="secondary" onClick={() => setBannerDismissed(true)}>Got it</Button>
+              <Button variant="secondary" onClick={dismissBanner}>Got it</Button>
             </BannerActions>
           </WelcomeBanner>
+        ) : (
+          <ShowWelcomeLink onClick={() => { localStorage.removeItem('history_banner_dismissed'); setBannerDismissed(false) }}>
+            show welcome message
+          </ShowWelcomeLink>
         )}
 
         <PageHeader>
