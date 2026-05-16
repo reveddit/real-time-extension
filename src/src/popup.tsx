@@ -4,7 +4,7 @@ import styled from '@emotion/styled'
 import { css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification } from './common'
 import { AppGlobal, setThemeMode, THEME_STORAGE_KEY } from './ui/global'
-import { BlueLink, ActionBtn, MessageBanner, Card } from './ui/components'
+import { ActionBtn, MessageBanner, Card } from './ui/components'
 import { tokens } from './ui/tokens'
 import {
   getSubscribedUsers_withSeenAndUnseenIDs,
@@ -40,16 +40,63 @@ const Brand = styled.div`
 
 
 const SubsCard = styled(Card)`
-  padding: ${tokens.space.sm} ${tokens.space.md};
+  padding: ${tokens.space.xs} ${tokens.space.md};
   margin: ${tokens.space.sm} 0;
 `
 
-const SubRow = styled.div`
+const SubRow = styled.a`
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 6px 0;
-  & + & { border-top: 1px solid var(--border); }
+  gap: 10px;
+  padding: 10px 10px 10px 12px;
+  margin: 0 -10px;
+  min-height: 36px;
+  border-radius: ${tokens.radius.md};
+  text-decoration: none;
+  color: var(--link);
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+
+  & + & {
+    border-top: 1px solid var(--border);
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+
+  &:hover {
+    background: var(--bg-surface-hover);
+    text-decoration: none;
+  }
+  &:active {
+    background: var(--bg-surface-hover);
+    filter: brightness(0.95);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--input-focus);
+    outline-offset: -2px;
+  }
+`
+
+const SubRowText = styled.span`
+  flex: 1;
+  min-width: 0;
+  font-size: 0.95em;
+  color: var(--link);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`
+
+const SubRowChev = styled.span`
+  flex-shrink: 0;
+  font-size: 18px;
+  line-height: 1;
+  margin-left: 2px;
+  color: var(--text-muted);
+
+  ${SubRow}:hover & {
+    color: var(--text-secondary);
+  }
 `
 
 const UnseenPill = styled.span`
@@ -272,9 +319,10 @@ function UnseenRow({ thing, isUser, unseenCount, totalStr, url }: {
   const Pill = unseenCount > 0 ? UnseenPillActive : UnseenPill
 
   return (
-    <SubRow>
-      <BlueLink href={url} target="_blank" onClick={handleClick}>{thing}</BlueLink>
+    <SubRow href={url} target="_blank" onClick={handleClick}>
+      <SubRowText>{thing}</SubRowText>
       <Pill>{totalStr ?? unseenCount}</Pill>
+      <SubRowChev aria-hidden="true">›</SubRowChev>
     </SubRow>
   )
 }
