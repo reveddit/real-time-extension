@@ -15,6 +15,8 @@ import {
     getLocalStorageItems,
     getPendingNotification,
     setPendingNotification,
+    clearPendingNotification,
+    appendNotificationLog,
     MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
     MAX_SYNC_STORAGE_CHANGES,
     SEEN_COUNT_DEFAULT,
@@ -60,8 +62,8 @@ const BACKLOG_AGE_THRESHOLD_SECONDS = 48 * 60 * 60
 
 interface MarkChangesResult {
     num_changes: number
-    realtimeChanges: { count: number; changeTypes: string[] }
-    backlogChanges: { count: number; changeTypes: string[]; ageRange: { min: number; max: number } }
+    realtimeChanges: { count: number; changeTypes: string[]; ids: string[] }
+    backlogChanges: { count: number; changeTypes: string[]; ids: string[]; ageRange: { min: number; max: number } }
 }
 
 const updateOldestDateThreshold = (items: any[], itemLookup: Record<string, any>, thing: string, isUser: boolean) => {
@@ -514,16 +516,28 @@ const checkForChanges_thing_byId = async (
 
         const changeTypes: string[] = []
         let num_changes = 0
-        const mergedRealtime: { count: number; changeTypes: string[] } = { count: 0, changeTypes: [] }
-        const mergedBacklog: { count: number; changeTypes: string[]; ageRange: { min: number; max: number } } = {
+        const mergedRealtime: { count: number; changeTypes: string[]; ids: string[] } = {
             count: 0,
             changeTypes: [],
+            ids: [],
+        }
+        const mergedBacklog: {
+            count: number
+            changeTypes: string[]
+            ids: string[]
+            ageRange: { min: number; max: number }
+        } = {
+            count: 0,
+            changeTypes: [],
+            ids: [],
             ageRange: { min: Infinity, max: 0 },
         }
         const mergeResult = (r: MarkChangesResult) => {
             num_changes += r.num_changes
             mergedRealtime.count += r.realtimeChanges.count
+            mergedRealtime.ids.push(...r.realtimeChanges.ids)
             mergedBacklog.count += r.backlogChanges.count
+            mergedBacklog.ids.push(...r.backlogChanges.ids)
             for (const t of r.realtimeChanges.changeTypes) {
                 if (!mergedRealtime.changeTypes.includes(t)) mergedRealtime.changeTypes.push(t)
             }
@@ -604,19 +618,31 @@ const checkForChanges_thing_byId = async (
                     backlogCount: mergedBacklog.count,
                 })
                 if (mergedRealtime.count > 0 && mergedRealtime.changeTypes.length) {
+                    const msg = `${mergedRealtime.count} new [${mergedRealtime.changeTypes.join(', ')}] actions, click to view`
                     console.log(
                         `Creating realtime notification for ${thing}: ${mergedRealtime.count} changes of type ${mergedRealtime.changeTypes.join(', ')}`,
                     )
                     createNotification({
                         notificationId: thing,
                         title: thing,
-                        message: `${mergedRealtime.count} new [${mergedRealtime.changeTypes.join(', ')}] actions, click to view`,
+                        message: msg,
+                    }).then(success => {
+                        if (success) clearPendingNotification(thing).catch(() => {})
                     })
                     setPendingNotification(thing, {
                         count: mergedRealtime.count,
                         types: mergedRealtime.changeTypes,
+                        itemIds: mergedRealtime.ids,
                         firstAttemptAt: Date.now(),
                         attempts: 1,
+                    }).catch(() => {})
+                    appendNotificationLog({
+                        ts: Date.now(),
+                        id: thing,
+                        title: thing,
+                        message: msg,
+                        itemIds: mergedRealtime.ids,
+                        source: 'recent',
                     }).catch(() => {})
                 }
                 if (mergedBacklog.count > 0) {
@@ -635,15 +661,26 @@ const checkForChanges_thing_byId = async (
                             if (pending.attempts >= MAX_RETRY_ATTEMPTS) return
                             const MIN_RETRY_DELAY_MS = 2 * 60 * 1000
                             if (Date.now() - pending.firstAttemptAt < MIN_RETRY_DELAY_MS) return
+                            const retryMsg = `${pending.count} new [${pending.types.join(', ')}] actions, click to view`
                             console.log(`Retrying pending notification for ${thing} (attempt ${pending.attempts + 1})`)
                             createNotification({
                                 notificationId: thing,
                                 title: thing,
-                                message: `${pending.count} new [${pending.types.join(', ')}] actions, click to view`,
+                                message: retryMsg,
+                            }).then(success => {
+                                if (success) clearPendingNotification(thing).catch(() => {})
                             })
                             setPendingNotification(thing, {
                                 ...pending,
                                 attempts: pending.attempts + 1,
+                            }).catch(() => {})
+                            appendNotificationLog({
+                                ts: Date.now(),
+                                id: thing,
+                                title: thing,
+                                message: retryMsg,
+                                itemIds: pending.itemIds,
+                                source: 'retry',
                             }).catch(() => {})
                         })
                         .catch(() => {})
@@ -868,6 +905,8 @@ function markChanges(
     const realtimeChangeTypes: string[] = []
     const backlogChangeTypes: string[] = []
     const backlogAges: number[] = []
+    const realtimeIds: string[] = []
+    const backlogIds: string[] = []
     let realtimeCount = 0
     let backlogCount = 0
 
@@ -877,8 +916,10 @@ function markChanges(
         if (age > BACKLOG_AGE_THRESHOLD_SECONDS) {
             backlogCount++
             backlogAges.push(age)
+            backlogIds.push(id)
         } else {
             realtimeCount++
+            realtimeIds.push(id)
         }
     }
     if (realtimeCount > 0) {
@@ -890,10 +931,11 @@ function markChanges(
 
     return {
         num_changes,
-        realtimeChanges: { count: realtimeCount, changeTypes: realtimeChangeTypes },
+        realtimeChanges: { count: realtimeCount, changeTypes: realtimeChangeTypes, ids: realtimeIds },
         backlogChanges: {
             count: backlogCount,
             changeTypes: backlogChangeTypes,
+            ids: backlogIds,
             ageRange: backlogAges.length
                 ? { min: Math.min(...backlogAges), max: Math.max(...backlogAges) }
                 : { min: 0, max: 0 },
@@ -942,11 +984,19 @@ const maybeFireBacklogSummary = async (storage: Record<string, any>): Promise<vo
     if (!state.initialBacklogNotified) {
         if (count === 0) return
         await markBacklogInitialNotified()
+        const msg = `${count} older removed/locked posts or comments found in your history. Click to review.`
         createNotification({
             notificationId: 'backlog_summary',
             title: 'reveddit real-time',
-            message: `${count} older removed/locked posts or comments found in your history. Click to review.`,
+            message: msg,
         })
+        appendNotificationLog({
+            ts: Date.now(),
+            id: 'backlog_summary',
+            title: 'reveddit real-time',
+            message: msg,
+            source: 'backlog_summary',
+        }).catch(() => {})
         return
     }
 
@@ -955,9 +1005,17 @@ const maybeFireBacklogSummary = async (storage: Record<string, any>): Promise<vo
     await markBacklogSummarySent()
     if (count === 0) return
 
+    const msg = `${count} older removed/locked posts or comments found in your history. Click to review.`
     createNotification({
         notificationId: 'backlog_summary',
         title: 'reveddit real-time',
-        message: `${count} older removed/locked posts or comments found in your history. Click to review.`,
+        message: msg,
     })
+    appendNotificationLog({
+        ts: Date.now(),
+        id: 'backlog_summary',
+        title: 'reveddit real-time',
+        message: msg,
+        source: 'backlog_summary',
+    }).catch(() => {})
 }

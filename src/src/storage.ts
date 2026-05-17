@@ -101,6 +101,7 @@ type PendingNotification = {
     thing: string
     count: number
     types: string[]
+    itemIds?: string[]
     firstAttemptAt: number
     attempts: number
 }
@@ -125,6 +126,35 @@ export const clearPendingNotification = (thing: string) => {
         const all = r[PENDING_NOTIFICATIONS_KEY] || {}
         delete all[thing]
         return browser.storage.local.set({ [PENDING_NOTIFICATIONS_KEY]: all })
+    })
+}
+
+const NOTIFICATION_LOG_KEY = 'notification_log'
+const NOTIFICATION_LOG_MAX = 50
+
+export type NotificationLogEntry = {
+    ts: number
+    id: string
+    title: string
+    message: string
+    itemIds?: string[]
+    source: 'recent' | 'retry' | 'backlog_summary'
+}
+
+export const getNotificationLog = (): Promise<NotificationLogEntry[]> => {
+    return browser.storage.local.get({ [NOTIFICATION_LOG_KEY]: [] }).then((r: any) => {
+        return r[NOTIFICATION_LOG_KEY] || []
+    })
+}
+
+export const appendNotificationLog = (entry: NotificationLogEntry): Promise<void> => {
+    return browser.storage.local.get({ [NOTIFICATION_LOG_KEY]: [] }).then((r: any) => {
+        const log: NotificationLogEntry[] = r[NOTIFICATION_LOG_KEY] || []
+        log.push(entry)
+        if (log.length > NOTIFICATION_LOG_MAX) {
+            log.splice(0, log.length - NOTIFICATION_LOG_MAX)
+        }
+        return browser.storage.local.set({ [NOTIFICATION_LOG_KEY]: log }) as unknown as void
     })
 }
 

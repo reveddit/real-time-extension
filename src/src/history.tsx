@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
-import { getAllChanges, getItemFromLocalStorage, getPendingPostQueueSize } from './storage'
+import { getAllChanges, getItemFromLocalStorage, getPendingPostQueueSize, getNotificationLog, NotificationLogEntry } from './storage'
 import { ChangeForStorage, LocalStorageItem, getPrettyDate, getPrettyTimeLength, isComment } from './common'
 import { AppGlobal } from './ui/global'
 import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueLink, MutedLink, Author, Subreddit, PostTitle, MdBody, MessageBanner, MiniSpinner } from './ui/components'
@@ -250,6 +250,9 @@ function History() {
   }
   const [pendingPostCount, setPendingPostCount] = useState(0)
   const [initialScanDone, setInitialScanDone] = useState(true)
+  const [notifLog, setNotifLog] = useState<NotificationLogEntry[]>([])
+  const [logOpen, setLogOpen] = useState(false)
+  const logSectionRef = useRef<HTMLDivElement>(null)
 
   const loadData = useCallback(() => {
     getPendingPostQueueSize().then(size => setPendingPostCount(size))
@@ -346,6 +349,7 @@ function History() {
 
   useEffect(() => {
     loadData()
+    getNotificationLog().then(setNotifLog)
     let debounceTimer: ReturnType<typeof setTimeout> | null = null
     const debouncedLoad = () => {
       if (debounceTimer) clearTimeout(debounceTimer)
@@ -364,6 +368,9 @@ function History() {
       if (area === 'local' && changes.pending_post_lookups) {
         const newQueue = changes.pending_post_lookups.newValue || []
         setPendingPostCount(newQueue.length)
+      }
+      if (area === 'local' && changes.notification_log) {
+        setNotifLog(changes.notification_log.newValue || [])
       }
     }
     chrome.storage.onChanged.addListener(onChange)
@@ -449,8 +456,14 @@ function History() {
           </ShowWelcomeLink>
         )}
 
-        <PageHeader>
+        <TitleBar>
           <h1 style={{ margin: 0 }}>History</h1>
+          <NotifLogLink onClick={() => {
+            setLogOpen(true)
+            setTimeout(() => logSectionRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+          }}>notification log</NotifLogLink>
+        </TitleBar>
+        <PageHeader>
           <Controls>
             <ControlGroup>
               <ControlLabel>filter</ControlLabel>
@@ -517,9 +530,89 @@ function History() {
             )}
           </>
         )}
+
+        <LogSection ref={logSectionRef}>
+          <LogToggle onClick={() => setLogOpen(!logOpen)}>
+            {logOpen ? '▾' : '▸'} Notification Log ({notifLog.length})
+          </LogToggle>
+          {logOpen && (
+            notifLog.length === 0 ? <LogEmpty>No notifications logged yet.</LogEmpty> : (
+            <LogTable>
+              <LogHeader>Time</LogHeader>
+              <LogHeader>Type</LogHeader>
+              <LogHeader>Message</LogHeader>
+              <LogHeader>IDs</LogHeader>
+              {notifLog.slice().reverse().map((entry, i) => (
+                <React.Fragment key={i}>
+                  <LogCell>{new Date(entry.ts).toLocaleString()}</LogCell>
+                  <LogCell>{entry.source}</LogCell>
+                  <LogCell>{entry.message}</LogCell>
+                  <LogCell>{entry.itemIds?.join(', ')}</LogCell>
+                </React.Fragment>
+              ))}
+            </LogTable>
+            )
+          )}
+        </LogSection>
       </Page>
     </>
   )
 }
+
+const LogSection = styled.div`
+    margin-top: ${tokens.space.lg};
+    padding-top: ${tokens.space.md};
+    border-top: 1px solid var(--border);
+`
+const LogToggle = styled.button`
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: ${tokens.space.xs} 0;
+    &:hover { color: var(--text-primary); }
+`
+const LogTable = styled.div`
+    display: grid;
+    grid-template-columns: auto auto 1fr auto;
+    gap: 0;
+    margin-top: ${tokens.space.sm};
+    font-size: 0.82em;
+    color: var(--text-secondary);
+`
+const LogHeader = styled.div`
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    padding: ${tokens.space.xs} ${tokens.space.sm};
+    border-bottom: 1px solid var(--border);
+`
+const LogCell = styled.div`
+    padding: ${tokens.space.xs} ${tokens.space.sm};
+    border-bottom: 1px solid var(--border);
+    word-break: break-all;
+`
+const LogEmpty = styled.div`
+    color: var(--text-muted);
+    padding: ${tokens.space.sm} 0;
+`
+const TitleBar = styled.div`
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: ${tokens.space.sm};
+`
+const NotifLogLink = styled.button`
+    background: none;
+    border: none;
+    color: var(--link);
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: 0;
+    text-decoration: none;
+    &:hover { color: var(--link-hover); text-decoration: underline; }
+`
 
 createRoot(document.getElementById('root')!).render(<History />)

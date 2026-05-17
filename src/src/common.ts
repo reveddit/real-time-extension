@@ -450,53 +450,58 @@ export const createNotification = ({
     notificationId: string
     title: string
     message: string
-}) => {
+}): Promise<boolean> => {
     console.log(`createNotification called: ${notificationId} - ${title} - ${message}`)
-    if (location.protocol.match(/^http/)) {
-        console.log('Sending notification via message passing')
-        chrome.runtime.sendMessage({
-            action: 'create-notification',
-            options: { notificationId, title, message },
-        })
-    } else {
-        console.log('Creating notification directly with chrome.notifications.create')
-        // Use callback form to avoid Promise issues across browsers
-        // Ensure a unique ID so repeated notifications are not silently merged by the OS
-        const baseId = String(notificationId)
-        const uniqueId = baseId.includes('|') ? baseId : `${baseId}|${Date.now()}`
-        const options = {
-            type: 'basic',
-            iconUrl: chrome.runtime.getURL('icons/128.png'),
-            title: title,
-            message: message,
-        }
-        const fallbackShowNotification = () => {
-            try {
-                const swSelf = self as any
-                const swRegistration = swSelf && swSelf.registration ? swSelf.registration : null
-                if (swRegistration && swRegistration.showNotification) {
-                    swRegistration.showNotification(title, {
-                        body: message,
-                        icon: chrome.runtime.getURL('icons/128.png'),
-                        data: baseId,
-                    })
+    return new Promise<boolean>(resolve => {
+        if (location.protocol.match(/^http/)) {
+            console.log('Sending notification via message passing')
+            chrome.runtime.sendMessage({
+                action: 'create-notification',
+                options: { notificationId, title, message },
+            })
+            resolve(true)
+        } else {
+            console.log('Creating notification directly with chrome.notifications.create')
+            const baseId = String(notificationId)
+            const uniqueId = baseId.includes('|') ? baseId : `${baseId}|${Date.now()}`
+            const options = {
+                type: 'basic',
+                iconUrl: chrome.runtime.getURL('icons/128.png'),
+                title: title,
+                message: message,
+            }
+            const fallbackShowNotification = () => {
+                try {
+                    const swSelf = self as any
+                    const swRegistration = swSelf && swSelf.registration ? swSelf.registration : null
+                    if (swRegistration && swRegistration.showNotification) {
+                        swRegistration.showNotification(title, {
+                            body: message,
+                            icon: chrome.runtime.getURL('icons/128.png'),
+                            data: baseId,
+                        })
+                    }
+                } catch (e) {
+                    console.log('Fallback showNotification failed:', e)
                 }
-            } catch (e) {
-                console.log('Fallback showNotification failed:', e)
+            }
+            try {
+                chrome.notifications.create(uniqueId, options as chrome.notifications.NotificationOptions, () => {
+                    if ((chrome.runtime as any)?.lastError) {
+                        console.log('chrome.notifications.create error:', (chrome.runtime as any).lastError.message)
+                        fallbackShowNotification()
+                        resolve(false)
+                    } else {
+                        resolve(true)
+                    }
+                })
+            } catch (error) {
+                console.log('Error creating notification:', error)
+                fallbackShowNotification()
+                resolve(false)
             }
         }
-        try {
-            chrome.notifications.create(uniqueId, options as chrome.notifications.NotificationOptions, () => {
-                if ((chrome.runtime as any)?.lastError) {
-                    console.log('chrome.notifications.create error:', (chrome.runtime as any).lastError.message)
-                    fallbackShowNotification()
-                }
-            })
-        } catch (error) {
-            console.log('Error creating notification:', error)
-            fallbackShowNotification()
-        }
-    }
+    })
 }
 
 export const updateBadgeUnseenCount = () => {
