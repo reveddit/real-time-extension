@@ -97,7 +97,9 @@ const contentScripts = {
     'content-common': './src/src/content-common.ts',
     contextMenus: './src/src/contextMenus.ts',
     requests: './src/src/requests.ts',
-    storage: './src/src/storage.ts'
+    storage: './src/src/storage.ts',
+    restore: './src/src/restore.ts',
+    'restore-ui': './src/src/restore-ui.ts',
 }
 const extensionPages = {
     options: './src/src/options.tsx',

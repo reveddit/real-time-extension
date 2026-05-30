@@ -95,3 +95,276 @@
 .commentarea .collapsed.deleted.comment {
     display: block;
 }
+
+/* --- Per-comment scan button --- */
+
+.rev-scan-comment-btn {
+    cursor: pointer;
+    color: #0079d3;
+    font-size: 11px;
+    font-weight: 700;
+    background: #e8f0fe;
+    border: none;
+    border-radius: 2px;
+    padding: 1px 6px;
+    text-decoration: none;
+}
+.rev-scan-comment-btn:hover {
+    background: #0079d3;
+    color: white;
+    text-decoration: none;
+}
+.rev-scan-comment-removed {
+    background: #0079d3;
+    color: white;
+}
+.rev-scan-comment-removed:hover {
+    background: #005fa3;
+}
+
+/* --- Restore button (new reddit) --- */
+
+.rev-restore-btn {
+    cursor: pointer;
+    color: #0079d3;
+    font-size: 12px;
+}
+.rev-restore-btn:hover {
+    text-decoration: underline;
+}
+
+.rev-restore-wrap {
+    margin: 4px 0;
+}
+
+.rev-restore-progress {
+    font-size: 11px;
+    color: #787c7e;
+    font-style: italic;
+    margin-left: 4px;
+}
+
+.rev-restore-cancel {
+    font-size: 11px;
+    color: #787c7e;
+    margin-left: 8px;
+    cursor: pointer;
+}
+.rev-restore-cancel:hover {
+    text-decoration: underline;
+}
+
+/* --- Restored comment --- */
+
+.rev-restored {
+    border-left: 3px solid #0079d3;
+    padding-left: 8px;
+    background-color: rgba(0, 121, 211, 0.05);
+}
+
+.rev-restore-attribution {
+    font-size: 11px;
+    color: #787c7e;
+    margin-top: 4px;
+}
+
+/* --- Profile scan --- */
+
+.rev-profile-scan-container {
+    margin: 8px 0;
+    padding: 8px;
+    border: 1px solid #edeff1;
+    border-radius: 4px;
+}
+
+.rev-profile-scan-btn {
+    background: #0079d3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1.4;
+    display: inline-flex;
+    align-items: center;
+}
+.rev-profile-scan-btn:hover {
+    background: #006cbf;
+}
+.rev-profile-scan-btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.rev-profile-scan-progress {
+    font-size: 12px;
+    color: #787c7e;
+    margin-top: 6px;
+}
+
+.rev-profile-scan-results {
+    margin-top: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.rev-scan-header {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.rev-scan-item {
+    padding: 8px;
+    border-bottom: 1px solid #edeff1;
+    font-size: 13px;
+}
+.rev-scan-item:last-child {
+    border-bottom: none;
+}
+
+.rev-scan-item-meta {
+    font-size: 11px;
+    color: #787c7e;
+    margin-bottom: 4px;
+}
+
+.rev-scan-badge-removed {
+    display: inline-block;
+    background: #ff585b;
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 2px;
+    text-transform: uppercase;
+    margin-left: 4px;
+}
+
+.rev-scan-item-body {
+    margin: 4px 0;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.rev-scan-item-link {
+    font-size: 11px;
+    color: #0079d3;
+}
+.rev-scan-item-link:hover {
+    text-decoration: underline;
+}
+
+/* --- Inline removed highlighting --- */
+
+.rev-removed-highlight {
+    border-left: 3px solid #ff585b !important;
+    background-color: rgba(255, 88, 91, 0.05) !important;
+}
+
+.rev-inline-badge {
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+/* --- Inserted (missing) comments --- */
+
+.rev-inserted-comment {
+    padding: 8px 12px;
+    margin: 4px 0;
+    border: 1px dashed #ff585b;
+    border-left: 3px solid #ff585b;
+    background-color: rgba(255, 88, 91, 0.03);
+    border-radius: 4px;
+}
+
+.rev-scan-item-title {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+
+/* --- Filter bar --- */
+
+.rev-filter-bar {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid #edeff1;
+}
+
+.rev-filter-btn {
+    background: none;
+    border: 1px solid #edeff1;
+    border-radius: 16px;
+    padding: 4px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #787c7e;
+}
+.rev-filter-btn:hover {
+    border-color: #0079d3;
+    color: #0079d3;
+}
+.rev-filter-btn.rev-filter-active {
+    background: #0079d3;
+    color: white;
+    border-color: #0079d3;
+}
+
+/* --- Scan All button --- */
+
+.rev-scan-all-btn {
+    display: inline-block;
+    margin-left: 8px;
+    cursor: pointer;
+    background: #0079d3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    vertical-align: middle;
+}
+.rev-scan-all-btn:hover {
+    background: #005fa3;
+}
+.rev-scan-all-btn:disabled {
+    opacity: 0.7;
+    cursor: wait;
+}
+.rev-scan-all-loading {
+    background: #787c7e;
+}
+
+.rev-scan-all-progress {
+    display: inline-block;
+    margin-left: 8px;
+    font-size: 11px;
+    color: #787c7e;
+    font-style: italic;
+    vertical-align: middle;
+}
+
+/* --- Dark mode (RES nightmode) --- */
+
+.res-nightmode .rev-removed-highlight {
+    background-color: rgba(255, 88, 91, 0.1) !important;
+}
+
+.res-nightmode .rev-inserted-comment {
+    background-color: rgba(255, 88, 91, 0.08);
+    border-color: rgba(255, 88, 91, 0.5);
+}
+
+.res-nightmode .rev-filter-btn {
+    border-color: #343536;
+    color: #818384;
+}
+
+.res-nightmode .rev-filter-bar {
+    border-bottom-color: #343536;
+}

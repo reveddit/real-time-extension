@@ -1,9 +1,10 @@
 import { getAuth, lookupItemsByID } from './requests'
-import { getFullIDsFromPath } from './common'
+import { getFullIDsFromPath, REMOVED_BY_MODERATOR_TEXT, detectIsNewReddit } from './common'
 import { setTextAndFunction_subscribe, setTextAndFunction_unsubscribe } from './content-common'
 import { observe, findByText } from './dom-helpers'
 import browser from 'webextension-polyfill'
 import { subscribeUser, MAX_SUBSCRIPTIONS } from './storage'
+import { initRestoreOnThread, initProfileScan } from './restore-ui'
 
 const USER_DELETED = 'rev-user-deleted'
 const MOD_REMOVED = 'rev-mod-removed'
@@ -18,8 +19,17 @@ export const redditModifications = (
     subscribed_users_lowercase: string[],
     unsubscribed_users_lowercase: string[],
 ) => {
-    const isNewReddit = Boolean(document.querySelector('head')?.getAttribute('prefix'))
+    const isNewReddit = detectIsNewReddit()
     ifThreadPage_showRemovalStatus(isNewReddit, monitor_quarantined)
+
+    // Restore buttons on thread pages, profile scan on user pages
+    const [postID_restore, , user_restore, subreddit_restore] = getFullIDsFromPath(window.location.pathname)
+    if (postID_restore && subreddit_restore) {
+        initRestoreOnThread(isNewReddit)
+    }
+    if (user_restore) {
+        initProfileScan(user_restore, isNewReddit)
+    }
     const subscribeIfNotUnsubscribed = (user: string) => {
         const user_lc = user.toLowerCase()
         if (
@@ -78,7 +88,7 @@ export const redditModifications = (
     }
 }
 
-const removedByModeratorText = 'Comment removed by moderator'.toLowerCase().trim()
+const removedByModeratorText = REMOVED_BY_MODERATOR_TEXT
 const directLink_class = 'RevedditLink'
 const addDirectLinks_newReddit_comments = () => {
     const processList = (elements: Element[]) => {
@@ -132,6 +142,7 @@ const ifThreadPage_showRemovalStatus = (
     postData: Record<string, any> = {},
 ) => {
     const [postID, , , subreddit] = getFullIDsFromPath(window.location.pathname)
+    if (!postID) return
     // links to comments on new reddit do not have robots noindex,nofollow, so need to lookup data if haven't already
     // as of 2022/2023: older posts e.g. t3_9emzhp no longer have noindex,nofollow, so always need to look up data for new reddit
     if (isNewReddit && Object.keys(postData).length === 0) {

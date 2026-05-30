@@ -17,6 +17,17 @@ export interface RedditItem {
 }
 
 export const ALARM_NAME = 'notifyme'
+export const REMOVED_BY_MODERATOR_TEXT = 'comment removed by moderator'
+
+export function detectIsNewReddit(): boolean {
+    // Available before JS renders — new reddit sets device attribute on <html>
+    if (document.documentElement.hasAttribute('device')) return true
+    // Custom elements present after rendering
+    if (document.querySelector('shreddit-app') || document.querySelector('shreddit-feed')) return true
+    // Old reddit markers
+    if (document.getElementById('header') || document.getElementById('siteTable')) return false
+    return false
+}
 const maxRedditContentLength = 10000
 const ACTION_API = __BUILT_FOR__ === 'chrome' ? 'action' : 'browserAction'
 

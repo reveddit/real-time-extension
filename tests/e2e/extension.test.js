@@ -35,14 +35,14 @@ test.describe('Options page', () => {
         await expect(page.locator('h2', { hasText: 'Tracking & notification' })).toBeVisible()
 
         // Tracking grid should have checkboxes for removed/locked
-        await expect(page.locator('text=removed')).toBeVisible()
-        await expect(page.locator('text=locked')).toBeVisible()
+        await expect(page.getByText('removed', { exact: true })).toBeVisible()
+        await expect(page.getByText('locked', { exact: true })).toBeVisible()
         const checkboxes = page.locator('input[type="checkbox"]')
         await expect(checkboxes.first()).toBeVisible()
 
         // Polling section with interval input
         await expect(page.locator('h2', { hasText: 'Polling' })).toBeVisible()
-        await expect(page.locator('text=minutes between updates')).toBeVisible()
+        await expect(page.locator('text=minutes between Reddit checks')).toBeVisible()
 
         // Appearance section
         await expect(page.locator('h2', { hasText: 'Appearance' })).toBeVisible()
