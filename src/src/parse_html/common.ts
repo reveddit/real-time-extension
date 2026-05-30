@@ -19,6 +19,25 @@ export const redditHTMLRequestOptions = {
     },
 }
 
+export const REDDIT_HTML_FETCH_TIMEOUT_MS = 15000
+
+// fetch() never times out on its own; a stalled old.reddit response would hang
+// the pending-post loop indefinitely (a "stuck scanning" cause). Abort after a
+// bounded time so the loop always makes progress.
+export const fetchWithTimeout = async (
+    url: string,
+    options: Parameters<typeof fetch>[1] = {},
+    timeoutMs: number = REDDIT_HTML_FETCH_TIMEOUT_MS,
+): Promise<Response> => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+        return await fetch(url, { ...options, signal: controller.signal })
+    } finally {
+        clearTimeout(timer)
+    }
+}
+
 export class ErrorCollector {
     errors: Record<string, number>
     url: string

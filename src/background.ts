@@ -430,7 +430,7 @@ if (!chrome.extension.inIncognitoContext) {
     chrome.alarms.onAlarm.addListener(function (alarm) {
         if (alarm.name == ALARM_NAME) {
             lastAlarm = Date.now() // part of WORKAROUND for broken alarms
-            checkForChanges()
+            checkForChanges(true) // apply jitter to periodic (alarm-driven) polls
             // Piggyback the news feed refresh on the alarm tick; fetchNews
             // enforces its own 6-hour throttle internally.
             fetchNews().catch(() => {})

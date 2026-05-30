@@ -358,6 +358,7 @@ function Popup() {
   const [connectMessage, setConnectMessage] = useState<string | null>(null)
   const [newsMessage, setNewsMessage] = useState<NewsMessage | null>(null)
   const [pendingPostCount, setPendingPostCount] = useState(0)
+  const [pendingProgress, setPendingProgress] = useState<{ processed: number; total: number } | null>(null)
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [showRelease, setShowRelease] = useState(false)
 
@@ -420,6 +421,10 @@ function Popup() {
     })
 
     getPendingPostQueueSize().then(size => setPendingPostCount(size))
+    chrome.storage.local.get(['pending_post_progress'], result => {
+      const prog = result?.pending_post_progress
+      setPendingProgress(prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null)
+    })
 
     // News feed: opportunistically refresh (6h throttled) then read top unread.
     fetchNews().finally(() => {
@@ -436,6 +441,11 @@ function Popup() {
       if (area === 'local' && changes.pending_post_lookups) {
         const newQueue = changes.pending_post_lookups.newValue || []
         setPendingPostCount(newQueue.length)
+        if (newQueue.length === 0) setPendingProgress(null)
+      }
+      if (area === 'local' && changes.pending_post_progress) {
+        const prog = changes.pending_post_progress.newValue
+        setPendingProgress(prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null)
       }
     }
     chrome.storage.onChanged.addListener(listener)
@@ -670,7 +680,9 @@ function Popup() {
         )}
 
         {pendingPostCount > 0 && (
-          <MessageBanner variant="info"><MiniSpinner />Scanning {pendingPostCount} posts for removals...</MessageBanner>
+          <MessageBanner variant="info"><MiniSpinner />{pendingProgress && pendingProgress.total > 0
+            ? `Scanning ${Math.min(pendingProgress.processed, pendingProgress.total)} of ${pendingProgress.total} posts for removals…`
+            : `Scanning ${pendingPostCount} posts for removals…`}</MessageBanner>
         )}
 
         <SubsCard>

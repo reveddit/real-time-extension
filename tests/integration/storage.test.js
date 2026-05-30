@@ -32,6 +32,14 @@ import {
     addToPendingPostQueue,
     getNextPendingPost,
     removeFromPendingPostQueue,
+    clearPendingPostQueue,
+    recordPendingPostAttempt,
+    clearPendingPostAttempt,
+    getPendingPostAttempts,
+    MAX_PENDING_POST_ATTEMPTS,
+    recordRateLimitHit,
+    clearRateLimitBackoff,
+    getRateLimitBackoffRemainingMs,
 } from '../../src/src/storage.ts'
 
 // Promisify callback-style functions for cleaner tests
@@ -305,6 +313,76 @@ describe('pending post queue', () => {
         const local = __getLocalStorage()
         const queue = local.pending_post_lookups
         expect(queue).toEqual(['t3_a', 't3_b', 't3_c'])
+    })
+})
+
+describe('pending post attempt cap', () => {
+    beforeEach(() => __resetStorage({}, {}))
+
+    it('records and increments attempts', async () => {
+        expect(await recordPendingPostAttempt('t3_a')).toBe(1)
+        expect(await recordPendingPostAttempt('t3_a')).toBe(2)
+        const attempts = await getPendingPostAttempts()
+        expect(attempts['t3_a']).toBe(2)
+    })
+
+    it('stops re-enqueuing a post once it hits the attempt cap', async () => {
+        for (let i = 0; i < MAX_PENDING_POST_ATTEMPTS; i++) {
+            await recordPendingPostAttempt('t3_stuck')
+        }
+        await addToPendingPostQueue(['t3_stuck', 't3_ok'])
+        expect(__getLocalStorage().pending_post_lookups).toEqual(['t3_ok'])
+    })
+
+    it('clearPendingPostAttempt lets a post be enqueued again', async () => {
+        for (let i = 0; i < MAX_PENDING_POST_ATTEMPTS; i++) {
+            await recordPendingPostAttempt('t3_a')
+        }
+        await clearPendingPostAttempt('t3_a')
+        await addToPendingPostQueue(['t3_a'])
+        expect(__getLocalStorage().pending_post_lookups).toEqual(['t3_a'])
+    })
+
+    it('clearPendingPostQueue empties queue, progress, and attempts', async () => {
+        await addToPendingPostQueue(['t3_a'])
+        await recordPendingPostAttempt('t3_a')
+        __getLocalStorage().pending_post_progress = { processed: 1, total: 5 }
+        await clearPendingPostQueue()
+        const local = __getLocalStorage()
+        expect(local.pending_post_lookups).toBeUndefined()
+        expect(local.pending_post_attempts).toBeUndefined()
+        expect(local.pending_post_progress).toBeUndefined()
+    })
+})
+
+describe('rate-limit backoff', () => {
+    beforeEach(() => __resetStorage({}, {}))
+
+    it('has no backoff initially', async () => {
+        expect(await getRateLimitBackoffRemainingMs()).toBe(0)
+    })
+
+    it('backs off exponentially on repeated hits', async () => {
+        const first = await recordRateLimitHit()
+        const second = await recordRateLimitHit()
+        expect(first).toBe(2 * 60 * 1000)
+        expect(second).toBe(first * 2)
+        expect(await getRateLimitBackoffRemainingMs()).toBeGreaterThan(0)
+    })
+
+    it('caps the backoff at the maximum', async () => {
+        let wait = 0
+        for (let i = 0; i < 12; i++) wait = await recordRateLimitHit()
+        expect(wait).toBe(30 * 60 * 1000)
+    })
+
+    it('clears backoff and resets the level', async () => {
+        await recordRateLimitHit()
+        await recordRateLimitHit()
+        await clearRateLimitBackoff()
+        expect(await getRateLimitBackoffRemainingMs()).toBe(0)
+        // next hit starts again from the base delay
+        expect(await recordRateLimitHit()).toBe(2 * 60 * 1000)
     })
 })
 

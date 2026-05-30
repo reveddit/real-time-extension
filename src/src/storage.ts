@@ -516,9 +516,15 @@ export const saveOptions = (
 const PENDING_POSTS_KEY = 'pending_post_lookups'
 
 export const addToPendingPostQueue = async (postIds: string[]) => {
+    // Don't re-enqueue posts that have already been attempted the maximum number
+    // of times without resolving — otherwise a failing lookup keeps refilling the
+    // queue every cycle and the scan banner never clears.
+    const attempts = await getPendingPostAttempts()
+    const allowed = postIds.filter(id => (attempts[id] || 0) < MAX_PENDING_POST_ATTEMPTS)
+    if (allowed.length === 0) return
     const result = await browser.storage.local.get({ [PENDING_POSTS_KEY]: [] })
     const existingQueue = result[PENDING_POSTS_KEY] as string[]
-    const newQueue = [...new Set([...existingQueue, ...postIds])]
+    const newQueue = [...new Set([...existingQueue, ...allowed])]
     await browser.storage.local.set({ [PENDING_POSTS_KEY]: newQueue })
 }
 
@@ -553,4 +559,68 @@ export const removeMultipleFromPendingPostQueue = async (postIds: string[]) => {
     const idsToRemove = new Set(postIds)
     const newQueue = queue.filter((id: string) => !idsToRemove.has(id))
     await browser.storage.local.set({ [PENDING_POSTS_KEY]: newQueue })
+}
+
+// Per-post attempt tracking so a post that never resolves (e.g. Reddit keeps
+// returning a non-removed status, or the lookup keeps failing) can't be
+// re-enqueued by the lookup fallback forever and keep the scan banner stuck.
+const PENDING_POST_ATTEMPTS_KEY = 'pending_post_attempts'
+export const MAX_PENDING_POST_ATTEMPTS = 3
+
+export const clearPendingPostQueue = async () => {
+    await browser.storage.local.remove([PENDING_POSTS_KEY, 'pending_post_progress', PENDING_POST_ATTEMPTS_KEY])
+}
+
+export const getPendingPostAttempts = async (): Promise<Record<string, number>> => {
+    const result = await browser.storage.local.get({ [PENDING_POST_ATTEMPTS_KEY]: {} })
+    return result[PENDING_POST_ATTEMPTS_KEY] as Record<string, number>
+}
+
+export const recordPendingPostAttempt = async (postId: string): Promise<number> => {
+    const attempts = await getPendingPostAttempts()
+    attempts[postId] = (attempts[postId] || 0) + 1
+    await browser.storage.local.set({ [PENDING_POST_ATTEMPTS_KEY]: attempts })
+    return attempts[postId]
+}
+
+export const clearPendingPostAttempt = async (postId: string) => {
+    const attempts = await getPendingPostAttempts()
+    if (postId in attempts) {
+        delete attempts[postId]
+        await browser.storage.local.set({ [PENDING_POST_ATTEMPTS_KEY]: attempts })
+    }
+}
+
+// --- Rate-limit backoff (shared across the monitoring alarm) ---
+// Reddit returns 403/429 when too many requests come from one client in a short
+// window, which on old.reddit can lock the user out of browsing for minutes.
+// Instead of hammering at the fixed poll interval, back off exponentially and
+// skip cycles until the cooldown expires.
+const RATE_LIMIT_UNTIL_KEY = 'rate_limit_until'
+const RATE_LIMIT_LEVEL_KEY = 'rate_limit_level'
+const RATE_LIMIT_BASE_MS = 2 * 60 * 1000 // 2 minutes
+const RATE_LIMIT_MAX_MS = 30 * 60 * 1000 // 30 minutes
+
+export const recordRateLimitHit = async (): Promise<number> => {
+    const result = await browser.storage.local.get({ [RATE_LIMIT_LEVEL_KEY]: 0 })
+    const level = (result[RATE_LIMIT_LEVEL_KEY] as number) || 0
+    const waitMs = Math.min(RATE_LIMIT_BASE_MS * Math.pow(2, level), RATE_LIMIT_MAX_MS)
+    await browser.storage.local.set({
+        [RATE_LIMIT_UNTIL_KEY]: Date.now() + waitMs,
+        [RATE_LIMIT_LEVEL_KEY]: level + 1,
+    })
+    return waitMs
+}
+
+export const clearRateLimitBackoff = async () => {
+    const result = await browser.storage.local.get({ [RATE_LIMIT_LEVEL_KEY]: 0, [RATE_LIMIT_UNTIL_KEY]: 0 })
+    if (result[RATE_LIMIT_LEVEL_KEY] || result[RATE_LIMIT_UNTIL_KEY]) {
+        await browser.storage.local.set({ [RATE_LIMIT_UNTIL_KEY]: 0, [RATE_LIMIT_LEVEL_KEY]: 0 })
+    }
+}
+
+export const getRateLimitBackoffRemainingMs = async (): Promise<number> => {
+    const result = await browser.storage.local.get({ [RATE_LIMIT_UNTIL_KEY]: 0 })
+    const until = (result[RATE_LIMIT_UNTIL_KEY] as number) || 0
+    return Math.max(0, until - Date.now())
 }

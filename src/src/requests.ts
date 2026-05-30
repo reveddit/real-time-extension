@@ -1,4 +1,4 @@
-import { getOptions, addToPendingPostQueue } from './storage'
+import { getOptions, addToPendingPostQueue, recordRateLimitHit, clearRateLimitBackoff } from './storage'
 import browser from 'webextension-polyfill'
 import { getItemsById_fromOldHTML } from './parse_html/old'
 import { setWarningBadge } from './common'
@@ -6,8 +6,16 @@ import { setWarningBadge } from './common'
 const RATE_LIMIT_STATUSES = new Set([403, 429])
 const flagIfRateLimited = (err: Error) => {
     const m = err.message.match(/request failed: (\d+)/)
-    if (m && RATE_LIMIT_STATUSES.has(Number(m[1]))) {
+    if (!m) return
+    const status = Number(m[1])
+    if (RATE_LIMIT_STATUSES.has(status)) {
         setWarningBadge('rate_limited')
+    }
+    // Only a real 429 means rate-limited. A 403 is Reddit's structural block on
+    // unauthenticated JSON requests (it happens every cycle now), so it must NOT
+    // trigger backoff — otherwise the alarm would needlessly pause monitoring.
+    if (status === 429) {
+        recordRateLimitHit()
     }
 }
 
@@ -85,6 +93,8 @@ export const lookupItemsByID_withFallback = (
     return fetch(wwwUrl, wwwOptions)
         .then(response => {
             if (response.ok) {
+                // Reddit is responding again — reset any rate-limit backoff.
+                clearRateLimitBackoff()
                 return response.json()
             } else {
                 throw new Error(`www.reddit.com request failed: ${response.status}`)

@@ -1,4 +1,4 @@
-import { consume, oldReddit, redditHTMLRequestOptions, ErrorCollector } from './common'
+import { consume, oldReddit, redditHTMLRequestOptions, fetchWithTimeout, ErrorCollector } from './common'
 import { DOMParser } from 'linkedom/worker'
 import TurndownService from 'turndown'
 import { HTMLRewriter } from '@worker-tools/html-rewriter'
@@ -492,7 +492,7 @@ class ThreadPageAuthor extends ErrorCollector {
 export const getItems_fromOld = async (path: string) => {
     const url = oldReddit + path
 
-    const response = await fetch(url, redditHTMLRequestOptions)
+    const response = await fetchWithTimeout(url, redditHTMLRequestOptions)
     if (!response.ok) {
         return { error: 'request failed' }
     }
@@ -617,7 +617,7 @@ export const getItemsById_fromOldHTML = async (
 
 export const getPost_fromOld = async (path: string) => {
     const url = oldReddit + path
-    const response = await fetch(url, redditHTMLRequestOptions)
+    const response = await fetchWithTimeout(url, redditHTMLRequestOptions)
     if (!response.ok) {
         return { error: 'request failed' }
     }

@@ -25,6 +25,9 @@ import {
     getOldestDateKey,
     getNextPendingPosts,
     removeFromPendingPostQueue,
+    recordPendingPostAttempt,
+    clearPendingPostAttempt,
+    getRateLimitBackoffRemainingMs,
     getBacklogSummaryState,
     markBacklogInitialNotified,
     markBacklogSummarySent,
@@ -130,9 +133,14 @@ const processPendingPosts = async (storage: Record<string, any>) => {
 
         if (isAlreadyKnownRemoved) {
             await removeFromPendingPostQueue(postId)
+            await clearPendingPostAttempt(postId)
             processed++
             continue
         }
+
+        // Count this attempt so a post that never resolves stops being re-enqueued
+        // by the lookup fallback (prevents a permanently "stuck" scan banner).
+        await recordPendingPostAttempt(postId)
 
         try {
             const postPath = '/comments/' + postId.substring(3) + '/'
@@ -163,6 +171,7 @@ const processPendingPosts = async (storage: Record<string, any>) => {
                         [{ data: itemData }],
                         true,
                     )
+                    await clearPendingPostAttempt(postId)
                 }
             } else {
                 console.log(`Pending post lookup: ${postId} is not removed.`)
@@ -207,7 +216,22 @@ export const setCurrentStateForId = (id: string, subscribedFromURL: string) => {
 
 const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 20 * (60 * 60 * 24)
 
-export const checkForChanges = () => {
+// Random jitter (0–10s) applied to periodic polls so they don't fire at a fixed
+// instant each cycle, reducing the chance of coinciding with the user's own
+// browsing and tripping Reddit's rate limit (429).
+const POLL_JITTER_MAX_MS = 10000
+
+export const checkForChanges = async (applyJitter = false) => {
+    // If Reddit recently rate-limited us, skip cycles until the backoff expires
+    // rather than hammering and prolonging the lockout (see recordRateLimitHit).
+    const backoffRemainingMs = await getRateLimitBackoffRemainingMs()
+    if (backoffRemainingMs > 0) {
+        console.log(`checkForChanges: skipping, rate-limit backoff ${Math.ceil(backoffRemainingMs / 1000)}s remaining`)
+        return
+    }
+    if (applyJitter) {
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * POLL_JITTER_MAX_MS)))
+    }
     chrome.storage.sync.get(undefined as any, function (storage: Record<string, any>) {
         const other = Object.keys(storage.other_subscriptions)
         const now = Math.floor(Date.now() / 1000)

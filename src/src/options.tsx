@@ -46,6 +46,14 @@ const Field = styled.div`
 
 const FieldStack = styled.div``
 
+const Hint = styled.div`
+  font-size: 0.8em;
+  font-weight: normal;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  max-width: 28em;
+`
+
 const TrackingGrid = styled.div`
   display: grid;
   grid-template-columns: 1fr 70px 70px;
@@ -164,7 +172,7 @@ function Options() {
     const customClientId = (clientId || '').trim()
 
     if (!(Number.isInteger(intervalNum) && intervalNum > 0)) {
-      setError('"minutes between updates" must be a positive integer')
+      setError('"minutes between Reddit checks" must be a positive integer')
       setTimeout(() => setError(''), 2800)
       return
     }
@@ -237,7 +245,10 @@ function Options() {
         <SectionHeader>Polling</SectionHeader>
         <FieldStack>
           <Field>
-            <label>minutes between updates</label>
+            <label>
+              minutes between Reddit checks
+              <Hint>How often the extension checks Reddit for removed content. Increase this if Reddit rate-limits you (429 errors).</Hint>
+            </label>
             <input type="text" value={interval} onChange={e => setInterval_(e.target.value)} />
           </Field>
           <Field>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
-import { getAllChanges, getItemFromLocalStorage, getPendingPostQueueSize, getNotificationLog, NotificationLogEntry } from './storage'
+import { getAllChanges, getItemFromLocalStorage, getPendingPostQueueSize, clearPendingPostQueue, getNotificationLog, NotificationLogEntry } from './storage'
 import { ChangeForStorage, LocalStorageItem, getPrettyDate, getPrettyTimeLength, isComment } from './common'
 import { AppGlobal } from './ui/global'
 import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueLink, MutedLink, Author, Subreddit, PostTitle, MdBody, MessageBanner, MiniSpinner } from './ui/components'
@@ -114,6 +114,18 @@ const ResetButton = styled.button`
   padding: 4px 8px;
   &:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
   &:disabled { opacity: 0.4; cursor: default; }
+`
+
+const StopScanLink = styled.button`
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 8px;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  cursor: pointer;
+  text-decoration: underline;
+  &:hover { color: var(--link-hover); }
 `
 
 const Empty = styled.p`
@@ -249,6 +261,8 @@ function History() {
     setBannerDismissed(true)
   }
   const [pendingPostCount, setPendingPostCount] = useState(0)
+  const [pendingProgress, setPendingProgress] = useState<{ processed: number; total: number } | null>(null)
+  const [backoffMs, setBackoffMs] = useState(0)
   const [initialScanDone, setInitialScanDone] = useState(true)
   const [notifLog, setNotifLog] = useState<NotificationLogEntry[]>([])
   const [logOpen, setLogOpen] = useState(false)
@@ -256,8 +270,11 @@ function History() {
 
   const loadData = useCallback(() => {
     getPendingPostQueueSize().then(size => setPendingPostCount(size))
-    chrome.storage.local.get(['last_logged_in_user'], result => {
+    chrome.storage.local.get(['last_logged_in_user', 'pending_post_progress', 'rate_limit_until'], result => {
       setCurrentUser(result?.last_logged_in_user || null)
+      const prog = result?.pending_post_progress
+      setPendingProgress(prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null)
+      setBackoffMs(Math.max(0, (result?.rate_limit_until || 0) - Date.now()))
     })
     chrome.storage.sync.get(['last_check'], result => {
       setInitialScanDone(result.last_check != null)
@@ -368,6 +385,14 @@ function History() {
       if (area === 'local' && changes.pending_post_lookups) {
         const newQueue = changes.pending_post_lookups.newValue || []
         setPendingPostCount(newQueue.length)
+        if (newQueue.length === 0) setPendingProgress(null)
+      }
+      if (area === 'local' && changes.pending_post_progress) {
+        const prog = changes.pending_post_progress.newValue
+        setPendingProgress(prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null)
+      }
+      if (area === 'local' && changes.rate_limit_until) {
+        setBackoffMs(Math.max(0, (changes.rate_limit_until.newValue || 0) - Date.now()))
       }
       if (area === 'local' && changes.notification_log) {
         setNotifLog(changes.notification_log.newValue || [])
@@ -490,7 +515,16 @@ function History() {
         </PageHeader>
 
         {pendingPostCount > 0 && (
-          <MessageBanner variant="info"><MiniSpinner />Scanning {pendingPostCount} posts for removals. New results will appear here automatically.</MessageBanner>
+          <MessageBanner variant="info">
+            <MiniSpinner />
+            {pendingProgress && pendingProgress.total > 0
+              ? `Scanning ${Math.min(pendingProgress.processed, pendingProgress.total)} of ${pendingProgress.total} posts for removals…`
+              : `Scanning ${pendingPostCount} ${pendingPostCount === 1 ? 'post' : 'posts'} for removals…`}
+            {backoffMs > 0
+              ? ` Paused ~${Math.max(1, Math.ceil(backoffMs / 60000))} min — Reddit rate limit.`
+              : ' New results appear here automatically.'}
+            <StopScanLink onClick={() => { clearPendingPostQueue(); setPendingPostCount(0); setPendingProgress(null) }}>stop</StopScanLink>
+          </MessageBanner>
         )}
 
         {visible.length > 0 ? (
