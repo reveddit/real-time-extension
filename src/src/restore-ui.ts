@@ -327,19 +327,6 @@ function createProfileScanContainer(username: string): HTMLElement {
     const btn = document.createElement('button')
     btn.className = 'rev-profile-scan-btn'
     btn.textContent = 'Scan for removed content'
-    // On your own profile the scan can only surface removed posts — your own
-    // removed comments look normal to you, so /api/info won't flag them. Relabel
-    // to set the right expectation when viewing the logged-in user's profile.
-    try {
-        chrome.storage.local.get(['last_logged_in_user'], res => {
-            const me = res?.last_logged_in_user
-            if (me && String(me).toLowerCase() === username.toLowerCase()) {
-                btn.textContent = 'Scan for removed posts'
-            }
-        })
-    } catch {
-        /* storage unavailable — keep default label */
-    }
     btn.addEventListener('click', () => handleProfileScan(username, container))
 
     const progress = document.createElement('div')
@@ -620,10 +607,7 @@ function createInlineItem(item: ScanResult, isNewReddit: boolean): HTMLElement {
 
 // --- Profile Scan: Filter Controls ---
 
-function renderFilterControls(
-    container: HTMLElement,
-    results: ScanResult[],
-) {
+function renderFilterControls(container: HTMLElement, results: ScanResult[]) {
     const filterBar = document.createElement('div')
     filterBar.className = 'rev-filter-bar'
 
@@ -748,15 +732,42 @@ export function initRestoreOnThread(isNewReddit: boolean) {
 }
 
 export function initProfileScan(username: string, isNewReddit: boolean) {
-    if (!isNewReddit) {
-        injectProfileScanButton_oldReddit(username)
-    } else {
-        injectProfileScanButton_newReddit(username)
-        setTimeout(() => injectProfileScanButton_newReddit(username), 1500)
-        setTimeout(() => injectProfileScanButton_newReddit(username), 3000)
-        setTimeout(() => injectProfileScanButton_newReddit(username), 5000)
-        setTimeout(() => injectProfileScanButton_newReddit(username), 10000)
-        // Also observe for shreddit-feed appearing dynamically
-        observe(document, 'shreddit-feed', () => injectProfileScanButton_newReddit(username))
-    }
+    shouldShowProfileScanButton(username).then(show => {
+        if (!show) return
+        if (!isNewReddit) {
+            injectProfileScanButton_oldReddit(username)
+        } else {
+            injectProfileScanButton_newReddit(username)
+            setTimeout(() => injectProfileScanButton_newReddit(username), 1500)
+            setTimeout(() => injectProfileScanButton_newReddit(username), 3000)
+            setTimeout(() => injectProfileScanButton_newReddit(username), 5000)
+            setTimeout(() => injectProfileScanButton_newReddit(username), 10000)
+            // Also observe for shreddit-feed appearing dynamically
+            observe(document, 'shreddit-feed', () => injectProfileScanButton_newReddit(username))
+        }
+    })
+}
+
+// Whether to inject the scan button, governed by two options:
+//   - other profiles: show_scan_on_other_profiles (default ON; undefined → on)
+//   - the logged-in user's OWN profile: show_scan_on_own_profile (default OFF)
+function shouldShowProfileScanButton(username: string): Promise<boolean> {
+    return new Promise(resolve => {
+        try {
+            chrome.storage.local.get(['last_logged_in_user'], local => {
+                const me = local?.last_logged_in_user
+                const isOwnProfile = !!me && String(me).toLowerCase() === username.toLowerCase()
+                chrome.storage.sync.get(['options'], sync => {
+                    const opts = sync?.options || {}
+                    if (isOwnProfile) {
+                        resolve(!!opts.show_scan_on_own_profile)
+                    } else {
+                        resolve(opts.show_scan_on_other_profiles !== false)
+                    }
+                })
+            })
+        } catch {
+            resolve(true)
+        }
+    })
 }

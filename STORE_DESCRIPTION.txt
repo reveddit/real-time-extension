@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/05/30 - 0.0.5.8
+- hide scan button on own profile
+
 2026/05/30 - 0.0.5.7
 - show removed content on reddit profiles; fix rate-limit lockouts and stuck scanning
 

@@ -112,6 +112,8 @@ function Options() {
   const [lockedNotify, setLockedNotify] = useState(false)
   const [hideSubscribe, setHideSubscribe] = useState(false)
   const [monitorQuarantined, setMonitorQuarantined] = useState(false)
+  const [showScanOnOwnProfile, setShowScanOnOwnProfile] = useState(false)
+  const [showScanOnOtherProfiles, setShowScanOnOtherProfiles] = useState(true)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [themeMode, setThemeModeState] = useState<ThemeMode>('auto')
   const [error, setError] = useState('')
@@ -131,6 +133,8 @@ function Options() {
       setLockedNotify(!!lock.notify)
       setHideSubscribe(!!opts.hide_subscribe)
       setMonitorQuarantined(!!opts.monitor_quarantined)
+      setShowScanOnOwnProfile(!!opts.show_scan_on_own_profile)
+      setShowScanOnOtherProfiles(opts.show_scan_on_other_profiles !== false)
       setLoaded(true)
     })
     chrome.storage.local.get([THEME_STORAGE_KEY], res => {
@@ -184,7 +188,7 @@ function Options() {
 
     setError('')
     saveOptions(seenCountNum, intervalNum, customClientId, removedTrack, removedNotify,
-                lockedTrack, lockedNotify, hideSubscribe, monitorQuarantined, () => {
+                lockedTrack, lockedNotify, hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, () => {
       setAlarm(intervalNum)
       chrome.runtime.sendMessage({ action: 'update-badge' })
       window.close()
@@ -265,12 +269,22 @@ function Options() {
             <input type="checkbox" checked={hideSubscribe}
               onChange={e => setHideSubscribe(e.target.checked)} />
           </Field>
+          <Field>
+            <label>show removed-content scan on other profiles</label>
+            <input type="checkbox" checked={showScanOnOtherProfiles}
+              onChange={e => setShowScanOnOtherProfiles(e.target.checked)} />
+          </Field>
+          <Field>
+            <label>show removed-content scan on your own profile</label>
+            <input type="checkbox" checked={showScanOnOwnProfile}
+              onChange={e => setShowScanOnOwnProfile(e.target.checked)} />
+          </Field>
         </FieldStack>
         {monitorQuarantined && (
           <Note>
             Enabling "monitor quarantined content" may appear to cause an occasional logout.
             Refreshing the page should show you are still logged in. Increase "minutes between
-            updates" to 5 or more to reduce this occurrence.
+            Reddit checks" to 5 or more to reduce this occurrence.
           </Note>
         )}
 

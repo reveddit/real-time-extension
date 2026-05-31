@@ -76,6 +76,8 @@ const getStorageInit = () => {
             removal_status: { track: true, notify: true },
             lock_status: { track: true, notify: true },
             monitor_quarantined: false,
+            show_scan_on_own_profile: false,
+            show_scan_on_other_profiles: true,
         },
         last_check: null,
         last_check_quarantined: null,
@@ -494,6 +496,8 @@ export const saveOptions = (
     locked_notify: boolean,
     hide_subscribe: boolean,
     monitor_quarantined: boolean,
+    show_scan_on_own_profile: boolean,
+    show_scan_on_other_profiles: boolean,
     callback: () => void,
 ) => {
     chrome.storage.sync.set(
@@ -506,6 +510,8 @@ export const saveOptions = (
                 lock_status: { track: locked_track, notify: locked_notify },
                 hide_subscribe,
                 monitor_quarantined,
+                show_scan_on_own_profile,
+                show_scan_on_other_profiles,
             },
         },
         callback,
