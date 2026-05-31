@@ -5,13 +5,22 @@ import { setCurrentStateForId } from './monitoring'
 let UNSUBSCRIBE_TEXT = 'unsubscribe-rev'
 let SUBSCRIBE_TEXT = 'subscribe-rev'
 
-if (location.hostname.match(/reveddit\.com$/)) {
+const ON_REVEDDIT = !!location.hostname.match(/reveddit\.com$/)
+if (ON_REVEDDIT) {
     UNSUBSCRIBE_TEXT = 'unsubscribe'
     SUBSCRIBE_TEXT = 'subscribe'
 }
 
+// On reddit, tint the reveddit buttons light blue so they stand out from the
+// native action buttons (same look as the "scan-rev" button). Not on reveddit,
+// where they're part of the site's own button row.
+const styleRevButton = (element: HTMLElement) => {
+    if (!ON_REVEDDIT) element.classList.add('rev-comment-action')
+}
+
 export const setTextAndFunction_subscribe = (id: string, element: HTMLElement, commentBody?: string): HTMLElement => {
     element.textContent = SUBSCRIBE_TEXT
+    styleRevButton(element)
     element.onclick = e => {
         e.preventDefault()
         e.stopPropagation()
@@ -22,6 +31,7 @@ export const setTextAndFunction_subscribe = (id: string, element: HTMLElement, c
 
 export const setTextAndFunction_unsubscribe = (id: string, element: HTMLElement, commentBody?: string): HTMLElement => {
     element.textContent = UNSUBSCRIBE_TEXT
+    styleRevButton(element)
     element.onclick = e => {
         e.preventDefault()
         e.stopPropagation()

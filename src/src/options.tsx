@@ -114,6 +114,7 @@ function Options() {
   const [monitorQuarantined, setMonitorQuarantined] = useState(false)
   const [showScanOnOwnProfile, setShowScanOnOwnProfile] = useState(false)
   const [showScanOnOtherProfiles, setShowScanOnOtherProfiles] = useState(true)
+  const [showThreadScanButtons, setShowThreadScanButtons] = useState(true)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [themeMode, setThemeModeState] = useState<ThemeMode>('auto')
   const [error, setError] = useState('')
@@ -135,6 +136,7 @@ function Options() {
       setMonitorQuarantined(!!opts.monitor_quarantined)
       setShowScanOnOwnProfile(!!opts.show_scan_on_own_profile)
       setShowScanOnOtherProfiles(opts.show_scan_on_other_profiles !== false)
+      setShowThreadScanButtons(opts.show_thread_scan_buttons !== false)
       setLoaded(true)
     })
     chrome.storage.local.get([THEME_STORAGE_KEY], res => {
@@ -188,7 +190,7 @@ function Options() {
 
     setError('')
     saveOptions(seenCountNum, intervalNum, customClientId, removedTrack, removedNotify,
-                lockedTrack, lockedNotify, hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, () => {
+                lockedTrack, lockedNotify, hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, showThreadScanButtons, () => {
       setAlarm(intervalNum)
       chrome.runtime.sendMessage({ action: 'update-badge' })
       window.close()
@@ -278,6 +280,11 @@ function Options() {
             <label>show removed-content scan on your own profile</label>
             <input type="checkbox" checked={showScanOnOwnProfile}
               onChange={e => setShowScanOnOwnProfile(e.target.checked)} />
+          </Field>
+          <Field>
+            <label>show "scan for removed comments" buttons on threads</label>
+            <input type="checkbox" checked={showThreadScanButtons}
+              onChange={e => setShowThreadScanButtons(e.target.checked)} />
           </Field>
         </FieldStack>
         {monitorQuarantined && (

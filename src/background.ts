@@ -77,6 +77,42 @@ if (__BUILT_FOR__ !== 'chrome') {
     )
 }
 // END webRequest API code
+
+// Strip the chrome-extension:// Origin header off the background's old.reddit.com
+// requests (the profile-scan user-page fetch). Reddit 403s requests carrying
+// that Origin; removing it makes them look like a plain request and return 200.
+// Uses declarativeNetRequest (Chrome/Edge MV3); Firefox uses the webRequest
+// handler above. Dynamic rules persist, so re-adding on each start is idempotent.
+;(() => {
+    const dnr = (chrome as any).declarativeNetRequest
+    if (!dnr?.updateDynamicRules) return
+    dnr.updateDynamicRules({
+        removeRuleIds: [9001],
+        addRules: [
+            {
+                id: 9001,
+                priority: 1,
+                action: {
+                    type: 'modifyHeaders',
+                    requestHeaders: [
+                        // Origin: chrome-extension:// is rejected; the Sec-Fetch-* trio marks
+                        // this as a cross-site programmatic fetch, which Reddit 403s for these
+                        // pages (a navigation, Mode:navigate/Dest:document, returns 200).
+                        // Strip them so the request looks like a plain (non-fetch) request.
+                        { header: 'origin', operation: 'remove' },
+                        { header: 'sec-fetch-site', operation: 'remove' },
+                        { header: 'sec-fetch-mode', operation: 'remove' },
+                        { header: 'sec-fetch-dest', operation: 'remove' },
+                    ],
+                },
+                condition: { urlFilter: '||old.reddit.com/', resourceTypes: ['xmlhttprequest', 'other'] },
+            },
+        ],
+    })
+        .then(() => console.log('[reveddit] DNR origin-strip rule installed for old.reddit.com'))
+        .catch((e: any) => console.log('[reveddit] DNR rule setup failed:', e?.message || e))
+})()
+
 console.log('bg script running')
 // Throttle recovery calls that fetch /api/me.json to at most ~2 per minute
 const ME_RECOVER_MIN_INTERVAL_MS = 30000 // 30 seconds
@@ -178,6 +214,64 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         getPost_fromOld(request.path).then(data => {
             sendResponse(data)
         })
+        return true
+    } else if (request.action === 'fetch-userpage-html') {
+        // Profile scan: content scripts on new reddit (www/sh) can't fetch
+        // old.reddit.com (cross-origin → CORS). The background has the
+        // host_permissions CORS bypass, so fetch the HTML here and hand the raw
+        // text back to the content script to parse.
+        const url = `https://old.reddit.com/user/${encodeURIComponent(request.username)}${request.qs || ''}`
+        fetch(url, { credentials: 'omit' })
+            .then(async r => {
+                console.log(`[reveddit] bg fetch-userpage-html ${url} -> ${r.status}`)
+                const text = r.ok ? await r.text() : ''
+                sendResponse({ ok: r.ok, status: r.status, text })
+            })
+            .catch(err => {
+                console.log('[reveddit] bg fetch-userpage-html error:', err?.message || String(err))
+                sendResponse({ ok: false, status: 0, error: String(err?.message || err) })
+            })
+        return true
+    } else if (request.action === 'fetch-api-info') {
+        // Profile-scan removal check via old.reddit.com/api/info, unauthenticated
+        // (no cookies from the extension origin). Same CORS/DNR situation as the
+        // user-page fetch, so it also goes through the background on new reddit.
+        // NOTE: no credentials:'omit' — that flag alone 403s the JSON API. From the
+        // background there are no reddit cookies anyway, so a plain fetch is
+        // unauthenticated without tripping that block.
+        const url = `https://old.reddit.com/api/info.json?id=${request.ids}&raw_json=1`
+        fetch(url)
+            .then(async r => {
+                console.log(
+                    `[reveddit] bg fetch-api-info (${String(request.ids).split(',').length} ids) -> ${r.status}`,
+                )
+                const data = r.ok ? await r.json() : null
+                sendResponse({ ok: r.ok, status: r.status, children: data?.data?.children || null })
+            })
+            .catch(err => {
+                console.log('[reveddit] bg fetch-api-info error:', err?.message || String(err))
+                sendResponse({ ok: false, status: 0, error: String(err?.message || err) })
+            })
+        return true
+    } else if (request.action === 'fetch-old-reddit-json') {
+        // Thread restore: fetch an old.reddit.com .json URL unauthenticated (no
+        // cookies from the extension origin) so removed bodies are visible. Same
+        // CORS/DNR situation as the profile-scan fetches. Host-checked.
+        const url = String(request.url || '')
+        if (!url.startsWith('https://old.reddit.com/')) {
+            sendResponse({ ok: false, status: 0, error: 'invalid url' })
+            return true
+        }
+        fetch(url)
+            .then(async r => {
+                console.log(`[reveddit] bg fetch-old-reddit-json ${url.split('?')[0]} -> ${r.status}`)
+                const data = r.ok ? await r.json() : null
+                sendResponse({ ok: r.ok, status: r.status, data })
+            })
+            .catch(err => {
+                console.log('[reveddit] bg fetch-old-reddit-json error:', err?.message || String(err))
+                sendResponse({ ok: false, status: 0, error: String(err?.message || err) })
+            })
         return true
     } else if (request.action === 'immediate-user-lookup') {
         const user = request.user

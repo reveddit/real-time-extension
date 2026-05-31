@@ -398,7 +398,7 @@ describe('getOptions / saveOptions', () => {
     })
 
     it('saves options and persists', async () => {
-        await saveOptionsP(3, 5, 'my_client', true, false, false, true, true, false, true, false)
+        await saveOptionsP(3, 5, 'my_client', true, false, false, true, true, false, true, false, false)
         const storage = __getSyncStorage()
         expect(storage.options.seen_count).toBe(3)
         expect(storage.options.interval).toBe(5)
@@ -411,5 +411,6 @@ describe('getOptions / saveOptions', () => {
         expect(storage.options.monitor_quarantined).toBe(false)
         expect(storage.options.show_scan_on_own_profile).toBe(true)
         expect(storage.options.show_scan_on_other_profiles).toBe(false)
+        expect(storage.options.show_thread_scan_buttons).toBe(false)
     })
 })

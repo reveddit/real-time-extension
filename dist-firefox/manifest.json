@@ -8,6 +8,7 @@
     "alarms",
     "storage",
     "contextMenus",
+    "declarativeNetRequestWithHostAccess",
     "activeTab",
     "webRequest",
     "webRequestBlocking",

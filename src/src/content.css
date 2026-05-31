@@ -98,9 +98,13 @@
 
 /* --- Per-comment scan button --- */
 
-.rev-scan-comment-btn {
+/* Light-blue pill shared by all reveddit comment-bar buttons (scan-rev,
+   subscribe-rev, unsubscribe-rev) so they read as one set, distinct from
+   reddit's native gray actions. */
+.rev-scan-comment-btn,
+.rev-comment-action {
     cursor: pointer;
-    color: #0079d3;
+    color: #0079d3 !important;
     font-size: 11px;
     font-weight: 700;
     background: #e8f0fe;
@@ -109,17 +113,13 @@
     padding: 1px 6px;
     text-decoration: none;
 }
-.rev-scan-comment-btn:hover {
-    background: #0079d3;
-    color: white;
+/* Keep the hover background light: old reddit's link-color rules can win over a
+   white override, so a dark hover background would leave the text unreadable. */
+.rev-scan-comment-btn:hover,
+.rev-comment-action:hover {
+    background: #cfe0fb;
+    color: #005fa3 !important;
     text-decoration: none;
-}
-.rev-scan-comment-removed {
-    background: #0079d3;
-    color: white;
-}
-.rev-scan-comment-removed:hover {
-    background: #005fa3;
 }
 
 /* --- Restore button (new reddit) --- */
@@ -142,6 +142,23 @@
     color: #787c7e;
     font-style: italic;
     margin-left: 4px;
+}
+
+.rev-spinner {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    margin-right: 5px;
+    vertical-align: -1px;
+    border: 2px solid rgba(120, 124, 126, 0.3);
+    border-top-color: #0079d3;
+    border-radius: 50%;
+    animation: rev-spin 0.7s linear infinite;
+}
+@keyframes rev-spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .rev-restore-cancel {
@@ -175,6 +192,9 @@
     padding: 8px;
     border: 1px solid #edeff1;
     border-radius: 4px;
+    /* Establish a block formatting context so results don't run under old
+       reddit's float:right sidebar — the box shrinks to the content column. */
+    display: flow-root;
 }
 
 .rev-profile-scan-btn {
@@ -205,8 +225,6 @@
 
 .rev-profile-scan-results {
     margin-top: 8px;
-    max-height: 400px;
-    overflow-y: auto;
 }
 
 .rev-scan-header {
@@ -216,18 +234,32 @@
 }
 
 .rev-scan-item {
-    padding: 8px;
-    border-bottom: 1px solid #edeff1;
+    padding: 8px 10px;
+    margin-bottom: 8px;
     font-size: 13px;
 }
-.rev-scan-item:last-child {
-    border-bottom: none;
+
+.rev-scan-item-title {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    color: #0079d3;
+    margin-bottom: 2px;
+}
+.rev-scan-item-title:hover {
+    text-decoration: underline;
 }
 
 .rev-scan-item-meta {
     font-size: 11px;
     color: #787c7e;
     margin-bottom: 4px;
+}
+
+.rev-scan-item-links {
+    margin-top: 6px;
+    display: flex;
+    gap: 12px;
 }
 
 .rev-scan-badge-removed {
@@ -277,6 +309,79 @@
     border-left: 3px solid #ff585b;
     background-color: rgba(255, 88, 91, 0.03);
     border-radius: 4px;
+}
+
+/* Recovered comments inserted into a thread (vs. the profile-scan list above). */
+.rev-rec-entry {
+    font-size: 13px;
+    line-height: 1.4;
+}
+.rev-rec-children {
+    margin-left: 18px;
+    padding-left: 10px;
+    border-left: 1px solid #e0e0e0;
+}
+.res-nightmode .rev-rec-children {
+    border-left-color: #343536;
+}
+
+/* Comments whose parent is also removed and couldn't be placed in the tree. */
+.rev-unattached-area {
+    margin: 8px 0;
+    padding: 8px 12px;
+    border-radius: 4px;
+}
+.rev-unattached-header {
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 88, 91, 0.4);
+}
+.rev-unattached-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #ff585b;
+}
+.rev-unattached-desc {
+    font-size: 11px;
+    color: #787c7e;
+    margin-top: 2px;
+}
+.rev-place-unattached-btn {
+    margin-top: 6px;
+    background: #0079d3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.rev-place-unattached-btn:hover {
+    background: #005fa3;
+}
+.rev-place-unattached-btn:disabled {
+    opacity: 0.7;
+    cursor: wait;
+}
+
+/* Live comments reconstructed only to bridge an unattached comment into the
+   tree — muted gray so they read as scaffolding, not recovered removals. */
+.rev-context {
+    border: 1px dashed #9aa0a6 !important;
+    border-left: 3px solid #9aa0a6 !important;
+    background-color: rgba(154, 160, 166, 0.06) !important;
+}
+.rev-scan-badge-context {
+    display: inline-block;
+    background: #9aa0a6;
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 2px;
+    text-transform: uppercase;
+    margin-left: 4px;
 }
 
 .rev-scan-item-title {

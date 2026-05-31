@@ -4,9 +4,12 @@ import {
     restoreComment,
     scanUserProfile,
     scanThreadForRemovedComments,
+    commentFullnameFromPermalink,
+    lookupCommentsByIds,
     RateLimiter,
     type RestoreProgress,
     type RestoreResult,
+    type RecoveredComment,
     type ScanResult,
     type ProfileScanOptions,
 } from './restore'
@@ -20,15 +23,12 @@ let currentFilter: 'all' | 'removed' | 'visible' = 'removed'
 
 // --- Thread Restore: Old Reddit ---
 
-function isRemovedComment_oldReddit(el: Element): boolean {
-    if (el.classList.contains('deleted')) return true
-    const body = el.querySelector(':scope > .entry .usertext-body .md')
-    const text = (body?.textContent || '').trim()
-    return text === '[removed]' || text === '[deleted]'
-}
-
 function injectRestoreButton_oldReddit(commentEl: HTMLElement) {
-    const id = commentEl.getAttribute('data-fullname')
+    // Removed tombstones lack data-fullname; recover the id from data-permalink
+    // so the per-comment "scan" button appears on removed comments too.
+    const id =
+        commentEl.getAttribute('data-fullname') ||
+        commentFullnameFromPermalink(commentEl.getAttribute('data-permalink'))
     if (!id || injectedComments.has(id)) return
 
     const buttons = commentEl.querySelector(':scope > .entry > ul.buttons')
@@ -36,13 +36,11 @@ function injectRestoreButton_oldReddit(commentEl: HTMLElement) {
 
     injectedComments.add(id)
 
-    const isRemoved = isRemovedComment_oldReddit(commentEl)
-
     const li = document.createElement('li')
     const btn = document.createElement('a')
     btn.href = '#'
-    btn.className = isRemoved ? 'rev-scan-comment-btn rev-scan-comment-removed' : 'rev-scan-comment-btn'
-    btn.textContent = 'scan'
+    btn.className = 'rev-scan-comment-btn rev-comment-action'
+    btn.textContent = 'scan-rev'
     btn.title = 'Scan for removed comments'
     btn.addEventListener('click', e => {
         e.preventDefault()
@@ -112,8 +110,14 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
     if (!progressEl) {
         progressEl = document.createElement('span')
         progressEl.className = 'rev-restore-progress'
+        const spinner = document.createElement('span')
+        spinner.className = 'rev-spinner'
+        const text = document.createElement('span')
+        text.className = 'rev-restore-progress-text'
+        progressEl.append(spinner, text)
         container.appendChild(progressEl)
     }
+    const progressText = (progressEl.querySelector('.rev-restore-progress-text') || progressEl) as HTMLElement
 
     let cancelBtn = container.querySelector('.rev-restore-cancel') as HTMLAnchorElement
     if (!cancelBtn) {
@@ -138,10 +142,12 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
         subreddit,
         isNewReddit,
         (progress: RestoreProgress) => {
-            progressEl.textContent = progress.message
+            progressText.textContent = progress.message
         },
         authorCache,
     )
+
+    progressEl.querySelector('.rev-spinner')?.remove()
 
     cancelBtn.style.display = 'none'
     activeRestoreLimiter = null
@@ -152,6 +158,21 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
     } else {
         if (btn) btn.style.display = ''
     }
+}
+
+// Find an old-reddit comment element by fullname. Removed tombstones have no
+// data-fullname, so fall back to matching the comment id parsed from
+// data-permalink (see commentFullnameFromPermalink).
+function findOldRedditCommentEl(commentId: string): HTMLElement | null {
+    const byFullname = document.querySelector(`.thing.comment[data-fullname="${commentId}"]`)
+    if (byFullname) return byFullname as HTMLElement
+    const things = document.querySelectorAll('.commentarea .thing.comment')
+    for (const el of Array.from(things)) {
+        if (commentFullnameFromPermalink(el.getAttribute('data-permalink')) === commentId) {
+            return el as HTMLElement
+        }
+    }
+    return null
 }
 
 // --- Display Restored Comment ---
@@ -165,15 +186,15 @@ function displayRestoredComment(
     if (!result.body) return
 
     if (!isNewReddit) {
-        const commentEl = document.querySelector(`.thing.comment[data-fullname="${commentId}"]`)
+        const commentEl = findOldRedditCommentEl(commentId)
         if (commentEl) {
+            commentEl.classList.remove('deleted')
+            commentEl.classList.add('rev-removed-highlight')
             const bodyEl = commentEl.querySelector(':scope > .entry .usertext-body .md')
             if (bodyEl && result.body_html) {
                 bodyEl.innerHTML = result.body_html
-                bodyEl.classList.add('rev-restored')
             } else if (bodyEl) {
                 bodyEl.textContent = result.body
-                bodyEl.classList.add('rev-restored')
             }
 
             if (result.author) {
@@ -189,7 +210,7 @@ function displayRestoredComment(
         }
     } else {
         const restoredEl = document.createElement('div')
-        restoredEl.className = 'rev-restored'
+        restoredEl.className = 'rev-inserted-comment rev-removed-highlight'
         if (result.body_html) {
             restoredEl.innerHTML = result.body_html
         } else {
@@ -254,26 +275,331 @@ async function handleScanAll(isNewReddit: boolean) {
         progressEl.className = 'rev-scan-all-progress'
         btn.after(progressEl)
     }
+    progressEl.textContent = ''
+    const spinner = document.createElement('span')
+    spinner.className = 'rev-spinner'
+    const progressText = document.createElement('span')
+    progressEl.append(spinner, progressText)
 
-    const results = await scanThreadForRemovedComments(postID, subreddit, isNewReddit, authorCache, progress => {
-        progressEl.textContent = progress.message
-    })
+    // Place each recovered comment the moment it's found: under its parent if
+    // present, otherwise parked in the "unattached" area and relocated later if
+    // an ancestor turns up in a subsequent search.
+    const inserter = new RecoveredCommentInserter(isNewReddit)
 
-    for (const { commentId, result } of results) {
-        if (!result.found) continue
-        const container = isNewReddit
-            ? document.querySelector(`[id="${commentId}"], [thingid="${commentId}"]`)
-            : document.querySelector(`.thing.comment[data-fullname="${commentId}"]`)
-        if (container) {
-            displayRestoredComment(commentId, container as HTMLElement, result, isNewReddit)
+    const recovered = await scanThreadForRemovedComments(
+        postID,
+        subreddit,
+        isNewReddit,
+        authorCache,
+        progress => {
+            progressText.textContent = progress.message
+        },
+        rc => inserter.add(rc),
+    )
+
+    btn.textContent =
+        recovered.length > 0 ? `${recovered.length} comment(s) recovered` : origText || 'Scan for removed comments'
+    btn.disabled = false
+    btn.classList.remove('rev-scan-all-loading')
+    // Leave the final status message visible; just drop the spinner.
+    spinner.remove()
+}
+
+// --- Recovered comment insertion (thread restore) ---
+
+// Builds the removed-comment subtree incrementally as comments are recovered.
+// A comment is placed under its parent when the parent is present (a visible
+// comment, a tombstone, or an already-recovered comment). If the parent is
+// itself missing, the comment is parked in an "unattached" area and relocated
+// under its parent later if that ancestor turns up in a subsequent search.
+const MAX_BRIDGE_DEPTH = 8
+
+class RecoveredCommentInserter {
+    private isNewReddit: boolean
+    private placed = new Map<string, HTMLElement>() // id -> element (can host children)
+    private orphans = new Map<string, { rc: RecoveredComment; el: HTMLElement }>()
+    private orphanArea: HTMLElement | null = null
+    private placing = false
+
+    constructor(isNewReddit: boolean) {
+        this.isNewReddit = isNewReddit
+    }
+
+    add(rc: RecoveredComment) {
+        if (this.placed.has(rc.id) || this.orphans.has(rc.id)) return
+
+        // Prefer filling an existing tombstone in place (old reddit only).
+        const tombstone = this.isNewReddit ? null : findOldRedditCommentEl(rc.id)
+        const el =
+            tombstone && !tombstone.classList.contains('rev-inserted-comment')
+                ? fillRecoveredTombstone(tombstone, rc)
+                : createRecoveredCommentEl(rc)
+
+        const placement = this.resolvePlacement(rc.parent_id)
+        if (placement) {
+            attach(el, placement)
+            this.placed.set(rc.id, el)
+            this.drainOrphans()
+        } else {
+            this.ensureOrphanArea().appendChild(el)
+            this.orphans.set(rc.id, { rc, el })
         }
     }
 
-    const found = results.filter(r => r.result.found).length
-    btn.textContent = found > 0 ? `${found} comment(s) restored` : origText || 'Scan for removed comments'
-    btn.disabled = false
-    btn.classList.remove('rev-scan-all-loading')
-    progressEl.textContent = ''
+    // Distinct parent ids that orphans still need but that aren't in the tree.
+    private pendingParentIds(): string[] {
+        const ids = new Set<string>()
+        for (const { rc } of this.orphans.values()) {
+            if (rc.parent_id.startsWith('t1_')) ids.add(rc.parent_id)
+        }
+        return [...ids]
+    }
+
+    // Walk up the ancestor chain via /api/info to bridge unattached comments into
+    // the tree: reconstruct each missing ancestor (removed → red, live-but-not-
+    // loaded → muted "context") until its own parent is known, capped by depth.
+    // Every chain ultimately reaches the post, so within the cap most attach.
+    async placeUnattached(btn: HTMLButtonElement) {
+        if (this.placing) return
+        this.placing = true
+        btn.disabled = true
+        const limiter = new RateLimiter()
+        const tried = new Set<string>()
+        for (let level = 0; level < MAX_BRIDGE_DEPTH; level++) {
+            const needed = this.pendingParentIds().filter(id => !tried.has(id))
+            if (needed.length === 0) break
+            needed.forEach(id => tried.add(id))
+            btn.textContent = `Placing… (${this.orphans.size} left)`
+            const looked = await lookupCommentsByIds(needed, limiter)
+            if (looked.size === 0) break // ancestors unavailable (deleted/invalid)
+            for (const c of looked.values()) {
+                this.add({
+                    id: c.id,
+                    parent_id: c.parent_id || c.link_id,
+                    link_id: c.link_id,
+                    author: c.author,
+                    body: c.body,
+                    body_html: c.body_html,
+                    created_utc: c.created_utc,
+                    score: 0,
+                    permalink: c.permalink,
+                    subreddit: c.subreddit,
+                    kind: c.removed ? 'recovered' : 'context',
+                })
+            }
+        }
+        this.placing = false
+        if (this.orphans.size === 0) return // orphan area auto-removed when empty
+        btn.disabled = false
+        btn.textContent = `Place unattached comments (${this.orphans.size} left)`
+    }
+
+    // Re-check parked orphans now that something new was placed; relocate any
+    // whose parent is now present. Loop so chains attach in one pass.
+    private drainOrphans() {
+        let moved = true
+        while (moved) {
+            moved = false
+            for (const [id, { rc, el }] of this.orphans) {
+                const placement = this.resolvePlacement(rc.parent_id)
+                if (!placement) continue
+                attach(el, placement) // relocates it out of the orphan area
+                this.placed.set(id, el)
+                this.orphans.delete(id)
+                moved = true
+            }
+        }
+        if (this.orphans.size === 0 && this.orphanArea) {
+            this.orphanArea.remove()
+            this.orphanArea = null
+        }
+    }
+
+    // Where a comment with this parent should attach, or null if the parent
+    // isn't present yet. Top-level recovered comments are prepended so they sit
+    // above the rest of the thread instead of being buried at the bottom.
+    private resolvePlacement(parentId: string): Placement | null {
+        // A previously-recovered comment — nest under it (works on old & new reddit).
+        const placedParent = this.placed.get(parentId)
+        if (placedParent) return { container: childSlotOf(placedParent), prepend: false }
+
+        if (this.isNewReddit) {
+            // Nesting into shreddit web components is unreliable, so comments with
+            // a native or top-level parent go into the panel (flat).
+            return null
+        }
+        if (parentId.startsWith('t3_')) {
+            const top =
+                (document.querySelector('.commentarea > .sitetable.nestedlisting') as HTMLElement) ||
+                (document.querySelector('.commentarea > .sitetable') as HTMLElement) ||
+                (document.querySelector('.commentarea') as HTMLElement)
+            return top ? { container: top, prepend: true } : null
+        }
+        const native = findOldRedditCommentEl(parentId)
+        return native ? { container: oldRedditChildListing(native), prepend: false } : null
+    }
+
+    private ensureOrphanArea(): HTMLElement {
+        if (this.orphanArea) return this.orphanArea
+        const area = document.createElement('div')
+        area.className = 'rev-unattached-area rev-removed-highlight'
+        const header = document.createElement('div')
+        header.className = 'rev-unattached-header'
+        const title = document.createElement('div')
+        title.className = 'rev-unattached-title'
+        title.textContent = 'Unattached removed comments'
+        const desc = document.createElement('div')
+        desc.className = 'rev-unattached-desc'
+        desc.textContent =
+            "Their parent comment isn't in the known part of the comment tree, so we couldn't determine where they belong."
+        const placeBtn = document.createElement('button')
+        placeBtn.className = 'rev-place-unattached-btn'
+        placeBtn.textContent = 'Place unattached comments'
+        placeBtn.title = 'Look up the missing parent comments to nest these into the thread'
+        placeBtn.addEventListener('click', e => {
+            e.preventDefault()
+            this.placeUnattached(placeBtn)
+        })
+        header.append(title, desc, placeBtn)
+        area.appendChild(header)
+        // Place above the comment list so unattached comments lead, not trail.
+        const anchor = this.isNewReddit
+            ? document.querySelector('shreddit-comment-tree') || document.querySelector('main')
+            : document.querySelector('.commentarea > .sitetable.nestedlisting') ||
+              document.querySelector('.commentarea > .sitetable') ||
+              document.querySelector('.commentarea')
+        if (anchor) anchor.prepend(area)
+        else document.body.prepend(area)
+        this.orphanArea = area
+        return area
+    }
+}
+
+interface Placement {
+    container: HTMLElement
+    prepend: boolean
+}
+
+function attach(el: HTMLElement, { container, prepend }: Placement) {
+    if (el.parentElement === container) return
+    if (prepend) container.prepend(el)
+    else container.appendChild(el)
+}
+
+// Returns/creates the slot that holds a recovered comment's own children.
+function childSlotOf(el: HTMLElement): HTMLElement {
+    let slot = el.querySelector(':scope > .rev-rec-children') as HTMLElement | null
+    if (!slot) {
+        slot = document.createElement('div')
+        slot.className = 'rev-rec-children'
+        el.appendChild(slot)
+    }
+    return slot
+}
+
+// Returns/creates the child comment listing of a native old-reddit comment.
+function oldRedditChildListing(nativeEl: HTMLElement): HTMLElement {
+    let child = nativeEl.querySelector(':scope > .child') as HTMLElement | null
+    if (!child) {
+        child = document.createElement('div')
+        child.className = 'child'
+        nativeEl.appendChild(child)
+    }
+    let listing = child.querySelector(':scope > .sitetable') as HTMLElement | null
+    if (!listing) {
+        listing = document.createElement('div')
+        listing.className = 'sitetable listing'
+        child.appendChild(listing)
+    }
+    return listing
+}
+
+function recoveredMeta(rc: RecoveredComment): HTMLElement {
+    const meta = document.createElement('div')
+    meta.className = 'rev-scan-item-meta'
+    const authorLink = document.createElement('a')
+    authorLink.className = 'author'
+    authorLink.href = `/user/${encodeURIComponent(rc.author)}`
+    authorLink.textContent = `u/${rc.author}`
+    meta.appendChild(authorLink)
+    meta.appendChild(document.createTextNode(rc.created_utc ? ` · ${getPrettyDate(rc.created_utc)} ` : ' '))
+    const badge = document.createElement('span')
+    if (rc.kind === 'context') {
+        // A live comment reconstructed only to bridge an unattached comment.
+        badge.className = 'rev-scan-badge-context'
+        badge.textContent = 'context'
+    } else {
+        badge.className = 'rev-scan-badge-removed'
+        badge.textContent = 'removed'
+    }
+    meta.appendChild(badge)
+
+    const links = document.createElement('span')
+    links.className = 'rev-scan-item-links'
+    if (rc.permalink) {
+        const ctx = document.createElement('a')
+        ctx.className = 'rev-scan-item-link'
+        ctx.href = `https://old.reddit.com${rc.permalink}?context=3`
+        ctx.target = '_blank'
+        ctx.rel = 'noopener'
+        ctx.textContent = 'context'
+        const rev = document.createElement('a')
+        rev.className = 'rev-scan-item-link'
+        rev.href = `https://www.reveddit.com${rc.permalink}`
+        rev.target = '_blank'
+        rev.rel = 'noopener'
+        rev.textContent = 'view on reveddit'
+        links.append(ctx, rev)
+    }
+    meta.appendChild(links)
+    return meta
+}
+
+function recoveredBody(rc: RecoveredComment): HTMLElement {
+    const body = document.createElement('div')
+    // Outer .rev-removed-highlight already provides the red marker; no inner blue.
+    body.className = 'rev-scan-item-body'
+    if (rc.body_html) body.innerHTML = rc.body_html
+    else body.textContent = rc.body
+    return body
+}
+
+// A fresh element for a recovered comment (no tombstone existed for it). 'context'
+// comments are live ancestors reconstructed only to bridge the tree, shown muted.
+function createRecoveredCommentEl(rc: RecoveredComment): HTMLElement {
+    const el = document.createElement('div')
+    el.className =
+        rc.kind === 'context'
+            ? 'thing comment rev-inserted-comment rev-context'
+            : 'thing comment rev-inserted-comment rev-removed-highlight'
+    el.setAttribute('data-fullname', rc.id)
+    el.setAttribute('data-rev-id', rc.id)
+    const entry = document.createElement('div')
+    entry.className = 'rev-rec-entry'
+    entry.append(recoveredMeta(rc), recoveredBody(rc))
+    el.appendChild(entry)
+    return el
+}
+
+// Fills an existing old-reddit tombstone in place with the recovered content.
+function fillRecoveredTombstone(tombstone: HTMLElement, rc: RecoveredComment): HTMLElement {
+    tombstone.classList.remove('deleted')
+    tombstone.classList.add('rev-inserted-comment', 'rev-removed-highlight')
+    tombstone.setAttribute('data-rev-id', rc.id)
+    const bodyEl = tombstone.querySelector(':scope > .entry .usertext-body .md')
+    if (bodyEl) {
+        if (rc.body_html) bodyEl.innerHTML = rc.body_html
+        else bodyEl.textContent = rc.body
+    }
+    const authorEl = tombstone.querySelector(':scope > .entry .tagline .author')
+    if (authorEl && rc.author) {
+        const link = document.createElement('a')
+        link.href = `/user/${encodeURIComponent(rc.author)}`
+        link.className = 'author'
+        link.textContent = rc.author
+        authorEl.replaceWith(link)
+    }
+    return tombstone
 }
 
 // --- Profile Scan: UI ---
@@ -585,7 +911,7 @@ function createInlineItem(item: ScanResult, isNewReddit: boolean): HTMLElement {
     }
 
     const body = document.createElement('div')
-    body.className = 'rev-scan-item-body rev-restored'
+    body.className = 'rev-scan-item-body'
     if (item.body_html) {
         body.innerHTML = item.body_html
     } else if (item.body) {
@@ -679,56 +1005,91 @@ function applyFilter(filter: 'all' | 'removed' | 'visible') {
 
 function createScanResultItem(item: ScanResult): HTMLElement {
     const el = document.createElement('div')
-    el.className = 'rev-scan-item'
+    el.className = 'rev-scan-item rev-removed-highlight'
+
+    // Title: the post title for posts, the parent post's title for comments.
+    const titleText = item.type === 'post' ? item.title : item.link_title
+    if (titleText) {
+        const title = document.createElement('a')
+        title.className = 'rev-scan-item-title'
+        title.href = `https://old.reddit.com${item.permalink}`
+        title.target = '_blank'
+        title.rel = 'noreferrer'
+        title.textContent = titleText
+        el.appendChild(title)
+    }
 
     const meta = document.createElement('div')
     meta.className = 'rev-scan-item-meta'
     const sub = item.subreddit ? `r/${item.subreddit}` : ''
     const age = item.created_utc ? getPrettyDate(item.created_utc) : ''
-    meta.innerHTML = `${sub} &middot; ${age} <span class="rev-scan-badge-removed">removed</span>`
+    meta.innerHTML = `${sub}${sub && age ? ' &middot; ' : ''}${age} <span class="rev-scan-badge-removed">removed</span>`
+    el.appendChild(meta)
 
-    const body = document.createElement('div')
-    body.className = 'rev-scan-item-body'
-    if (item.type === 'post' && item.title) {
-        body.textContent = item.title
-    } else if (item.body) {
-        body.textContent = item.body.length > 300 ? item.body.substring(0, 300) + '...' : item.body
+    if (item.body) {
+        const body = document.createElement('div')
+        body.className = 'rev-scan-item-body'
+        body.textContent = item.body
+        el.appendChild(body)
     }
 
-    const link = document.createElement('a')
-    link.className = 'rev-scan-item-link'
-    link.href = `https://www.reveddit.com${item.permalink}`
-    link.target = '_blank'
-    link.textContent = 'View on Reveddit'
+    const links = document.createElement('div')
+    links.className = 'rev-scan-item-links'
+    const mkLink = (text: string, href: string) => {
+        const a = document.createElement('a')
+        a.className = 'rev-scan-item-link'
+        a.href = href
+        a.target = '_blank'
+        a.rel = 'noreferrer'
+        a.textContent = text
+        return a
+    }
+    links.appendChild(mkLink('context', `https://old.reddit.com${item.permalink}?context=3`))
+    links.appendChild(mkLink('view on reveddit', `https://www.reveddit.com${item.permalink}`))
+    el.appendChild(links)
 
-    el.appendChild(meta)
-    el.appendChild(body)
-    el.appendChild(link)
     return el
 }
 
 // --- Public entry points ---
 
-export function initRestoreOnThread(isNewReddit: boolean) {
-    if (!isNewReddit) {
-        const selector = '.thing.comment'
-        for (const el of Array.from(document.querySelectorAll(selector))) {
-            injectRestoreButton_oldReddit(el as HTMLElement)
+// Thread-scan buttons (per-comment "scan" + thread-level "Scan for removed
+// comments") are governed by the show_thread_scan_buttons option (default ON).
+function shouldShowThreadScanButtons(): Promise<boolean> {
+    return new Promise(resolve => {
+        try {
+            chrome.storage.sync.get(['options'], sync => {
+                resolve((sync?.options || {}).show_thread_scan_buttons !== false)
+            })
+        } catch {
+            resolve(true)
         }
-        observe(document, selector, el => injectRestoreButton_oldReddit(el as HTMLElement))
-    } else {
-        const processSpan = (el: Element) => {
-            if ((el.textContent || '').toLowerCase().trim() === REMOVED_BY_MODERATOR_TEXT) {
+    })
+}
+
+export function initRestoreOnThread(isNewReddit: boolean) {
+    shouldShowThreadScanButtons().then(show => {
+        if (!show) return
+        if (!isNewReddit) {
+            const selector = '.thing.comment'
+            for (const el of Array.from(document.querySelectorAll(selector))) {
+                injectRestoreButton_oldReddit(el as HTMLElement)
+            }
+            observe(document, selector, el => injectRestoreButton_oldReddit(el as HTMLElement))
+        } else {
+            const processSpan = (el: Element) => {
+                if ((el.textContent || '').toLowerCase().trim() === REMOVED_BY_MODERATOR_TEXT) {
+                    injectRestoreButton_newReddit(el)
+                }
+            }
+            for (const el of findByText(document, 'span', REMOVED_BY_MODERATOR_TEXT)) {
                 injectRestoreButton_newReddit(el)
             }
+            observe(document, 'span', processSpan)
         }
-        for (const el of findByText(document, 'span', REMOVED_BY_MODERATOR_TEXT)) {
-            injectRestoreButton_newReddit(el)
-        }
-        observe(document, 'span', processSpan)
-    }
 
-    injectScanAllButton(isNewReddit)
+        injectScanAllButton(isNewReddit)
+    })
 }
 
 export function initProfileScan(username: string, isNewReddit: boolean) {

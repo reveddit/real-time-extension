@@ -7,7 +7,8 @@
     "notifications",
     "alarms",
     "storage",
-    "contextMenus"
+    "contextMenus",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "https://*.reddit.com/*",

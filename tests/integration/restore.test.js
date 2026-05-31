@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest'
 import {
     getCandidateAuthors,
     extractCommentTree_fromJSON,
+    commentFullnameFromPermalink,
     RateLimiter,
 } from '../../src/src/restore.ts'
 
@@ -253,6 +254,31 @@ describe('extractCommentTree_fromJSON', () => {
         const { map, postAuthor } = extractCommentTree_fromJSON(jsonData)
         expect(map.size).toBe(0)
         expect(postAuthor).toBe('poster')
+    })
+})
+
+describe('commentFullnameFromPermalink', () => {
+    it('extracts t1_ fullname from a comment permalink', () => {
+        expect(
+            commentFullnameFromPermalink(
+                '/r/CantSayAnything/comments/1t8z25a/write_any_comment_here_20260510/om7qgnl/',
+            ),
+        ).toBe('t1_om7qgnl')
+    })
+
+    it('works without a trailing slash', () => {
+        expect(
+            commentFullnameFromPermalink('/r/sub/comments/abc123/some_slug/def456'),
+        ).toBe('t1_def456')
+    })
+
+    it('returns empty string for a post permalink (no comment id)', () => {
+        expect(commentFullnameFromPermalink('/r/sub/comments/abc123/some_slug/')).toBe('')
+    })
+
+    it('returns empty string for null/empty input', () => {
+        expect(commentFullnameFromPermalink(null)).toBe('')
+        expect(commentFullnameFromPermalink('')).toBe('')
     })
 })
 

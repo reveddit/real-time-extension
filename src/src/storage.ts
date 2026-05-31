@@ -78,6 +78,7 @@ const getStorageInit = () => {
             monitor_quarantined: false,
             show_scan_on_own_profile: false,
             show_scan_on_other_profiles: true,
+            show_thread_scan_buttons: true,
         },
         last_check: null,
         last_check_quarantined: null,
@@ -498,6 +499,7 @@ export const saveOptions = (
     monitor_quarantined: boolean,
     show_scan_on_own_profile: boolean,
     show_scan_on_other_profiles: boolean,
+    show_thread_scan_buttons: boolean,
     callback: () => void,
 ) => {
     chrome.storage.sync.set(
@@ -512,6 +514,7 @@ export const saveOptions = (
                 monitor_quarantined,
                 show_scan_on_own_profile,
                 show_scan_on_other_profiles,
+                show_thread_scan_buttons,
             },
         },
         callback,
