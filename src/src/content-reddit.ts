@@ -4,7 +4,7 @@ import { setTextAndFunction_subscribe, setTextAndFunction_unsubscribe } from './
 import { observe, findByText } from './dom-helpers'
 import browser from 'webextension-polyfill'
 import { subscribeUser, MAX_SUBSCRIPTIONS } from './storage'
-import { initRestoreOnThread, initProfileScan } from './restore-ui'
+import { initRestoreOnThread, initProfileScan, initOwnProfileStatus } from './restore-ui'
 
 const USER_DELETED = 'rev-user-deleted'
 const MOD_REMOVED = 'rev-mod-removed'
@@ -29,6 +29,7 @@ export const redditModifications = (
     }
     if (user_restore) {
         initProfileScan(user_restore, isNewReddit)
+        initOwnProfileStatus(user_restore, isNewReddit)
     }
     const subscribeIfNotUnsubscribed = (user: string) => {
         const user_lc = user.toLowerCase()

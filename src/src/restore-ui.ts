@@ -1,4 +1,5 @@
 import { getFullIDsFromPath, getPrettyDate, REMOVED_BY_MODERATOR_TEXT, detectIsNewReddit } from './common'
+import { getObjectNamesForThing } from './storage'
 import { observe, findByText } from './dom-helpers'
 import {
     restoreComment,
@@ -1131,4 +1132,117 @@ function shouldShowProfileScanButton(username: string): Promise<boolean> {
             resolve(true)
         }
     })
+}
+
+// --- Own-profile status highlight ---
+//
+// On the logged-in user's OWN profile, flag content the monitor already recorded
+// as removed (red) or locked (gold). On your own profile reddit shows your
+// removed comments normally, so there's otherwise no cue. This reads the
+// monitor's stored removed_u_*/locked_u_* records only — it does not touch the
+// monitoring itself. Default on; toggle in options. Works on old + new reddit.
+
+type OwnFilter = 'all' | 'removed' | 'locked'
+
+function ownProfileItemSelector(isNewReddit: boolean): string {
+    return isNewReddit
+        ? 'shreddit-post[id^="t3_"], shreddit-profile-comment[comment-id]'
+        : '#siteTable .thing[data-fullname]'
+}
+
+function ownItemFullname(el: Element): string {
+    return el.getAttribute('data-fullname') || el.getAttribute('comment-id') || el.getAttribute('id') || ''
+}
+
+export function initOwnProfileStatus(username: string, isNewReddit: boolean) {
+    try {
+        chrome.storage.local.get(['last_logged_in_user'], local => {
+            const me = local?.last_logged_in_user
+            if (!me || String(me).toLowerCase() !== username.toLowerCase()) return // own profile only
+            chrome.storage.sync.get(['options'], sync => {
+                if ((sync?.options || {}).highlight_own_profile_status === false) return
+                const keys = getObjectNamesForThing(me, true)
+                // The monitor stores these dicts in SYNC storage (not local).
+                chrome.storage.sync.get([keys.removed, keys.locked], data => {
+                    const removed = new Set(Object.keys(data[keys.removed] || {}))
+                    const locked = new Set(Object.keys(data[keys.locked] || {}))
+                    if (removed.size === 0 && locked.size === 0) return // nothing recorded
+                    runOwnProfileStatus(removed, locked, isNewReddit)
+                })
+            })
+        })
+    } catch {
+        // storage unavailable — skip silently
+    }
+}
+
+function runOwnProfileStatus(removed: Set<string>, locked: Set<string>, isNewReddit: boolean) {
+    const selector = ownProfileItemSelector(isNewReddit)
+    let filter: OwnFilter = 'all'
+
+    const applyFilter = (el: HTMLElement) => {
+        const status = el.getAttribute('data-rev-status') || ''
+        el.style.display = filter === 'all' || filter === status ? '' : 'none'
+    }
+
+    const flag = (el: HTMLElement) => {
+        if (el.hasAttribute('data-rev-status')) return
+        const id = ownItemFullname(el)
+        if (!id) return
+        const status = removed.has(id) ? 'removed' : locked.has(id) ? 'locked' : ''
+        el.setAttribute('data-rev-status', status)
+        if (status === 'removed') el.classList.add('rev-removed-highlight')
+        else if (status === 'locked') el.classList.add('rev-locked-highlight')
+        applyFilter(el)
+    }
+
+    const flagAll = () => document.querySelectorAll(selector).forEach(el => flag(el as HTMLElement))
+
+    flagAll()
+    injectOwnFilterBar(isNewReddit, removed.size > 0, locked.size > 0, f => {
+        filter = f
+        document.querySelectorAll(selector).forEach(el => applyFilter(el as HTMLElement))
+    })
+    // Profiles load items lazily — flag (and filter) each as it appears.
+    observe(document, selector, el => flag(el as HTMLElement))
+}
+
+function injectOwnFilterBar(
+    isNewReddit: boolean,
+    hasRemoved: boolean,
+    hasLocked: boolean,
+    onFilter: (f: OwnFilter) => void,
+) {
+    if (document.querySelector('.rev-own-filter-bar')) return
+    const bar = document.createElement('div')
+    bar.className = 'rev-filter-bar rev-own-filter-bar'
+
+    const label = document.createElement('span')
+    label.className = 'rev-own-filter-label'
+    label.textContent = 'reveddit:'
+    bar.appendChild(label)
+
+    const mk = (text: string, f: OwnFilter, active: boolean) => {
+        const b = document.createElement('button')
+        b.className = 'rev-filter-btn' + (active ? ' rev-filter-active' : '')
+        b.textContent = text
+        b.addEventListener('click', () => {
+            bar.querySelectorAll('.rev-filter-btn').forEach(x => x.classList.remove('rev-filter-active'))
+            b.classList.add('rev-filter-active')
+            onFilter(f)
+        })
+        return b
+    }
+
+    bar.appendChild(mk('all', 'all', true))
+    if (hasRemoved) bar.appendChild(mk('removed', 'removed', false))
+    if (hasLocked) bar.appendChild(mk('locked', 'locked', false))
+
+    if (isNewReddit) {
+        const feed = document.querySelector('shreddit-feed')
+        feed?.parentElement?.insertBefore(bar, feed)
+    } else {
+        const siteTable = document.querySelector('#siteTable')
+        siteTable?.parentElement?.insertBefore(bar, siteTable)
+    }
 }

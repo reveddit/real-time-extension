@@ -115,6 +115,7 @@ function Options() {
   const [showScanOnOwnProfile, setShowScanOnOwnProfile] = useState(false)
   const [showScanOnOtherProfiles, setShowScanOnOtherProfiles] = useState(true)
   const [showThreadScanButtons, setShowThreadScanButtons] = useState(true)
+  const [highlightOwnProfileStatus, setHighlightOwnProfileStatus] = useState(true)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [themeMode, setThemeModeState] = useState<ThemeMode>('auto')
   const [error, setError] = useState('')
@@ -137,6 +138,7 @@ function Options() {
       setShowScanOnOwnProfile(!!opts.show_scan_on_own_profile)
       setShowScanOnOtherProfiles(opts.show_scan_on_other_profiles !== false)
       setShowThreadScanButtons(opts.show_thread_scan_buttons !== false)
+      setHighlightOwnProfileStatus(opts.highlight_own_profile_status !== false)
       setLoaded(true)
     })
     chrome.storage.local.get([THEME_STORAGE_KEY], res => {
@@ -190,7 +192,7 @@ function Options() {
 
     setError('')
     saveOptions(seenCountNum, intervalNum, customClientId, removedTrack, removedNotify,
-                lockedTrack, lockedNotify, hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, showThreadScanButtons, () => {
+                lockedTrack, lockedNotify, hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, showThreadScanButtons, highlightOwnProfileStatus, () => {
       setAlarm(intervalNum)
       chrome.runtime.sendMessage({ action: 'update-badge' })
       window.close()
@@ -285,6 +287,11 @@ function Options() {
             <label>show "scan for removed comments" buttons on threads</label>
             <input type="checkbox" checked={showThreadScanButtons}
               onChange={e => setShowThreadScanButtons(e.target.checked)} />
+          </Field>
+          <Field>
+            <label>flag your removed/locked content on your own profile</label>
+            <input type="checkbox" checked={highlightOwnProfileStatus}
+              onChange={e => setHighlightOwnProfileStatus(e.target.checked)} />
           </Field>
         </FieldStack>
         {monitorQuarantined && (

@@ -156,7 +156,9 @@
     animation: rev-spin 0.7s linear infinite;
 }
 @keyframes rev-spin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .rev-restore-cancel {
@@ -293,6 +295,26 @@
     background-color: rgba(255, 88, 91, 0.05) !important;
 }
 
+/* Locked content (gold), used by the own-profile status highlight. */
+.rev-locked-highlight {
+    border-left: 3px solid #ffb000 !important;
+    background-color: rgba(255, 176, 0, 0.07) !important;
+}
+.res-nightmode .rev-locked-highlight {
+    background-color: rgba(255, 176, 0, 0.13) !important;
+}
+
+/* Own-profile flagged items on old reddit: space them apart, round the corners,
+   and give content room from the colored border so each reads as its own card.
+   Scoped to #siteTable + data-rev-status so it never touches thread-restore
+   inserted comments (which live in .commentarea and use data-rev-id). */
+#siteTable .thing[data-rev-status='removed'],
+#siteTable .thing[data-rev-status='locked'] {
+    margin: 6px 0 !important;
+    padding: 5px 8px 5px 10px !important;
+    border-radius: 3px;
+}
+
 .rev-inline-badge {
     margin-left: 6px;
     vertical-align: middle;
@@ -396,6 +418,21 @@
     margin-bottom: 8px;
     padding: 6px 0;
     border-bottom: 1px solid #edeff1;
+}
+
+/* Own-profile status filter bar (above the profile listing). */
+.rev-own-filter-bar {
+    align-items: center;
+    margin: 8px;
+    padding: 6px 10px;
+    border: 1px solid #edeff1;
+    border-radius: 6px;
+}
+.rev-own-filter-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #0079d3;
+    margin-right: 4px;
 }
 
 .rev-filter-btn {
