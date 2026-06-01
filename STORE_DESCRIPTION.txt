@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/06/01 - 0.0.5.10
+- mark logged-in user's known removed comments in thread view
+
 2026/06/01 - 0.0.5.9
 - fix per-comment restore; batch search with progress; cross-check all removed comments; reduce wasted requests
 

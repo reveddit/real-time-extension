@@ -540,3 +540,15 @@
 .res-nightmode .rev-filter-bar {
     border-bottom-color: #343536;
 }
+
+.res-nightmode .rev-scan-comment-btn,
+.res-nightmode .rev-comment-action {
+    background: rgba(0, 121, 211, 0.15);
+    color: #4db2ff !important;
+}
+
+.res-nightmode .rev-scan-comment-btn:hover,
+.res-nightmode .rev-comment-action:hover {
+    background: rgba(0, 121, 211, 0.25);
+    color: #6ec0ff !important;
+}
