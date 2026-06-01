@@ -19,6 +19,11 @@ export interface RestoreResult {
     body?: string
     body_html?: string
     sourceAuthor?: string
+    // Per-comment scan batching: exhausted = every visible author has now been
+    // searched (so the button can be disabled); remaining = visible authors still
+    // unsearched after this batch (shown as "scan-rev (N)").
+    exhausted?: boolean
+    remaining?: number
 }
 
 export interface RestoreProgress {
@@ -447,25 +452,6 @@ export function parseUserPageHTML(html: string): any[] {
     return items
 }
 
-function findMatchingComment(
-    userPageItems: any[],
-    threadFullname: string,
-    targetParentId: string,
-): { author: string; body: string; body_html: string } | null {
-    for (const item of userPageItems) {
-        const d = item.data
-        if (!d || item.kind !== 't1') continue
-        if (d.link_id === threadFullname && d.parent_id === targetParentId) {
-            return {
-                author: d.author,
-                body: d.body,
-                body_html: d.body_html,
-            }
-        }
-    }
-    return null
-}
-
 // --- Rate Limit Persistence ---
 
 async function isRateLimited(): Promise<boolean> {
@@ -498,6 +484,10 @@ export async function fetchThreadJSON(postId: string, subreddit: string): Promis
 
 // --- Main Restore Function ---
 
+// Callback for comments found on author pages that aren't the target but belong
+// to this thread and are removed — the UI fills tombstones or inserts them.
+export type OtherFoundCallback = (comment: RecoveredComment) => void
+
 export async function restoreComment(
     targetCommentId: string,
     threadPostId: string,
@@ -505,6 +495,7 @@ export async function restoreComment(
     isNewReddit: boolean,
     onProgress: ProgressCallback,
     authorCache?: Map<string, any[]>,
+    onOtherFound?: OtherFoundCallback,
 ): Promise<RestoreResult> {
     if (await isRateLimited()) {
         onProgress({
@@ -543,7 +534,23 @@ export async function restoreComment(
     }
 
     const { treeMap, postAuthor } = treeResult
-    const candidates = getCandidateAuthors(targetCommentId, treeMap, postAuthor)
+    const { visibleRealIds, tombstoneIds } = summarizeThreadTree(treeMap)
+
+    // Track which comments we've already resolved (across clicks) so we don't
+    // report them again.
+    const alreadyResolved = new Set<string>()
+    document.querySelectorAll('[data-rev-id]').forEach(el => {
+        alreadyResolved.add(el.getAttribute('data-rev-id')!)
+    })
+
+    // Search EVERY visible author, nearest-first for the target. We usually
+    // find it in a few fetches and stop early, but only conclude "not found"
+    // once ALL visible authors are exhausted.
+    const proximityOrdered = getCandidateAuthors(targetCommentId, treeMap, postAuthor, Number.MAX_SAFE_INTEGER)
+    const seenAuthors = new Set(proximityOrdered)
+    const candidates = proximityOrdered.concat(
+        summarizeThreadTree(treeMap).candidateAuthors.filter(a => !seenAuthors.has(a)),
+    )
 
     if (candidates.length === 0) {
         onProgress({
@@ -553,7 +560,7 @@ export async function restoreComment(
             status: 'not_found',
             message: 'No candidate authors found to search.',
         })
-        return { found: false }
+        return { found: false, exhausted: true, remaining: 0 }
     }
 
     const target = treeMap.get(targetCommentId)
@@ -570,8 +577,60 @@ export async function restoreComment(
 
     const { sort, t } = getUserPageSort(target.created_utc)
     const limiter = new RateLimiter(RESTORE_DELAY_MS)
+    // Cap NEW network lookups per click; cached authors are checked for free.
+    let newFetches = 0
+    let unsearched = 0
+    let targetResult: RestoreResult | null = null
+
+    const makeRecovered = (d: any, subreddit_: string): RecoveredComment => ({
+        id: d.name,
+        parent_id: d.parent_id || threadPostId,
+        link_id: d.link_id,
+        author: d.author || '',
+        body: d.body || '',
+        body_html: d.body_html || '',
+        created_utc: d.created_utc || 0,
+        score: d.score || 0,
+        permalink: d.permalink || '',
+        subreddit: d.subreddit || subreddit_,
+    })
+
+    // Cross-check an author's page against this thread. Three cases:
+    //   1. Tombstone (in removedIds) — removal already confirmed, report directly.
+    //   2. Target comment — save as the result.
+    //   3. Not in tree at all (no tombstone, not visible) — might be a removed
+    //      leaf or just not loaded. Collect for /api/info verification.
+    const pendingVerify: any[] = []
+
+    const crossCheck = (items: any[], _sourceAuthor: string) => {
+        for (const item of items) {
+            const d = item?.data
+            if (!d || item.kind !== 't1') continue
+            if (d.link_id !== threadPostId) continue
+            if (alreadyResolved.has(d.name) || visibleRealIds.has(d.name)) continue
+
+            if (d.name === targetCommentId) {
+                alreadyResolved.add(d.name)
+                targetResult = {
+                    found: true,
+                    author: d.author,
+                    body: d.body,
+                    body_html: d.body_html,
+                    sourceAuthor: _sourceAuthor,
+                }
+            } else if (tombstoneIds.has(d.name)) {
+                // Tombstone — removal confirmed, report immediately.
+                alreadyResolved.add(d.name)
+                onOtherFound?.(makeRecovered(d, subreddit))
+            } else {
+                // Not in tree at all — queue for /api/info verification.
+                pendingVerify.push(d)
+            }
+        }
+    }
 
     for (let i = 0; i < candidates.length; i++) {
+        if (targetResult) break
         if (limiter.isCancelled()) {
             onProgress({
                 current: i,
@@ -584,39 +643,30 @@ export async function restoreComment(
         }
 
         const author = candidates[i]
+        const cached = authorCache?.has(author) ?? false
+        if (!cached && newFetches >= MAX_RESTORE_LOOKUPS) {
+            unsearched++
+            continue
+        }
+
         onProgress({
             current: i + 1,
             total: candidates.length,
             currentAuthor: author,
             status: 'searching',
-            message: `Checking u/${author}... (${i + 1}/${candidates.length})`,
+            message: `Searching u/${author}…`,
         })
 
         try {
             let items: any[]
-            if (authorCache?.has(author)) {
-                items = authorCache.get(author)!
+            if (cached) {
+                items = authorCache!.get(author)!
             } else {
                 items = await limiter.schedule(() => fetchUserPage(author, sort, t))
                 authorCache?.set(author, items)
+                newFetches++
             }
-            const match = findMatchingComment(items, target.link_id, target.parent_id)
-            if (match) {
-                onProgress({
-                    current: i + 1,
-                    total: candidates.length,
-                    currentAuthor: author,
-                    status: 'found',
-                    message: `Found comment by u/${match.author}`,
-                })
-                return {
-                    found: true,
-                    author: match.author,
-                    body: match.body,
-                    body_html: match.body_html,
-                    sourceAuthor: author,
-                }
-            }
+            crossCheck(items, author)
         } catch (err: any) {
             if (err.message === 'Cancelled') {
                 onProgress({
@@ -639,18 +689,50 @@ export async function restoreComment(
                 })
                 return { found: false }
             }
-            // Other errors: skip this author, continue
         }
     }
 
+    // Verify not-in-tree comments via /api/info before reporting them. A
+    // removed comment reads [removed]/[deleted]; a live-but-not-loaded one
+    // reads its real body and should be skipped.
+    if (pendingVerify.length > 0) {
+        const unverified = pendingVerify.filter(d => !alreadyResolved.has(d.name))
+        if (unverified.length > 0) {
+            const confirmed = await verifyRemovedViaApiInfo(
+                unverified.map(d => d.name),
+                limiter,
+            )
+            for (const d of unverified) {
+                if (!confirmed.has(d.name)) continue
+                alreadyResolved.add(d.name)
+                onOtherFound?.(makeRecovered(d, subreddit))
+            }
+        }
+    }
+
+    if (targetResult) {
+        const r = targetResult as RestoreResult
+        onProgress({
+            current: candidates.length,
+            total: candidates.length,
+            currentAuthor: r.author || '',
+            status: 'found',
+            message: `Found comment by u/${r.author}`,
+        })
+        return r
+    }
+
+    const exhausted = unsearched === 0
     onProgress({
         current: candidates.length,
         total: candidates.length,
         currentAuthor: '',
         status: 'not_found',
-        message: `Not found after checking ${candidates.length} users.`,
+        message: exhausted
+            ? `Not found — searched all ${candidates.length} visible author(s).`
+            : `No match yet — ${unsearched} author(s) left; click again to continue.`,
     })
-    return { found: false }
+    return { found: false, exhausted, remaining: unsearched }
 }
 
 // --- Profile Scan ---

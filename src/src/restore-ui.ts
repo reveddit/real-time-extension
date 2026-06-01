@@ -46,6 +46,7 @@ function injectRestoreButton_oldReddit(commentEl: HTMLElement) {
     btn.addEventListener('click', e => {
         e.preventDefault()
         e.stopPropagation()
+        if (btn.classList.contains('rev-scan-exhausted')) return
         handleRestore(id, commentEl, false)
     })
     li.appendChild(btn)
@@ -97,38 +98,47 @@ function injectRestoreButton_newReddit(removedTextEl: Element) {
 
 // --- Restore Handler ---
 
+// Disable every scan/restore button while one search runs, so a user can't fire
+// many at once (which would multiply requests to reddit and risk a rate-limit).
+function setScanButtonsEnabled(enabled: boolean) {
+    document.querySelectorAll('.rev-scan-comment-btn, .rev-scan-all-btn').forEach(b => {
+        ;(b as HTMLElement).classList.toggle('rev-scan-disabled', !enabled)
+    })
+}
+
 async function handleRestore(commentId: string, container: HTMLElement, isNewReddit: boolean) {
     const [postID, , , subreddit] = getFullIDsFromPath(window.location.pathname)
     if (!postID || !subreddit) return
 
     activeRestoreLimiter?.cancel()
 
+    // Inline progress/cancel UI belongs next to the comment — for old reddit the
+    // comment's own .entry, not the whole .thing (which sits above its replies).
+    const host = isNewReddit ? container : (container.querySelector(':scope > .entry') as HTMLElement) || container
+
     const btn = (container.querySelector('.rev-restore-btn') ||
         container.querySelector('.rev-scan-comment-btn')) as HTMLElement
     if (btn) btn.style.display = 'none'
+    setScanButtonsEnabled(false)
 
-    let progressEl = container.querySelector('.rev-restore-progress') as HTMLElement
-    if (!progressEl) {
-        progressEl = document.createElement('span')
-        progressEl.className = 'rev-restore-progress'
-        const spinner = document.createElement('span')
-        spinner.className = 'rev-spinner'
-        const text = document.createElement('span')
-        text.className = 'rev-restore-progress-text'
-        progressEl.append(spinner, text)
-        container.appendChild(progressEl)
-    }
-    const progressText = (progressEl.querySelector('.rev-restore-progress-text') || progressEl) as HTMLElement
+    host.querySelector(':scope > .rev-restore-progress')?.remove()
+    host.querySelector(':scope > .rev-restore-cancel')?.remove()
 
-    let cancelBtn = container.querySelector('.rev-restore-cancel') as HTMLAnchorElement
-    if (!cancelBtn) {
-        cancelBtn = document.createElement('a')
-        cancelBtn.href = '#'
-        cancelBtn.className = 'rev-restore-cancel'
-        cancelBtn.textContent = 'cancel'
-        container.appendChild(cancelBtn)
-    }
-    cancelBtn.style.display = ''
+    // Cancel goes first (left) so it stays put as the progress text changes width.
+    const cancelBtn = document.createElement('a')
+    cancelBtn.href = '#'
+    cancelBtn.className = 'rev-restore-cancel'
+    cancelBtn.textContent = 'cancel'
+    host.appendChild(cancelBtn)
+
+    const progressEl = document.createElement('span')
+    progressEl.className = 'rev-restore-progress'
+    const spinner = document.createElement('span')
+    spinner.className = 'rev-spinner'
+    const progressText = document.createElement('span')
+    progressText.className = 'rev-restore-progress-text'
+    progressEl.append(spinner, progressText)
+    host.appendChild(progressEl)
 
     const limiter = new RateLimiter()
     activeRestoreLimiter = limiter
@@ -137,28 +147,82 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
         limiter.cancel()
     }
 
-    const result = await restoreComment(
-        commentId,
-        postID,
-        subreddit,
-        isNewReddit,
-        (progress: RestoreProgress) => {
-            progressText.textContent = progress.message
-        },
-        authorCache,
-    )
+    // Reuse the inserter from the thread-scan so other-found comments (tombstones
+    // AND removed leaves without tombstones) are placed/orphaned properly, and
+    // orphans relocate when their parent turns up later.
+    const inserter = new RecoveredCommentInserter(isNewReddit)
 
-    progressEl.querySelector('.rev-spinner')?.remove()
+    let result: RestoreResult
+    let lastStatus = ''
+    try {
+        result = await restoreComment(
+            commentId,
+            postID,
+            subreddit,
+            isNewReddit,
+            (progress: RestoreProgress) => {
+                progressText.textContent = progress.message
+                lastStatus = progress.status
+            },
+            authorCache,
+            // Cross-check callback: when the scan finds another removed comment
+            // while looking for the target, place it immediately — filling a
+            // tombstone if one exists, or inserting into the tree / unattached area.
+            rc => {
+                inserter.add(rc)
+                // Hide that comment's scan-rev button since it's resolved.
+                const el = isNewReddit
+                    ? document.querySelector(`[id="${rc.id}"], [thingid="${rc.id}"]`)
+                    : findOldRedditCommentEl(rc.id)
+                const otherBtn = el?.querySelector('.rev-scan-comment-btn') as HTMLElement | null
+                if (otherBtn) otherBtn.style.display = 'none'
+            },
+        )
+    } finally {
+        activeRestoreLimiter = null
+        setScanButtonsEnabled(true)
+    }
 
-    cancelBtn.style.display = 'none'
-    activeRestoreLimiter = null
+    spinner.remove()
+    cancelBtn.remove()
 
     if (result.found) {
-        progressEl.textContent = ''
+        progressEl.remove()
         displayRestoredComment(commentId, container, result, isNewReddit)
-    } else {
-        if (btn) btn.style.display = ''
+        return
     }
+
+    if (!btn) return
+    btn.style.display = ''
+    if (lastStatus === 'not_found') {
+        if (result.exhausted) {
+            // Every visible author has been searched — no more to find for ANY
+            // comment in this thread, so disable ALL remaining scan buttons
+            // (per-comment and thread-level).
+            const exhaustedTitle = 'All visible authors searched — no more removed comments to find'
+            document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(b => {
+                b.textContent = 'scan-rev'
+                ;(b as HTMLElement).classList.add('rev-scan-exhausted')
+                ;(b as HTMLElement).title = exhaustedTitle
+            })
+            const scanAllBtn = document.querySelector('.rev-scan-all-btn') as HTMLButtonElement | null
+            if (scanAllBtn && !scanAllBtn.classList.contains('rev-scan-exhausted')) {
+                scanAllBtn.classList.add('rev-scan-exhausted')
+                scanAllBtn.disabled = true
+                scanAllBtn.title = exhaustedTitle
+            }
+        } else {
+            // More authors remain; show the count and let a re-click continue.
+            // Update ALL non-exhausted scan buttons so every comment shows the
+            // same remaining count.
+            document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(b => {
+                const base = (b.textContent || '').replace(/\s*\(\d+\)\s*$/, '')
+                b.textContent = `${base} (${result.remaining})`
+                ;(b as HTMLElement).title = `${result.remaining} more author(s) to search — click to continue`
+            })
+        }
+    }
+    // cancelled / rate_limited / error: leave the button clickable so the user can retry.
 }
 
 // Find an old-reddit comment element by fullname. Removed tombstones have no
@@ -188,37 +252,47 @@ function displayRestoredComment(
 
     if (!isNewReddit) {
         const commentEl = findOldRedditCommentEl(commentId)
-        if (commentEl) {
-            commentEl.classList.remove('deleted')
-            commentEl.classList.add('rev-removed-highlight')
-            const bodyEl = commentEl.querySelector(':scope > .entry .usertext-body .md')
-            if (bodyEl && result.body_html) {
-                bodyEl.innerHTML = result.body_html
-            } else if (bodyEl) {
-                bodyEl.textContent = result.body
-            }
+        if (!commentEl) return
+        commentEl.classList.remove('deleted')
+        // Highlight only the comment's own row (.entry), not the whole .thing —
+        // the .thing contains its nested replies (.child), so a border/tint there
+        // would span the entire subtree.
+        const entry = (commentEl.querySelector(':scope > .entry') as HTMLElement | null) || commentEl
+        entry.classList.add('rev-removed-highlight')
+        const bodyEl = commentEl.querySelector(':scope > .entry .usertext-body .md')
+        if (bodyEl && result.body_html) {
+            bodyEl.innerHTML = result.body_html
+        } else if (bodyEl) {
+            bodyEl.textContent = result.body
+        }
 
-            if (result.author) {
-                const authorEl = commentEl.querySelector(':scope > .entry .tagline .author')
-                if (authorEl) {
-                    const link = document.createElement('a')
-                    link.href = `/user/${result.author}`
-                    link.className = 'author'
-                    link.textContent = result.author
-                    authorEl.replaceWith(link)
-                }
+        if (result.author) {
+            const authorEl = commentEl.querySelector(':scope > .entry .tagline .author')
+            if (authorEl) {
+                const link = document.createElement('a')
+                link.href = `/user/${result.author}`
+                link.className = 'author'
+                link.textContent = result.author
+                authorEl.replaceWith(link)
             }
         }
-    } else {
-        const restoredEl = document.createElement('div')
-        restoredEl.className = 'rev-inserted-comment rev-removed-highlight'
-        if (result.body_html) {
-            restoredEl.innerHTML = result.body_html
-        } else {
-            restoredEl.textContent = result.body
-        }
-        container.appendChild(restoredEl)
+        // Attribution under the comment itself (the author already shows in the
+        // tagline above), not appended after the whole subtree.
+        const attr = document.createElement('div')
+        attr.className = 'rev-restore-attribution'
+        attr.textContent = 'Restored by Reveddit'
+        entry.appendChild(attr)
+        return
     }
+
+    const restoredEl = document.createElement('div')
+    restoredEl.className = 'rev-inserted-comment rev-removed-highlight'
+    if (result.body_html) {
+        restoredEl.innerHTML = result.body_html
+    } else {
+        restoredEl.textContent = result.body
+    }
+    container.appendChild(restoredEl)
 
     const attr = document.createElement('div')
     attr.className = 'rev-restore-attribution'
@@ -269,6 +343,10 @@ async function handleScanAll(isNewReddit: boolean) {
     btn.textContent = 'Scanning...'
     btn.disabled = true
     btn.classList.add('rev-scan-all-loading')
+    // Block per-comment scans while the thread scan runs (and vice versa); keep
+    // this button itself un-dimmed since it shows the active progress.
+    setScanButtonsEnabled(false)
+    btn.classList.remove('rev-scan-disabled')
 
     let progressEl = document.querySelector('.rev-scan-all-progress') as HTMLElement
     if (!progressEl) {
@@ -302,8 +380,21 @@ async function handleScanAll(isNewReddit: boolean) {
         recovered.length > 0 ? `${recovered.length} comment(s) recovered` : origText || 'Scan for removed comments'
     btn.disabled = false
     btn.classList.remove('rev-scan-all-loading')
+    setScanButtonsEnabled(true)
     // Leave the final status message visible; just drop the spinner.
     spinner.remove()
+
+    // The thread-level scan searches all visible authors — so everything is now
+    // exhausted. Disable all per-comment scan buttons + the thread button itself.
+    const exhaustedTitle = 'All visible authors searched — no more removed comments to find'
+    document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(b => {
+        b.textContent = 'scan-rev'
+        ;(b as HTMLElement).classList.add('rev-scan-exhausted')
+        ;(b as HTMLElement).title = exhaustedTitle
+    })
+    btn.classList.add('rev-scan-exhausted')
+    btn.disabled = true
+    btn.title = exhaustedTitle
 }
 
 // --- Recovered comment insertion (thread restore) ---
@@ -585,8 +676,10 @@ function createRecoveredCommentEl(rc: RecoveredComment): HTMLElement {
 // Fills an existing old-reddit tombstone in place with the recovered content.
 function fillRecoveredTombstone(tombstone: HTMLElement, rc: RecoveredComment): HTMLElement {
     tombstone.classList.remove('deleted')
-    tombstone.classList.add('rev-inserted-comment', 'rev-removed-highlight')
     tombstone.setAttribute('data-rev-id', rc.id)
+    // Highlight only this comment's row, not its nested replies (see displayRestoredComment).
+    const entry = (tombstone.querySelector(':scope > .entry') as HTMLElement | null) || tombstone
+    entry.classList.add('rev-removed-highlight')
     const bodyEl = tombstone.querySelector(':scope > .entry .usertext-body .md')
     if (bodyEl) {
         if (rc.body_html) bodyEl.innerHTML = rc.body_html

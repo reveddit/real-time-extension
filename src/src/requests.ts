@@ -77,7 +77,10 @@ const tryContentScriptFetch = async (ids: string | string[]) => {
     }
 }
 
-// Function that tries multiple fallbacks: www JSON -> content script -> old HTML -> OAuth
+// Function that tries multiple fallbacks: old HTML -> www JSON -> content script -> OAuth
+// old.reddit.com HTML is first because reddit structurally 403s unauthenticated
+// www JSON requests (every cycle), and content script fetch also typically fails.
+// This avoids two guaranteed-failing requests per cycle.
 export const lookupItemsByID_withFallback = (
     path: string,
     search: string,
@@ -86,51 +89,54 @@ export const lookupItemsByID_withFallback = (
     monitor_quarantined_remote = false,
     ids: string | string[] = '',
 ) => {
-    // First try www.reddit.com without authentication
-    const wwwUrl = www_reddit + path + '.json' + search
-    const wwwOptions = { credentials: 'omit' as const }
-
-    return fetch(wwwUrl, wwwOptions)
-        .then(response => {
-            if (response.ok) {
-                // Reddit is responding again — reset any rate-limit backoff.
-                clearRateLimitBackoff()
-                return response.json()
-            } else {
-                throw new Error(`www.reddit.com request failed: ${response.status}`)
-            }
+    // First: try old.reddit.com HTML parsing (the most reliable path)
+    return getItemsById_fromOldHTML(ids, addToPendingPostQueue)
+        .then(result => {
+            clearRateLimitBackoff()
+            return result
         })
-        .then(data => {
-            if (data && data.data && data.data.children) {
-                return data.data.children
-            }
-            throw new Error('Invalid data format from www.reddit.com')
-        })
-        .catch(error => {
-            console.log('www.reddit.com JSON failed, trying content script fallback:', error.message)
+        .catch(htmlError => {
+            console.log('old.reddit.com HTML fallback failed:', htmlError.message)
 
-            // Second: try content script fetch (credentials: omit from reddit.com origin)
-            return tryContentScriptFetch(ids).catch(contentError => {
-                console.log('Content script fallback failed:', contentError.message)
+            // Second: try www.reddit.com JSON (sometimes works after rate-limit clears)
+            const wwwUrl = www_reddit + path + '.json' + search
+            const wwwOptions = { credentials: 'omit' as const }
 
-                // Third: try old.reddit.com HTML parsing
-                return getItemsById_fromOldHTML(ids, addToPendingPostQueue).catch(htmlError => {
-                    console.log('old.reddit.com HTML fallback failed:', htmlError.message)
-
-                    // Fourth: Fall back to OAuth if available
-                    if (auth && auth !== 'none') {
-                        console.log('Trying OAuth fallback')
-                        return fetch_forReddit(
-                            ...getFetchParams(path, search, auth, monitor_quarantined_remote),
-                            monitor_quarantined,
-                        )
+            return fetch(wwwUrl, wwwOptions)
+                .then(response => {
+                    if (response.ok) {
+                        clearRateLimitBackoff()
+                        return response.json()
                     } else {
-                        console.log('No OAuth auth available for fallback')
-                        flagIfRateLimited(error)
-                        throw htmlError
+                        throw new Error(`www.reddit.com request failed: ${response.status}`)
                     }
                 })
-            })
+                .then(data => {
+                    if (data && data.data && data.data.children) {
+                        return data.data.children
+                    }
+                    throw new Error('Invalid data format from www.reddit.com')
+                })
+                .catch(wwwError => {
+                    console.log('www.reddit.com JSON failed:', wwwError.message)
+
+                    // Third: try content script fetch
+                    return tryContentScriptFetch(ids).catch(contentError => {
+                        console.log('Content script fallback failed:', contentError.message)
+
+                        // Fourth: Fall back to OAuth if available
+                        if (auth && auth !== 'none') {
+                            console.log('Trying OAuth fallback')
+                            return fetch_forReddit(
+                                ...getFetchParams(path, search, auth, monitor_quarantined_remote),
+                                monitor_quarantined,
+                            )
+                        } else {
+                            flagIfRateLimited(wwwError)
+                            throw htmlError
+                        }
+                    })
+                })
         })
 }
 

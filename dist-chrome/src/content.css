@@ -122,6 +122,20 @@
     text-decoration: none;
 }
 
+/* Temporarily disabled while another scan/restore is in progress. */
+.rev-scan-disabled {
+    opacity: 0.45 !important;
+    pointer-events: none !important;
+    cursor: default !important;
+}
+
+/* Permanently disabled once all visible authors are exhausted. Keeps
+   pointer-events so the title tooltip is visible on hover. */
+.rev-scan-exhausted {
+    opacity: 0.45 !important;
+    cursor: default !important;
+}
+
 /* --- Restore button (new reddit) --- */
 
 .rev-restore-btn {
@@ -141,7 +155,6 @@
     font-size: 11px;
     color: #787c7e;
     font-style: italic;
-    margin-left: 4px;
 }
 
 .rev-spinner {
@@ -164,7 +177,7 @@
 .rev-restore-cancel {
     font-size: 11px;
     color: #787c7e;
-    margin-left: 8px;
+    margin-right: 8px;
     cursor: pointer;
 }
 .rev-restore-cancel:hover {
