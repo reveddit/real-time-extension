@@ -398,7 +398,7 @@ describe('getOptions / saveOptions', () => {
     })
 
     it('saves options and persists', async () => {
-        await saveOptionsP(3, 5, 'my_client', true, false, false, true, true, false, true, false, false, true)
+        await saveOptionsP(3, 5, 'my_client', true, false, false, true, true, false, true, false, false, true, false)
         const storage = __getSyncStorage()
         expect(storage.options.seen_count).toBe(3)
         expect(storage.options.interval).toBe(5)
@@ -413,5 +413,6 @@ describe('getOptions / saveOptions', () => {
         expect(storage.options.show_scan_on_other_profiles).toBe(false)
         expect(storage.options.show_thread_scan_buttons).toBe(false)
         expect(storage.options.highlight_own_profile_status).toBe(true)
+        expect(storage.options.auto_filter_removed_threads).toBe(false)
     })
 })

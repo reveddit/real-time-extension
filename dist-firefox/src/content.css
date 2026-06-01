@@ -452,6 +452,15 @@
     margin-right: 4px;
 }
 
+/* Thread filter bar — sits inline next to the scan button. */
+.rev-thread-filter-bar {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 10px;
+    vertical-align: middle;
+    align-items: center;
+}
+
 .rev-filter-btn {
     background: none;
     border: 1px solid #edeff1;

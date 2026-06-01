@@ -189,6 +189,11 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
     if (result.found) {
         progressEl.remove()
         displayRestoredComment(commentId, container, result, isNewReddit)
+        // Show filter and auto-switch if this is the first found comment
+        injectThreadFilter(isNewReddit)
+        shouldAutoFilterRemoved().then(auto => {
+            if (auto) applyThreadFilter('removed', isNewReddit)
+        })
         return
     }
 
@@ -395,6 +400,172 @@ async function handleScanAll(isNewReddit: boolean) {
     btn.classList.add('rev-scan-exhausted')
     btn.disabled = true
     btn.title = exhaustedTitle
+
+    // Show the filter bar and auto-switch to "removed" view if any were found.
+    if (recovered.length > 0) {
+        injectThreadFilter(isNewReddit)
+        shouldAutoFilterRemoved().then(auto => {
+            if (auto) applyThreadFilter('removed', isNewReddit)
+        })
+    }
+}
+
+// --- Thread comment filter (all / removed) ---
+
+type ThreadFilter = 'all' | 'removed'
+let _activeThreadFilter: ThreadFilter = 'all'
+
+function expandComment(el: Element) {
+    if (!el.classList.contains('collapsed')) return
+    el.classList.remove('collapsed')
+    el.classList.add('noncollapsed')
+    const btn = el.querySelector(':scope > .entry .expand')
+    if (btn) btn.textContent = '[–]'
+}
+
+function collapseComment(el: Element) {
+    if (el.classList.contains('collapsed')) return
+    el.classList.remove('noncollapsed')
+    el.classList.add('collapsed')
+    const btn = el.querySelector(':scope > .entry .expand')
+    if (btn) btn.textContent = '[+]'
+}
+
+function isRemovedOrRecovered(el: Element): boolean {
+    // A tombstone filled by us, or inserted by us, or highlighted by per-comment scan
+    if (el.classList.contains('rev-removed-highlight')) return true
+    if (el.classList.contains('rev-inserted-comment')) return true
+    if (el.getAttribute('data-rev-id')) return true
+    // A native reddit tombstone (deleted class, body = [removed])
+    if (el.classList.contains('deleted')) return true
+    return false
+}
+
+// Does this comment or any of its descendants contain a removed comment?
+function hasRemovedDescendant(el: Element): boolean {
+    if (isRemovedOrRecovered(el)) return true
+    const childContainer = el.querySelector(':scope > .child')
+    if (!childContainer) return false
+    const children = childContainer.querySelectorAll(':scope > .sitetable > .thing.comment, :scope > .thing.comment')
+    for (const child of Array.from(children)) {
+        if (hasRemovedDescendant(child)) return true
+    }
+    return false
+}
+
+function applyThreadFilter(filter: ThreadFilter, isNewReddit: boolean) {
+    _activeThreadFilter = filter
+    // Update button states
+    document.querySelectorAll('.rev-thread-filter-btn').forEach(b => {
+        b.classList.toggle('rev-filter-active', b.getAttribute('data-filter') === filter)
+    })
+
+    if (isNewReddit) {
+        // New reddit: simplified — just hide/show shreddit comments
+        // (nesting into web components is unreliable, so we do best-effort)
+        return
+    }
+
+    const topComments = document.querySelectorAll('.commentarea > .sitetable > .thing.comment')
+    for (const el of Array.from(topComments)) {
+        applyFilterToComment(el as HTMLElement, filter)
+    }
+    // Also handle unattached area
+    const unattached = document.querySelector('.rev-unattached-area')
+    if (unattached)
+        (unattached as HTMLElement).style.display =
+            filter === 'all' || unattached.querySelector('.rev-removed-highlight, .rev-inserted-comment') ? '' : 'none'
+}
+
+function applyFilterToComment(el: HTMLElement, filter: ThreadFilter) {
+    if (filter === 'all') {
+        if (el.hasAttribute('data-rev-filter-collapsed')) {
+            expandComment(el)
+            el.removeAttribute('data-rev-filter-collapsed')
+        }
+        const childContainer = el.querySelector(':scope > .child')
+        if (childContainer) {
+            const children = childContainer.querySelectorAll(
+                ':scope > .sitetable > .thing.comment, :scope > .thing.comment',
+            )
+            children.forEach(c => applyFilterToComment(c as HTMLElement, filter))
+        }
+        return
+    }
+
+    // filter === 'removed': collapse non-removed subtrees at their highest
+    // level so a single expand reveals the whole branch.
+    if (!hasRemovedDescendant(el)) {
+        if (!el.classList.contains('collapsed')) {
+            collapseComment(el)
+            el.setAttribute('data-rev-filter-collapsed', '1')
+        }
+        return
+    }
+
+    if (el.hasAttribute('data-rev-filter-collapsed')) {
+        expandComment(el)
+        el.removeAttribute('data-rev-filter-collapsed')
+    }
+
+    if (isRemovedOrRecovered(el)) {
+        expandComment(el)
+    }
+
+    const childContainer = el.querySelector(':scope > .child')
+    if (childContainer) {
+        const children = childContainer.querySelectorAll(
+            ':scope > .sitetable > .thing.comment, :scope > .thing.comment',
+        )
+        children.forEach(c => applyFilterToComment(c as HTMLElement, filter))
+    }
+}
+
+function injectThreadFilter(isNewReddit: boolean) {
+    if (document.querySelector('.rev-thread-filter-bar')) return
+    const bar = document.createElement('div')
+    bar.className = 'rev-thread-filter-bar'
+
+    const label = document.createElement('span')
+    label.className = 'rev-own-filter-label'
+    label.textContent = 'reveddit:'
+    bar.appendChild(label)
+
+    const mk = (text: string, f: ThreadFilter) => {
+        const b = document.createElement('button')
+        b.className = 'rev-filter-btn rev-thread-filter-btn' + (f === 'all' ? ' rev-filter-active' : '')
+        b.textContent = text
+        b.setAttribute('data-filter', f)
+        b.addEventListener('click', () => applyThreadFilter(f, isNewReddit))
+        return b
+    }
+
+    bar.appendChild(mk('all', 'all'))
+    bar.appendChild(mk('removed', 'removed'))
+
+    // Place next to the "Scan for removed comments" button
+    const scanBtn = document.querySelector('.rev-scan-all-btn')
+    if (scanBtn) {
+        scanBtn.after(bar)
+    } else {
+        // Fallback: above comments
+        const anchor = isNewReddit
+            ? document.querySelector('shreddit-comment-tree') || document.querySelector('main')
+            : document.querySelector('.commentarea .menuarea') || document.querySelector('.commentarea')
+        if (anchor) anchor.prepend(bar)
+    }
+}
+
+function shouldAutoFilterRemoved(): Promise<boolean> {
+    return new Promise(resolve => {
+        try {
+            chrome.storage.sync.get(['options'], sync => {
+                resolve((sync?.options || {}).auto_filter_removed_threads !== false)
+            })
+        } catch {
+            resolve(true)
+        }
+    })
 }
 
 // --- Recovered comment insertion (thread restore) ---

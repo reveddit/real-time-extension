@@ -116,6 +116,7 @@ function Options() {
   const [showScanOnOtherProfiles, setShowScanOnOtherProfiles] = useState(true)
   const [showThreadScanButtons, setShowThreadScanButtons] = useState(true)
   const [highlightOwnProfileStatus, setHighlightOwnProfileStatus] = useState(true)
+  const [autoFilterRemovedThreads, setAutoFilterRemovedThreads] = useState(true)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [themeMode, setThemeModeState] = useState<ThemeMode>('auto')
   const [error, setError] = useState('')
@@ -139,6 +140,7 @@ function Options() {
       setShowScanOnOtherProfiles(opts.show_scan_on_other_profiles !== false)
       setShowThreadScanButtons(opts.show_thread_scan_buttons !== false)
       setHighlightOwnProfileStatus(opts.highlight_own_profile_status !== false)
+      setAutoFilterRemovedThreads(opts.auto_filter_removed_threads !== false)
       setLoaded(true)
     })
     chrome.storage.local.get([THEME_STORAGE_KEY], res => {
@@ -192,7 +194,7 @@ function Options() {
 
     setError('')
     saveOptions(seenCountNum, intervalNum, customClientId, removedTrack, removedNotify,
-                lockedTrack, lockedNotify, hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, showThreadScanButtons, highlightOwnProfileStatus, () => {
+                lockedTrack, lockedNotify, hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, showThreadScanButtons, highlightOwnProfileStatus, autoFilterRemovedThreads, () => {
       setAlarm(intervalNum)
       chrome.runtime.sendMessage({ action: 'update-badge' })
       window.close()
@@ -292,6 +294,11 @@ function Options() {
             <label>flag your removed/locked content on your own profile</label>
             <input type="checkbox" checked={highlightOwnProfileStatus}
               onChange={e => setHighlightOwnProfileStatus(e.target.checked)} />
+          </Field>
+          <Field>
+            <label>auto-filter to show only removed comments after thread scan</label>
+            <input type="checkbox" checked={autoFilterRemovedThreads}
+              onChange={e => setAutoFilterRemovedThreads(e.target.checked)} />
           </Field>
         </FieldStack>
         {monitorQuarantined && (

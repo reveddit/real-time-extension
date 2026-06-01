@@ -697,18 +697,27 @@ export async function restoreComment(
 
     // Verify not-in-tree comments via /api/info before reporting them. A
     // removed comment reads [removed]/[deleted]; a live-but-not-loaded one
-    // reads its real body and should be skipped.
+    // reads its real body and should be skipped. Use the full lookup (not just
+    // the removed-set) so we get the real parent_id for proper tree placement —
+    // the HTML parser doesn't have parent_id, so without this the inserter
+    // can't tell where the comment belongs and it would be misplaced.
     if (pendingVerify.length > 0) {
         const unverified = pendingVerify.filter(d => !alreadyResolved.has(d.name))
         if (unverified.length > 0) {
-            const confirmed = await verifyRemovedViaApiInfo(
+            const looked = await lookupCommentsByIds(
                 unverified.map(d => d.name),
                 limiter,
             )
             for (const d of unverified) {
-                if (!confirmed.has(d.name)) continue
+                const info = looked.get(d.name)
+                if (!info?.removed) continue
                 alreadyResolved.add(d.name)
-                onOtherFound?.(makeRecovered(d, subreddit))
+                const rc = makeRecovered(d, subreddit)
+                // Use the real parent_id from /api/info (the HTML parser doesn't
+                // have it, so without this correction the comment would be
+                // misplaced as a top-level comment).
+                if (info.parent_id) rc.parent_id = info.parent_id
+                onOtherFound?.(rc)
             }
         }
     }
@@ -972,17 +981,6 @@ function summarizeThreadTree(map: Map<string, CommentTreeNode>): {
     return { candidateAuthors: authors, visibleRealIds, tombstoneIds }
 }
 
-// A comment found on an author's profile but absent from the thread view might be
-// genuinely removed, or just not loaded here (e.g. a single-comment-thread view).
-// Confirm via unauthenticated /api/info: a removed comment reads body '[removed]'
-// /'[deleted]' there, a live one reads its real body.
-async function verifyRemovedViaApiInfo(ids: string[], limiter: RateLimiter): Promise<Set<string>> {
-    const looked = await lookupCommentsByIds(ids, limiter)
-    const removed = new Set<string>()
-    for (const [id, c] of looked) if (c.removed) removed.add(id)
-    return removed
-}
-
 function getOldRedditNumComments(): number {
     const el = document.querySelector(
         '#siteTable .thing[data-comments-count], .linklisting .thing[data-comments-count]',
@@ -1139,12 +1137,19 @@ export async function scanThreadForRemovedComments(
             }
         }
         if (uncertain.length) {
-            const confirmed = await verifyRemovedViaApiInfo(
+            const looked = await lookupCommentsByIds(
                 uncertain.map(d => d.name),
                 limiter,
             )
-            console.log(`[reveddit scan]   /api/info verified ${confirmed.size}/${uncertain.length} as removed`)
-            for (const d of uncertain) if (confirmed.has(d.name)) recordRecovery(d, author)
+            const confirmedCount = [...looked.values()].filter(c => c.removed).length
+            console.log(`[reveddit scan]   /api/info verified ${confirmedCount}/${uncertain.length} as removed`)
+            for (const d of uncertain) {
+                const info = looked.get(d.name)
+                if (!info?.removed) continue
+                // Use real parent_id from /api/info (HTML parser doesn't have it)
+                if (info.parent_id) d.parent_id = info.parent_id
+                recordRecovery(d, author)
+            }
         }
     }
 

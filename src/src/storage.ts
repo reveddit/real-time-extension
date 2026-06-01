@@ -80,6 +80,7 @@ const getStorageInit = () => {
             show_scan_on_other_profiles: true,
             show_thread_scan_buttons: true,
             highlight_own_profile_status: true,
+            auto_filter_removed_threads: true,
         },
         last_check: null,
         last_check_quarantined: null,
@@ -502,6 +503,7 @@ export const saveOptions = (
     show_scan_on_other_profiles: boolean,
     show_thread_scan_buttons: boolean,
     highlight_own_profile_status: boolean,
+    auto_filter_removed_threads: boolean,
     callback: () => void,
 ) => {
     chrome.storage.sync.set(
@@ -518,6 +520,7 @@ export const saveOptions = (
                 show_scan_on_other_profiles,
                 show_thread_scan_buttons,
                 highlight_own_profile_status,
+                auto_filter_removed_threads,
             },
         },
         callback,
