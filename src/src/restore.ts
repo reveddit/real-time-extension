@@ -337,28 +337,18 @@ function getUserPageSort(
     return { sort, t }
 }
 
+// Fetch an author's comments UNAUTHENTICATED. Uses the HTML path because the
+// JSON endpoint hides removed comments from the listing — the HTML page still
+// shows them logged-out. Fetches /comments (not the overview) so posts don't
+// dilute the 25-per-page limit.
 export async function fetchUserPage(
     author: string,
     sort: string = 'new',
-    t: string = '',
-    after?: string,
-    before?: string,
+    _t: string = '',
+    _after?: string,
+    _before?: string,
 ): Promise<any[]> {
-    const params = new URLSearchParams({
-        sort,
-        limit: '100',
-        raw_json: '1',
-    })
-    if (t) params.set('t', t)
-    if (after) params.set('after', after)
-    if (before) params.set('before', before)
-
-    const url = `https://old.reddit.com/user/${encodeURIComponent(author)}.json?${params}`
-    const data = await fetchOldRedditJSON(url)
-    if (data?.data?.children) {
-        return data.data.children
-    }
-    return []
+    return fetchUserPageHTML(author, sort, true)
 }
 
 // Fetch an old.reddit.com JSON URL UNAUTHENTICATED. The content script can't do
@@ -380,23 +370,31 @@ async function fetchOldRedditJSON(url: string): Promise<any> {
 // browsers, no DNR needed); on new reddit (www/sh) old.reddit.com is cross-origin
 // and CORS-blocked in the content script, so the background does it (it has the
 // host_permissions CORS bypass + the DNR header strip).
-export async function fetchUserPageHTML(username: string, sort = 'new'): Promise<any[]> {
+// commentsOnly: true  → /user/X/comments (thread restore — no posts diluting)
+// commentsOnly: false → /user/X (profile scan — needs both posts and comments)
+export async function fetchUserPageHTML(username: string, sort = 'new', commentsOnly = false): Promise<any[]> {
+    const subpath = commentsOnly ? '/comments' : ''
     const qs = sort && sort !== 'new' ? `?sort=${encodeURIComponent(sort)}` : ''
+    const path = `/user/${encodeURIComponent(username)}${subpath}${qs}`
     let html: string
     if (location.hostname === 'old.reddit.com') {
-        const url = `https://old.reddit.com/user/${encodeURIComponent(username)}${qs}`
+        const url = `https://old.reddit.com${path}`
         const response = await fetch(url, { credentials: 'omit' })
         if (!response.ok) throw new Error(`User page fetch failed: ${response.status}`)
         html = await response.text()
         console.log(`[reveddit scan] user-page direct fetch ok (${html.length} bytes)`)
     } else {
-        html = await fetchUserPageHTMLViaBackground(username, qs)
+        html = await fetchUserPageHTMLViaBackground(username, path)
     }
     return parseUserPageHTML(html)
 }
 
-async function fetchUserPageHTMLViaBackground(username: string, qs: string): Promise<string> {
-    const res = (await browser.runtime.sendMessage({ action: 'fetch-userpage-html', username, qs })) as any
+async function fetchUserPageHTMLViaBackground(username: string, path: string): Promise<string> {
+    const res = (await browser.runtime.sendMessage({
+        action: 'fetch-userpage-html',
+        username,
+        path,
+    })) as any
     console.log(
         `[reveddit scan] user-page background fetch -> status ${res?.status ?? 'none'} (${res?.ok ? 'ok' : res?.error || 'fail'})`,
     )
@@ -434,6 +432,7 @@ export function parseUserPageHTML(html: string): any[] {
         }
         const datetime = timeEl?.getAttribute('datetime')
         items.push({
+            kind: isCommentItem ? 't1' : 't3',
             data: {
                 name,
                 author: el.getAttribute('data-author') || '',
@@ -446,6 +445,10 @@ export function parseUserPageHTML(html: string): any[] {
                 score: scoreEl?.getAttribute('title') ? parseInt(scoreEl.getAttribute('title')!, 10) || 0 : undefined,
                 permalink,
                 link_id,
+                // parent_id isn't in the HTML, but link_id (the thread) is; the
+                // inserter can still place comments by link_id when parent_id is
+                // missing (they land in the unattached area and can be bridged).
+                parent_id: link_id,
             },
         })
     }
@@ -1121,20 +1124,26 @@ export async function scanThreadForRemovedComments(
         // tombstone confirms removal; anything else is only "missing from this
         // view" until /api/info confirms it's actually removed (it may simply
         // not be loaded here, e.g. a single-comment-thread view).
+        const threadComments = items.filter(i => i?.data && i.kind === 't1' && i.data.link_id === threadPostId)
+        console.log(`[reveddit scan] u/${author}: ${items.length} items, ${threadComments.length} in this thread`)
         const uncertain: any[] = []
-        for (const item of items) {
-            const d = item?.data
-            if (!d || item.kind !== 't1') continue
-            if (d.link_id !== threadPostId) continue // a comment in a different thread
+        for (const item of threadComments) {
+            const d = item.data
             if (visibleRealIds.has(d.name) || recoveredIds.has(d.name)) continue
-            if (tombstoneIds.has(d.name)) recordRecovery(d, author)
-            else uncertain.push(d)
+            if (tombstoneIds.has(d.name)) {
+                console.log(`[reveddit scan]   ${d.name} → tombstone match, recovering`)
+                recordRecovery(d, author)
+            } else {
+                console.log(`[reveddit scan]   ${d.name} → not in tree, queuing for /api/info verify`)
+                uncertain.push(d)
+            }
         }
         if (uncertain.length) {
             const confirmed = await verifyRemovedViaApiInfo(
                 uncertain.map(d => d.name),
                 limiter,
             )
+            console.log(`[reveddit scan]   /api/info verified ${confirmed.size}/${uncertain.length} as removed`)
             for (const d of uncertain) if (confirmed.has(d.name)) recordRecovery(d, author)
         }
     }

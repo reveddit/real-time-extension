@@ -342,6 +342,7 @@
     border-left: 3px solid #ff585b;
     background-color: rgba(255, 88, 91, 0.03);
     border-radius: 4px;
+    display: flow-root;
 }
 
 /* Recovered comments inserted into a thread (vs. the profile-scan list above). */
@@ -363,6 +364,9 @@
     margin: 8px 0;
     padding: 8px 12px;
     border-radius: 4px;
+    /* BFC so the box shrinks to the content column and doesn't run under
+       old reddit's float:right sidebar. */
+    display: flow-root;
 }
 .rev-unattached-header {
     margin-bottom: 8px;

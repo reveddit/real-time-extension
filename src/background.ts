@@ -220,7 +220,11 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         // old.reddit.com (cross-origin → CORS). The background has the
         // host_permissions CORS bypass, so fetch the HTML here and hand the raw
         // text back to the content script to parse.
-        const url = `https://old.reddit.com/user/${encodeURIComponent(request.username)}${request.qs || ''}`
+        // Use the explicit path if provided (e.g. /user/X/comments?sort=new),
+        // otherwise fall back to the overview for backward compatibility.
+        const url = request.path
+            ? `https://old.reddit.com${request.path}`
+            : `https://old.reddit.com/user/${encodeURIComponent(request.username)}${request.qs || ''}`
         fetch(url, { credentials: 'omit' })
             .then(async r => {
                 console.log(`[reveddit] bg fetch-userpage-html ${url} -> ${r.status}`)
