@@ -313,6 +313,12 @@
     border-left: 3px solid #ffb000 !important;
     background-color: rgba(255, 176, 0, 0.07) !important;
 }
+
+/* Thread comments: .entry gets the highlight, needs padding from the border. */
+.commentarea .entry.rev-removed-highlight,
+.commentarea .entry.rev-locked-highlight {
+    padding-left: 8px;
+}
 .res-nightmode .rev-locked-highlight {
     background-color: rgba(255, 176, 0, 0.13) !important;
 }

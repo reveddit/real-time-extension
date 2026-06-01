@@ -4,7 +4,7 @@ import { setTextAndFunction_subscribe, setTextAndFunction_unsubscribe } from './
 import { observe, findByText } from './dom-helpers'
 import browser from 'webextension-polyfill'
 import { subscribeUser, MAX_SUBSCRIPTIONS } from './storage'
-import { initRestoreOnThread, initProfileScan, initOwnProfileStatus } from './restore-ui'
+import { initRestoreOnThread, initProfileScan, initOwnProfileStatus, initOwnThreadStatus } from './restore-ui'
 
 const USER_DELETED = 'rev-user-deleted'
 const MOD_REMOVED = 'rev-mod-removed'
@@ -26,6 +26,7 @@ export const redditModifications = (
     const [postID_restore, , user_restore, subreddit_restore] = getFullIDsFromPath(window.location.pathname)
     if (postID_restore && subreddit_restore) {
         initRestoreOnThread(isNewReddit)
+        initOwnThreadStatus(isNewReddit)
     }
     if (user_restore) {
         initProfileScan(user_restore, isNewReddit)
