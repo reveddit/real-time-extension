@@ -122,6 +122,26 @@
     text-decoration: none;
 }
 
+/* New reddit action row: match shreddit's native button style. */
+.rev-newreddit-action {
+    background: none !important;
+    color: inherit !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    padding: 4px 8px !important;
+    border: none !important;
+    border-radius: 999px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    cursor: pointer;
+    line-height: 16px !important;
+}
+.rev-newreddit-action:hover {
+    background: var(--color-neutral-background-hover, rgba(0, 0, 0, 0.05)) !important;
+    color: inherit !important;
+}
+
 /* Temporarily disabled while another scan/restore is in progress. */
 .rev-scan-disabled {
     opacity: 0.45 !important;

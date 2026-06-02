@@ -42,7 +42,7 @@ function injectRestoreButton_oldReddit(commentEl: HTMLElement) {
     btn.href = '#'
     btn.className = 'rev-scan-comment-btn rev-comment-action'
     btn.textContent = 'scan-rev'
-    btn.title = 'Scan for removed comments'
+    btn.title = 'Search for removed comments in this thread via reveddit'
     btn.addEventListener('click', e => {
         e.preventDefault()
         e.stopPropagation()
@@ -98,25 +98,81 @@ function injectRestoreButton_newReddit(removedTextEl: Element) {
     closestDiv.after(wrap)
 }
 
+function newRedditScanBtnHTML(): string {
+    return (
+        '<svg fill="currentColor" height="16" width="16" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M9 2a7 7 0 104.32 12.527l3.576 3.576a1 1 0 001.414-1.414l-3.576-3.576A7 7 0 009 2zM4 9a5 5 0 1110 0A5 5 0 014 9z"/>' +
+        '</svg>' +
+        '<span>Scan-Rev</span>'
+    )
+}
+
 function injectScanButton_newReddit(commentEl: HTMLElement) {
     const thingid = commentEl.getAttribute('thingid')
     if (!thingid || injectedComments.has(thingid)) return
-    const actionRow = commentEl.querySelector('[slot="actionRow"]')
-    if (!actionRow || actionRow.querySelector('.rev-scan-comment-btn')) return
+    const actionRow = commentEl.querySelector(':scope > [slot="actionRow"]')
+    if (!actionRow) return
 
     injectedComments.add(thingid)
 
-    const btn = document.createElement('button')
-    btn.className = 'rev-scan-comment-btn rev-comment-action'
-    btn.textContent = 'scan-rev'
-    btn.title = 'Scan for removed comments'
-    btn.addEventListener('click', e => {
-        e.preventDefault()
-        e.stopPropagation()
-        if (btn.classList.contains('rev-scan-exhausted')) return
-        handleRestore(thingid, commentEl, true)
-    })
-    actionRow.appendChild(btn)
+    const makeBtn = () => {
+        const btn = document.createElement('button')
+        btn.className = 'rev-scan-comment-btn rev-newreddit-action'
+        btn.title = 'Search for removed comments in this thread via reveddit'
+        btn.innerHTML = newRedditScanBtnHTML()
+        btn.addEventListener('click', e => {
+            e.preventDefault()
+            e.stopPropagation()
+            if (btn.classList.contains('rev-scan-exhausted')) return
+            handleRestore(thingid, commentEl, true)
+        })
+        return btn
+    }
+
+    // When logged in, Reddit lazily loads a shreddit-comment-action-row (with
+    // its own shadow DOM) inside the actionRow div. We inject directly into
+    // that shadow DOM's flex container so the button sits inline with
+    // Reply/Award/Share. Fallback to the light DOM actionRow for not-logged-in.
+    const placeInShadow = (): boolean => {
+        const scar = commentEl.querySelector('shreddit-comment-action-row')
+        const sr = scar?.shadowRoot
+        if (!sr) return false
+        if (sr.querySelector('.rev-scan-comment-btn')) return true
+        const overflowSlot = sr.querySelector('slot[name="overflow"]')
+        const flexRow = overflowSlot?.parentElement
+        if (!flexRow) return false
+
+        if (!sr.querySelector('.rev-scan-style')) {
+            const style = document.createElement('style')
+            style.className = 'rev-scan-style'
+            style.textContent =
+                '.rev-scan-comment-btn{background:none;border:none;color:inherit;' +
+                'font-size:12px;font-weight:600;padding:4px 8px;border-radius:999px;' +
+                'display:inline-flex;align-items:center;gap:4px;cursor:pointer;line-height:16px}' +
+                '.rev-scan-comment-btn:hover{background:var(--color-neutral-background-hover,rgba(0,0,0,0.05))}'
+            sr.prepend(style)
+        }
+        // Remove fallback button from light DOM actionRow
+        actionRow.querySelector('.rev-scan-comment-btn')?.remove()
+        overflowSlot.before(makeBtn())
+        return true
+    }
+
+    if (!placeInShadow()) {
+        // Fallback: light DOM actionRow (not logged in, or before lazy load)
+        if (!actionRow.querySelector('.rev-scan-comment-btn')) {
+            actionRow.appendChild(makeBtn())
+        }
+        const obs = new MutationObserver(() => {
+            if (placeInShadow()) obs.disconnect()
+        })
+        obs.observe(actionRow, { childList: true, subtree: true })
+        // Shadow root may not exist when the element is first added to the DOM.
+        // MutationObserver can't detect shadow root creation, so retry briefly.
+        setTimeout(() => placeInShadow(), 500)
+        setTimeout(() => placeInShadow(), 1500)
+        setTimeout(() => placeInShadow(), 3000)
+    }
 }
 
 // --- Restore Handler ---
@@ -346,8 +402,8 @@ function injectScanAllButton(isNewReddit: boolean) {
         menuarea.appendChild(btn)
     } else {
         if (document.querySelector('.rev-scan-all-btn')) return
-        const anchor = document.querySelector('shreddit-comment-tree') || document.querySelector('main#main-content')
-        if (!anchor) return
+        const tree = document.querySelector('shreddit-comment-tree')
+        if (!tree) return
 
         const btn = document.createElement('button')
         btn.className = 'rev-scan-all-btn rev-profile-scan-btn'
@@ -356,7 +412,7 @@ function injectScanAllButton(isNewReddit: boolean) {
             e.preventDefault()
             handleScanAll(true)
         })
-        anchor.before(btn)
+        tree.prepend(btn)
     }
 }
 
