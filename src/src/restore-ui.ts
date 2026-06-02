@@ -56,6 +56,8 @@ function injectRestoreButton_oldReddit(commentEl: HTMLElement) {
 // --- Thread Restore: New Reddit ---
 
 function getCommentId_newReddit(el: Element): string | null {
+    const comment = el.closest('shreddit-comment')
+    if (comment) return comment.getAttribute('thingid')
     let current = el.closest('[id]')
     while (current) {
         if (current.id?.startsWith('t1_')) return current.id
@@ -94,6 +96,27 @@ function injectRestoreButton_newReddit(removedTextEl: Element) {
     })
     wrap.appendChild(btn)
     closestDiv.after(wrap)
+}
+
+function injectScanButton_newReddit(commentEl: HTMLElement) {
+    const thingid = commentEl.getAttribute('thingid')
+    if (!thingid || injectedComments.has(thingid)) return
+    const actionRow = commentEl.querySelector('[slot="actionRow"]')
+    if (!actionRow || actionRow.querySelector('.rev-scan-comment-btn')) return
+
+    injectedComments.add(thingid)
+
+    const btn = document.createElement('button')
+    btn.className = 'rev-scan-comment-btn rev-comment-action'
+    btn.textContent = 'scan-rev'
+    btn.title = 'Scan for removed comments'
+    btn.addEventListener('click', e => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (btn.classList.contains('rev-scan-exhausted')) return
+        handleRestore(thingid, commentEl, true)
+    })
+    actionRow.appendChild(btn)
 }
 
 // --- Restore Handler ---
@@ -322,19 +345,18 @@ function injectScanAllButton(isNewReddit: boolean) {
         })
         menuarea.appendChild(btn)
     } else {
-        const target =
-            document.querySelector('shreddit-sort-dropdown')?.parentElement ||
-            document.querySelector('[slot="commentCount"]')?.parentElement
-        if (!target || target.querySelector('.rev-scan-all-btn')) return
+        if (document.querySelector('.rev-scan-all-btn')) return
+        const anchor = document.querySelector('shreddit-comment-tree') || document.querySelector('main#main-content')
+        if (!anchor) return
 
         const btn = document.createElement('button')
         btn.className = 'rev-scan-all-btn rev-profile-scan-btn'
-        btn.textContent = 'Restore all removed'
+        btn.textContent = 'Scan for removed comments'
         btn.addEventListener('click', e => {
             e.preventDefault()
             handleScanAll(true)
         })
-        target.appendChild(btn)
+        anchor.before(btn)
     }
 }
 
@@ -461,8 +483,16 @@ function applyThreadFilter(filter: ThreadFilter, isNewReddit: boolean) {
     })
 
     if (isNewReddit) {
-        // New reddit: simplified — just hide/show shreddit comments
-        // (nesting into web components is unreliable, so we do best-effort)
+        const topComments = document.querySelectorAll('shreddit-comment-tree > shreddit-comment[thingid]')
+        for (const el of Array.from(topComments)) {
+            applyFilterToNewRedditComment(el as HTMLElement, filter)
+        }
+        const unattached = document.querySelector('.rev-unattached-area')
+        if (unattached)
+            (unattached as HTMLElement).style.display =
+                filter === 'all' || unattached.querySelector('.rev-removed-highlight, .rev-inserted-comment')
+                    ? ''
+                    : 'none'
         return
     }
 
@@ -519,6 +549,53 @@ function applyFilterToComment(el: HTMLElement, filter: ThreadFilter) {
         )
         children.forEach(c => applyFilterToComment(c as HTMLElement, filter))
     }
+}
+
+function isNewRedditCommentRemoved(el: Element): boolean {
+    if (el.classList.contains('rev-removed-highlight')) return true
+    if (el.classList.contains('rev-inserted-comment')) return true
+    if (el.hasAttribute('data-rev-id')) return true
+    if (el.hasAttribute('is-comment-deleted')) return true
+    const body = el.querySelector('[slot="comment"]')
+    if (body && (body.textContent || '').toLowerCase().includes(REMOVED_BY_MODERATOR_TEXT)) return true
+    return false
+}
+
+function hasNewRedditRemovedDescendant(el: Element): boolean {
+    if (isNewRedditCommentRemoved(el)) return true
+    const children = el.querySelectorAll(':scope > shreddit-comment')
+    for (const child of Array.from(children)) {
+        if (hasNewRedditRemovedDescendant(child)) return true
+    }
+    return false
+}
+
+function applyFilterToNewRedditComment(el: HTMLElement, filter: ThreadFilter) {
+    if (filter === 'all') {
+        if (el.hasAttribute('data-rev-filter-hidden')) {
+            el.style.display = ''
+            el.removeAttribute('data-rev-filter-hidden')
+        }
+        el.querySelectorAll(':scope > shreddit-comment').forEach(c =>
+            applyFilterToNewRedditComment(c as HTMLElement, filter),
+        )
+        return
+    }
+
+    if (!hasNewRedditRemovedDescendant(el)) {
+        el.style.display = 'none'
+        el.setAttribute('data-rev-filter-hidden', '1')
+        return
+    }
+
+    if (el.hasAttribute('data-rev-filter-hidden')) {
+        el.style.display = ''
+        el.removeAttribute('data-rev-filter-hidden')
+    }
+
+    el.querySelectorAll(':scope > shreddit-comment').forEach(c =>
+        applyFilterToNewRedditComment(c as HTMLElement, filter),
+    )
 }
 
 function injectThreadFilter(isNewReddit: boolean) {
@@ -687,9 +764,13 @@ class RecoveredCommentInserter {
         if (placedParent) return { container: childSlotOf(placedParent), prepend: false }
 
         if (this.isNewReddit) {
-            // Nesting into shreddit web components is unreliable, so comments with
-            // a native or top-level parent go into the panel (flat).
-            return null
+            if (parentId.startsWith('t3_')) {
+                const tree = document.querySelector('shreddit-comment-tree') as HTMLElement
+                return tree ? { container: tree, prepend: false } : null
+            }
+            const nativeParent = document.querySelector(`shreddit-comment[thingid="${parentId}"]`) as HTMLElement
+            if (!nativeParent) return null
+            return { container: newRedditChildSlot(nativeParent), prepend: false }
         }
         if (parentId.startsWith('t3_')) {
             const top =
@@ -775,6 +856,29 @@ function oldRedditChildListing(nativeEl: HTMLElement): HTMLElement {
         child.appendChild(listing)
     }
     return listing
+}
+
+function newRedditChildSlot(parentComment: HTMLElement): HTMLElement {
+    const thingid = parentComment.getAttribute('thingid') || ''
+    const slotName = `children-${thingid}-rev`
+
+    let wrapper = parentComment.querySelector(`[slot="${slotName}"]`) as HTMLElement | null
+    if (wrapper) return wrapper
+
+    // Create a named slot inside the shadow DOM's #comment-children
+    const commentChildren = parentComment.shadowRoot?.querySelector('#comment-children')
+    if (commentChildren) {
+        const newSlot = document.createElement('slot')
+        newSlot.name = slotName
+        commentChildren.appendChild(newSlot)
+    }
+
+    // Light DOM wrapper targeting that slot — CSS applies normally
+    wrapper = document.createElement('div')
+    wrapper.slot = slotName
+    wrapper.className = 'rev-rec-children'
+    parentComment.appendChild(wrapper)
+    return wrapper
 }
 
 function recoveredMeta(rc: RecoveredComment): HTMLElement {
@@ -1351,9 +1455,18 @@ export function initRestoreOnThread(isNewReddit: boolean) {
                 injectRestoreButton_newReddit(el)
             }
             observe(document, 'span', processSpan)
+
+            // Per-comment scan buttons on all shreddit-comments
+            const commentSel = 'shreddit-comment[thingid]'
+            document.querySelectorAll(commentSel).forEach(el => injectScanButton_newReddit(el as HTMLElement))
+            observe(document, commentSel, el => injectScanButton_newReddit(el as HTMLElement))
         }
 
         injectScanAllButton(isNewReddit)
+        if (isNewReddit) {
+            // Comment tree may not exist yet — retry when it appears.
+            observe(document, 'shreddit-comment-tree', () => injectScanAllButton(true))
+        }
     })
 }
 
@@ -1449,13 +1562,14 @@ function flagOwnStatus(
 
 export function initOwnThreadStatus(isNewReddit: boolean) {
     loadOwnRemovedSets((removed, locked) => {
-        const selector = isNewReddit
-            ? 'shreddit-comment[thingid], [id^="t1_"].Comment'
-            : '.thing.comment[data-fullname]'
+        const selector = isNewReddit ? 'shreddit-comment[thingid]' : '.thing.comment[data-fullname]'
         const getId = (el: HTMLElement) =>
-            isNewReddit ? el.getAttribute('thingid') || el.id || '' : el.getAttribute('data-fullname') || ''
-        // Highlight .entry not .thing — .thing wraps nested replies.
-        const getTarget = (el: HTMLElement) => (el.querySelector(':scope > .entry') as HTMLElement) || el
+            isNewReddit ? el.getAttribute('thingid') || '' : el.getAttribute('data-fullname') || ''
+        // Old reddit: highlight .entry not .thing — .thing wraps nested replies.
+        // New reddit: shreddit-comment itself is fine — children are slotted separately.
+        const getTarget = isNewReddit
+            ? undefined
+            : (el: HTMLElement) => (el.querySelector(':scope > .entry') as HTMLElement) || el
         const flag = (el: HTMLElement) => flagOwnStatus(el, removed, locked, getId, getTarget)
         document.querySelectorAll(selector).forEach(el => flag(el as HTMLElement))
         observe(document, selector, el => flag(el as HTMLElement))

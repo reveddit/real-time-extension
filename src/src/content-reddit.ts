@@ -285,6 +285,7 @@ const addSubscribeLinks_newReddit_comments = (elements: HTMLElement[], subscript
     elements.forEach(targetedElement => {
         const element = targetedElement.closest('.Comment') as HTMLElement
         if (!element) return
+        if (element.querySelector('.rev-comment-action')) return
         const id = getID_newReddit(element, id_match_comment)
         if (!id || !id.match(id_match_comment)) return
         let button = getButton(element, 'save')
@@ -314,6 +315,7 @@ const getButton = (element: Element, button_search_text: string): Element | null
 
 const addSubscribeLinks_newReddit_posts = (elements: HTMLElement[], subscriptions: Record<string, any>) => {
     elements.forEach(element => {
+        if (element.querySelector('.rev-comment-action')) return
         const id = getID_newReddit(element, id_match_post)
         if (!id || !id.match(id_match_post)) return
         // Find a descendant of a button with text "save", then get its parent (the button)
@@ -353,8 +355,8 @@ const addSubscribeLinks_oldReddit = (elements: HTMLElement[], subscriptions: Rec
             }
         }
         if (!id) return
-        const buttons = element.querySelector('ul.buttons')
-        if (!buttons) return
+        const buttons = element.querySelector(':scope > .entry > ul.buttons')
+        if (!buttons || buttons.querySelector('.rev-comment-action')) return
         let commentBody = ''
         const bodyElement = element.querySelector('.usertext-body')
         if (bodyElement && id.match(/^t1_/)) {
