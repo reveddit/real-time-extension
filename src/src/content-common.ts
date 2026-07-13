@@ -29,6 +29,27 @@ export const setTextAndFunction_subscribe = (id: string, element: HTMLElement, c
     return element
 }
 
+// Shown in place of subscribe on the logged-in user's own comments. Their content
+// is already monitored automatically (profile path), and the per-item "other"
+// lookup cannot see their own removals anyway (Reddit's self-view hides them) —
+// so the button is disabled with an explanation instead of silently working wrong.
+// aria-disabled + swallowed click rather than the native disabled attribute, so the
+// title tooltip shows reliably cross-browser (and works on old reddit's <a>).
+export const setTextAndFunction_disabledOwn = (element: HTMLElement): HTMLElement => {
+    element.textContent = SUBSCRIBE_TEXT
+    styleRevButton(element)
+    element.title =
+        'Tracking isn’t needed for your own comments — this extension already monitors your content and will notify you of removals.'
+    element.setAttribute('aria-disabled', 'true')
+    element.style.opacity = '0.5'
+    element.style.cursor = 'not-allowed'
+    element.onclick = e => {
+        e.preventDefault()
+        e.stopPropagation()
+    }
+    return element
+}
+
 export const setTextAndFunction_unsubscribe = (id: string, element: HTMLElement, commentBody?: string): HTMLElement => {
     element.textContent = UNSUBSCRIBE_TEXT
     styleRevButton(element)

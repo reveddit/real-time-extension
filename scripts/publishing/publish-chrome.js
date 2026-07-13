@@ -3,7 +3,7 @@ import chromeWebstoreUpload from 'chrome-webstore-upload';
 import open from 'open';
 import dotenv from 'dotenv';
 import { spawnSync } from 'child_process';
-import { CONFIG, readDescription, getManifest, copyToClipboard, setupAbortHandler, prompt } from './common.js';
+import { CONFIG, readDescription, getManifest, copyToClipboard, setupAbortHandler, prompt, buildFresh } from './common.js';
 
 setupAbortHandler();
 dotenv.config();
@@ -29,6 +29,8 @@ async function main() {
 
     const manifest = getManifest();
     console.log(`\n\x1b[36m🚀 Starting Chrome Publish Flow for version ${manifest.version}...\x1b[0m`);
+
+    buildFresh('build-chrome');
 
     // 1. Upload the ZIP
     console.log('\n\x1b[33m[1/3] Uploading source package...\x1b[0m');

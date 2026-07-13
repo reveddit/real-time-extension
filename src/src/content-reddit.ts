@@ -1,6 +1,10 @@
 import { getAuth, lookupItemsByID } from './requests'
 import { getFullIDsFromPath, REMOVED_BY_MODERATOR_TEXT, detectIsNewReddit } from './common'
-import { setTextAndFunction_subscribe, setTextAndFunction_unsubscribe } from './content-common'
+import {
+    setTextAndFunction_subscribe,
+    setTextAndFunction_unsubscribe,
+    setTextAndFunction_disabledOwn,
+} from './content-common'
 import { observe, findByText } from './dom-helpers'
 import browser from 'webextension-polyfill'
 import { subscribeUser, MAX_SUBSCRIPTIONS } from './storage'
@@ -52,9 +56,10 @@ export const redditModifications = (
             addSubscribeLinks_oldReddit(
                 Array.from(document.querySelectorAll(selector)) as HTMLElement[],
                 other_subscriptions,
+                username,
             )
             observe(document, selector, element => {
-                addSubscribeLinks_oldReddit([element as HTMLElement], other_subscriptions)
+                addSubscribeLinks_oldReddit([element as HTMLElement], other_subscriptions, username)
             })
         }
     } else {
@@ -69,9 +74,10 @@ export const redditModifications = (
             addSubscribeLinks_newReddit_comments(
                 Array.from(document.querySelectorAll(selector_comments)) as HTMLElement[],
                 other_subscriptions,
+                username,
             )
             observe(document, selector_comments, element => {
-                addSubscribeLinks_newReddit_comments([element as HTMLElement], other_subscriptions)
+                addSubscribeLinks_newReddit_comments([element as HTMLElement], other_subscriptions, username)
             })
             const selector_posts = '.Post'
             addSubscribeLinks_newReddit_posts(
@@ -281,13 +287,41 @@ const getID_newReddit = (element: HTMLElement, id_match: RegExp) => {
     return id
 }
 
-const addSubscribeLinks_newReddit_comments = (elements: HTMLElement[], subscriptions: Record<string, any>) => {
+// The logged-in user's own content is already monitored via their profile, and the
+// "other" bucket can't reliably detect their own mod-removals anyway — so on their
+// own comments the track button renders disabled with a tooltip explaining why
+// (setTextAndFunction_disabledOwn), instead of silently doing the wrong thing.
+// Author comes from data-author (old reddit) or the comment's author link (new
+// reddit); fail open (normal button) if the author can't be determined.
+const normalizeUser = (u: string | null | undefined): string => (u || '').trim().replace(/^u\//i, '').toLowerCase()
+const isOwnComment = (author: string | null | undefined, loggedInUser: string | null | undefined): boolean => {
+    const a = normalizeUser(author)
+    const me = normalizeUser(loggedInUser)
+    return !!a && !!me && a === me
+}
+const getCommentAuthor_newReddit = (comment: HTMLElement): string | null => {
+    const link =
+        (comment.querySelector('a[data-testid="comment_author_link"]') as HTMLElement | null) ||
+        (comment.querySelector('a[href^="/user/"]') as HTMLElement | null)
+    if (!link) return null
+    const text = (link.textContent || '').trim()
+    if (text) return text
+    const m = (link.getAttribute('href') || '').match(/\/user\/([^/]+)/)
+    return m ? m[1] : null
+}
+
+const addSubscribeLinks_newReddit_comments = (
+    elements: HTMLElement[],
+    subscriptions: Record<string, any>,
+    loggedInUser?: string | null,
+) => {
     elements.forEach(targetedElement => {
         const element = targetedElement.closest('.Comment') as HTMLElement
         if (!element) return
         if (element.querySelector('.rev-comment-action')) return
         const id = getID_newReddit(element, id_match_comment)
         if (!id || !id.match(id_match_comment)) return
+        const own = isOwnComment(getCommentAuthor_newReddit(element), loggedInUser)
         let button = getButton(element, 'save')
         let appendButtonTo = button?.parentElement
         if (!button) {
@@ -302,7 +336,10 @@ const addSubscribeLinks_newReddit_comments = (elements: HTMLElement[], subscript
             commentBody = bodyElement.textContent || ''
         }
         if (id in subscriptions) {
+            // Already tracked (e.g. from before) — keep unsubscribe available.
             appendButtonTo.appendChild(setTextAndFunction_unsubscribe(id, buttonClone, commentBody))
+        } else if (own) {
+            appendButtonTo.appendChild(setTextAndFunction_disabledOwn(buttonClone))
         } else {
             appendButtonTo.appendChild(setTextAndFunction_subscribe(id, buttonClone, commentBody))
         }
@@ -343,7 +380,11 @@ const addSubscribeLinks_newReddit_posts = (elements: HTMLElement[], subscription
     })
 }
 
-const addSubscribeLinks_oldReddit = (elements: HTMLElement[], subscriptions: Record<string, any>) => {
+const addSubscribeLinks_oldReddit = (
+    elements: HTMLElement[],
+    subscriptions: Record<string, any>,
+    loggedInUser?: string | null,
+) => {
     elements.forEach(element => {
         let id: string | null = element.getAttribute('data-fullname')
         if (!id) {
@@ -355,6 +396,7 @@ const addSubscribeLinks_oldReddit = (elements: HTMLElement[], subscriptions: Rec
             }
         }
         if (!id) return
+        const own = id.match(/^t1_/) && isOwnComment(element.getAttribute('data-author'), loggedInUser)
         const buttons = element.querySelector(':scope > .entry > ul.buttons')
         if (!buttons || buttons.querySelector('.rev-comment-action')) return
         let commentBody = ''
@@ -367,7 +409,10 @@ const addSubscribeLinks_oldReddit = (elements: HTMLElement[], subscriptions: Rec
         a.href = ''
         let newButton: HTMLElement
         if (id in subscriptions) {
+            // Already tracked (e.g. from before) — keep unsubscribe available.
             newButton = setTextAndFunction_unsubscribe(id, a, commentBody)
+        } else if (own) {
+            newButton = setTextAndFunction_disabledOwn(a)
         } else {
             newButton = setTextAndFunction_subscribe(id, a, commentBody)
         }

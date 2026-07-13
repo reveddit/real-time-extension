@@ -1,6 +1,7 @@
 // Webpack DefinePlugin global
 declare const __BUILT_FOR__: 'chrome' | 'firefox' | 'edge'
 declare const __DEV__: boolean
+declare const __SIMULATE_DEPRECATION__: boolean
 
 // linkedom
 declare module 'linkedom/worker' {

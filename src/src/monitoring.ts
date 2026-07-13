@@ -4,6 +4,7 @@ import {
     getAuth,
     getLoggedinUser,
     storeRedditCookies,
+    isLegacyDisabled,
 } from './requests'
 import {
     REMOVED,
@@ -111,6 +112,12 @@ const PENDING_POST_BATCH_SIZE = 3
 const PENDING_POST_DELAY_MS = 2000
 
 const processPendingPosts = async (storage: Record<string, any>) => {
+    // This whole flow reads unauthenticated old.reddit.com thread pages and
+    // www .json — both dying endpoints. It's only fed by the legacy lookup
+    // chain; the www public-profile path detects post removals directly.
+    if (await isLegacyDisabled()) {
+        return
+    }
     const { posts, totalRemaining } = await getNextPendingPosts(PENDING_POST_BATCH_SIZE)
     if (posts.length === 0) {
         await browser.storage.local.remove('pending_post_progress')
@@ -478,11 +485,34 @@ const checkForChanges_thing_byId = async (
 ) => {
     let promise
     const monitor_quarantined = storage.options.monitor_quarantined
+    // For user-tracked lookups, `thing` is the username — the www.reddit.com
+    // public-profile comparison needs it. The public HTML lacks locked/created_utc,
+    // so carry those per-item from the authenticated view (itemLookup).
+    const username = isUser ? thing : ''
+    const authItemsMeta: Record<string, any> = {}
+    if (isUser) {
+        for (const [name, authItem] of Object.entries(itemLookup)) {
+            authItemsMeta[name] = {
+                locked: !!authItem.locked,
+                created_utc: authItem.created_utc,
+                // Positive removal signals from the author's own view — used to
+                // confirm post removals the public feed hides during the grace period.
+                is_robot_indexable: authItem.is_robot_indexable,
+                removed_by_category: authItem.removed_by_category,
+            }
+        }
+    }
     if (preFetchedItems) {
         promise = Promise.resolve(preFetchedItems)
     } else if (location.protocol.match(/^http/)) {
         // this condition is for when the code is activated via a content script (e.g. the subscribe button) and browser.cookies is unavailable
-        promise = browser.runtime.sendMessage({ action: 'get-reddit-items-by-id', ids, monitor_quarantined })
+        promise = browser.runtime.sendMessage({
+            action: 'get-reddit-items-by-id',
+            ids,
+            monitor_quarantined,
+            username,
+            authItemsMeta,
+        })
     } else {
         promise = lookupItemsByID(
             ids,
@@ -490,6 +520,8 @@ const checkForChanges_thing_byId = async (
             monitor_quarantined,
             storage.tempVar_monitor_quarantined,
             quarantined_subreddits,
+            username,
+            authItemsMeta,
         )
     }
     return promise.then(result => {
@@ -518,7 +550,22 @@ const checkForChanges_thing_byId = async (
             if (!isUser) {
                 itemLookup[item.name] = item
             }
-            if (isRemovedItem(item)) {
+            // Quarantined/NSFW/private-sub items never appear in the logged-out
+            // www.reddit.com view, so "missing from the public profile" is
+            // meaningless for them. Classify them as approved: bodies still get
+            // cached, and no false removal alerts fire. Only applies to results
+            // whose status came from the public-view comparison — the legacy
+            // paths can genuinely see this content.
+            // 'restricted' subs are deliberately NOT excluded: only posting is
+            // restricted there — their content is publicly viewable.
+            const authItem = isUser ? itemLookup[item.name] : null
+            const invisibleToPublicView =
+                item._public_view &&
+                authItem &&
+                (authItem.quarantine || authItem.over_18 || authItem.subreddit_type === 'private')
+            if (invisibleToPublicView) {
+                approved.push(item.name)
+            } else if (isRemovedItem(item)) {
                 removed.push(item.name)
             } else {
                 approved.push(item.name)
@@ -915,6 +962,12 @@ function markChanges(
                     false,
                     isComment(item.name) && item.link_id ? item.link_id : undefined,
                 )
+                // Cache the body on first observation. The authenticated view (itemLookup) is the
+                // only place the original text is guaranteed to exist — once Reddit removes the
+                // item, no public source can recover it.
+                if (isUser && !existingLocalStorageItems[name]) {
+                    newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
+                }
             }
         }
     })

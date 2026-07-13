@@ -539,12 +539,7 @@ export const getItems_fromOld = async (path: string) => {
 
 const getCommentsInfo_fromOld = async (ids: string[]) => {
     const url = oldReddit + '/api/info?id=' + ids.join(',')
-    const response = await fetch(url, {
-        'Accept-Language': 'en',
-        Cookie: 'over18=1;',
-        'User-Agent': 'extension',
-        credentials: 'omit',
-    } as any)
+    const response = await fetch(url, { ...redditHTMLRequestOptions, credentials: 'omit' })
     if (!response.ok) {
         console.error('request failed:', url)
         return {}
@@ -582,14 +577,7 @@ export const getItemsById_fromOldHTML = async (
     }
 
     const url = oldReddit + '/api/info?id=' + idsArray.join(',')
-    const response = await fetch(url, {
-        headers: {
-            'Accept-Language': 'en',
-            Cookie: 'over18=1;',
-            'User-Agent': 'extension',
-        },
-        credentials: 'omit',
-    })
+    const response = await fetch(url, { ...redditHTMLRequestOptions, credentials: 'omit' })
     if (!response.ok) {
         throw new Error(`old.reddit.com HTML request failed: ${response.status}`)
     }

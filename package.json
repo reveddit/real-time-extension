@@ -52,6 +52,7 @@
     "build-dev": "yarn build-chrome-dev && yarn build-firefox-dev",
     "build-staging": "yarn build-chrome-staging && yarn build-firefox-staging",
     "build-chrome-dev": "NODE_ENV=development BROWSER=chrome yarn run-webpack",
+    "build-chrome-dev-nolegacy": "NODE_ENV=development BROWSER=chrome SIMULATE_DEPRECATION=true yarn run-webpack",
     "build-firefox-dev": "NODE_ENV=development BROWSER=firefox yarn run-webpack",
     "build-chrome-staging": "NODE_ENV=production BROWSER=chrome STAGING=true yarn run-webpack",
     "build-firefox-staging": "NODE_ENV=production BROWSER=firefox STAGING=true yarn run-webpack",

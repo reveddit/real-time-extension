@@ -11,12 +11,16 @@ export const consume = async (stream: ReadableStream) => {
 export const oldReddit = 'https://old.reddit.com'
 export const newReddit = 'https://www.reddit.com'
 
-export const redditHTMLRequestOptions = {
+// old.reddit serves logged-out pages with Cache-Control: private, max-age=3600.
+// Without 'reload', polls re-read the disk cache and a removal can go unseen for
+// up to an hour (until the id list changes or the entry expires).
+export const redditHTMLRequestOptions: RequestInit = {
     headers: {
         'Accept-Language': 'en',
         Cookie: 'over18=1;',
         'User-Agent': 'extension',
     },
+    cache: 'reload',
 }
 
 export const REDDIT_HTML_FETCH_TIMEOUT_MS = 15000

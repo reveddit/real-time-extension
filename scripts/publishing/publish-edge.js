@@ -4,7 +4,7 @@ import path from 'path';
 import FormData from 'form-data';
 import open from 'open';
 import dotenv from 'dotenv';
-import { getManifest, readDescription, copyToClipboard, setupAbortHandler, prompt } from './common.js';
+import { getManifest, readDescription, copyToClipboard, setupAbortHandler, prompt, buildFresh } from './common.js';
 
 setupAbortHandler();
 dotenv.config();
@@ -52,6 +52,8 @@ async function main() {
     checkApiKeyExpiry();
     const manifest = getManifest();
     console.log(`\n\x1b[36m🚀 Starting Edge Publish Flow for version ${manifest.version}...\x1b[0m`);
+
+    buildFresh('build-edge');
 
     const productId = process.env.EDGE_PRODUCT_ID;
     const clientId = process.env.EDGE_CLIENT_ID;

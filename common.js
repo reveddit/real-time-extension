@@ -20,6 +20,13 @@ if (browser) {
 } else {
     folderName += 'unknown'
 }
+// Post-deprecation test build: legacy old.reddit/unauth-.json paths disabled from
+// the first run (a runtime flag can't win the race against the extension's
+// immediate on-load check). Loads side-by-side with the normal build.
+if (process.env.SIMULATE_DEPRECATION === 'true') {
+    folderName += '-nolegacy'
+    zipName = ''
+}
 
 export const __filename = fileURLToPath(import.meta.url)
 

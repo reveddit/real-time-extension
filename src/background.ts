@@ -8,7 +8,14 @@ import {
     setWarningBadge,
 } from './src/common'
 import { checkForChanges } from './src/monitoring'
-import { lookupItemsByID, getLoggedinUser, getCookie, getAuth, storeRedditCookies } from './src/requests'
+import {
+    lookupItemsByID,
+    getLoggedinUser,
+    getCookie,
+    getAuth,
+    storeRedditCookies,
+    throwIfLegacyDisabled,
+} from './src/requests'
 import {
     initStorage,
     INTERVAL_DEFAULT,
@@ -29,6 +36,38 @@ const WHATSNEW_SHOWN_KEY = 'whatsnew_shown_version'
 // Compare only the first 3 segments (e.g. "0.0.5") so that patch bumps like
 // 0.0.5.0 → 0.0.5.1 don't re-show the same what's-new page.
 const whatsnewGeneration = (version: string) => version.split('.').slice(0, 3).join('.')
+
+// Dev builds keep a ring buffer of background console output, readable from
+// reveddit.com via the dev-* external messages below. The service worker
+// console is otherwise unreachable for automated testing.
+if (__DEV__) {
+    const MAX_DEV_LOG_LINES = 400
+    const devLog: string[] = []
+    ;(globalThis as any).__devLog = devLog
+    for (const level of ['log', 'warn', 'error'] as const) {
+        const original = console[level].bind(console)
+        console[level] = (...args: any[]) => {
+            try {
+                const line = args
+                    .map(a => {
+                        try {
+                            return typeof a === 'string' ? a : JSON.stringify(a)
+                        } catch {
+                            return String(a)
+                        }
+                    })
+                    .join(' ')
+                devLog.push(`${new Date().toISOString()} [${level}] ${line}`)
+                if (devLog.length > MAX_DEV_LOG_LINES) {
+                    devLog.splice(0, devLog.length - MAX_DEV_LOG_LINES)
+                }
+            } catch {
+                /* ignored */
+            }
+            original(...args)
+        }
+    }
+}
 
 setupContextualMenu()
 
@@ -78,38 +117,46 @@ if (__BUILT_FOR__ !== 'chrome') {
 }
 // END webRequest API code
 
-// Strip the chrome-extension:// Origin header off the background's old.reddit.com
-// requests (the profile-scan user-page fetch). Reddit 403s requests carrying
-// that Origin; removing it makes them look like a plain request and return 200.
+// Strip the chrome-extension:// Origin header off the background's reddit
+// requests (old.reddit profile-scan fetches, www.reddit public-profile fetches).
+// Reddit 403s requests carrying that Origin; the Sec-Fetch-* trio marks them as
+// cross-site programmatic fetches, which Reddit also rejects for these pages (a
+// navigation, Mode:navigate/Dest:document, returns 200). Stripping both makes
+// them look like plain requests.
 // Uses declarativeNetRequest (Chrome/Edge MV3); Firefox uses the webRequest
-// handler above. Dynamic rules persist, so re-adding on each start is idempotent.
+// handler above. Session rules (not dynamic) because the tabIds condition is
+// session-rule-only; the service worker re-registers them on every start.
 ;(() => {
     const dnr = (chrome as any).declarativeNetRequest
-    if (!dnr?.updateDynamicRules) return
-    dnr.updateDynamicRules({
-        removeRuleIds: [9001],
-        addRules: [
-            {
-                id: 9001,
-                priority: 1,
-                action: {
-                    type: 'modifyHeaders',
-                    requestHeaders: [
-                        // Origin: chrome-extension:// is rejected; the Sec-Fetch-* trio marks
-                        // this as a cross-site programmatic fetch, which Reddit 403s for these
-                        // pages (a navigation, Mode:navigate/Dest:document, returns 200).
-                        // Strip them so the request looks like a plain (non-fetch) request.
-                        { header: 'origin', operation: 'remove' },
-                        { header: 'sec-fetch-site', operation: 'remove' },
-                        { header: 'sec-fetch-mode', operation: 'remove' },
-                        { header: 'sec-fetch-dest', operation: 'remove' },
-                    ],
-                },
-                condition: { urlFilter: '||old.reddit.com/', resourceTypes: ['xmlhttprequest', 'other'] },
-            },
-        ],
+    if (!dnr?.updateSessionRules) return
+    const stripHeaders = [
+        { header: 'origin', operation: 'remove' },
+        { header: 'sec-fetch-site', operation: 'remove' },
+        { header: 'sec-fetch-mode', operation: 'remove' },
+        { header: 'sec-fetch-dest', operation: 'remove' },
+    ]
+    const makeRule = (id: number, urlFilter: string) => ({
+        id,
+        priority: 1,
+        action: { type: 'modifyHeaders', requestHeaders: stripHeaders },
+        condition: {
+            urlFilter,
+            resourceTypes: ['xmlhttprequest', 'other'],
+            // Background/service-worker requests only (tabId -1). Without this,
+            // the rule would also strip headers off the Shreddit SPA's own XHRs
+            // in the user's reddit tabs — breaking or fingerprint-flagging their
+            // normal browsing. Content-script fetches are same-origin and don't
+            // carry a problematic Origin header, so they don't need the rule.
+            tabIds: [-1],
+        },
     })
-        .then(() => console.log('[reveddit] DNR origin-strip rule installed for old.reddit.com'))
+    // Prior versions persisted 9001 as a dynamic rule (no tab scoping) — clean it up
+    dnr.updateDynamicRules({ removeRuleIds: [9001, 9002] }).catch(() => {})
+    dnr.updateSessionRules({
+        removeRuleIds: [9001, 9002],
+        addRules: [makeRule(9001, '||old.reddit.com/'), makeRule(9002, '||www.reddit.com/')],
+    })
+        .then(() => console.log('[reveddit] DNR header-strip rules installed for old+www reddit'))
         .catch((e: any) => console.log('[reveddit] DNR rule setup failed:', e?.message || e))
 })()
 
@@ -190,7 +237,15 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
 
             authPromise
                 .then(auth => {
-                    return lookupItemsByID(request.ids, auth, request.monitor_quarantined)
+                    return lookupItemsByID(
+                        request.ids,
+                        auth,
+                        request.monitor_quarantined,
+                        false,
+                        [],
+                        request.username || '',
+                        request.authItemsMeta || {},
+                    )
                 })
                 .then(items => {
                     // if request fails, items is null
@@ -211,9 +266,15 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         // This will be handled by content script, just pass it through
         return true
     } else if (request.action === 'get-from-old') {
-        getPost_fromOld(request.path).then(data => {
-            sendResponse(data)
-        })
+        // Unauthenticated old.reddit.com thread page — dying endpoint, gated
+        throwIfLegacyDisabled('old.reddit.com post page')
+            .then(() => getPost_fromOld(request.path))
+            .then(data => {
+                sendResponse(data)
+            })
+            .catch(err => {
+                sendResponse({ error: String(err?.message || err) })
+            })
         return true
     } else if (request.action === 'fetch-userpage-html') {
         // Profile scan: content scripts on new reddit (www/sh) can't fetch
@@ -225,7 +286,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         const url = request.path
             ? `https://old.reddit.com${request.path}`
             : `https://old.reddit.com/user/${encodeURIComponent(request.username)}${request.qs || ''}`
-        fetch(url, { credentials: 'omit' })
+        throwIfLegacyDisabled('old.reddit.com userpage HTML')
+            .then(() => fetch(url, { credentials: 'omit' }))
             .then(async r => {
                 console.log(`[reveddit] bg fetch-userpage-html ${url} -> ${r.status}`)
                 const text = r.ok ? await r.text() : ''
@@ -244,7 +306,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         // background there are no reddit cookies anyway, so a plain fetch is
         // unauthenticated without tripping that block.
         const url = `https://old.reddit.com/api/info.json?id=${request.ids}&raw_json=1`
-        fetch(url)
+        throwIfLegacyDisabled('old.reddit.com api/info JSON')
+            .then(() => fetch(url))
             .then(async r => {
                 console.log(
                     `[reveddit] bg fetch-api-info (${String(request.ids).split(',').length} ids) -> ${r.status}`,
@@ -266,7 +329,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             sendResponse({ ok: false, status: 0, error: 'invalid url' })
             return true
         }
-        fetch(url)
+        throwIfLegacyDisabled('old.reddit.com JSON')
+            .then(() => fetch(url))
             .then(async r => {
                 console.log(`[reveddit] bg fetch-old-reddit-json ${url.split('?')[0]} -> ${r.status}`)
                 const data = r.ok ? await r.json() : null
@@ -326,18 +390,100 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
 chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResponse) {
     switch (message.action) {
         case 'fetch-old':
-            getItems_fromOld(message.path).then(data => {
-                sendResponse({ data })
-            })
+            // Unauthenticated old.reddit.com user page HTML — dying endpoint, gated
+            throwIfLegacyDisabled('old.reddit.com HTML')
+                .then(() => getItems_fromOld(message.path))
+                .then(data => {
+                    sendResponse({ data })
+                })
+                .catch(err => {
+                    sendResponse({ data: { error: String(err?.message || err) } })
+                })
             break
         case 'version':
-            sendResponse({ version: chrome.runtime.getManifest().version })
+            sendResponse({ version: chrome.runtime.getManifest().version, name: chrome.runtime.getManifest().name })
             break
+    }
+    // Dev-only introspection for automated testing from reveddit.com (the SW
+    // console and chrome://extensions are unreachable for automation). Absent
+    // from production builds.
+    if (__DEV__) {
+        switch (message.action) {
+            case 'dev-get-log':
+                sendResponse({ log: (globalThis as any).__devLog || [] })
+                break
+            case 'dev-get-storage':
+                Promise.all([chrome.storage.local.get(undefined), chrome.storage.sync.get(undefined)])
+                    .then(([local, sync]) => sendResponse({ local, sync }))
+                    .catch(err => sendResponse({ error: String(err?.message || err) }))
+                break
+            case 'dev-clear-storage':
+                Promise.all([chrome.storage.local.clear(), chrome.storage.sync.clear()])
+                    .then(() => sendResponse({ ok: true }))
+                    .catch(err => sendResponse({ error: String(err?.message || err) }))
+                break
+            case 'dev-run-check':
+                Promise.resolve(checkForChanges())
+                    .then(() => sendResponse({ ok: true }))
+                    .catch(err => sendResponse({ error: String(err?.message || err) }))
+                break
+            case 'dev-reload':
+                sendResponse({ ok: true })
+                setTimeout(() => chrome.runtime.reload(), 200)
+                break
+            case 'dev-inject':
+                injectContentScriptIntoExistingRedditTabs()
+                    .then(() => sendResponse({ ok: true }))
+                    .catch((err: any) => sendResponse({ error: String(err?.message || err) }))
+                break
+            case 'dev-open-page':
+                // Open an extension page (e.g. src/history.html) as a real tab so
+                // its rendered output/console can be inspected by automation.
+                try {
+                    const rel = String(message.page || 'src/history.html')
+                    const url = chrome.runtime.getURL(rel) + (message.query || '')
+                    chrome.tabs.create({ url, active: true }, tab => sendResponse({ ok: true, tabId: tab?.id }))
+                } catch (err: any) {
+                    sendResponse({ error: String(err?.message || err) })
+                }
+                break
+            case 'dev-replay-install':
+                // Reruns the exact install-time flow (clear storage, detect user,
+                // subscribe, immediate lookup) — replicates a remove/re-add.
+                Promise.resolve((globalThis as any).__replayInstall?.())
+                    .then(() => sendResponse({ ok: true }))
+                    .catch((err: any) => sendResponse({ error: String(err?.message || err) }))
+                break
+            case 'dev-fetch': {
+                // Fetch an arbitrary reddit URL from the background (host_permissions
+                // CORS bypass) exactly as the detection paths do, and report what
+                // came back — so background-only fetch behavior is diagnosable.
+                const credentials = message.credentials === 'include' ? 'include' : 'omit'
+                fetch(message.url, { credentials, headers: { 'Accept-Language': 'en' } })
+                    .then(async r => {
+                        const text = await r.text()
+                        sendResponse({
+                            status: r.status,
+                            redirected: r.redirected,
+                            finalUrl: r.url,
+                            len: text.length,
+                            hasShredditPost: text.includes('<shreddit-post'),
+                            hasFeed: text.includes('<shreddit-feed'),
+                            head: text.slice(0, message.maxLen || 600),
+                        })
+                    })
+                    .catch(err => sendResponse({ error: String(err?.message || err) }))
+                break
+            }
+        }
     }
     return true
 })
 
 chrome.runtime.onInstalled.addListener(function (details) {
+    // Existing reddit tabs lost their content script on install/update; re-inject
+    // so the reliable tab fetch path is ready before the first removal check.
+    injectContentScriptIntoExistingRedditTabs()
     if (details.reason == 'install') {
         initStorage(() => {
             setAlarm(INTERVAL_DEFAULT)
@@ -370,6 +516,64 @@ chrome.runtime.onInstalled.addListener(function (details) {
         fetchNews({ force: true }).catch(() => {})
     }
 })
+
+// Inject the content script into reddit tabs that predate this install/reload.
+// Manifest content scripts only auto-run on navigation, so already-open tabs have
+// none until refreshed — and the reliable www public-view fetch path (a
+// same-origin, challenge-free content-script fetch) needs one. Without this, the
+// immediate on-install check falls back to the background worker, which Reddit
+// challenges on post pages. The content script's own __reveddit_cs_loaded guard
+// makes a redundant injection a no-op, but we still check first to avoid the work.
+async function injectContentScriptIntoExistingRedditTabs() {
+    const scripting = (chrome as any).scripting
+    if (!scripting?.executeScript) return // older Firefox MV2 — skip gracefully
+    let tabs: any[]
+    try {
+        tabs = await browser.tabs.query({ url: ['https://*.reddit.com/*', 'https://*.reveddit.com/*'] })
+    } catch {
+        return
+    }
+    let injected = 0
+    let alreadyPresent = 0
+    let inaccessible = 0
+    await Promise.all(
+        tabs
+            .filter(t => t.id != null)
+            .map(async tab => {
+                try {
+                    const [probe] = await scripting.executeScript({
+                        target: { tabId: tab.id },
+                        func: () => (window as any).__reveddit_cs_loaded === true,
+                    })
+                    if (probe?.result) {
+                        alreadyPresent++
+                        return
+                    }
+                    await scripting.insertCSS({ target: { tabId: tab.id }, files: ['src/content.css'] })
+                    await scripting.executeScript({ target: { tabId: tab.id }, files: ['src/content.js'] })
+                    injected++
+                } catch (e: any) {
+                    // Expected for tabs this SW instance can't touch: incognito
+                    // tabs under `incognito:"split"`, discarded tabs, or protected
+                    // pages. Their own instance (if any) handles them.
+                    const msg = String(e?.message || e)
+                    if (/Cannot access|must request permission|No tab with id|discarded/i.test(msg)) {
+                        inaccessible++
+                    } else {
+                        console.log(`[reveddit] content-script injection failed for tab ${tab.id} (${tab.url}):`, msg)
+                    }
+                }
+            }),
+    )
+    if (injected || alreadyPresent || inaccessible) {
+        console.log(
+            `[reveddit] content-script injection: ${injected} injected, ${alreadyPresent} already present, ` +
+                `${inaccessible} inaccessible (of ${tabs.length} matched tabs)`,
+        )
+    }
+}
+// Runs on every service-worker start (including reload) and after install/update.
+injectContentScriptIntoExistingRedditTabs()
 
 // On browser startup, if no user is currently tracked, re-check connection and
 // surface a warning badge if Reddit can't be reached.

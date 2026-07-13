@@ -7,7 +7,7 @@ export const SEEN_COUNT_DEFAULT = 2
 // These limits are set with consideration for Chrome's sync & local storage limits,
 // and for the objects stored by the extension
 export const MAX_SUBSCRIPTIONS = 5
-const MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT = 500
+const MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT = 1000
 export const MAX_SYNC_STORAGE_ITEMS_PER_OBJECT = 130
 export const MAX_SYNC_STORAGE_CHANGES = 100
 export const MAX_OTHER_SUBSCRIPTIONS = 100

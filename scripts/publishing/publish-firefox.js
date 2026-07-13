@@ -5,7 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import jwt from 'jsonwebtoken';
 import { execSync } from 'child_process';
-import { CONFIG, readDescription, getManifest, setupAbortHandler } from './common.js';
+import { CONFIG, readDescription, getManifest, setupAbortHandler, buildFresh } from './common.js';
 
 setupAbortHandler();
 dotenv.config();
@@ -113,6 +113,8 @@ async function main() {
     }
 
     console.log(`\n\x1b[36m🚀 Starting Firefox Publish Flow for version ${manifest.version}...\x1b[0m`);
+
+    buildFresh('build-firefox');
 
     const sourceZipPath = await createSourceZip();
 

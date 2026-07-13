@@ -641,6 +641,21 @@ function Popup() {
               <MessageBanner variant="warning">
                 ⚠ Reddit is rate-limiting requests. Monitoring will resume automatically.
               </MessageBanner>
+            ) : errorStatus === 'profile_publicly_empty' ? (
+              <MessageBanner variant="warning">
+                ⚠ Your profile appears empty to logged-out users — possibly a shadowban. Removal alerts are
+                paused. You can appeal at reddit.com/appeals.
+              </MessageBanner>
+            ) : errorStatus === 'public_view_unavailable' ? (
+              <>
+                <MessageBanner variant="warning">
+                  ⚠ Removal monitoring is paused — Reddit&apos;s public view isn&apos;t loading. Opening a
+                  www.reddit.com tab usually restores it.
+                </MessageBanner>
+                <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
+                  Open www.reddit.com
+                </ActionBtn>
+              </>
             ) : (
               <>
                 <MessageBanner variant="warning">

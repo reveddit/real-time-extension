@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
+import { spawnSync } from 'child_process';
 import clipboardy from 'clipboardy';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -31,6 +32,21 @@ export function readDescription() {
 
 export function getManifest() {
     return JSON.parse(fs.readFileSync(CONFIG.manifestFile, 'utf8'));
+}
+
+/**
+ * Rebuild the production artifact right before uploading, so a standalone
+ * publish (without publish-all) can never ship a stale zip/dist built from an
+ * older commit. Dev builds live in dist-dev-*, so they were never a risk here.
+ * @param {string} buildScript - The yarn script to run (e.g. "build-chrome")
+ */
+export function buildFresh(buildScript) {
+    console.log(`\x1b[33mBuilding fresh production package (yarn ${buildScript})...\x1b[0m`);
+    const result = spawnSync('yarn', [buildScript], { stdio: 'inherit', cwd: process.cwd() });
+    if (result.status !== 0) {
+        console.error(`\x1b[31myarn ${buildScript} failed.\x1b[0m`);
+        process.exit(1);
+    }
 }
 
 /**

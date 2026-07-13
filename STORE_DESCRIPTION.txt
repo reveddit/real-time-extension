@@ -19,6 +19,12 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/07/12 - 0.0.5.13
+- fix a bug where removal notifications could be delayed by up to an hour
+
+2026/06/09 - 0.0.5.12
+- improve scan button wording; show rate-limit backoff countdown in popup
+
 2026/06/02 - 0.0.5.11
 - fix subscribe-rev button duplicating on comments; add scan and filter buttons on new reddit threads
 

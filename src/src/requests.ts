@@ -1,7 +1,58 @@
-import { getOptions, addToPendingPostQueue, recordRateLimitHit, clearRateLimitBackoff } from './storage'
+import {
+    getOptions,
+    addToPendingPostQueue,
+    removeMultipleFromPendingPostQueue,
+    recordRateLimitHit,
+    clearRateLimitBackoff,
+} from './storage'
 import browser from 'webextension-polyfill'
 import { getItemsById_fromOldHTML } from './parse_html/old'
+import {
+    getPublicProfileItems,
+    fullnameValue,
+    FetchHtml,
+    buildPostPageUrl,
+    classifyPostPage,
+    PostPageStatus,
+} from './parse_html/new'
 import { setWarningBadge } from './common'
+import { getRemoteMechanism, resolveMechanismDisabled, MECHANISM_LEGACY } from './news'
+
+// Gate for the unauthenticated legacy paths: old.reddit.com HTML and unauth www
+// .json — the endpoints Reddit's announced deprecation removes. Gates exactly the
+// unauthenticated legacy call sites; authenticated calls (credentials:'include')
+// and the www SSR HTML public path survive the real change, so they are never gated.
+//
+// Resolution, highest priority first:
+// 1. Dev storage override (dev options checkbox, or from the service-worker console):
+//      chrome.storage.local.set({ dev_simulate_endpoint_deprecation: true })   // or false
+//      chrome.storage.local.remove('dev_simulate_endpoint_deprecation')        // back to defaults
+// 2. Remote option MECHANISM_LEGACY from the news feed (see news.ts) — lets the
+//    legacy paths be turned off fleet-wide when the deprecation actually lands,
+//    without waiting on a store republish. 'auto' defers to the build.
+// 3. Build default (SIMULATE_DEPRECATION=true → dist-*-nolegacy folders). The
+//    extension checks for removals immediately on load, so this is what's in
+//    effect before the first news fetch completes.
+export const DEV_SIMULATE_DEPRECATION_KEY = 'dev_simulate_endpoint_deprecation'
+const SIMULATE_DEPRECATION_BUILD_DEFAULT =
+    typeof __SIMULATE_DEPRECATION__ !== 'undefined' ? __SIMULATE_DEPRECATION__ : false
+export const isLegacyDisabled = (): Promise<boolean> =>
+    browser.storage.local
+        .get({ [DEV_SIMULATE_DEPRECATION_KEY]: null })
+        .then(async (r: any) => {
+            const dev = r[DEV_SIMULATE_DEPRECATION_KEY]
+            const remote = await getRemoteMechanism(MECHANISM_LEGACY)
+            return resolveMechanismDisabled(dev === null ? null : !!dev, remote, SIMULATE_DEPRECATION_BUILD_DEFAULT)
+        })
+        .catch(() => SIMULATE_DEPRECATION_BUILD_DEFAULT)
+
+// Message shape matches flagIfRateLimited's /request failed: (\d+)/ — a 403 does
+// not trigger rate-limit backoff, mirroring how the real deprecation responds.
+export const throwIfLegacyDisabled = async (label: string) => {
+    if (await isLegacyDisabled()) {
+        throw new Error(`${label} request failed: 403 (legacy endpoints disabled)`)
+    }
+}
 
 const RATE_LIMIT_STATUSES = new Set([403, 429])
 const flagIfRateLimited = (err: Error) => {
@@ -27,12 +78,30 @@ const WWW_REVEDDIT = 'https://wred.reveddit.com/'
 
 const NO_AUTH = 'none'
 
+// Per-item data the public-view lookup needs from the authenticated view.
+// - locked/created_utc: the public HTML omits both; without them items would
+//   misclassify as unlocked / never-too-old.
+// - is_robot_indexable/removed_by_category: the author's own view often reveals a
+//   post removal (e.g. modqueue/spam) that the public profile feed still shows
+//   during a grace period. is_robot_indexable===false is a reliable POSITIVE
+//   removal signal (only its "true" is unreliable, per the 24h grace window), so
+//   it's used only to confirm removal, never to override one.
+export interface AuthItemMeta {
+    locked?: boolean
+    created_utc?: number
+    is_robot_indexable?: boolean
+    removed_by_category?: string | null
+}
+export type AuthItemsMeta = Record<string, AuthItemMeta>
+
 export const lookupItemsByID = (
     ids: string | string[],
     auth: any,
     monitor_quarantined = false,
     monitor_quarantined_remote = false,
     quarantined_subreddits: string[] = [],
+    username = '',
+    authItemsMeta: AuthItemsMeta = {},
 ) => {
     const params: Record<string, any> = { id: ids, raw_json: 1 }
     if (monitor_quarantined_remote) {
@@ -44,53 +113,312 @@ export const lookupItemsByID = (
             .map(k => `${k}=${params[k]}`)
             .join('&')
 
-    return lookupItemsByID_withFallback('api/info', search, auth, monitor_quarantined, monitor_quarantined_remote, ids)
+    return lookupItemsByID_withFallback(
+        'api/info',
+        search,
+        auth,
+        monitor_quarantined,
+        monitor_quarantined_remote,
+        ids,
+        username,
+        authItemsMeta,
+    )
 }
 
-// Helper to try fetching via content script on a Reddit tab
-const tryContentScriptFetch = async (ids: string | string[]) => {
-    // Find a Reddit tab to use for the fetch
-    const tabs = await browser.tabs.query({ url: ['*://*.reddit.com/*'] })
-    const supportedTabs = tabs.filter(tab => {
-        try {
-            const hostname = new URL(tab.url!).hostname
-            return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
-        } catch {
-            return false
+// The public fetch MUST omit credentials: rehydrateStoredRedditCookies() can put
+// the user's real session in the browser jar, and sending it would turn this
+// "public" view into the authenticated view — removals would never be detected.
+const fetchWwwHtml_viaBackground: FetchHtml = async (url: string) => {
+    const response = await fetch(url, { credentials: 'omit', headers: { 'Accept-Language': 'en' } })
+    if (!response.ok) {
+        throw new Error(`www.reddit.com request failed: ${response.status}`)
+    }
+    return response.text()
+}
+
+// Prefer fetching through a www.reddit.com tab's content script: a same-origin
+// fetch there is verified to never receive Reddit's JS challenge. old.reddit.com
+// and sh.reddit.com tabs cannot help — content scripts follow the page's origin
+// rules, so cross-origin reads to www.reddit.com are CORS-blocked from them.
+// Without a www tab, the background fetch works via host_permissions (bypasses
+// CORS) but may hit the challenge; parse_html/new.ts carries a best-effort solver.
+const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTab: boolean }> => {
+    let tabs: any[] = []
+    try {
+        if (typeof chrome !== 'undefined' && chrome.tabs) {
+            tabs = await browser.tabs.query({ url: ['https://www.reddit.com/*'] })
         }
-    })
-
-    if (supportedTabs.length === 0) {
-        throw new Error('No Reddit tab available for content script fetch')
+    } catch {
+        /* no tabs API in this context */
     }
+    const tab = tabs.find(t => t.id != null)
+    if (!tab) {
+        return { fetchHtml: fetchWwwHtml_viaBackground, viaTab: false }
+    }
+    let contentScriptAlive = true
+    const fetchHtml: FetchHtml = async (url: string) => {
+        if (contentScriptAlive) {
+            try {
+                const response = (await browser.tabs.sendMessage(tab.id, {
+                    action: 'fetch-www-profile-public',
+                    url,
+                })) as any
+                if (response && response.success && typeof response.html === 'string') {
+                    return response.html
+                }
+                throw new Error(response?.error || 'content-script www fetch failed')
+            } catch {
+                // The tab may predate the extension install (no content script);
+                // stop retrying it this cycle and use the background instead.
+                contentScriptAlive = false
+            }
+        }
+        return fetchWwwHtml_viaBackground(url)
+    }
+    return { fetchHtml, viaTab: true }
+}
 
-    // Try to send message to the first available Reddit tab
-    const response = (await browser.tabs.sendMessage(supportedTabs[0].id!, {
-        action: 'fetch-api-info-public',
-        ids: ids,
-    })) as any
+export const PROFILE_PUBLICLY_EMPTY = 'profile_publicly_empty'
+const WWW_DETECT_FAILURES_KEY = 'www_detect_consecutive_failures'
+const WWW_DETECT_FAILURE_WARN_THRESHOLD = 5
 
-    if (response && response.success) {
-        return response.items
-    } else {
-        throw new Error(response?.error || 'Content script fetch failed')
+// Feed presence is not a liveness signal for POSTS: held ("awaiting moderator
+// approval") and spam-removed posts linger in the author's public feed for a
+// grace period (verified live — same anomaly as is_robot_indexable staying true
+// for the author for ~24h). Young feed-present posts are verified against their
+// own logged-out page, where the true status shows. Verdicts are cached so each
+// young post costs one page fetch per TTL, not per cycle.
+const POST_FEED_GRACE_SECONDS = 48 * 3600
+const POST_VERDICT_CACHE_KEY = 'www_post_page_verdicts'
+const POST_VERDICT_TTL_MS = 2 * 3600 * 1000
+const POST_VERDICT_CACHE_MAX = 50
+
+interface PostVerdictEntry {
+    v: PostPageStatus
+    t: number // epoch ms of verification
+}
+
+const verifyFeedPresentPosts = async (
+    ids: string[],
+    presentIds: Set<string>,
+    authItemsMeta: AuthItemsMeta,
+    fetchHtml: FetchHtml,
+    viaTab: boolean,
+): Promise<Record<string, PostPageStatus>> => {
+    // Post pages reliably 200 with real HTML only via a content-script tab; the
+    // background gets the JS challenge (unsolvable without leaking auth cookies).
+    // Without a tab, skip per-post verification and lean on the authenticated
+    // removal signal + feed presence instead of hammering the challenge.
+    if (!viaTab) {
+        return {}
+    }
+    const nowSec = Math.floor(Date.now() / 1000)
+    const nowMs = Date.now()
+    let cache: Record<string, PostVerdictEntry> = {}
+    try {
+        cache =
+            ((await browser.storage.local.get({ [POST_VERDICT_CACHE_KEY]: {} })) as any)[POST_VERDICT_CACHE_KEY] || {}
+    } catch {
+        /* ignored */
+    }
+    const verdicts: Record<string, PostPageStatus> = {}
+    const toFetch: string[] = []
+    for (const id of ids) {
+        if (!id.startsWith('t3_') || !presentIds.has(id)) {
+            continue
+        }
+        const m = authItemsMeta[id]
+        // Auth view already flags it removed → the caller uses that directly; no
+        // page fetch needed.
+        if (m && (m.is_robot_indexable === false || m.removed_by_category)) {
+            continue
+        }
+        const created = m?.created_utc
+        const isMature = created !== undefined && nowSec - created > POST_FEED_GRACE_SECONDS
+        const cached = cache[id]
+        // Mature + no adverse history → the feed is trustworthy, skip the page.
+        // An adverse cached verdict forces re-verification at any age so a post
+        // once seen as held/removed can't silently flip back to approved.
+        if (isMature && (!cached || cached.v === 'live')) {
+            continue
+        }
+        if (cached && nowMs - cached.t < POST_VERDICT_TTL_MS) {
+            verdicts[id] = cached.v
+            continue
+        }
+        toFetch.push(id)
+    }
+    if (toFetch.length) {
+        await Promise.all(
+            toFetch.map(async id => {
+                try {
+                    const html = await fetchHtml(buildPostPageUrl(id))
+                    const page = classifyPostPage(html)
+                    verdicts[id] = page.status
+                    console.log(`[reveddit] post page verdict ${id}: ${page.status} (html ${html.length}b)`)
+                    if (page.status !== 'unknown') {
+                        cache[id] = { v: page.status, t: nowMs }
+                    }
+                } catch (err: any) {
+                    console.log(`[reveddit] post page fetch failed ${id}:`, String(err?.message || err))
+                    verdicts[id] = 'unknown'
+                }
+            }),
+        )
+        // Prune oldest entries and persist
+        const entries = Object.entries(cache).sort((a, b) => b[1].t - a[1].t)
+        cache = Object.fromEntries(entries.slice(0, POST_VERDICT_CACHE_MAX))
+        try {
+            await browser.storage.local.set({ [POST_VERDICT_CACHE_KEY]: cache })
+        } catch {
+            /* ignored */
+        }
+    }
+    return verdicts
+}
+
+// Track consecutive failures of the www public-view path. One failure is noise
+// (deploys, blips); persistent failure means the detection path is broken and
+// the user should know — without it they'd assume monitoring still works.
+const recordWwwDetectOutcome = async (ok: boolean) => {
+    try {
+        if (ok) {
+            await browser.storage.local.remove(WWW_DETECT_FAILURES_KEY)
+            return
+        }
+        const stored = (await browser.storage.local.get({ [WWW_DETECT_FAILURES_KEY]: 0 })) as any
+        const failures = Number(stored[WWW_DETECT_FAILURES_KEY] || 0) + 1
+        await browser.storage.local.set({ [WWW_DETECT_FAILURES_KEY]: failures })
+        if (failures >= WWW_DETECT_FAILURE_WARN_THRESHOLD) {
+            setWarningBadge('public_view_unavailable')
+        }
+    } catch {
+        /* ignored */
     }
 }
 
-// Function that tries multiple fallbacks: old HTML -> www JSON -> content script -> OAuth
-// old.reddit.com HTML is first because reddit structurally 403s unauthenticated
-// www JSON requests (every cycle), and content script fetch also typically fails.
-// This avoids two guaranteed-failing requests per cycle.
-export const lookupItemsByID_withFallback = (
+// Primary detection path: compare the requested (authenticated) ids against the
+// logged-out www.reddit.com profile. Present → not removed. Missing within the
+// paginated coverage window → removed. Missing below the window → status unknown,
+// omitted entirely so the caller neither alerts nor resets removal counts.
+export const lookupItemsByID_fromPublicProfile = async (
+    ids: string[],
+    username: string,
+    authItemsMeta: AuthItemsMeta = {},
+) => {
+    const { fetchHtml, viaTab } = await getWwwHtmlFetcher()
+    const profile = await getPublicProfileItems(username, fetchHtml, ids)
+    if (!profile.valid) {
+        await recordWwwDetectOutcome(false)
+        throw new Error(`www profile lookup invalid: ${profile.error || 'unrecognized response'}`)
+    }
+    await recordWwwDetectOutcome(true)
+    if (profile.emptyProfile && ids.length) {
+        // The whole profile is publicly empty while the authenticated view has
+        // items — the shadowban signature. One dedicated warning instead of N
+        // removal alerts. Thrown (not returned) so the fallback chain doesn't
+        // run the legacy paths, and so monitoring skips this cycle without
+        // clearing the warning.
+        console.log(`[reveddit] public profile for ${username} is empty - possible shadowban`)
+        setWarningBadge(PROFILE_PUBLICLY_EMPTY)
+        throw new Error(PROFILE_PUBLICLY_EMPTY)
+    }
+    const postVerdicts = await verifyFeedPresentPosts(
+        ids,
+        new Set(profile.items.keys()),
+        authItemsMeta,
+        fetchHtml,
+        viaTab,
+    )
+    const results: { data: Record<string, any> }[] = []
+    for (const id of ids) {
+        const meta = authItemsMeta[id] || {}
+        const carried = {
+            locked: !!meta.locked,
+            ...(meta.created_utc !== undefined && { created_utc: meta.created_utc }),
+            // Marks results whose removed/approved status came from the public
+            // profile comparison. Quarantined/NSFW/private-sub items are never
+            // visible in that view, so their "missing" must not count as removed —
+            // the classification loop uses this flag to exempt them.
+            _public_view: true,
+        }
+        const isPost = id.startsWith('t3_')
+        // The author's own view is authoritative when it already shows removal.
+        const authSaysRemoved = isPost && (meta.is_robot_indexable === false || !!meta.removed_by_category)
+        const publicItem = profile.items.get(id)
+        if (publicItem) {
+            if (!isPost) {
+                // Present comment → live (removed comments vanish from the feed).
+                results.push({ data: { ...publicItem, ...carried } })
+            } else if (authSaysRemoved) {
+                // In the public feed but the authenticated view already flags it
+                // removed (modqueue/spam grace period). is_robot_indexable:false
+                // makes isRemovedPost() fire.
+                results.push({ data: { ...publicItem, is_robot_indexable: false, ...carried } })
+            } else {
+                const verdict = postVerdicts[id]
+                if (verdict === 'held' || verdict === 'removed') {
+                    // The post's own page shows it held/removed even though it
+                    // lingers in the feed and the auth view hasn't caught up.
+                    results.push({ data: { ...publicItem, is_robot_indexable: false, ...carried } })
+                } else {
+                    // No removal signal from any source → live. (verdict 'live',
+                    // 'unknown', or unfetched: the auth view says not-removed and
+                    // it's publicly visible, so treat as live and cache the body.)
+                    results.push({ data: { ...publicItem, is_robot_indexable: true, ...carried } })
+                }
+            }
+        } else {
+            const floor = isPost ? profile.coverage.t3 : profile.coverage.t1
+            const value = fullnameValue(id)
+            if (authSaysRemoved || (Number.isFinite(value) && value >= floor)) {
+                // Absent from the public view (and reachable), or the auth view
+                // already flags it removed → removed. The synthetic shape passes
+                // isRemovedComment (author+body start with '[') and isRemovedPost
+                // (is_robot_indexable === false).
+                results.push({
+                    data: {
+                        name: id,
+                        author: '[deleted]',
+                        body: '[removed]',
+                        is_robot_indexable: false,
+                        ...carried,
+                    },
+                })
+            }
+        }
+    }
+    // The legacy pending-post queue may hold a conflicting verdict from a cycle
+    // where the www path failed over to old.reddit — clear our ids from it so
+    // the two paths can't alternate verdicts for the same post.
+    const t3Requested = ids.filter(id => id.startsWith('t3_'))
+    if (t3Requested.length) {
+        removeMultipleFromPendingPostQueue(t3Requested).catch(() => {})
+    }
+    const removedCount = results.filter(
+        r => r.data.author === '[deleted]' || r.data.is_robot_indexable === false,
+    ).length
+    console.log(
+        `[reveddit] www lookup ${username}: ${ids.length} requested, ${results.length} returned ` +
+            `(${removedCount} removed, ${ids.length - results.length} omitted/uncovered), ` +
+            `coverage t1=${profile.coverage.t1} t3=${profile.coverage.t3}, verdicts=${JSON.stringify(postVerdicts)}`,
+    )
+    return results
+}
+
+// Legacy paths, kept as fallback until Reddit's deprecation lands:
+// old.reddit HTML -> www JSON -> OAuth. All unauthenticated-legacy fetches are
+// gated by the dev deprecation switch so post-deprecation behavior is testable.
+const lookupItemsByID_legacy = (
     path: string,
     search: string,
     auth: any,
-    monitor_quarantined = false,
-    monitor_quarantined_remote = false,
-    ids: string | string[] = '',
+    monitor_quarantined: boolean,
+    monitor_quarantined_remote: boolean,
+    ids: string | string[],
 ) => {
-    // First: try old.reddit.com HTML parsing (the most reliable path)
-    return getItemsById_fromOldHTML(ids, addToPendingPostQueue)
+    return throwIfLegacyDisabled('old.reddit.com HTML')
+        .then(() => getItemsById_fromOldHTML(ids, addToPendingPostQueue))
         .then(result => {
             clearRateLimitBackoff()
             return result
@@ -102,7 +430,8 @@ export const lookupItemsByID_withFallback = (
             const wwwUrl = www_reddit + path + '.json' + search
             const wwwOptions = { credentials: 'omit' as const }
 
-            return fetch(wwwUrl, wwwOptions)
+            return throwIfLegacyDisabled('www.reddit.com JSON')
+                .then(() => fetch(wwwUrl, wwwOptions))
                 .then(response => {
                     if (response.ok) {
                         clearRateLimitBackoff()
@@ -120,23 +449,115 @@ export const lookupItemsByID_withFallback = (
                 .catch(wwwError => {
                     console.log('www.reddit.com JSON failed:', wwwError.message)
 
-                    // Third: try content script fetch
-                    return tryContentScriptFetch(ids).catch(contentError => {
-                        console.log('Content script fallback failed:', contentError.message)
-
-                        // Fourth: Fall back to OAuth if available
-                        if (auth && auth !== 'none') {
-                            console.log('Trying OAuth fallback')
-                            return fetch_forReddit(
-                                ...getFetchParams(path, search, auth, monitor_quarantined_remote),
-                                monitor_quarantined,
-                            )
-                        } else {
-                            flagIfRateLimited(wwwError)
-                            throw htmlError
-                        }
-                    })
+                    // Fall back to OAuth if available
+                    if (auth && auth !== 'none') {
+                        console.log('Trying OAuth fallback')
+                        return fetch_forReddit(
+                            ...getFetchParams(path, search, auth, monitor_quarantined_remote),
+                            monitor_quarantined,
+                        )
+                    } else {
+                        flagIfRateLimited(wwwError)
+                        throw htmlError
+                    }
                 })
+        })
+}
+
+// "Other" (non-profile) items have no public profile to diff against, so removal
+// is read from api/info instead. This is the deprecation-surviving primary for
+// that case: an AUTHENTICATED api/info request (OAuth token if one exists, else
+// the user's real session cookies) — both survive the unauth deprecation. It
+// reveals removals for content the user did NOT author (Reddit's self-view only
+// hides your OWN removals); self-authored items are handled separately via the
+// logged-out thread view. Ids are batched to Reddit's 100-per-call api/info limit,
+// one chunk at a time with a small gap, so a large watch list can't burst.
+const OTHER_APIINFO_CHUNK = 100
+const OTHER_APIINFO_CHUNK_DELAY_MS = 1000
+
+const lookupOtherItemsByID_authed = async (ids: string[], auth: any, monitor_quarantined: boolean) => {
+    const useOAuth = auth && auth !== NO_AUTH
+    if (!useOAuth) {
+        // Put the user's harvested session back in the cookie jar so credentials
+        // 'include' yields the authenticated view (mirrors lookupItemsByLoggedInUserWithAuth).
+        await rehydrateStoredRedditCookies()
+    }
+    const children: any[] = []
+    for (let i = 0; i < ids.length; i += OTHER_APIINFO_CHUNK) {
+        const chunk = ids.slice(i, i + OTHER_APIINFO_CHUNK)
+        const search = `?id=${chunk.join(',')}&raw_json=1`
+        let batch: any
+        if (useOAuth) {
+            // getFetchParams returns [url, auth] here, so the spread is well-formed.
+            batch = await fetch_forReddit(...getFetchParams('api/info', search, auth, false), monitor_quarantined)
+        } else {
+            const response = await fetch(`${www_reddit}api/info.json${search}`, {
+                credentials: 'include',
+                cache: 'reload',
+                headers: { 'Accept-Language': 'en' },
+            })
+            if (!response.ok) {
+                throw new Error(`authenticated api/info request failed: ${response.status}`)
+            }
+            const json = await response.json()
+            batch = json?.data?.children
+        }
+        if (!Array.isArray(batch)) {
+            // fetch_forReddit swallows its own errors (returns undefined); treat any
+            // non-array as failure so the caller drops to the legacy chain.
+            throw new Error('authenticated api/info returned no children')
+        }
+        children.push(...batch)
+        if (i + OTHER_APIINFO_CHUNK < ids.length) {
+            await new Promise(r => setTimeout(r, OTHER_APIINFO_CHUNK_DELAY_MS))
+        }
+    }
+    return children
+}
+
+// Primary: compare against the logged-out www.reddit.com profile (survives the
+// deprecation). Falls back to the legacy chain while that still exists.
+export const lookupItemsByID_withFallback = (
+    path: string,
+    search: string,
+    auth: any,
+    monitor_quarantined = false,
+    monitor_quarantined_remote = false,
+    ids: string | string[] = '',
+    username = '',
+    authItemsMeta: AuthItemsMeta = {},
+) => {
+    const idsArray = (Array.isArray(ids) ? ids : String(ids).split(',')).filter(x => x)
+    const legacy = () =>
+        lookupItemsByID_legacy(path, search, auth, monitor_quarantined, monitor_quarantined_remote, ids)
+    if (!idsArray.length) {
+        return legacy()
+    }
+    if (!username) {
+        // "Other" (non-profile) subscriptions: no public profile to diff against.
+        // Authenticated api/info is the deprecation-surviving primary; the legacy
+        // chain stays as a fallback only while old.reddit/unauth-.json still work.
+        return lookupOtherItemsByID_authed(idsArray, auth, monitor_quarantined)
+            .then(result => {
+                clearRateLimitBackoff()
+                return result
+            })
+            .catch((authedError: Error) => {
+                console.log('authenticated api/info lookup failed:', authedError.message)
+                return legacy()
+            })
+    }
+    return lookupItemsByID_fromPublicProfile(idsArray, username, authItemsMeta)
+        .then(result => {
+            clearRateLimitBackoff()
+            return result
+        })
+        .catch((publicError: Error) => {
+            if (publicError.message === PROFILE_PUBLICLY_EMPTY) {
+                throw publicError
+            }
+            console.log('www.reddit.com public profile lookup failed:', publicError.message)
+            return legacy()
         })
 }
 

@@ -118,6 +118,7 @@ function Options() {
   const [highlightOwnProfileStatus, setHighlightOwnProfileStatus] = useState(true)
   const [autoFilterRemovedThreads, setAutoFilterRemovedThreads] = useState(true)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [simulateDeprecation, setSimulateDeprecation] = useState(false)
   const [themeMode, setThemeModeState] = useState<ThemeMode>('auto')
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
@@ -146,7 +147,18 @@ function Options() {
     chrome.storage.local.get([THEME_STORAGE_KEY], res => {
       setThemeModeState((res?.[THEME_STORAGE_KEY] as ThemeMode) || 'auto')
     })
+    chrome.storage.local.get(['dev_simulate_endpoint_deprecation'], res => {
+      setSimulateDeprecation(!!res?.dev_simulate_endpoint_deprecation)
+    })
   }, [])
+
+  // Written straight to local storage (not through saveOptions) so it takes
+  // effect on the next monitoring cycle without needing "save". It's a dev/test
+  // switch, not a user preference.
+  const handleSimulateDeprecationChange = (checked: boolean) => {
+    setSimulateDeprecation(checked)
+    chrome.storage.local.set({ dev_simulate_endpoint_deprecation: checked })
+  }
 
   const handleRemovedNotifyChange = (checked: boolean) => {
     setRemovedNotify(checked)
@@ -347,6 +359,24 @@ function Options() {
                 spellCheck={false}
               />
             </Field>
+            {/* Dev/test switch only — gated out of released builds (mirrors __replayInstall). */}
+            {__DEV__ && (
+              <Field>
+                <label>
+                  simulate Reddit endpoint deprecation (dev)
+                  <Hint>
+                    Blocks the legacy old.reddit.com HTML and unauthenticated .json paths, as if Reddit
+                    had already removed them. Detection then relies only on the logged-out
+                    www.reddit.com profile view. Applies on the next check — no save needed.
+                  </Hint>
+                </label>
+                <input
+                  type="checkbox"
+                  checked={simulateDeprecation}
+                  onChange={e => handleSimulateDeprecationChange(e.target.checked)}
+                />
+              </Field>
+            )}
           </FieldStack>
         </AdvancedSection>
 

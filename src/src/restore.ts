@@ -1,4 +1,5 @@
 import { isRemovedComment, isRemovedPost, isComment } from './common'
+import { throwIfLegacyDisabled } from './requests'
 import browser from 'webextension-polyfill'
 
 // --- Interfaces ---
@@ -378,6 +379,8 @@ export async function fetchUserPageHTML(username: string, sort = 'new', comments
     const path = `/user/${encodeURIComponent(username)}${subpath}${qs}`
     let html: string
     if (location.hostname === 'old.reddit.com') {
+        // Unauthenticated (credentials omitted) old.reddit fetch — dying endpoint, gated
+        await throwIfLegacyDisabled('old.reddit.com userpage HTML')
         const url = `https://old.reddit.com${path}`
         const response = await fetch(url, { credentials: 'omit' })
         if (!response.ok) throw new Error(`User page fetch failed: ${response.status}`)
@@ -809,6 +812,8 @@ export async function scanUserProfile(
 
     try {
         if (location.hostname === 'old.reddit.com') {
+            // Unauthenticated old.reddit .json — dying endpoint, gated
+            await throwIfLegacyDisabled('old.reddit.com api/info JSON')
             const infoUrl = `https://old.reddit.com/api/info.json?id=${ids.join(',')}&raw_json=1`
             const response = await fetch(infoUrl)
             console.log(`[reveddit scan] /api/info direct -> ${response.status}`)

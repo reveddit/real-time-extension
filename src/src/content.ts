@@ -4,6 +4,16 @@ import { revdditModifications } from './content-revddit'
 import { getLoggedinUser } from './requests'
 import browser from 'webextension-polyfill'
 ;(function () {
+    // Guard against double-execution: the background injects this script into
+    // reddit tabs that predate the extension's install/reload (they otherwise
+    // have no content script). A second run would register duplicate message
+    // listeners. The flag lives in the content-script isolated world, which the
+    // background's injection check reads via chrome.scripting.executeScript.
+    if ((window as any).__reveddit_cs_loaded) {
+        return
+    }
+    ;(window as any).__reveddit_cs_loaded = true
+
     const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
 
     function queryUser(message: any, _sender: any, _response: any) {
@@ -59,35 +69,31 @@ import browser from 'webextension-polyfill'
                     console.log('Error fetching logged-in user items:', error)
                     return null
                 })
-        } else if (message.action === 'fetch-api-info-public') {
-            // Fetch /api/info WITHOUT credentials to get "public" view
-            // This is key for detecting removed content - we need to see what logged-out users see
-            const ids = message.ids
-            const url = `https://old.reddit.com/api/info.json?id=${ids}&raw_json=1`
-
+        } else if (message.action === 'fetch-www-profile-public') {
+            // Public-view fetch for removal detection: what logged-out users see.
+            // Runs in a www.reddit.com tab so the fetch is same-origin, which is
+            // verified to bypass Reddit's JS challenge (the background worker's
+            // fetch may not). URLs (profile tabs and /svc/ pagination partials)
+            // are built by parse_html/new.ts; this handler just fetches.
+            // credentials MUST stay omitted or the logged-in view comes back and
+            // removals become undetectable.
+            const url = String(message.url || '')
+            if (!url.startsWith('https://www.reddit.com/')) {
+                return Promise.resolve({ success: false, error: 'invalid url' })
+            }
             return fetch(url, {
                 credentials: 'omit',
-                headers: {
-                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.5',
-                    'Cache-Control': 'no-cache',
-                    Pragma: 'no-cache',
-                },
+                headers: { 'Accept-Language': 'en' },
             })
                 .then(response => {
                     if (!response.ok) {
-                        throw new Error(`Content script fetch failed: ${response.status}`)
+                        throw new Error(`www.reddit.com request failed: ${response.status}`)
                     }
-                    return response.json()
+                    return response.text()
                 })
-                .then(data => {
-                    if (data && data.data && data.data.children) {
-                        return { success: true, items: data.data.children }
-                    }
-                    throw new Error('Invalid data format')
-                })
+                .then(html => ({ success: true, html }))
                 .catch(error => {
-                    console.log('Content script fetch-api-info-public error:', error)
+                    console.log('Content script fetch-www-profile-public error:', error)
                     return { success: false, error: error.message }
                 })
         }

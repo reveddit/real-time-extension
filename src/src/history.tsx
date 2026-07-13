@@ -134,7 +134,10 @@ const Empty = styled.p`
   padding: ${tokens.space.xl};
 `
 
-const Spinner = styled.div`
+// span (not div): it renders inside <Empty>, a styled.p, and <p> cannot
+// contain a <div> — React flags that as a hydration error.
+const Spinner = styled.span`
+  display: block;
   width: 48px;
   height: 48px;
   margin: 0 auto ${tokens.space.md};
@@ -254,6 +257,9 @@ function History() {
   const [sort, setSort] = useState<SortValue>('observed')
   const [currentUser, setCurrentUser] = useState<string | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(() => {
+    // ?welcome=1 (the post-install landing URL) always shows the welcome banner,
+    // regardless of a prior dismissal.
+    if (new URLSearchParams(location.search).get('welcome') === '1') return false
     return localStorage.getItem('history_banner_dismissed') === '1'
   })
   const dismissBanner = () => {
