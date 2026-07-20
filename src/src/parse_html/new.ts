@@ -180,6 +180,56 @@ export const classifyPostPage = (html: string): PostPageResult => {
     return { status: 'live', ...meta }
 }
 
+// ---------------------------------------------------------------------------
+// Individual comment-page classification.
+//
+// Since ~2026-07, the public profile feed also omits items from subreddits the
+// user has hidden from their profile ("curate your profile") — for every
+// viewer, not just profile visitors. Feed absence therefore no longer proves a
+// comment was removed. The comment's own logged-out permalink page is
+// authoritative (verified live 2026-07-20):
+// - a live comment renders as <shreddit-comment ... thingId="t1_x"> with the
+//   real author name, including comments from profile-hidden subreddits
+// - a removed/deleted comment without replies is absent from its own page
+// - a removed/deleted comment kept for its reply tree renders a placeholder
+//   element with author="[deleted]"
+// ---------------------------------------------------------------------------
+
+export type CommentPageStatus = 'live' | 'removed' | 'unknown'
+
+export const buildCommentPageUrl = (commentId: string, linkId: string): string =>
+    `${newReddit}/comments/${linkId.replace(/^t3_/, '')}/comment/${commentId.replace(/^t1_/, '')}/`
+
+// (?![\w-]) so this can't match <shreddit-comment-tree ...>, which carries the
+// focal comment's thingId even when that comment is removed (verified live).
+const COMMENT_TAG_REGEX = /<shreddit-comment(?![\w-])([^>]*)>/g
+// A page qualifies as a real comments page (vs challenge/error/interstitial)
+// only if the thread scaffolding rendered.
+const COMMENT_PAGE_VALID_REGEX = /<shreddit-comment-tree\b|<shreddit-post\b/
+
+export const classifyCommentPage = (html: string, commentId: string): CommentPageStatus => {
+    for (const m of html.matchAll(COMMENT_TAG_REGEX)) {
+        const attrs: Record<string, string> = {}
+        for (const a of m[1].matchAll(ATTR_REGEX)) {
+            attrs[a[1]] = a[2]
+        }
+        // Comment pages use thingId=; profile feeds use thing-id=. Accept both
+        // in case the SSR attribute style changes.
+        if ((attrs['thingId'] || attrs['thing-id']) === commentId) {
+            const author = attrs['author']
+            if (!author) {
+                // Element matched but no author attribute: SSR structure changed.
+                // Unknown (not removed) so a markup change can't fire false alerts.
+                return 'unknown'
+            }
+            // No real username starts with '[' — same signal isRemovedComment
+            // relies on, language-indifferent.
+            return author.startsWith('[') ? 'removed' : 'live'
+        }
+    }
+    return COMMENT_PAGE_VALID_REGEX.test(html) ? 'removed' : 'unknown'
+}
+
 // The challenge is a string-doubling puzzle served instead of the real page:
 // solution string in await(async e=>e+e)("..."), token in a hidden input.
 // Best-effort fallback for background-worker fetches — the primary content

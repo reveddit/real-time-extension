@@ -14,7 +14,11 @@ import {
     buildPostPageUrl,
     classifyPostPage,
     PostPageStatus,
+    buildCommentPageUrl,
+    classifyCommentPage,
+    solveChallenge,
 } from './parse_html/new'
+import { newReddit } from './parse_html/common'
 import { setWarningBadge } from './common'
 import { getRemoteMechanism, resolveMechanismDisabled, MECHANISM_LEGACY } from './news'
 
@@ -91,6 +95,16 @@ export interface AuthItemMeta {
     created_utc?: number
     is_robot_indexable?: boolean
     removed_by_category?: string | null
+    // permalink/link_id: for building a comment's own logged-out page URL when
+    // it's absent from the public feed (see verifyFeedAbsentItems).
+    permalink?: string
+    link_id?: string
+    // Publicly-invisible classes: their own pages are gated logged-out, so feed
+    // absence can't be verified — and monitoring.ts already exempts them from
+    // feed-absence removal (invisibleToPublicView). Used to skip verification.
+    quarantine?: boolean
+    over_18?: boolean
+    subreddit_type?: string
 }
 export type AuthItemsMeta = Record<string, AuthItemMeta>
 
@@ -277,6 +291,116 @@ const verifyFeedPresentPosts = async (
     return verdicts
 }
 
+// Feed absence stopped being a sufficient removal signal in ~2026-07: Reddit now
+// also omits items from profile-hidden subreddits ("curate your profile") from
+// the logged-out feed, so an unverified "missing" would flag every hidden-sub
+// item as mod-removed. A feed-absent item's own logged-out page is authoritative:
+// live items render there (profile-hidden included), removed ones don't (see
+// classifyCommentPage / classifyPostPage). Verdicts are cached so each hidden
+// item costs one page fetch per TTL, not per cycle; 'live' entries get a longer
+// TTL since their only interesting transition (a later real removal) just waits
+// for the next expiry. The challenge solve works without cookies (verified live
+// 2026-07-20), so this runs in both tab and background modes.
+const ABSENT_VERDICT_CACHE_KEY = 'www_absent_item_verdicts'
+const ABSENT_VERDICT_LIVE_TTL_MS = 6 * 3600 * 1000
+const ABSENT_VERDICT_ADVERSE_TTL_MS = 2 * 3600 * 1000
+const ABSENT_VERDICT_CACHE_MAX = 200
+// Bounds the burst when a user newly hides a large subreddit: at most this many
+// page fetches per cycle; the rest stay unverified (omitted) until later cycles.
+const ABSENT_VERIFY_MAX_PER_CYCLE = 20
+const ABSENT_VERIFY_DELAY_MS = 500
+
+interface AbsentVerdictEntry {
+    v: Exclude<PostPageStatus, 'unknown'>
+    t: number // epoch ms of verification
+}
+
+const fetchAndClassifyAbsentItem = async (
+    id: string,
+    meta: AuthItemMeta,
+    fetchHtml: FetchHtml,
+): Promise<PostPageStatus> => {
+    let url: string
+    if (id.startsWith('t3_')) {
+        url = buildPostPageUrl(id)
+    } else if (meta.permalink) {
+        url = newReddit + meta.permalink
+    } else if (meta.link_id) {
+        url = buildCommentPageUrl(id, meta.link_id)
+    } else {
+        return 'unknown'
+    }
+    const classify = (html: string): PostPageStatus =>
+        id.startsWith('t3_') ? classifyPostPage(html).status : classifyCommentPage(html, id)
+    let html = await fetchHtml(url)
+    let verdict = classify(html)
+    if (verdict === 'unknown') {
+        const solutionUrl = solveChallenge(html, url)
+        if (solutionUrl) {
+            html = await fetchHtml(solutionUrl)
+            verdict = classify(html)
+        }
+    }
+    return verdict
+}
+
+const verifyFeedAbsentItems = async (
+    ids: string[],
+    authItemsMeta: AuthItemsMeta,
+    fetchHtml: FetchHtml,
+): Promise<Record<string, PostPageStatus>> => {
+    const nowMs = Date.now()
+    let cache: Record<string, AbsentVerdictEntry> = {}
+    try {
+        cache =
+            ((await browser.storage.local.get({ [ABSENT_VERDICT_CACHE_KEY]: {} })) as any)[ABSENT_VERDICT_CACHE_KEY] ||
+            {}
+    } catch {
+        /* ignored */
+    }
+    const verdicts: Record<string, PostPageStatus> = {}
+    const toFetch: string[] = []
+    for (const id of ids) {
+        const cached = cache[id]
+        const ttl = cached && cached.v === 'live' ? ABSENT_VERDICT_LIVE_TTL_MS : ABSENT_VERDICT_ADVERSE_TTL_MS
+        if (cached && nowMs - cached.t < ttl) {
+            verdicts[id] = cached.v
+        } else {
+            toFetch.push(id)
+        }
+    }
+    let fetched = 0
+    for (const id of toFetch) {
+        if (fetched >= ABSENT_VERIFY_MAX_PER_CYCLE) {
+            break
+        }
+        if (fetched > 0) {
+            await new Promise(r => setTimeout(r, ABSENT_VERIFY_DELAY_MS))
+        }
+        fetched++
+        try {
+            const verdict = await fetchAndClassifyAbsentItem(id, authItemsMeta[id] || {}, fetchHtml)
+            console.log(`[reveddit] absent item verdict ${id}: ${verdict}`)
+            if (verdict !== 'unknown') {
+                verdicts[id] = verdict
+                cache[id] = { v: verdict, t: nowMs }
+            }
+        } catch (err: any) {
+            console.log(`[reveddit] absent item verification failed ${id}:`, String(err?.message || err))
+        }
+    }
+    if (fetched) {
+        const entries = Object.entries(cache).sort((a, b) => b[1].t - a[1].t)
+        cache = Object.fromEntries(entries.slice(0, ABSENT_VERDICT_CACHE_MAX))
+        try {
+            await browser.storage.local.set({ [ABSENT_VERDICT_CACHE_KEY]: cache })
+        } catch {
+            /* ignored */
+        }
+    }
+    return verdicts
+}
+
 // Track consecutive failures of the www public-view path. One failure is noise
 // (deploys, blips); persistent failure means the detection path is broken and
 // the user should know — without it they'd assume monitoring still works.
@@ -330,6 +454,28 @@ export const lookupItemsByID_fromPublicProfile = async (
         fetchHtml,
         viaTab,
     )
+    // Feed-absent items within coverage can be profile-hidden rather than
+    // removed — verify against their own pages before concluding anything.
+    // Skipped: auth-confirmed removals, and publicly-invisible classes whose
+    // pages are gated logged-out (monitoring exempts those from removal anyway).
+    const absentToVerify = ids.filter(id => {
+        if (profile.items.has(id)) {
+            return false
+        }
+        const meta = authItemsMeta[id] || {}
+        if (id.startsWith('t3_') && (meta.is_robot_indexable === false || meta.removed_by_category)) {
+            return false
+        }
+        if (meta.quarantine || meta.over_18 || meta.subreddit_type === 'private') {
+            return false
+        }
+        const floor = id.startsWith('t3_') ? profile.coverage.t3 : profile.coverage.t1
+        const value = fullnameValue(id)
+        return Number.isFinite(value) && value >= floor
+    })
+    const absentVerdicts = absentToVerify.length
+        ? await verifyFeedAbsentItems(absentToVerify, authItemsMeta, fetchHtml)
+        : {}
     const results: { data: Record<string, any> }[] = []
     for (const id of ids) {
         const meta = authItemsMeta[id] || {}
@@ -371,20 +517,38 @@ export const lookupItemsByID_fromPublicProfile = async (
         } else {
             const floor = isPost ? profile.coverage.t3 : profile.coverage.t1
             const value = fullnameValue(id)
-            if (authSaysRemoved || (Number.isFinite(value) && value >= floor)) {
-                // Absent from the public view (and reachable), or the auth view
-                // already flags it removed → removed. The synthetic shape passes
-                // isRemovedComment (author+body start with '[') and isRemovedPost
-                // (is_robot_indexable === false).
-                results.push({
-                    data: {
-                        name: id,
-                        author: '[deleted]',
-                        body: '[removed]',
-                        is_robot_indexable: false,
-                        ...carried,
-                    },
-                })
+            const covered = Number.isFinite(value) && value >= floor
+            const publiclyInvisible = meta.quarantine || meta.over_18 || meta.subreddit_type === 'private'
+            // The synthetic removed shape passes isRemovedComment (author+body
+            // start with '[') and isRemovedPost (is_robot_indexable === false).
+            const syntheticRemoved = {
+                data: {
+                    name: id,
+                    author: '[deleted]',
+                    body: '[removed]',
+                    is_robot_indexable: false,
+                    ...carried,
+                },
+            }
+            if (authSaysRemoved) {
+                // The auth view already flags it removed — authoritative.
+                results.push(syntheticRemoved)
+            } else if (covered && publiclyInvisible) {
+                // Never publicly visible; same synthetic shape as before — the
+                // classification loop reclassifies these as approved
+                // (invisibleToPublicView), which also refreshes the body cache.
+                results.push(syntheticRemoved)
+            } else if (covered) {
+                const verdict = absentVerdicts[id]
+                if (verdict === 'live') {
+                    // Renders on its own page → not removed; it's absent from
+                    // the feed because its subreddit is hidden from the profile.
+                    results.push({ data: { name: id, author: username, is_robot_indexable: true, ...carried } })
+                } else if (verdict === 'removed' || verdict === 'held') {
+                    results.push(syntheticRemoved)
+                }
+                // No verdict ('unknown' or over the per-cycle budget) → omit:
+                // feed absence alone is ambiguous, so neither alert nor reset.
             }
         }
     }
@@ -401,7 +565,8 @@ export const lookupItemsByID_fromPublicProfile = async (
     console.log(
         `[reveddit] www lookup ${username}: ${ids.length} requested, ${results.length} returned ` +
             `(${removedCount} removed, ${ids.length - results.length} omitted/uncovered), ` +
-            `coverage t1=${profile.coverage.t1} t3=${profile.coverage.t3}, verdicts=${JSON.stringify(postVerdicts)}`,
+            `coverage t1=${profile.coverage.t1} t3=${profile.coverage.t3}, verdicts=${JSON.stringify(postVerdicts)}, ` +
+            `absentVerdicts=${JSON.stringify(absentVerdicts)}`,
     )
     return results
 }

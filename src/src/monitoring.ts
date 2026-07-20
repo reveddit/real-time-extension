@@ -499,6 +499,15 @@ const checkForChanges_thing_byId = async (
                 // confirm post removals the public feed hides during the grace period.
                 is_robot_indexable: authItem.is_robot_indexable,
                 removed_by_category: authItem.removed_by_category,
+                // For verifying feed-absent comments against their own logged-out
+                // page (profile-hidden subreddits vanish from the public feed).
+                permalink: authItem.permalink,
+                link_id: authItem.link_id,
+                // Publicly-invisible classes — lets the lookup skip unverifiable
+                // page fetches for them.
+                quarantine: !!authItem.quarantine,
+                over_18: !!authItem.over_18,
+                subreddit_type: authItem.subreddit_type,
             }
         }
     }

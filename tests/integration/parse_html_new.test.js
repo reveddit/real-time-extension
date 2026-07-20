@@ -8,6 +8,8 @@ import {
     buildPartialUrl,
     buildPostPageUrl,
     classifyPostPage,
+    buildCommentPageUrl,
+    classifyCommentPage,
     fullnameValue,
 } from '../../src/src/parse_html/new'
 
@@ -148,6 +150,74 @@ describe('classifyPostPage', () => {
 
     it('builds post page urls from fullnames', () => {
         expect(buildPostPageUrl('t3_1ukv6vb')).toBe('https://www.reddit.com/comments/1ukv6vb/')
+    })
+})
+
+describe('classifyCommentPage', () => {
+    // Modeled on live comment permalink pages (verified 2026-07-20): live
+    // comments render with the real author; removed/deleted comments are absent
+    // from their own page, or present as an author="[deleted]" placeholder when
+    // kept for their reply tree.
+    const commentEl = (id, author) =>
+        `<shreddit-comment created="2019-10-12T00:53:40.750000+0000" author="${author}" ` +
+        `thingId="${id}" depth="0" comment-position="0" comment-parent-positions="[]" ` +
+        `permalink="/r/test/comments/abc123/comment/${id.slice(3)}/" ` +
+        `reload-url="/svc/shreddit/comment/${id}?depth=0&amp;subredditName=test" score="1">` +
+        `<div slot="comment">some text</div></shreddit-comment>`
+
+    // The tree element carries the focal comment's thingId even when that
+    // comment is removed (live removed-page shape) — it must never be mistaken
+    // for the comment element itself.
+    const commentsPage = inner =>
+        `<html><body><shreddit-post class="block" id="t3_abc123" author="someone" ` +
+        `subreddit-name="test" permalink="/r/test/comments/abc123/title/"></shreddit-post>` +
+        `<shreddit-comment-tree-stats total-comments="8" sort="NEW">` +
+        `<shreddit-comment-tree id="comment-tree" thingId="t1_target1" post-id="t3_abc123" ` +
+        `permalink="/r/test/comments/abc123/title/">${inner}</shreddit-comment-tree></body></html>`
+
+    it('classifies a rendered comment with a real author as live', () => {
+        const html = commentsPage(commentEl('t1_target1', 'SomeUser'))
+        expect(classifyCommentPage(html, 't1_target1')).toBe('live')
+    })
+
+    it('classifies an author="[deleted]" placeholder as removed', () => {
+        const html = commentsPage(commentEl('t1_target1', '[deleted]'))
+        expect(classifyCommentPage(html, 't1_target1')).toBe('removed')
+    })
+
+    it('classifies absence from a valid comments page as removed', () => {
+        // The page rendered (other comments present) but the target is gone —
+        // matches the live removed-comment page: no element for the comment.
+        const html = commentsPage(commentEl('t1_other11', 'SomeoneElse'))
+        expect(classifyCommentPage(html, 't1_target1')).toBe('removed')
+        expect(classifyCommentPage(commentsPage(''), 't1_target1')).toBe('removed')
+    })
+
+    it('accepts the thing-id attribute form', () => {
+        const html = commentsPage(commentEl('t1_target1', 'SomeUser').replace('thingId=', 'thing-id='))
+        expect(classifyCommentPage(html, 't1_target1')).toBe('live')
+    })
+
+    it('does not match a different comment id', () => {
+        // t1_target1 must not match t1_target11's element
+        const html = commentsPage(commentEl('t1_target11', 'SomeUser'))
+        expect(classifyCommentPage(html, 't1_target1')).toBe('removed')
+    })
+
+    it('returns unknown for challenge or unrecognizable pages', () => {
+        expect(classifyCommentPage(challengePage, 't1_target1')).toBe('unknown')
+        expect(classifyCommentPage('<html><body>error page</body></html>', 't1_target1')).toBe('unknown')
+    })
+
+    it('returns unknown when the element matches but has no author attribute', () => {
+        const html = commentsPage(`<shreddit-comment thingId="t1_target1" depth="0"></shreddit-comment>`)
+        expect(classifyCommentPage(html, 't1_target1')).toBe('unknown')
+    })
+
+    it('builds comment page urls from fullnames', () => {
+        expect(buildCommentPageUrl('t1_ouz0d47', 't3_1u1u4am')).toBe(
+            'https://www.reddit.com/comments/1u1u4am/comment/ouz0d47/',
+        )
     })
 })
 
