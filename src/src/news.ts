@@ -27,6 +27,11 @@ export interface RemoteOptions {
 // The unauthenticated legacy paths (old.reddit HTML, unauth www .json). Flip to
 // 'off' once Reddit's deprecation actually lands, to stop the doomed attempts.
 export const MECHANISM_LEGACY = 'legacyOldReddit'
+// Verification of feed-absent items against their own logged-out pages (the
+// profile-hidden-subreddit false-alert fix, v0.0.5.14). Enabled by default;
+// flip to 'off' to fall back to the older feed-absence-only classification if
+// the page classifier ever misbehaves against a Reddit markup change.
+export const MECHANISM_ABSENT_VERIFICATION = 'absentPageVerification'
 
 export interface NewsFeed {
     messages: NewsMessage[]

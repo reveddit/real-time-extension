@@ -127,6 +127,46 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         expect(names).not.toContain(HIDDEN)
     })
 
+    it('reverts to feed-absence classification when the remote mechanism is off', async () => {
+        __resetStorage(
+            {},
+            {
+                news_cache: {
+                    feed: { messages: [], options: { mechanisms: { absentPageVerification: 'off' } } },
+                    lastFetched: 1,
+                },
+            },
+        )
+        const calls = installFetch(defaultRoutes())
+        const ids = [HIDDEN, GONE]
+        const authItemsMeta = Object.fromEntries(ids.map(id => [id, meta(id)]))
+        const results = await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
+        // no item pages fetched at all
+        expect(calls.filter(u => u.includes('/r/hiddensub/') || u.includes('/r/somesub/')).length).toBe(0)
+        // pre-verification behavior: absence within coverage counts as removed
+        const byId = Object.fromEntries(results.map(r => [r.data.name, r.data]))
+        expect(byId[HIDDEN].author).toBe('[deleted]')
+        expect(byId[GONE].author).toBe('[deleted]')
+    })
+
+    it('honors the dev override over the remote state', async () => {
+        __resetStorage(
+            {},
+            {
+                dev_disable_absent_verification: true,
+                news_cache: {
+                    feed: { messages: [], options: { mechanisms: { absentPageVerification: 'on' } } },
+                    lastFetched: 1,
+                },
+            },
+        )
+        const calls = installFetch(defaultRoutes())
+        const authItemsMeta = { [HIDDEN]: meta(HIDDEN) }
+        const results = await lookupItemsByID_fromPublicProfile([HIDDEN], USER, authItemsMeta)
+        expect(calls.filter(u => u.includes('/r/hiddensub/')).length).toBe(0)
+        expect(results[0].data.author).toBe('[deleted]')
+    })
+
     it('skips verification for publicly-invisible items and returns the exempt synthetic shape', async () => {
         const calls = installFetch(defaultRoutes())
         const authItemsMeta = { [HIDDEN]: meta(HIDDEN, { over_18: true }) }

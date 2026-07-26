@@ -20,7 +20,7 @@ import {
 } from './parse_html/new'
 import { newReddit } from './parse_html/common'
 import { setWarningBadge } from './common'
-import { getRemoteMechanism, resolveMechanismDisabled, MECHANISM_LEGACY } from './news'
+import { getRemoteMechanism, resolveMechanismDisabled, MECHANISM_LEGACY, MECHANISM_ABSENT_VERIFICATION } from './news'
 
 // Gate for the unauthenticated legacy paths: old.reddit.com HTML and unauth www
 // .json — the endpoints Reddit's announced deprecation removes. Gates exactly the
@@ -315,6 +315,25 @@ interface AbsentVerdictEntry {
     t: number // epoch ms of verification
 }
 
+// Remote gate for the whole feed-absent verification path. Default: enabled
+// (no extension-news.json entry needed). Remotely flipping the mechanism 'off'
+// reverts to the pre-0.0.5.14 classification — feed absence within coverage
+// counts as removed, no page fetches — as field insurance against a Reddit
+// markup change the classifier misreads. Dev override (highest priority):
+//   chrome.storage.local.set({ dev_disable_absent_verification: true })  // or false
+//   chrome.storage.local.remove('dev_disable_absent_verification')       // defaults
+export const DEV_DISABLE_ABSENT_VERIFICATION_KEY = 'dev_disable_absent_verification'
+
+const isAbsentVerificationDisabled = (): Promise<boolean> =>
+    browser.storage.local
+        .get({ [DEV_DISABLE_ABSENT_VERIFICATION_KEY]: null })
+        .then(async (r: any) => {
+            const dev = r[DEV_DISABLE_ABSENT_VERIFICATION_KEY]
+            const remote = await getRemoteMechanism(MECHANISM_ABSENT_VERIFICATION)
+            return resolveMechanismDisabled(dev === null ? null : !!dev, remote, false)
+        })
+        .catch(() => false)
+
 const fetchAndClassifyAbsentItem = async (
     id: string,
     meta: AuthItemMeta,
@@ -458,7 +477,11 @@ export const lookupItemsByID_fromPublicProfile = async (
     // removed — verify against their own pages before concluding anything.
     // Skipped: auth-confirmed removals, and publicly-invisible classes whose
     // pages are gated logged-out (monitoring exempts those from removal anyway).
+    const absentVerificationDisabled = await isAbsentVerificationDisabled()
     const absentToVerify = ids.filter(id => {
+        if (absentVerificationDisabled) {
+            return false
+        }
         if (profile.items.has(id)) {
             return false
         }
@@ -539,16 +562,22 @@ export const lookupItemsByID_fromPublicProfile = async (
                 // (invisibleToPublicView), which also refreshes the body cache.
                 results.push(syntheticRemoved)
             } else if (covered) {
-                const verdict = absentVerdicts[id]
-                if (verdict === 'live') {
-                    // Renders on its own page → not removed; it's absent from
-                    // the feed because its subreddit is hidden from the profile.
-                    results.push({ data: { name: id, author: username, is_robot_indexable: true, ...carried } })
-                } else if (verdict === 'removed' || verdict === 'held') {
+                if (absentVerificationDisabled) {
+                    // Remote fallback: pre-verification behavior — absence
+                    // within coverage counts as removed.
                     results.push(syntheticRemoved)
+                } else {
+                    const verdict = absentVerdicts[id]
+                    if (verdict === 'live') {
+                        // Renders on its own page → not removed; it's absent from
+                        // the feed because its subreddit is hidden from the profile.
+                        results.push({ data: { name: id, author: username, is_robot_indexable: true, ...carried } })
+                    } else if (verdict === 'removed' || verdict === 'held') {
+                        results.push(syntheticRemoved)
+                    }
+                    // No verdict ('unknown' or over the per-cycle budget) → omit:
+                    // feed absence alone is ambiguous, so neither alert nor reset.
                 }
-                // No verdict ('unknown' or over the per-cycle budget) → omit:
-                // feed absence alone is ambiguous, so neither alert nor reset.
             }
         }
     }
