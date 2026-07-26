@@ -20,11 +20,7 @@ Note, the extension is not able to track content from private subreddits.
 VERSION HISTORY:
 
 2026/07/26 - 0.0.5.14
-- fix false "mod removed" alerts for comments in subreddits hidden from your profile
-- fix false "mod removed" alerts for posts on your own profile page, including pinned posts
-- fix repeated notifications for the same post alternating between removed and approved
-- fix silent install on reinstall: connect now completes and runs the first check even if you were already subscribed
-- always show the Connect button in the popup (connecting no longer requires an open Reddit tab)
+- fix false and repeated "mod removed" alerts for content that was not actually removed
 
 2026/07/12 - 0.0.5.13
 - fix a bug where removal notifications could be delayed by up to an hour
