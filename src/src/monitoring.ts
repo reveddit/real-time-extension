@@ -491,6 +491,7 @@ const checkForChanges_thing_byId = async (
     const username = isUser ? thing : ''
     const authItemsMeta: Record<string, any> = {}
     if (isUser) {
+        const knownRemovedHash = storage[getObjectNamesForThing(thing, isUser)['removed']] || {}
         for (const [name, authItem] of Object.entries(itemLookup)) {
             authItemsMeta[name] = {
                 locked: !!authItem.locked,
@@ -508,6 +509,10 @@ const checkForChanges_thing_byId = async (
                 quarantine: !!authItem.quarantine,
                 over_18: !!authItem.over_18,
                 subreddit_type: authItem.subreddit_type,
+                // Removed posts can linger in the public feed long past creation
+                // age — feed presence must not flip a recorded removal back to
+                // approved without a page verdict.
+                known_removed: name in knownRemovedHash,
             }
         }
     }

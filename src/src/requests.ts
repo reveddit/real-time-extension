@@ -6,7 +6,7 @@ import {
     clearRateLimitBackoff,
 } from './storage'
 import browser from 'webextension-polyfill'
-import { getItemsById_fromOldHTML } from './parse_html/old'
+import { getItemsById_fromOldHTML, getPost_fromOld } from './parse_html/old'
 import {
     getPublicProfileItems,
     fullnameValue,
@@ -19,7 +19,7 @@ import {
     solveChallenge,
 } from './parse_html/new'
 import { newReddit } from './parse_html/common'
-import { setWarningBadge } from './common'
+import { setWarningBadge, isRemovedComment } from './common'
 import { getRemoteMechanism, resolveMechanismDisabled, MECHANISM_LEGACY, MECHANISM_ABSENT_VERIFICATION } from './news'
 
 // Gate for the unauthenticated legacy paths: old.reddit.com HTML and unauth www
@@ -105,6 +105,11 @@ export interface AuthItemMeta {
     quarantine?: boolean
     over_18?: boolean
     subreddit_type?: string
+    // Already recorded as removed in extension storage. Removed posts can linger
+    // in the public feed well past creation age (verified live: a 3.5-week-old
+    // post, removed a day earlier, still listed), so feed presence must never
+    // flip a recorded removal back to approved without a page verdict.
+    known_removed?: boolean
 }
 export type AuthItemsMeta = Record<string, AuthItemMeta>
 
@@ -251,9 +256,11 @@ const verifyFeedPresentPosts = async (
         const isMature = created !== undefined && nowSec - created > POST_FEED_GRACE_SECONDS
         const cached = cache[id]
         // Mature + no adverse history → the feed is trustworthy, skip the page.
-        // An adverse cached verdict forces re-verification at any age so a post
-        // once seen as held/removed can't silently flip back to approved.
-        if (isMature && (!cached || cached.v === 'live')) {
+        // An adverse cached verdict — or a removal already recorded in storage
+        // (which a fresh verdict cache knows nothing about) — forces
+        // re-verification at any age so a post once seen as held/removed can't
+        // silently flip back to approved.
+        if (isMature && (!cached || cached.v === 'live') && !m?.known_removed) {
             continue
         }
         if (cached && nowMs - cached.t < POST_VERDICT_TTL_MS) {
@@ -363,10 +370,93 @@ const fetchAndClassifyAbsentItem = async (
     return verdict
 }
 
+// Seam for tests: the legacy parsers run HTMLRewriter (WASM), which cannot load
+// under vitest, so the tiebreaker routes its calls through this replaceable
+// object rather than calling the parse_html/old functions directly.
+export const _legacyLookups = {
+    commentsById: getItemsById_fromOldHTML,
+    postByPath: getPost_fromOld,
+}
+
+const LEGACY_TIEBREAK_POST_MAX_PER_CYCLE = 5
+const LEGACY_TIEBREAK_POST_DELAY_MS = 500
+
+// old.reddit tiebreaker for ids the www page lottery left unverdicted. The www
+// SSR variants sometimes serve comment-less shells for extended stretches
+// (observed live: 12/12 shells), which would leave feed-absent items undetected
+// indefinitely. old.reddit is not subject to those variants and remains the
+// pre-Shreddit truth source until the deprecation lands — this call site is
+// gated with the rest of the legacy paths. Comments resolve in one batched
+// /api/info HTML request; posts need their own page (meta-robots signal).
+const legacyTiebreakAbsent = async (
+    ids: string[],
+    canaryCommentIds: string[],
+    verdicts: Record<string, PostPageStatus>,
+    record: (id: string, v: Exclude<PostPageStatus, 'unknown'>) => void,
+): Promise<void> => {
+    const unresolved = ids.filter(id => !(id in verdicts))
+    if (!unresolved.length || (await isLegacyDisabled())) {
+        return
+    }
+    const commentIds = unresolved.filter(id => id.startsWith('t1_'))
+    const postIds = unresolved.filter(id => id.startsWith('t3_'))
+    if (commentIds.length) {
+        try {
+            // old.reddit /api/info HTML DROPS removed comments instead of
+            // rendering [removed] markers (verified live), so absence is the
+            // removal signal — but only when the response is provably healthy.
+            // Feed-present comments are live by definition; batching a few in as
+            // canaries proves the endpoint returned real things this cycle.
+            const batch = [...commentIds, ...canaryCommentIds]
+            const results = (await _legacyLookups.commentsById(batch, null)) as any[]
+            const byName: Record<string, any> = {}
+            for (const wrap of results || []) {
+                if (wrap?.data?.name) {
+                    byName[wrap.data.name] = wrap.data
+                }
+            }
+            const canaryRendered = canaryCommentIds.some(id => byName[id])
+            for (const id of commentIds) {
+                const item = byName[id]
+                if (item && item.author) {
+                    record(id, isRemovedComment(item) ? 'removed' : 'live')
+                } else if (!item && canaryRendered) {
+                    // Absent while known-live canaries rendered. /api/info is not
+                    // a profile view, so profile-hiding cannot explain absence
+                    // here (verified: a profile-hidden live comment renders) →
+                    // the comment is removed or deleted.
+                    record(id, 'removed')
+                }
+            }
+        } catch (err: any) {
+            console.log('[reveddit] legacy comment tiebreak failed:', String(err?.message || err))
+        }
+    }
+    let postFetches = 0
+    for (const id of postIds) {
+        if (postFetches >= LEGACY_TIEBREAK_POST_MAX_PER_CYCLE) {
+            break
+        }
+        if (postFetches > 0) {
+            await new Promise(r => setTimeout(r, LEGACY_TIEBREAK_POST_DELAY_MS))
+        }
+        postFetches++
+        try {
+            const page = (await _legacyLookups.postByPath('/comments/' + id.substring(3) + '/')) as any
+            if (page && !page.error) {
+                record(id, page.is_removed ? 'removed' : 'live')
+            }
+        } catch (err: any) {
+            console.log(`[reveddit] legacy post tiebreak failed ${id}:`, String(err?.message || err))
+        }
+    }
+}
+
 const verifyFeedAbsentItems = async (
     ids: string[],
     authItemsMeta: AuthItemsMeta,
     fetchHtml: FetchHtml,
+    canaryCommentIds: string[] = [],
 ): Promise<Record<string, PostPageStatus>> => {
     const nowMs = Date.now()
     let cache: Record<string, AbsentVerdictEntry> = {}
@@ -408,7 +498,13 @@ const verifyFeedAbsentItems = async (
             console.log(`[reveddit] absent item verification failed ${id}:`, String(err?.message || err))
         }
     }
-    if (fetched) {
+    let cacheMutated = fetched > 0
+    await legacyTiebreakAbsent(ids, canaryCommentIds, verdicts, (id, v) => {
+        verdicts[id] = v
+        cache[id] = { v, t: nowMs }
+        cacheMutated = true
+    })
+    if (cacheMutated) {
         const entries = Object.entries(cache).sort((a, b) => b[1].t - a[1].t)
         cache = Object.fromEntries(entries.slice(0, ABSENT_VERDICT_CACHE_MAX))
         try {
@@ -496,8 +592,9 @@ export const lookupItemsByID_fromPublicProfile = async (
         const value = fullnameValue(id)
         return Number.isFinite(value) && value >= floor
     })
+    const canaryCommentIds = [...profile.items.keys()].filter(id => id.startsWith('t1_')).slice(0, 3)
     const absentVerdicts = absentToVerify.length
-        ? await verifyFeedAbsentItems(absentToVerify, authItemsMeta, fetchHtml)
+        ? await verifyFeedAbsentItems(absentToVerify, authItemsMeta, fetchHtml, canaryCommentIds)
         : {}
     const results: { data: Record<string, any> }[] = []
     for (const id of ids) {
@@ -530,6 +627,12 @@ export const lookupItemsByID_fromPublicProfile = async (
                     // The post's own page shows it held/removed even though it
                     // lingers in the feed and the auth view hasn't caught up.
                     results.push({ data: { ...publicItem, is_robot_indexable: false, ...carried } })
+                } else if (meta.known_removed && verdict !== 'live') {
+                    // Recorded as removed, still lingering in the feed, and no
+                    // page verdict landed this cycle (no tab, challenge, shell).
+                    // Omit: feed presence alone must not flip a recorded removal
+                    // back to approved on fetch luck — that oscillates. A real
+                    // re-approval flips it once a 'live' page verdict arrives.
                 } else {
                     // No removal signal from any source → live. (verdict 'live',
                     // 'unknown', or unfetched: the auth view says not-removed and

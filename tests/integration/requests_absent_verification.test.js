@@ -6,10 +6,18 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
-import { lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
+import { lookupItemsByID_fromPublicProfile, _legacyLookups } from '../../src/src/requests'
+
+// The real legacy parsers run HTMLRewriter (WASM) which cannot load under
+// vitest — always stub the seam so no test can reach them.
+const originalLegacyLookups = { ..._legacyLookups }
+const stubLegacy = (commentsById, postByPath) => {
+    _legacyLookups.commentsById = commentsById || (async () => [])
+    _legacyLookups.postByPath = postByPath || (async () => ({ error: 'stubbed' }))
+}
 
 const USER = 'testuser'
 
@@ -77,6 +85,10 @@ const defaultRoutes = () => [
 describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
     beforeEach(() => {
         __resetStorage()
+        stubLegacy()
+    })
+    afterEach(() => {
+        Object.assign(_legacyLookups, originalLegacyLookups)
     })
 
     it('keeps a profile-hidden comment live and flags a page-absent comment removed', async () => {
@@ -165,6 +177,93 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         const results = await lookupItemsByID_fromPublicProfile([HIDDEN], USER, authItemsMeta)
         expect(calls.filter(u => u.includes('/r/hiddensub/')).length).toBe(0)
         expect(results[0].data.author).toBe('[deleted]')
+    })
+
+    it('resolves unknown www verdicts via the old.reddit tiebreaker', async () => {
+        // www serves shells (unrecognizable) for both items; old.reddit knows
+        // the truth: HIDDEN is live, GONE is removed.
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
+            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+            [PERMALINKS[HIDDEN], '<html><body>shell</body></html>'],
+            [PERMALINKS[GONE], '<html><body>shell</body></html>'],
+        ])
+        // old.reddit /api/info drops removed comments: GONE is absent from the
+        // response; the feed-present canary (FEED_OK) and the hidden-but-live
+        // comment render. Absence + rendered canary → removed.
+        let requestedIds
+        stubLegacy(async ids => {
+            requestedIds = ids
+            return [
+                { data: { name: HIDDEN, author: USER, body: 'still here' } },
+                { data: { name: FEED_OK, author: USER, body: 'canary' } },
+            ]
+        })
+        const ids = [FEED_OK, HIDDEN, GONE]
+        const authItemsMeta = Object.fromEntries(ids.map(id => [id, meta(id)]))
+        const results = await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
+        const byId = Object.fromEntries(results.map(r => [r.data.name, r.data]))
+        expect(byId[HIDDEN].author).toBe(USER)
+        expect(byId[GONE].author).toBe('[deleted]')
+        // the batch included the feed-present canary alongside the unresolved ids
+        expect(requestedIds).toContain(FEED_OK)
+        // tiebreaker verdicts are cached like www verdicts
+        expect(__getLocalStorage().www_absent_item_verdicts[HIDDEN].v).toBe('live')
+        expect(__getLocalStorage().www_absent_item_verdicts[GONE].v).toBe('removed')
+    })
+
+    it('does not treat absence from a canary-less or unhealthy legacy response as removed', async () => {
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
+            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+            [PERMALINKS[GONE], '<html><body>shell</body></html>'],
+        ])
+        // Legacy response renders nothing (unhealthy/blocked) → no absence verdict
+        stubLegacy(async () => [])
+        const results = await lookupItemsByID_fromPublicProfile([FEED_OK, GONE], USER, {
+            [FEED_OK]: meta(FEED_OK),
+            [GONE]: meta(GONE),
+        })
+        expect(results.map(r => r.data.name)).not.toContain(GONE)
+    })
+
+    it('skips the tiebreaker when the legacy paths are disabled', async () => {
+        __resetStorage({}, { dev_simulate_endpoint_deprecation: true })
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
+            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+            [PERMALINKS[GONE], '<html><body>shell</body></html>'],
+        ])
+        let called = false
+        stubLegacy(async () => {
+            called = true
+            return []
+        })
+        const results = await lookupItemsByID_fromPublicProfile([GONE], USER, { [GONE]: meta(GONE) })
+        expect(called).toBe(false)
+        expect(results.map(r => r.data.name)).not.toContain(GONE)
+    })
+
+    it('omits a known-removed feed-present post with no page verdict instead of approving it', async () => {
+        const POST = 't3_post11'
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments') + commentsPage('')],
+            // The removed post still lingers in the public submitted feed
+            [`/user/${USER}/submitted/?sort=new`, thingIdEl(POST)],
+        ])
+        // Old post (mature), recorded as removed. In vitest there is no www tab,
+        // so verifyFeedPresentPosts cannot produce a page verdict.
+        const oldCreated = 1700000000
+        const authItemsMeta = { [POST]: { locked: false, created_utc: oldCreated, known_removed: true } }
+        const results = await lookupItemsByID_fromPublicProfile([POST], USER, authItemsMeta)
+        expect(results.map(r => r.data.name)).not.toContain(POST)
+
+        // Same post NOT known-removed → feed presence keeps it live (unchanged behavior)
+        const results2 = await lookupItemsByID_fromPublicProfile([POST], USER, {
+            [POST]: { locked: false, created_utc: oldCreated },
+        })
+        const item = results2.find(r => r.data.name === POST)
+        expect(item.data.is_robot_indexable).toBe(true)
     })
 
     it('skips verification for publicly-invisible items and returns the exempt synthetic shape', async () => {

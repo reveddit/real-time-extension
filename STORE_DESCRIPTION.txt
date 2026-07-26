@@ -21,6 +21,7 @@ VERSION HISTORY:
 
 2026/07/20 - 0.0.5.14
 - fix false "mod removed" alerts for comments in subreddits hidden from your profile
+- fix removed posts flip-flopping between removed and approved while they linger in the public feed
 
 2026/07/12 - 0.0.5.13
 - fix a bug where removal notifications could be delayed by up to an hour
