@@ -346,7 +346,6 @@ function Popup() {
     otherTotal: number
   } | null>(null)
   const [currentUser, setCurrentUser] = useState<string | null | undefined>(undefined)
-  const [hasSupportedTabs, setHasSupportedTabs] = useState(false)
   const [showSubdomainWarning, setShowSubdomainWarning] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [syncStorage, setSyncStorage] = useState<Record<string, any> | null>(null)
@@ -393,7 +392,6 @@ function Popup() {
             return h === 'www.reddit.com' || h === 'old.reddit.com'
           } catch { return false }
         })
-        setHasSupportedTabs(supported.length > 0)
         if (tabs.length > 0 && supported.length === 0) {
           chrome.storage.local.get(['subdomain_warning_shown'], result => {
             if (!result.subdomain_warning_shown) {
@@ -600,11 +598,12 @@ function Popup() {
               <MessageBanner variant="info">
                 {connectMessage || 'Log in to www.reddit.com or old.reddit.com to get started.'}
               </MessageBanner>
-              {hasSupportedTabs && (
-                <ActionBtn onClick={handleConnect} disabled={connecting}>
-                  {connecting ? 'Connecting...' : 'Connect'}
-                </ActionBtn>
-              )}
+              {/* Connect is tab-independent (direct cookie-authenticated fetch),
+                  so always offer it — the old tab gate left users with no
+                  button and no path forward when no Reddit tab was open. */}
+              <ActionBtn onClick={handleConnect} disabled={connecting}>
+                {connecting ? 'Connecting...' : 'Connect'}
+              </ActionBtn>
             </>
           )}
         </div>
@@ -663,15 +662,9 @@ function Popup() {
                     ? '⚠ Still disconnected. Try logging into Reddit again.'
                     : '⚠ Session may be disconnected.'}
                 </MessageBanner>
-                {hasSupportedTabs ? (
-                  <ActionBtn onClick={handleReconnect} disabled={reconnecting}>
-                    {reconnecting ? 'Checking...' : 'Reconnect'}
-                  </ActionBtn>
-                ) : (
-                  <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
-                    Open Reddit to reconnect
-                  </ActionBtn>
-                )}
+                <ActionBtn onClick={handleReconnect} disabled={reconnecting}>
+                  {reconnecting ? 'Checking...' : 'Reconnect'}
+                </ActionBtn>
               </>
             )}
           </div>

@@ -359,8 +359,9 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                     subscribeUser(
                         user,
                         () => {
-                            // Trigger immediate lookup
-                            triggerImmediateLookupOnce(user)
+                            // Trigger immediate lookup (forced: the user clicked
+                            // Connect and expects a check now)
+                            triggerImmediateLookupOnce(user, true)
                             chrome.storage.local.remove('error_status', () => {
                                 updateBadgeUnseenCount()
                                 sendResponse({ success: true, user })
@@ -368,7 +369,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                         },
                         () => {
                             // Already subscribed - still trigger lookup and clear error
-                            triggerImmediateLookupOnce(user)
+                            triggerImmediateLookupOnce(user, true)
                             chrome.storage.local.remove('error_status', () => {
                                 updateBadgeUnseenCount()
                                 sendResponse({ success: true, user })
@@ -630,13 +631,24 @@ async function subscribeToLoggedInUser_or_promptForUser() {
     }
 
     if (user) {
-        subscribeUser(user, () => {
+        // Populate the popup's connected state immediately — before this, only
+        // try-reconnect and the first completed check wrote it, so a reinstall
+        // showed "log in to get started" despite a detected user.
+        chrome.storage.local.set({ last_logged_in_user: user })
+        const onSubscribed = () => {
             // Delay the initial lookup briefly so Android has time to dismiss
             // the "extension was added" system dialog and grant notification
             // permission before the first createNotification call.
-            setTimeout(() => triggerImmediateLookupOnce(user), 3000)
+            // force: reinstalls persist user_initial_lookup_done in synced
+            // storage; without forcing, a reinstall would skip the first check.
+            setTimeout(() => triggerImmediateLookupOnce(user, true), 3000)
             chrome.tabs.create({ url: chrome.runtime.getURL('src/history.html?welcome=1'), active: true })
-        })
+        }
+        // Also handle the already-subscribed case: user_subscriptions persists
+        // in synced storage across reinstalls, and subscribeUser reports an
+        // existing subscription via its error callback. Without it, a reinstall
+        // completed silently — no tab, no first check, popup stuck disconnected.
+        subscribeUser(user, onSubscribed, onSubscribed)
     } else {
         // Still no user - surface the disconnected state on the toolbar icon and
         // show the welcome/onboarding page so the user can finish the setup.
@@ -645,10 +657,13 @@ async function subscribeToLoggedInUser_or_promptForUser() {
     }
 }
 
-function triggerImmediateLookupOnce(user: string) {
+// force bypasses the once-per-user guard (which lives in synced storage and so
+// survives reinstalls) — used when the check is explicitly expected: install
+// and the popup's Connect/Reconnect.
+function triggerImmediateLookupOnce(user: string, force = false) {
     chrome.storage.sync.get(['user_initial_lookup_done'], result => {
         const lookupMap = result.user_initial_lookup_done || {}
-        if (!lookupMap[user]) {
+        if (force || !lookupMap[user]) {
             lookupMap[user] = true
             chrome.storage.sync.set({ user_initial_lookup_done: lookupMap }, () => {
                 // Run a full check which includes logged-in user

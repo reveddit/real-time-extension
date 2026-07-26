@@ -1191,7 +1191,11 @@ export const getLoggedinUser = () => {
             //    browser includes the user's real session cookies even with no tab open.
             fetchUser(targetUrl)
                 .then(resolve)
-                .catch(() => {
+                .catch(err => {
+                    // Log the reason: a challenge/HTML response fails json() with
+                    // a SyntaxError that is otherwise indistinguishable from
+                    // "not logged in" when debugging connect issues.
+                    console.log(`getLoggedinUser direct fetch failed (${targetUrl}):`, String(err?.message || err))
                     // 2) Fallback: rehydrate any previously-stored cookies and retry once.
                     rehydrateStoredRedditCookies().then(success => {
                         if (!success) {
