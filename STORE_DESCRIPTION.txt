@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/08/15 - 0.0.5.17
+- record in the diagnostic log how each check was made, so a failed check can be traced to the exact request that failed
+
 2026/08/14 - 0.0.5.16
 - keep detection working when Reddit blocks the extension's background checks: check through an open reddit tab even after extension updates, pace retries of unreadable pages, show a warning when removal checks stay blocked, and record why a check failed in the diagnostic log
 
