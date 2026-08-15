@@ -30,6 +30,11 @@ import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
 import { getItems_fromOld, getPost_fromOld } from './src/parse_html/old'
 import { fetchNews } from './src/news'
+import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
+import { getRateLimitBackoffRemainingMs } from './src/storage'
+
+// The background context is the diagnostic log's single writer — see diaglog.ts.
+initDiagPersistence()
 
 const WHATSNEW_SHOWN_KEY = 'whatsnew_shown_version'
 
@@ -165,6 +170,11 @@ console.log('bg script running')
 const ME_RECOVER_MIN_INTERVAL_MS = 30000 // 30 seconds
 let recoveringMe = false
 let lastMeRecoverTs = 0
+
+// Manual "check now" (options page) self-throttle. Module-level is enough: a
+// service-worker restart resetting it just allows one extra manual run.
+const MANUAL_CHECK_MIN_INTERVAL_MS = 60000
+let lastManualCheckTs = 0
 
 function recoverIfDegraded() {
     const now = Date.now()
@@ -348,6 +358,50 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         }
         sendResponse({ response: 'done' })
         return true
+    } else if (request.action === 'get-diag-log') {
+        getRateLimitBackoffRemainingMs()
+            .then(backoffMs =>
+                buildDiagReport({
+                    includeUsername: !!request.includeUsername,
+                    extraHeaderLines: [
+                        `rate-limit backoff: ${backoffMs > 0 ? Math.ceil(backoffMs / 1000) + 's remaining' : 'none'}`,
+                    ],
+                }),
+            )
+            .then(text => sendResponse({ text }))
+            .catch(err => sendResponse({ error: String(err?.message || err) }))
+        return true
+    } else if (request.action === 'clear-diag-log') {
+        dlog('ui', '[reveddit] diagnostic log cleared from options page')
+        clearDiagLog()
+            .then(() => sendResponse({ ok: true }))
+            .catch(() => sendResponse({ ok: false }))
+        return true
+    } else if (request.action === 'get-diag-status') {
+        Promise.all([
+            getRateLimitBackoffRemainingMs(),
+            new Promise<number>(resolve =>
+                chrome.storage.sync.get(['last_check'], r => resolve(Number(r?.last_check) || 0)),
+            ),
+        ])
+            .then(([backoffMs, lastCheck]) => sendResponse({ backoffRemainingMs: backoffMs, lastCheck }))
+            .catch(err => sendResponse({ error: String(err?.message || err) }))
+        return true
+    } else if (request.action === 'run-check-now') {
+        const now = Date.now()
+        if (now - lastManualCheckTs < MANUAL_CHECK_MIN_INTERVAL_MS) {
+            sendResponse({ throttled: true })
+            return true
+        }
+        lastManualCheckTs = now
+        dlog('ui', '[reveddit] manual check requested from options page')
+        try {
+            checkForChanges(false, { bypassBackoff: true })
+        } catch (e: any) {
+            dlog('ui', '[reveddit] manual check failed to start:', String(e?.message || e))
+        }
+        sendResponse({ started: true })
+        return true
     } else if (request.action === 'try-reconnect') {
         // Manual reconnect attempt from popup - subscribe user and trigger lookup
         storeRedditCookies()
@@ -482,6 +536,11 @@ chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResp
 })
 
 chrome.runtime.onInstalled.addListener(function (details) {
+    try {
+        dlog('cycle', `[reveddit] onInstalled (${details.reason}) — version ${chrome.runtime.getManifest().version}`)
+    } catch {
+        /* ignored */
+    }
     // Existing reddit tabs lost their content script on install/update; re-inject
     // so the reliable tab fetch path is ready before the first removal check.
     injectContentScriptIntoExistingRedditTabs()

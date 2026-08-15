@@ -19,6 +19,12 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/08/14 - 0.0.5.16
+- keep detection working when Reddit blocks the extension's background checks: check through an open reddit tab even after extension updates, pace retries of unreadable pages, show a warning when removal checks stay blocked, and record why a check failed in the diagnostic log
+
+2026/08/07 - 0.0.5.15
+- add a copyable diagnostic log in options ("check now" + "copy log"); improve detection reliability when Reddit rate-limits or challenges the extension
+
 2026/07/26 - 0.0.5.14
 - fix false and repeated "mod removed" alerts for content that was not actually removed
 

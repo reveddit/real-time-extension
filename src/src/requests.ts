@@ -4,8 +4,10 @@ import {
     removeMultipleFromPendingPostQueue,
     recordRateLimitHit,
     clearRateLimitBackoff,
+    getMsSinceLastRateLimitHit,
 } from './storage'
 import browser from 'webextension-polyfill'
+import { dlog } from './diaglog'
 import { getItemsById_fromOldHTML, getPost_fromOld } from './parse_html/old'
 import {
     getPublicProfileItems,
@@ -17,10 +19,17 @@ import {
     buildCommentPageUrl,
     classifyCommentPage,
     solveChallenge,
+    describePageForDiag,
 } from './parse_html/new'
 import { newReddit } from './parse_html/common'
 import { setWarningBadge, isRemovedComment } from './common'
-import { getRemoteMechanism, resolveMechanismDisabled, MECHANISM_LEGACY, MECHANISM_ABSENT_VERIFICATION } from './news'
+import {
+    getRemoteMechanism,
+    resolveMechanismDisabled,
+    MECHANISM_LEGACY,
+    MECHANISM_ABSENT_VERIFICATION,
+    MECHANISM_ME_CHALLENGE,
+} from './news'
 
 // Gate for the unauthenticated legacy paths: old.reddit.com HTML and unauth www
 // .json — the endpoints Reddit's announced deprecation removes. Gates exactly the
@@ -70,6 +79,7 @@ const flagIfRateLimited = (err: Error) => {
     // unauthenticated JSON requests (it happens every cycle now), so it must NOT
     // trigger backoff — otherwise the alarm would needlessly pause monitoring.
     if (status === 429) {
+        dlog('ratelimit', '[reveddit] 429 from Reddit — scheduling monitoring backoff')
         recordRateLimitHit()
     }
 }
@@ -155,13 +165,50 @@ const fetchWwwHtml_viaBackground: FetchHtml = async (url: string) => {
     return response.text()
 }
 
+// Fallback for a tab whose content script is orphaned (every extension update
+// or reinstall severs content scripts in already-open tabs — issue #14's log
+// showed "Receiving end does not exist" on each cycle): inject the fetch with
+// scripting.executeScript instead. It runs same-origin inside the tab, so it
+// keeps the challenge-free property the content-script path has. The injected
+// function must be self-contained and must never reject — a rejected promise
+// doesn't surface as an error consistently across browsers — so failures come
+// back as a tagged object.
+export const _fetchViaExecuteScript = async (tabId: number, url: string): Promise<string> => {
+    const scripting = (browser as any).scripting || (typeof chrome !== 'undefined' && (chrome as any).scripting)
+    if (!scripting) {
+        throw new Error('scripting API unavailable')
+    }
+    const results = (await scripting.executeScript({
+        target: { tabId },
+        func: async (u: string) => {
+            try {
+                const resp = await fetch(u, { credentials: 'omit', headers: { 'Accept-Language': 'en' } })
+                return { ok: resp.ok, status: resp.status, text: resp.ok ? await resp.text() : '' }
+            } catch (e) {
+                return { ok: false, status: 0, text: '', err: String(e) }
+            }
+        },
+        args: [url],
+    })) as any[]
+    const value = results && results[0] && results[0].result
+    if (!value || typeof value.text !== 'string') {
+        throw new Error('executeScript fetch returned no result')
+    }
+    if (!value.ok) {
+        // Same message shape as fetchWwwHtml_viaBackground so flagIfRateLimited
+        // still recognizes 429s arriving through this path.
+        throw new Error(`www.reddit.com request failed: ${value.status}${value.err ? ` (${value.err})` : ''}`)
+    }
+    return value.text
+}
+
 // Prefer fetching through a www.reddit.com tab's content script: a same-origin
 // fetch there is verified to never receive Reddit's JS challenge. old.reddit.com
 // and sh.reddit.com tabs cannot help — content scripts follow the page's origin
 // rules, so cross-origin reads to www.reddit.com are CORS-blocked from them.
 // Without a www tab, the background fetch works via host_permissions (bypasses
 // CORS) but may hit the challenge; parse_html/new.ts carries a best-effort solver.
-const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTab: boolean }> => {
+export const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTab: boolean }> => {
     let tabs: any[] = []
     try {
         if (typeof chrome !== 'undefined' && chrome.tabs) {
@@ -170,11 +217,13 @@ const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTab: bool
     } catch {
         /* no tabs API in this context */
     }
-    const tab = tabs.find(t => t.id != null)
+    // A discarded tab can't answer messages or run injected scripts.
+    const tab = tabs.find(t => t.id != null && !t.discarded) || tabs.find(t => t.id != null)
     if (!tab) {
         return { fetchHtml: fetchWwwHtml_viaBackground, viaTab: false }
     }
     let contentScriptAlive = true
+    let injectionUsable = true
     const fetchHtml: FetchHtml = async (url: string) => {
         if (contentScriptAlive) {
             try {
@@ -187,9 +236,28 @@ const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTab: bool
                 }
                 throw new Error(response?.error || 'content-script www fetch failed')
             } catch {
-                // The tab may predate the extension install (no content script);
-                // stop retrying it this cycle and use the background instead.
+                // The tab may predate the extension install/update (orphaned
+                // content script); stop retrying it this cycle.
                 contentScriptAlive = false
+            }
+        }
+        if (injectionUsable) {
+            try {
+                return await _fetchViaExecuteScript(tab.id, url)
+            } catch (err: any) {
+                // An HTTP failure from inside the tab is a real outcome (the
+                // background fetch would fare no better) — let callers see it.
+                if (/request failed: \d/.test(String(err?.message))) {
+                    throw err
+                }
+                // Injection itself unavailable (tab closed/navigated mid-cycle,
+                // API missing): stop trying it this cycle.
+                injectionUsable = false
+                dlog(
+                    'feed',
+                    '[reveddit] executeScript fetch unavailable, using background fetch:',
+                    String(err?.message || err),
+                )
             }
         }
         return fetchWwwHtml_viaBackground(url)
@@ -311,15 +379,68 @@ const verifyFeedPresentPosts = async (
 const ABSENT_VERDICT_CACHE_KEY = 'www_absent_item_verdicts'
 const ABSENT_VERDICT_LIVE_TTL_MS = 6 * 3600 * 1000
 const ABSENT_VERDICT_ADVERSE_TTL_MS = 2 * 3600 * 1000
+// 'unknown' is cached too, briefly: when the channel is dead (unreadable pages,
+// issue #14) an uncached unknown means the same newest-N items are re-fetched
+// every cycle forever (~29k requests/day at the 1-min interval) while items
+// past the per-cycle budget are never attempted. Pacing retries lets the budget
+// rotate through the whole absent set and stops the extension's own traffic
+// from feeding whatever flagging causes the unreadable pages. Unknowns stay out
+// of the returned verdicts — callers still treat them as unresolved.
+const ABSENT_VERDICT_UNKNOWN_TTL_MS = 30 * 60 * 1000
 const ABSENT_VERDICT_CACHE_MAX = 200
 // Bounds the burst when a user newly hides a large subreddit: at most this many
 // page fetches per cycle; the rest stay unverified (omitted) until later cycles.
 const ABSENT_VERIFY_MAX_PER_CYCLE = 20
 const ABSENT_VERIFY_DELAY_MS = 500
 
+// Gentle resume after a 429: for a while after the last recorded hit, halve the
+// verification burst and double its spacing, so the first cycle back from a
+// backoff doesn't immediately re-trip the limiter (which for a heavy commenter
+// turns into a permanent skip-verify-skip loop — issue #14's suspected shape).
+export const RECENT_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
+export const computeAbsentVerifyBudget = (
+    msSinceLastRateLimitHit: number | null,
+): { maxPerCycle: number; delayMs: number } => {
+    if (msSinceLastRateLimitHit !== null && msSinceLastRateLimitHit < RECENT_RATE_LIMIT_WINDOW_MS) {
+        return {
+            maxPerCycle: Math.max(3, Math.floor(ABSENT_VERIFY_MAX_PER_CYCLE / 2)),
+            delayMs: ABSENT_VERIFY_DELAY_MS * 2,
+        }
+    }
+    return { maxPerCycle: ABSENT_VERIFY_MAX_PER_CYCLE, delayMs: ABSENT_VERIFY_DELAY_MS }
+}
+
 interface AbsentVerdictEntry {
-    v: Exclude<PostPageStatus, 'unknown'>
+    v: PostPageStatus
     t: number // epoch ms of verification
+}
+
+// F4 (issue #14): consecutive cycles where absent-item verification fetched
+// pages but resolved nothing — every page unreadable AND the legacy tiebreak
+// silent. Without this, that state is invisible: removals in profile-hidden
+// subs simply stop being detected. Mirrors recordWwwDetectOutcome; any fresh
+// definitive verdict (from a page fetch or the tiebreak) resets the streak.
+// Cycles that fetch nothing (all verdicts cached) are neutral.
+export const ABSENT_VERIFY_UNAVAILABLE = 'absent_verify_unavailable'
+const ABSENT_VERIFY_FAILURES_KEY = 'absent_verify_consecutive_failures'
+const ABSENT_VERIFY_FAILURE_WARN_THRESHOLD = 5
+
+const recordAbsentVerifyOutcome = async (ok: boolean) => {
+    try {
+        if (ok) {
+            await browser.storage.local.remove(ABSENT_VERIFY_FAILURES_KEY)
+            return
+        }
+        const stored = (await browser.storage.local.get({ [ABSENT_VERIFY_FAILURES_KEY]: 0 })) as any
+        const failures = Number(stored[ABSENT_VERIFY_FAILURES_KEY] || 0) + 1
+        await browser.storage.local.set({ [ABSENT_VERIFY_FAILURES_KEY]: failures })
+        dlog('verify', `[reveddit] absent verification resolved nothing — consecutive cycles: ${failures}`)
+        if (failures >= ABSENT_VERIFY_FAILURE_WARN_THRESHOLD) {
+            setWarningBadge(ABSENT_VERIFY_UNAVAILABLE)
+        }
+    } catch {
+        /* ignored */
+    }
 }
 
 // Remote gate for the whole feed-absent verification path. Default: enabled
@@ -361,10 +482,20 @@ const fetchAndClassifyAbsentItem = async (
     let html = await fetchHtml(url)
     let verdict = classify(html)
     if (verdict === 'unknown') {
+        const firstPage = describePageForDiag(html)
         const solutionUrl = solveChallenge(html, url)
         if (solutionUrl) {
             html = await fetchHtml(solutionUrl)
             verdict = classify(html)
+            if (verdict === 'unknown') {
+                dlog(
+                    'verify',
+                    `[reveddit] ${id} page unreadable after challenge solve`,
+                    `${firstPage} → ${describePageForDiag(html)}`,
+                )
+            }
+        } else {
+            dlog('verify', `[reveddit] ${id} page unreadable (no solvable challenge)`, firstPage)
         }
     }
     return verdict
@@ -416,6 +547,12 @@ const legacyTiebreakAbsent = async (
                 }
             }
             const canaryRendered = canaryCommentIds.some(id => byName[id])
+            // The "healthy call, zero items" case was invisible in issue #14's
+            // log — it must be distinguishable from "tiebreak resolved things".
+            dlog(
+                'legacy',
+                `[reveddit] legacy comment tiebreak: ${Object.keys(byName).length}/${batch.length} rendered, canaryRendered=${canaryRendered}`,
+            )
             for (const id of commentIds) {
                 const item = byName[id]
                 if (item && item.author) {
@@ -429,7 +566,7 @@ const legacyTiebreakAbsent = async (
                 }
             }
         } catch (err: any) {
-            console.log('[reveddit] legacy comment tiebreak failed:', String(err?.message || err))
+            dlog('legacy', '[reveddit] legacy comment tiebreak failed:', String(err?.message || err))
         }
     }
     let postFetches = 0
@@ -445,14 +582,16 @@ const legacyTiebreakAbsent = async (
             const page = (await _legacyLookups.postByPath('/comments/' + id.substring(3) + '/')) as any
             if (page && !page.error) {
                 record(id, page.is_removed ? 'removed' : 'live')
+            } else {
+                dlog('legacy', `[reveddit] legacy post tiebreak ${id}: no page${page?.error ? ` (${page.error})` : ''}`)
             }
         } catch (err: any) {
-            console.log(`[reveddit] legacy post tiebreak failed ${id}:`, String(err?.message || err))
+            dlog('legacy', `[reveddit] legacy post tiebreak failed ${id}:`, String(err?.message || err))
         }
     }
 }
 
-const verifyFeedAbsentItems = async (
+export const verifyFeedAbsentItems = async (
     ids: string[],
     authItemsMeta: AuthItemsMeta,
     fetchHtml: FetchHtml,
@@ -469,33 +608,59 @@ const verifyFeedAbsentItems = async (
     }
     const verdicts: Record<string, PostPageStatus> = {}
     const toFetch: string[] = []
+    let recentUnknownSkipped = 0
     for (const id of ids) {
         const cached = cache[id]
-        const ttl = cached && cached.v === 'live' ? ABSENT_VERDICT_LIVE_TTL_MS : ABSENT_VERDICT_ADVERSE_TTL_MS
-        if (cached && nowMs - cached.t < ttl) {
-            verdicts[id] = cached.v
-        } else {
-            toFetch.push(id)
+        if (cached) {
+            const ttl =
+                cached.v === 'live'
+                    ? ABSENT_VERDICT_LIVE_TTL_MS
+                    : cached.v === 'removed'
+                      ? ABSENT_VERDICT_ADVERSE_TTL_MS
+                      : ABSENT_VERDICT_UNKNOWN_TTL_MS
+            if (nowMs - cached.t < ttl) {
+                if (cached.v === 'unknown') {
+                    // Recently confirmed unreadable — pace instead of retrying
+                    // every cycle. Stays out of `verdicts` (callers treat it as
+                    // unresolved, fail-open) but still reaches the legacy
+                    // tiebreak below, which may settle it definitively.
+                    recentUnknownSkipped++
+                } else {
+                    verdicts[id] = cached.v
+                }
+                continue
+            }
         }
+        toFetch.push(id)
+    }
+    const budget = computeAbsentVerifyBudget(await getMsSinceLastRateLimitHit())
+    if (toFetch.length && budget.maxPerCycle < ABSENT_VERIFY_MAX_PER_CYCLE) {
+        dlog('ratelimit', `[reveddit] absent verification budget reduced to ${budget.maxPerCycle}/cycle (recent 429)`)
     }
     let fetched = 0
+    let freshDefinitive = 0
     for (const id of toFetch) {
-        if (fetched >= ABSENT_VERIFY_MAX_PER_CYCLE) {
+        if (fetched >= budget.maxPerCycle) {
             break
         }
         if (fetched > 0) {
-            await new Promise(r => setTimeout(r, ABSENT_VERIFY_DELAY_MS))
+            await new Promise(r => setTimeout(r, budget.delayMs))
         }
         fetched++
         try {
             const verdict = await fetchAndClassifyAbsentItem(id, authItemsMeta[id] || {}, fetchHtml)
-            console.log(`[reveddit] absent item verdict ${id}: ${verdict}`)
+            dlog('verify', `[reveddit] absent item verdict ${id}: ${verdict}`)
+            cache[id] = { v: verdict, t: nowMs }
             if (verdict !== 'unknown') {
                 verdicts[id] = verdict
-                cache[id] = { v: verdict, t: nowMs }
+                freshDefinitive++
             }
         } catch (err: any) {
-            console.log(`[reveddit] absent item verification failed ${id}:`, String(err?.message || err))
+            dlog('verify', `[reveddit] absent item verification failed ${id}:`, String(err?.message || err))
+            // A 429 here must enter the shared backoff: without this, a
+            // rate-limited client burns the whole verification budget every
+            // cycle producing silent unknowns (no alert, no Paused banner).
+            flagIfRateLimited(err)
         }
     }
     let cacheMutated = fetched > 0
@@ -503,7 +668,17 @@ const verifyFeedAbsentItems = async (
         verdicts[id] = v
         cache[id] = { v, t: nowMs }
         cacheMutated = true
+        freshDefinitive++
     })
+    if (fetched > 0 || recentUnknownSkipped > 0) {
+        dlog(
+            'verify',
+            `[reveddit] absent verify: ${fetched} fetched, ${recentUnknownSkipped} paced (recent unknown), ${freshDefinitive} resolved this cycle`,
+        )
+    }
+    if (fetched > 0) {
+        await recordAbsentVerifyOutcome(freshDefinitive > 0)
+    }
     if (cacheMutated) {
         const entries = Object.entries(cache).sort((a, b) => b[1].t - a[1].t)
         cache = Object.fromEntries(entries.slice(0, ABSENT_VERDICT_CACHE_MAX))
@@ -514,6 +689,34 @@ const verifyFeedAbsentItems = async (
         }
     }
     return verdicts
+}
+
+// Consecutive-failure tracking for the logged-in detection path, mirroring
+// recordWwwDetectOutcome below: one indeterminate probe is noise, a streak
+// means the extension is blind and the user should see a badge instead of
+// silently getting zero detections. Definite outcomes (a username, or a clean
+// logged-out response) reset the streak. Only the monitoring cycle records
+// outcomes — content-script probes have different fetch conditions.
+export const LOGGED_IN_VIEW_UNAVAILABLE = 'logged_in_view_unavailable'
+const LOGIN_DETECT_FAILURES_KEY = 'login_detect_consecutive_failures'
+const LOGIN_DETECT_FAILURE_WARN_THRESHOLD = 5
+
+export const recordLoginDetectOutcome = async (indeterminate: boolean) => {
+    try {
+        if (!indeterminate) {
+            await browser.storage.local.remove(LOGIN_DETECT_FAILURES_KEY)
+            return
+        }
+        const stored = (await browser.storage.local.get({ [LOGIN_DETECT_FAILURES_KEY]: 0 })) as any
+        const failures = Number(stored[LOGIN_DETECT_FAILURES_KEY] || 0) + 1
+        await browser.storage.local.set({ [LOGIN_DETECT_FAILURES_KEY]: failures })
+        dlog('auth', `[reveddit] login detection indeterminate — consecutive failures: ${failures}`)
+        if (failures >= LOGIN_DETECT_FAILURE_WARN_THRESHOLD) {
+            setWarningBadge(LOGGED_IN_VIEW_UNAVAILABLE)
+        }
+    } catch {
+        /* ignored */
+    }
 }
 
 // Track consecutive failures of the www public-view path. One failure is noise
@@ -528,6 +731,7 @@ const recordWwwDetectOutcome = async (ok: boolean) => {
         const stored = (await browser.storage.local.get({ [WWW_DETECT_FAILURES_KEY]: 0 })) as any
         const failures = Number(stored[WWW_DETECT_FAILURES_KEY] || 0) + 1
         await browser.storage.local.set({ [WWW_DETECT_FAILURES_KEY]: failures })
+        dlog('feed', `[reveddit] www public-view lookup failed — consecutive failures: ${failures}`)
         if (failures >= WWW_DETECT_FAILURE_WARN_THRESHOLD) {
             setWarningBadge('public_view_unavailable')
         }
@@ -558,7 +762,7 @@ export const lookupItemsByID_fromPublicProfile = async (
         // removal alerts. Thrown (not returned) so the fallback chain doesn't
         // run the legacy paths, and so monitoring skips this cycle without
         // clearing the warning.
-        console.log(`[reveddit] public profile for ${username} is empty - possible shadowban`)
+        dlog('feed', `[reveddit] public profile for ${username} is empty - possible shadowban`)
         setWarningBadge(PROFILE_PUBLICLY_EMPTY)
         throw new Error(PROFILE_PUBLICLY_EMPTY)
     }
@@ -694,7 +898,8 @@ export const lookupItemsByID_fromPublicProfile = async (
     const removedCount = results.filter(
         r => r.data.author === '[deleted]' || r.data.is_robot_indexable === false,
     ).length
-    console.log(
+    dlog(
+        'feed',
         `[reveddit] www lookup ${username}: ${ids.length} requested, ${results.length} returned ` +
             `(${removedCount} removed, ${ids.length - results.length} omitted/uncovered), ` +
             `coverage t1=${profile.coverage.t1} t3=${profile.coverage.t3}, verdicts=${JSON.stringify(postVerdicts)}, ` +
@@ -1151,75 +1356,165 @@ export const getLocalOrAppAuth = () => {
         .catch(console.log)
 }
 
-export const getLoggedinUser = () => {
-    return new Promise(resolve => {
-        const isContentContext =
-            typeof chrome === 'undefined' || !chrome.tabs || typeof chrome.tabs.query !== 'function'
-        // In a content script, chrome.tabs.query is not available. Use the current page's host.
-        if (isContentContext && typeof window !== 'undefined' && window.location && window.location.hostname) {
-            const currentHost = window.location.hostname
-            const targetUrl = `https://${currentHost}/api/me.json`
-            fetch(targetUrl, { credentials: 'include', cache: 'reload' })
-                .then(handleFetchErrors)
-                .then(getRedditUsername)
-                .then(resolve)
-                .catch(() => resolve(null))
-            return
-        }
+// --- Logged-in-user detection ---
+// Tri-state so callers can tell "definitely logged out" from "couldn't
+// determine" (challenge page, 429, network failure). The old boolean-null shape
+// collapsed both into null, and monitoring silently skipped every cycle when a
+// client's /api/me.json was WAF-challenged — zero detections, no visible error.
+export interface LoginDetectResult {
+    user: string | null
+    // True when no probe produced a definite answer. Monitoring treats this as
+    // "detection channel broken" (badge after a streak, grace mode), never as
+    // "logged out".
+    indeterminate: boolean
+    reason?: string
+}
 
-        // Pick a host: prefer old.reddit.com if an old.reddit tab is open (quarantine
-        // opt-in lives there), otherwise default to www.reddit.com.
-        const pickHost = (): Promise<string> =>
-            new Promise(hostResolve => {
-                try {
-                    chrome.tabs.query({ url: ['*://old.reddit.com/*'] }, tabs => {
-                        hostResolve(tabs && tabs.length > 0 ? 'old.reddit.com' : 'www.reddit.com')
-                    })
-                } catch {
-                    hostResolve('www.reddit.com')
-                }
-            })
-
-        const fetchUser = (targetUrl: string) =>
-            fetch(targetUrl, { credentials: 'include', cache: 'reload' })
-                .then(handleFetchErrors)
-                .then(getRedditUsername)
-
-        pickHost().then(host => {
-            const targetUrl = `https://${host}/api/me.json`
-            // 1) Direct fetch. With `cookies` permission + reddit host_permissions the
-            //    browser includes the user's real session cookies even with no tab open.
-            fetchUser(targetUrl)
-                .then(resolve)
-                .catch(err => {
-                    // Log the reason: a challenge/HTML response fails json() with
-                    // a SyntaxError that is otherwise indistinguishable from
-                    // "not logged in" when debugging connect issues.
-                    console.log(`getLoggedinUser direct fetch failed (${targetUrl}):`, String(err?.message || err))
-                    // 2) Fallback: rehydrate any previously-stored cookies and retry once.
-                    rehydrateStoredRedditCookies().then(success => {
-                        if (!success) {
-                            resolve(null)
-                            return
-                        }
-                        fetchUser(targetUrl)
-                            .then(resolve)
-                            .catch(() => {
-                                console.log('Failed to authenticate with stored cookies')
-                                resolve(null)
-                            })
-                    })
-                })
+// Retry-with-solution when me.json serves the string-doubling challenge, same
+// solver as the absent-verification path. Remote-gated (MECHANISM_ME_CHALLENGE)
+// with the usual dev override (highest priority):
+//   chrome.storage.local.set({ dev_disable_me_challenge_solve: true })  // or false
+//   chrome.storage.local.remove('dev_disable_me_challenge_solve')       // defaults
+export const DEV_DISABLE_ME_CHALLENGE_KEY = 'dev_disable_me_challenge_solve'
+const isMeChallengeSolveDisabled = (): Promise<boolean> =>
+    browser.storage.local
+        .get({ [DEV_DISABLE_ME_CHALLENGE_KEY]: null })
+        .then(async (r: any) => {
+            const dev = r[DEV_DISABLE_ME_CHALLENGE_KEY]
+            const remote = await getRemoteMechanism(MECHANISM_ME_CHALLENGE)
+            return resolveMechanismDisabled(dev === null ? null : !!dev, remote, false)
         })
-    })
+        .catch(() => false)
+
+type MeProbe =
+    | { state: 'user'; user: string }
+    | { state: 'loggedOut' }
+    | { state: 'indeterminate'; reason: string; html?: string }
+
+// One fetch of an /api/me.json URL, classified. Logged-out is only concluded
+// from a clean 2xx JSON body without a username; every other shape (non-2xx,
+// HTML/challenge, network error) is indeterminate.
+const probeMeJson = async (url: string): Promise<MeProbe> => {
+    let response: Response
+    try {
+        response = await fetch(url, { credentials: 'include', cache: 'reload' })
+    } catch (err: any) {
+        return { state: 'indeterminate', reason: `network error: ${String(err?.message || err)}` }
+    }
+    if (!response.ok) {
+        return { state: 'indeterminate', reason: `status ${response.status}` }
+    }
+    let text: string
+    try {
+        text = await response.text()
+    } catch (err: any) {
+        return { state: 'indeterminate', reason: `body read failed: ${String(err?.message || err)}` }
+    }
+    try {
+        const data = JSON.parse(text)
+        const name = data?.data?.name
+        return name ? { state: 'user', user: String(name) } : { state: 'loggedOut' }
+    } catch {
+        return { state: 'indeterminate', reason: 'non-JSON response (challenge or HTML page)', html: text }
+    }
 }
 
-const getRedditUsername = (data: any) => {
-    if (!data || !data.data || !data.data.name) {
-        throw Error('reddit username is not defined')
+const probeMeJsonWithChallengeRetry = async (host: string): Promise<MeProbe> => {
+    const targetUrl = `https://${host}/api/me.json`
+    let probe = await probeMeJson(targetUrl)
+    if (probe.state === 'indeterminate' && probe.html && !(await isMeChallengeSolveDisabled())) {
+        const solutionUrl = solveChallenge(probe.html, targetUrl)
+        if (solutionUrl) {
+            dlog('auth', `[reveddit] me.json challenge detected on ${host} — retrying with solution`)
+            probe = await probeMeJson(solutionUrl)
+        }
     }
-    return data.data.name
+    if (probe.state === 'indeterminate') {
+        // Keep the historical line shape: a challenge/HTML response is otherwise
+        // indistinguishable from "not logged in" when debugging connect issues.
+        dlog('auth', `getLoggedinUser direct fetch failed (${targetUrl}): ${probe.reason}`)
+    }
+    return probe
 }
+
+export const getLoggedinUserDetailed = async (): Promise<LoginDetectResult> => {
+    const isContentContext = typeof chrome === 'undefined' || !chrome.tabs || typeof chrome.tabs.query !== 'function'
+    // In a content script, chrome.tabs.query is not available. Use the current
+    // page's host (same-origin fetch; verified to never receive the challenge).
+    if (isContentContext && typeof window !== 'undefined' && window.location && window.location.hostname) {
+        const probe = await probeMeJson(`https://${window.location.hostname}/api/me.json`)
+        if (probe.state === 'user') {
+            return { user: probe.user, indeterminate: false }
+        }
+        return {
+            user: null,
+            indeterminate: probe.state === 'indeterminate',
+            reason: probe.state === 'indeterminate' ? probe.reason : undefined,
+        }
+    }
+
+    // Pick a host: prefer old.reddit.com if an old.reddit tab is open (quarantine
+    // opt-in lives there), otherwise default to www.reddit.com. With `cookies`
+    // permission + reddit host_permissions the browser includes the user's real
+    // session cookies even with no tab open.
+    const pickHost = (): Promise<string> =>
+        new Promise(hostResolve => {
+            try {
+                chrome.tabs.query({ url: ['*://old.reddit.com/*'] }, tabs => {
+                    hostResolve(tabs && tabs.length > 0 ? 'old.reddit.com' : 'www.reddit.com')
+                })
+            } catch {
+                hostResolve('www.reddit.com')
+            }
+        })
+
+    const primaryHost = await pickHost()
+
+    let probe = await probeMeJsonWithChallengeRetry(primaryHost)
+    if (probe.state === 'user') {
+        return { user: probe.user, indeterminate: false }
+    }
+    let sawLoggedOut = probe.state === 'loggedOut'
+    let lastReason: string | undefined = probe.state === 'indeterminate' ? probe.reason : undefined
+
+    if (probe.state === 'indeterminate') {
+        // Challenge/throttle flags are often per-host — a definite answer from
+        // the other host is just as authoritative.
+        const fallbackHost = primaryHost === 'www.reddit.com' ? 'old.reddit.com' : 'www.reddit.com'
+        probe = await probeMeJsonWithChallengeRetry(fallbackHost)
+        if (probe.state === 'user') {
+            return { user: probe.user, indeterminate: false }
+        }
+        sawLoggedOut = sawLoggedOut || probe.state === 'loggedOut'
+        lastReason = probe.state === 'indeterminate' ? probe.reason : lastReason
+    }
+
+    // Last resort (pre-existing behavior): rehydrate any previously-stored
+    // cookies and retry the primary host once.
+    if (!sawLoggedOut) {
+        const rehydrated = await rehydrateStoredRedditCookies()
+        if (rehydrated) {
+            probe = await probeMeJsonWithChallengeRetry(primaryHost)
+            if (probe.state === 'user') {
+                return { user: probe.user, indeterminate: false }
+            }
+            if (probe.state === 'indeterminate') {
+                dlog('auth', 'Failed to authenticate with stored cookies')
+                lastReason = probe.reason
+            }
+            sawLoggedOut = sawLoggedOut || probe.state === 'loggedOut'
+        }
+    }
+
+    if (sawLoggedOut) {
+        return { user: null, indeterminate: false }
+    }
+    return { user: null, indeterminate: true, reason: lastReason || 'unknown' }
+}
+
+// Back-compat shape for callers that only care about the username (content
+// scripts, popup reconnect, startup): resolves the username or null, never rejects.
+export const getLoggedinUser = (): Promise<string | null> => getLoggedinUserDetailed().then(r => r.user)
 
 // Store Reddit cookies for later use when no tabs are open
 export const storeRedditCookies = () => {

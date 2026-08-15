@@ -3,6 +3,8 @@
 // shipping a new version (a store republish can take days). The feed starts
 // empty; when messages are added, the popup renders them in a banner.
 
+import { dlog } from './diaglog'
+
 export const NEWS_URL = 'https://www.reveddit.com/extension-news.json'
 export const NEWS_CACHE_KEY = 'news_cache'
 export const NEWS_READ_IDS_KEY = 'news_read_ids'
@@ -32,6 +34,10 @@ export const MECHANISM_LEGACY = 'legacyOldReddit'
 // flip to 'off' to fall back to the older feed-absence-only classification if
 // the page classifier ever misbehaves against a Reddit markup change.
 export const MECHANISM_ABSENT_VERIFICATION = 'absentPageVerification'
+// Challenge-solve retry when /api/me.json returns the string-doubling challenge
+// instead of JSON (login detection would otherwise read it as "not logged in").
+// Enabled by default; flip to 'off' if the retry ever misbehaves.
+export const MECHANISM_ME_CHALLENGE = 'meJsonChallengeSolve'
 
 export interface NewsFeed {
     messages: NewsMessage[]
@@ -118,7 +124,10 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
     }
     try {
         const res = await fetch(NEWS_URL, { credentials: 'omit', cache: 'no-cache' })
-        if (!res.ok) return
+        if (!res.ok) {
+            dlog('news', `[reveddit] news fetch failed: ${res.status}`)
+            return
+        }
         const feed = (await res.json()) as NewsFeed
         if (!feed || !Array.isArray(feed.messages)) return
         // Only recognized mechanism values survive sanitization; anything else is
@@ -152,7 +161,13 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
         }
         const newCache: NewsCache = { feed: sanitized, lastFetched: now }
         chrome.storage.local.set({ [NEWS_CACHE_KEY]: newCache })
-    } catch {
-        // Silent — network failures are expected and cached feed keeps working.
+        dlog(
+            'news',
+            `[reveddit] news fetch ok: ${sanitized.messages.length} messages, mechanisms=${JSON.stringify(mechanisms)}`,
+        )
+    } catch (err: any) {
+        // Network failures are expected and the cached feed keeps working, but
+        // record them — remote-gate staleness matters when reading a diag log.
+        dlog('news', `[reveddit] news fetch error: ${String(err?.message || err)}`)
     }
 }

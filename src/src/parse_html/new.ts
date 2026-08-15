@@ -248,6 +248,17 @@ export const solveChallenge = (html: string, originalUrl: string): string | null
     return `${originalUrl}${sep}solution=${encodeURIComponent(solution)}&js_challenge=1&token=${encodeURIComponent(tokenMatch[1])}`
 }
 
+// Compact page-shape line for the diagnostic log: enough to tell a challenge
+// page, an SSR shell, and a block page apart without recording page content.
+// (Issue #14's log had verdicts but no reason — this is the missing "why".)
+export const describePageForDiag = (html: string): string => {
+    const title = (html.match(/<title[^>]*>([^<]{0,60})/) || [])[1] || ''
+    return (
+        `bytes=${html.length} challenge=${CHALLENGE_REGEX.test(html) ? 1 : 0} ` +
+        `scaffold=${COMMENT_PAGE_VALID_REGEX.test(html) ? 1 : 0} title=${JSON.stringify(title)}`
+    )
+}
+
 const decodeCursorValue = (cursor: string): number | null => {
     try {
         const value = fullnameValue(atob(cursor))

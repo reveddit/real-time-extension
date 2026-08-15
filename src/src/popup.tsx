@@ -655,6 +655,28 @@ function Popup() {
                   Open www.reddit.com
                 </ActionBtn>
               </>
+            ) : errorStatus === 'absent_verify_unavailable' ? (
+              <>
+                <MessageBanner variant="warning">
+                  ⚠ Reddit isn&apos;t letting the extension confirm whether missing content was removed, so
+                  some removals can&apos;t be detected. Keeping a www.reddit.com tab open usually restores
+                  this. If it keeps up, copy the diagnostic log from options and report it.
+                </MessageBanner>
+                <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
+                  Open www.reddit.com
+                </ActionBtn>
+              </>
+            ) : errorStatus === 'logged_in_view_unavailable' ? (
+              <>
+                <MessageBanner variant="warning">
+                  ⚠ Reddit isn&apos;t answering the extension&apos;s login check, so monitoring may be paused.
+                  Opening a www.reddit.com tab usually restores it. If this keeps up, copy the diagnostic log
+                  from options and report it.
+                </MessageBanner>
+                <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
+                  Open www.reddit.com
+                </ActionBtn>
+              </>
             ) : (
               <>
                 <MessageBanner variant="warning">

@@ -102,6 +102,19 @@ const Note = styled.p`
   margin: ${tokens.space.sm} 0;
 `
 
+const DiagActions = styled.div`
+  display: flex;
+  gap: ${tokens.space.sm};
+  margin-top: ${tokens.space.sm};
+`
+
+// Callback-style sendMessage and lastError aren't in this chrome typings
+// surface — same cast popup.tsx uses for try-reconnect.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sendMessageAny = chrome.runtime.sendMessage as any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const runtimeAny = chrome.runtime as any
+
 function Options() {
   const [interval, setInterval_] = useState('')
   const [seenCount, setSeenCount] = useState('')
@@ -122,6 +135,9 @@ function Options() {
   const [themeMode, setThemeModeState] = useState<ThemeMode>('auto')
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
+  const [diagIncludeUser, setDiagIncludeUser] = useState(false)
+  const [diagStatus, setDiagStatus] = useState('')
+  const [diagBusy, setDiagBusy] = useState(false)
 
   useEffect(() => {
     getOptions((_users, _others, options) => {
@@ -150,7 +166,64 @@ function Options() {
     chrome.storage.local.get(['dev_simulate_endpoint_deprecation'], res => {
       setSimulateDeprecation(!!res?.dev_simulate_endpoint_deprecation)
     })
+    sendMessageAny(
+      { action: 'get-diag-status' },
+      (resp: { backoffRemainingMs?: number; lastCheck?: number; error?: string }) => {
+        if (runtimeAny.lastError || !resp || resp.error) return
+        const parts: string[] = []
+        if (resp.lastCheck) {
+          parts.push(`last check ${new Date(resp.lastCheck * 1000).toLocaleTimeString()}`)
+        }
+        if (resp.backoffRemainingMs && resp.backoffRemainingMs > 0) {
+          parts.push(`paused ~${Math.max(1, Math.ceil(resp.backoffRemainingMs / 60000))} min (Reddit rate limit)`)
+        }
+        if (parts.length) setDiagStatus(parts.join(' · '))
+      },
+    )
   }, [])
+
+  const copyDiagLog = () => {
+    setDiagBusy(true)
+    sendMessageAny(
+      { action: 'get-diag-log', includeUsername: diagIncludeUser },
+      (resp: { text?: string; error?: string }) => {
+        setDiagBusy(false)
+        if (runtimeAny.lastError || !resp || resp.error || typeof resp.text !== 'string') {
+          setDiagStatus('could not read the log — try reopening this page')
+          return
+        }
+        const text = resp.text
+        navigator.clipboard.writeText(text).then(
+          () => setDiagStatus(`copied ${text.split('\n').length} lines to the clipboard`),
+          () => setDiagStatus('copy failed — clipboard unavailable'),
+        )
+      },
+    )
+  }
+
+  const clearDiagLogClick = () => {
+    sendMessageAny({ action: 'clear-diag-log' }, () => {
+      if (runtimeAny.lastError) return
+      setDiagStatus('log cleared')
+    })
+  }
+
+  const runCheckNow = () => {
+    sendMessageAny(
+      { action: 'run-check-now' },
+      (resp: { started?: boolean; throttled?: boolean }) => {
+        if (runtimeAny.lastError || !resp) {
+          setDiagStatus('could not start a check — try reopening this page')
+          return
+        }
+        setDiagStatus(
+          resp.throttled
+            ? 'a manual check already ran in the last minute'
+            : 'check started — wait about 30 seconds, then copy the log',
+        )
+      },
+    )
+  }
 
   // Written straight to local storage (not through saveOptions) so it takes
   // effect on the next monitoring cycle without needing "save". It's a dev/test
@@ -332,6 +405,26 @@ function Options() {
             </select>
           </Field>
         </FieldStack>
+
+        <SectionHeader>Diagnostics</SectionHeader>
+        <Note>
+          If removal detection seems broken, run a check, then copy the log and include it in a GitHub
+          issue or email. The log stays on this device — nothing is sent automatically. It lists ids of
+          your recent posts and comments; your username is left out unless you include it.
+        </Note>
+        <FieldStack>
+          <Field>
+            <label>include username in copied log</label>
+            <input type="checkbox" checked={diagIncludeUser}
+              onChange={e => setDiagIncludeUser(e.target.checked)} />
+          </Field>
+        </FieldStack>
+        <DiagActions>
+          <Button onClick={runCheckNow}>check now</Button>
+          <Button onClick={copyDiagLog} disabled={diagBusy}>copy log</Button>
+          <Button onClick={clearDiagLogClick}>clear log</Button>
+        </DiagActions>
+        {diagStatus && <Note>{diagStatus}</Note>}
 
         <AdvancedLink>
           {!showAdvanced && (

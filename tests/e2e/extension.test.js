@@ -79,6 +79,14 @@ test.describe('History page', () => {
 
 test.describe('Welcome page', () => {
     test('renders welcome UI with connection check', async ({ context, extensionId }) => {
+        // The rendered state depends on the connection check: "Getting started"
+        // only appears after /api/me.json resolves with no user. Stub it so the
+        // test exercises the UI deterministically — against live Reddit this
+        // request can 403, challenge, or stall for automation traffic, which
+        // left this test red regardless of code changes.
+        await context.route('**/api/me.json*', route =>
+            route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
+        )
         const page = await context.newPage()
         await page.goto(`chrome-extension://${extensionId}/src/welcome.html`)
 

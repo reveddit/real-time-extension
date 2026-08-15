@@ -69,6 +69,16 @@ const browser = {
             },
         },
     },
+    // Tests may override these per-case (and restore after): the default is the
+    // no-tabs environment, which routes public fetches to the background path.
+    tabs: {
+        query() {
+            return Promise.resolve([])
+        },
+        sendMessage() {
+            return Promise.reject(new Error('Could not establish connection. Receiving end does not exist.'))
+        },
+    },
     runtime: {
         sendMessage() {
             return Promise.resolve()

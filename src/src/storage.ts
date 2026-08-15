@@ -613,6 +613,11 @@ export const clearPendingPostAttempt = async (postId: string) => {
 // skip cycles until the cooldown expires.
 const RATE_LIMIT_UNTIL_KEY = 'rate_limit_until'
 const RATE_LIMIT_LEVEL_KEY = 'rate_limit_level'
+// Last 429 timestamp, kept across clearRateLimitBackoff: the backoff keys reset
+// on the first success, but the verification budget stays reduced for a while
+// after (see computeAbsentVerifyBudget) so a recovered cycle doesn't burst
+// straight back into the limiter.
+const RATE_LIMIT_LAST_HIT_KEY = 'rate_limit_last_hit'
 const RATE_LIMIT_BASE_MS = 2 * 60 * 1000 // 2 minutes
 const RATE_LIMIT_MAX_MS = 30 * 60 * 1000 // 30 minutes
 
@@ -623,8 +628,15 @@ export const recordRateLimitHit = async (): Promise<number> => {
     await browser.storage.local.set({
         [RATE_LIMIT_UNTIL_KEY]: Date.now() + waitMs,
         [RATE_LIMIT_LEVEL_KEY]: level + 1,
+        [RATE_LIMIT_LAST_HIT_KEY]: Date.now(),
     })
     return waitMs
+}
+
+export const getMsSinceLastRateLimitHit = async (): Promise<number | null> => {
+    const result = await browser.storage.local.get({ [RATE_LIMIT_LAST_HIT_KEY]: 0 })
+    const last = (result[RATE_LIMIT_LAST_HIT_KEY] as number) || 0
+    return last > 0 ? Math.max(0, Date.now() - last) : null
 }
 
 export const clearRateLimitBackoff = async () => {

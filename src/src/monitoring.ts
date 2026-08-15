@@ -2,10 +2,13 @@ import {
     lookupItemsByID,
     lookupItemsByLoggedInUserWithAuth,
     getAuth,
-    getLoggedinUser,
+    getLoggedinUserDetailed,
+    recordLoginDetectOutcome,
+    LoginDetectResult,
     storeRedditCookies,
     isLegacyDisabled,
 } from './requests'
+import { dlog } from './diaglog'
 import {
     REMOVED,
     DELETED,
@@ -228,14 +231,27 @@ const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 20 * (60 * 60 * 24)
 // browsing and tripping Reddit's rate limit (429).
 const POLL_JITTER_MAX_MS = 10000
 
-export const checkForChanges = async (applyJitter = false) => {
+export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff?: boolean } = {}) => {
     // If Reddit recently rate-limited us, skip cycles until the backoff expires
     // rather than hammering and prolonging the lockout (see recordRateLimitHit).
     const backoffRemainingMs = await getRateLimitBackoffRemainingMs()
     if (backoffRemainingMs > 0) {
-        console.log(`checkForChanges: skipping, rate-limit backoff ${Math.ceil(backoffRemainingMs / 1000)}s remaining`)
-        return
+        if (!opts.bypassBackoff) {
+            dlog(
+                'ratelimit',
+                `checkForChanges: skipping, rate-limit backoff ${Math.ceil(backoffRemainingMs / 1000)}s remaining`,
+            )
+            return
+        }
+        // Manual "check now" from the options page: run anyway, but say so —
+        // a paste showing a bypassed backoff reads very differently from one
+        // showing a clean cycle.
+        dlog(
+            'ratelimit',
+            `checkForChanges: running despite rate-limit backoff (${Math.ceil(backoffRemainingMs / 1000)}s remaining, manual)`,
+        )
     }
+    dlog('cycle', `[reveddit] checkForChanges: cycle start${opts.bypassBackoff ? ' (manual)' : ''}`)
     if (applyJitter) {
         await new Promise(r => setTimeout(r, Math.floor(Math.random() * POLL_JITTER_MAX_MS)))
     }
@@ -284,27 +300,69 @@ export const checkForChanges = async (applyJitter = false) => {
                     newStorage.options.monitor_quarantined = true
                 }
                 chrome.storage.sync.set(newStorage)
+                dlog('cycle', '[reveddit] checkForChanges: cycle done')
                 return maybeFireBacklogSummary(storage)
             })
             .catch(error => {
-                console.log('Error in checkForChanges:', error)
+                dlog('cycle', 'Error in checkForChanges:', String(error?.message || error))
                 // Clear warning badge on error
                 updateBadgeUnseenCount()
             })
     })
 }
 
+// Grace mode: when login detection is indeterminate (challenge page, 429) but a
+// reddit session cookie is present and a user was previously detected, proceed
+// with the cached username — the item lookups may run through a reddit tab's
+// content script, which service-worker-only blocks don't reach.
+const getGraceUser = async (): Promise<string | null> => {
+    try {
+        const local = (await browser.storage.local.get({ last_logged_in_user: '' })) as any
+        const cached = local.last_logged_in_user
+        if (!cached) {
+            return null
+        }
+        const cookie = await browser.cookies.get({ url: 'https://www.reddit.com', name: 'reddit_session' })
+        return cookie ? String(cached) : null
+    } catch {
+        return null
+    }
+}
+
 const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, any>) => {
-    // First get the current logged-in user
-    return getLoggedinUser()
-        .then((loggedInUser: any) => {
+    // First get the current logged-in user — with failure class, so a broken
+    // detection channel isn't mistaken for "logged out" and silently skipped.
+    return getLoggedinUserDetailed()
+        .then(async (detect: LoginDetectResult) => {
+            let loggedInUser: any = detect.user
+            let usedGrace = false
+            if (!loggedInUser && detect.indeterminate) {
+                const graceUser = await getGraceUser()
+                if (graceUser) {
+                    dlog(
+                        'auth',
+                        `[reveddit] login detection indeterminate (${detect.reason}) — proceeding with cached user (grace mode)`,
+                    )
+                    loggedInUser = graceUser
+                    usedGrace = true
+                }
+            }
             if (!loggedInUser) {
-                console.log('No logged-in user found, skipping user monitoring')
+                if (detect.indeterminate) {
+                    dlog('auth', `No logged-in user found, skipping user monitoring (indeterminate: ${detect.reason})`)
+                } else {
+                    dlog('auth', 'No logged-in user found, skipping user monitoring')
+                }
+                await recordLoginDetectOutcome(detect.indeterminate)
                 return
             }
-            // Remember the last detected logged-in user for popup display without extra network calls
+            // Remember the last detected logged-in user for popup display without
+            // extra network calls. Grace mode skips the write: it only ever
+            // echoes the stored value back, and a stale echo must not refresh it.
             try {
-                chrome.storage.local.set({ last_logged_in_user: loggedInUser })
+                if (!usedGrace) {
+                    chrome.storage.local.set({ last_logged_in_user: loggedInUser })
+                }
             } catch {
                 /* ignored */
             }
@@ -341,7 +399,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     })
 
                     if (supportedTabs.length === 0) {
-                        console.log('No supported Reddit subdomains found (www.reddit.com or old.reddit.com)')
+                        dlog('cycle', 'No supported Reddit subdomains found (www.reddit.com or old.reddit.com)')
                         // Try to use stored cookies as fallback
                         resolve('use_stored_cookies')
                         return
@@ -358,9 +416,12 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                         (response: any) => {
                             if ((chrome.runtime as any).lastError) {
                                 // Receiving end does not exist, fall back gracefully and set warning badge
-                                console.log(
+                                dlog(
+                                    'cycle',
                                     'Error sending message to content script:',
-                                    (chrome.runtime as any).lastError,
+                                    String(
+                                        (chrome.runtime as any).lastError?.message || (chrome.runtime as any).lastError,
+                                    ),
                                 )
                                 setWarningBadge('needs_user')
                                 resolve('use_stored_cookies')
@@ -387,6 +448,10 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                         ).then(storedItems => {
                             if (!storedItems) {
                                 // Stored cookies also failed → keep yellow badge to indicate attention needed
+                                dlog(
+                                    'auth',
+                                    '[reveddit] stored-cookie item lookup returned nothing — needs_user badge set',
+                                )
                                 setWarningBadge('needs_user')
                                 return // handle expected errors
                             }
@@ -453,6 +518,13 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     )
                 })
                 .then(() => {
+                    // A completed pass with a directly-detected user is a
+                    // definite login-detection success; grace-mode passes stay
+                    // neutral (the channel is still broken, but working around
+                    // it shouldn't escalate toward a warning badge either).
+                    if (!usedGrace) {
+                        recordLoginDetectOutcome(false)
+                    }
                     // Clear warning badge and error state if we successfully processed items
                     chrome.storage.local.remove('error_status', () => {
                         updateBadgeUnseenCount()
@@ -460,7 +532,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                 })
         })
         .catch(error => {
-            console.log('Error in checkForChanges_loggedInUser:', error)
+            dlog('cycle', 'Error in checkForChanges_loggedInUser:', String(error?.message || error))
         })
 }
 
