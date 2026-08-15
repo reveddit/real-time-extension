@@ -235,10 +235,19 @@ export const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTa
                     return response.html
                 }
                 throw new Error(response?.error || 'content-script www fetch failed')
-            } catch {
+            } catch (err: any) {
                 // The tab may predate the extension install/update (orphaned
-                // content script); stop retrying it this cycle.
+                // content script); stop retrying it this cycle. Logged because
+                // this transition decides which fetch leg produced every page
+                // this cycle — without it, "tab open but still unknown" can't
+                // distinguish a dead tab leg from Reddit serving the tab's
+                // same-origin fetches unreadable pages (issue #14, 2nd paste).
                 contentScriptAlive = false
+                dlog(
+                    'feed',
+                    '[reveddit] content-script www fetch failed, trying next fetch mode:',
+                    String(err?.message || err),
+                )
             }
         }
         if (injectionUsable) {
@@ -903,7 +912,10 @@ export const lookupItemsByID_fromPublicProfile = async (
         `[reveddit] www lookup ${username}: ${ids.length} requested, ${results.length} returned ` +
             `(${removedCount} removed, ${ids.length - results.length} omitted/uncovered), ` +
             `coverage t1=${profile.coverage.t1} t3=${profile.coverage.t3}, verdicts=${JSON.stringify(postVerdicts)}, ` +
-            `absentVerdicts=${JSON.stringify(absentVerdicts)}`,
+            // via=tab means a www tab existed at cycle start, not that it served
+            // every fetch — the "fetch failed, trying next fetch mode" lines
+            // record any mid-cycle handoff.
+            `absentVerdicts=${JSON.stringify(absentVerdicts)}, via=${viaTab ? 'tab' : 'background'}`,
     )
     return results
 }
