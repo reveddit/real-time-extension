@@ -7,8 +7,8 @@ const __dirname = path.dirname(__filename);
 
 const scripts = [
     'publish-chrome.js',
-    'publish-firefox.js',
-    'publish-edge.js'
+    'publish-edge.js',
+    'publish-firefox.js'
 ];
 
 let currentProcess = null;
