@@ -9,7 +9,9 @@ import {
     buildPostPageUrl,
     classifyPostPage,
     buildCommentPageUrl,
+    buildCommentPartialUrl,
     classifyCommentPage,
+    describePageForDiag,
     fullnameValue,
 } from '../../src/src/parse_html/new'
 
@@ -352,5 +354,40 @@ describe('getPublicProfileItems', () => {
         expect(result.valid).toBe(true)
         expect(result.items.has(post)).toBe(true)
         expect(result.items.get(post).author).toBe('user1')
+    })
+})
+
+describe('buildCommentPartialUrl', () => {
+    it('builds the svc partial URL from a standard comment permalink', () => {
+        const url = buildCommentPartialUrl(
+            '/r/CantSayAnything/comments/1u1u4am/write_any_comment_here_20260610/p36brqf/',
+            't1_p36brqf',
+        )
+        expect(url).toBe(
+            'https://www.reddit.com/svc/shreddit/comments/r/CantSayAnything/1u1u4am/p36brqf?render-mode=partial',
+        )
+    })
+
+    it('returns null for permalinks that do not carry a subreddit thread path', () => {
+        expect(buildCommentPartialUrl('/user/someone/comments/abc/title/', 't1_x')).toBe(null)
+        expect(buildCommentPartialUrl('', 't1_x')).toBe(null)
+    })
+})
+
+describe('describePageForDiag wall tags', () => {
+    it('names the captcha interstitial', () => {
+        const d = describePageForDiag('<html><title>Reddit - Prove your humanity</title></html>')
+        expect(d).toContain('wall=captcha')
+    })
+
+    it('names the front page served in place of a permalink', () => {
+        const d = describePageForDiag('<html><title>Reddit - The heart of the internet</title></html>')
+        expect(d).toContain('wall=frontpage')
+    })
+
+    it('adds no wall tag to ordinary pages', () => {
+        const d = describePageForDiag('<html><title>Some thread title</title><shreddit-post></shreddit-post></html>')
+        expect(d).not.toContain('wall=')
+        expect(d).toContain('scaffold=1')
     })
 })

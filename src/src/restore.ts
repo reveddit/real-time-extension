@@ -1,5 +1,6 @@
 import { isRemovedComment, isRemovedPost, isComment } from './common'
-import { throwIfLegacyDisabled } from './requests'
+import { throwIfLegacyDisabled, RECENT_RATE_LIMIT_WINDOW_MS } from './requests'
+import { recordRateLimitHit, getMsSinceLastRateLimitHit, getRateLimitBackoffRemainingMs } from './storage'
 import browser from 'webextension-polyfill'
 
 // --- Interfaces ---
@@ -472,6 +473,45 @@ async function isRateLimited(): Promise<boolean> {
     })
 }
 
+// Monitoring and scans spend one shared client budget on Reddit's side, and
+// removal monitoring is the extension's core job — so scans defer to it.
+// While monitoring's rate-limit backoff is active, scans decline to run (the
+// popup badge is already explaining the pause), and for a while after the
+// last recorded 429 they run at half speed, mirroring monitoring's own
+// gentle resume (computeAbsentVerifyBudget).
+export async function monitoringBackoffGate(onProgress: ProgressCallback): Promise<boolean> {
+    let backoffMs = 0
+    try {
+        backoffMs = await getRateLimitBackoffRemainingMs()
+    } catch {
+        /* storage unavailable — don't block the scan */
+    }
+    if (backoffMs > 0) {
+        onProgress({
+            current: 0,
+            total: 0,
+            currentAuthor: '',
+            status: 'rate_limited',
+            message:
+                'Reddit is rate limiting this browser. Removal monitoring is paused too. Try again in a few minutes.',
+        })
+        return false
+    }
+    return true
+}
+
+export async function scanDelayMs(): Promise<number> {
+    try {
+        const ms = await getMsSinceLastRateLimitHit()
+        if (ms !== null && ms < RECENT_RATE_LIMIT_WINDOW_MS) {
+            return RESTORE_DELAY_MS * 2
+        }
+    } catch {
+        /* fall through to the default */
+    }
+    return RESTORE_DELAY_MS
+}
+
 async function setRateLimitCooldown(durationMs: number = 60000) {
     try {
         chrome.storage.local.set({ [RATE_LIMIT_KEY]: Date.now() + durationMs })
@@ -511,6 +551,9 @@ export async function restoreComment(
             status: 'rate_limited',
             message: 'Rate limited by Reddit. Try again in a minute.',
         })
+        return { found: false }
+    }
+    if (!(await monitoringBackoffGate(onProgress))) {
         return { found: false }
     }
 
@@ -582,7 +625,7 @@ export async function restoreComment(
     }
 
     const { sort, t } = getUserPageSort(target.created_utc)
-    const limiter = new RateLimiter(RESTORE_DELAY_MS)
+    const limiter = new RateLimiter(await scanDelayMs())
     // Cap NEW network lookups per click; cached authors are checked for free.
     let newFetches = 0
     let unsearched = 0
@@ -685,6 +728,13 @@ export async function restoreComment(
                 return { found: false }
             }
             if (err.message?.includes('429') || err.message?.includes('403')) {
+                if (err.message?.includes('429')) {
+                    // Shared client-level signal: monitoring halves its
+                    // verification budget for an hour and backs off, and the
+                    // popup badge tells the user why. Not for 403 — that shape
+                    // includes throwIfLegacyDisabled's synthetic error.
+                    recordRateLimitHit()
+                }
                 await setRateLimitCooldown()
                 onProgress({
                     current: i + 1,
@@ -757,6 +807,9 @@ export async function scanUserProfile(
     onProgress: ProgressCallback,
     options?: ProfileScanOptions,
 ): Promise<ScanResult[]> {
+    if (!(await monitoringBackoffGate(onProgress))) {
+        return []
+    }
     onProgress({
         current: 0,
         total: 0,
@@ -1007,6 +1060,9 @@ export async function scanThreadForRemovedComments(
     onProgress: ProgressCallback,
     onComment?: RecoveredCommentCallback,
 ): Promise<RecoveredComment[]> {
+    if (!(await monitoringBackoffGate(onProgress))) {
+        return []
+    }
     let candidateAuthors: string[]
     let visibleRealIds: Set<string>
     let tombstoneIds: Set<string>
@@ -1071,7 +1127,7 @@ export async function scanThreadForRemovedComments(
     }
 
     const { sort, t } = getUserPageSort(postCreatedUtc || Math.floor(Date.now() / 1000))
-    const limiter = new RateLimiter(RESTORE_DELAY_MS)
+    const limiter = new RateLimiter(await scanDelayMs())
     const recovered: RecoveredComment[] = []
     const recoveredIds = new Set<string>()
     let searched = 0
@@ -1117,6 +1173,10 @@ export async function scanThreadForRemovedComments(
         } catch (err: any) {
             if (err.message === 'Cancelled') break
             if (err.message?.includes('429') || err.message?.includes('403')) {
+                if (err.message?.includes('429')) {
+                    // Shared signal — see the twin catch in restoreComment.
+                    recordRateLimitHit()
+                }
                 await setRateLimitCooldown()
                 break
             }

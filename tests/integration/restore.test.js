@@ -1,11 +1,14 @@
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { __resetStorage } from '../mocks/webextension-polyfill.js'
 import {
     getCandidateAuthors,
     extractCommentTree_fromJSON,
     commentFullnameFromPermalink,
     RateLimiter,
+    monitoringBackoffGate,
+    scanDelayMs,
 } from '../../src/src/restore.ts'
 
 // Helper to build a CommentTreeNode
@@ -301,5 +304,32 @@ describe('RateLimiter', () => {
         await expect(
             limiter.schedule(() => Promise.reject(new Error('test error')))
         ).rejects.toThrow('test error')
+    })
+})
+
+describe('scans defer to monitoring rate-limit state', () => {
+    it('monitoringBackoffGate declines the scan while monitoring backoff is active', async () => {
+        __resetStorage({}, { rate_limit_until: Date.now() + 120000 })
+        const onProgress = vi.fn()
+        expect(await monitoringBackoffGate(onProgress)).toBe(false)
+        const p = onProgress.mock.calls[0][0]
+        expect(p.status).toBe('rate_limited')
+        expect(p.message).toContain('monitoring is paused too')
+    })
+
+    it('monitoringBackoffGate lets scans run when no backoff is active', async () => {
+        __resetStorage({}, {})
+        const onProgress = vi.fn()
+        expect(await monitoringBackoffGate(onProgress)).toBe(true)
+        expect(onProgress).not.toHaveBeenCalled()
+    })
+
+    it('scanDelayMs halves scan speed within the recent-429 window and not after', async () => {
+        __resetStorage({}, { rate_limit_last_hit: Date.now() - 1000 })
+        expect(await scanDelayMs()).toBe(3000)
+        __resetStorage({}, { rate_limit_last_hit: Date.now() - 61 * 60 * 1000 })
+        expect(await scanDelayMs()).toBe(1500)
+        __resetStorage({}, {})
+        expect(await scanDelayMs()).toBe(1500)
     })
 })

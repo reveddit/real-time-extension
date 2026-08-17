@@ -65,7 +65,8 @@ describe('verifyFeedAbsentItems unknown caching', () => {
         const fetchHtml = vi.fn(async () => SHELL_HTML)
         const first = await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)
         expect(first).toEqual({})
-        expect(fetchHtml).toHaveBeenCalledTimes(1)
+        // svc partial + full page, both unreadable
+        expect(fetchHtml).toHaveBeenCalledTimes(2)
         expect(__getLocalStorage()[CACHE_KEY].t1_a.v).toBe('unknown')
 
         const fetchHtml2 = vi.fn(async () => SHELL_HTML)
@@ -78,7 +79,7 @@ describe('verifyFeedAbsentItems unknown caching', () => {
         __getLocalStorage()[CACHE_KEY] = { t1_a: { v: 'unknown', t: Date.now() - 31 * 60 * 1000 } }
         const fetchHtml = vi.fn(async () => SHELL_HTML)
         await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)
-        expect(fetchHtml).toHaveBeenCalledTimes(1)
+        expect(fetchHtml).toHaveBeenCalledTimes(2)
     })
 
     it('still returns cached definitive verdicts without fetching', async () => {
@@ -113,6 +114,8 @@ describe('unreadable-page diagnostics', () => {
         expect(String(call[1])).toContain('challenge=0')
         expect(String(call[1])).toContain('scaffold=0')
         expect(String(call[1])).toContain('Reddit')
+        // The svc partial attempt gets its own fingerprint line too
+        expect(spy.mock.calls.some(c => String(c[0]).includes('svc partial unreadable'))).toBe(true)
     })
 
     it('logs the legacy tiebreak result including the silent-empty case', async () => {
@@ -133,6 +136,38 @@ describe('unreadable-page diagnostics', () => {
         expect(String(line[0])).toContain('1 fetched')
         expect(String(line[0])).toContain('1 paced')
         expect(String(line[0])).toContain('0 resolved')
+    })
+})
+
+describe('svc partial-first verification', () => {
+    it('resolves via the svc partial without fetching the full page', async () => {
+        const fetchHtml = vi.fn(async url => {
+            if (url.includes('/svc/shreddit/comments/')) return livePage('t1_a')
+            throw new Error(`unexpected full-page fetch: ${url}`)
+        })
+        const verdicts = await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)
+        expect(verdicts).toEqual({ t1_a: 'live' })
+        expect(fetchHtml).toHaveBeenCalledTimes(1)
+        expect(fetchHtml.mock.calls[0][0]).toContain('/svc/shreddit/comments/r/sub/abc/a?render-mode=partial')
+    })
+
+    it('falls back to the full page when the partial is unreadable', async () => {
+        const fetchHtml = vi.fn(async url => (url.includes('/svc/') ? SHELL_HTML : livePage('t1_a')))
+        const verdicts = await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)
+        expect(verdicts).toEqual({ t1_a: 'live' })
+        expect(fetchHtml).toHaveBeenCalledTimes(2)
+        expect(fetchHtml.mock.calls[0][0]).toContain('/svc/')
+        expect(fetchHtml.mock.calls[1][0]).not.toContain('/svc/')
+    })
+
+    it('a 429 on the partial flags the shared rate limit even when the page fallback succeeds', async () => {
+        const fetchHtml = vi.fn(async url => {
+            if (url.includes('/svc/')) throw new Error('www.reddit.com request failed: 429')
+            return livePage('t1_a')
+        })
+        const verdicts = await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)
+        expect(verdicts).toEqual({ t1_a: 'live' })
+        expect(__getLocalStorage().rate_limit_until).toBeGreaterThan(Date.now())
     })
 })
 

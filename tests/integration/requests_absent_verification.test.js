@@ -112,7 +112,10 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         const ids = [HIDDEN, GONE]
         const authItemsMeta = Object.fromEntries(ids.map(id => [id, meta(id)]))
         await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
-        const pageFetches = () => calls.filter(u => u.includes('/r/hiddensub/') || u.includes('/r/somesub/')).length
+        // Full-page fetches only: the svc partial (also /r/<sub>-shaped) is
+        // attempted first per item and is covered by the same verdict cache.
+        const pageFetches = () =>
+            calls.filter(u => !u.includes('/svc/') && (u.includes('/r/hiddensub/') || u.includes('/r/somesub/'))).length
         expect(pageFetches()).toBe(2)
         expect(__getLocalStorage().www_absent_item_verdicts[HIDDEN].v).toBe('live')
         expect(__getLocalStorage().www_absent_item_verdicts[GONE].v).toBe('removed')

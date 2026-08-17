@@ -231,7 +231,22 @@ const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 20 * (60 * 60 * 24)
 // browsing and tripping Reddit's rate limit (429).
 const POLL_JITTER_MAX_MS = 10000
 
+// A manual "check now" (or a slow cycle meeting the next alarm) can otherwise
+// start while the previous cycle is still mid-flight — issue #14's 5.15 log
+// showed two interleaved cycles doubling the instantaneous request rate right
+// before Reddit's first observed 429s. The window bounds staleness: a cycle
+// that dies without reaching its done/catch marker (worker killed mid-cycle)
+// must not wedge monitoring until the next worker restart.
+let cycleStartedAtMs = 0
+let cycleEndedAtMs = 0
+const CYCLE_OVERLAP_WINDOW_MS = 3 * 60 * 1000
+
 export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff?: boolean } = {}) => {
+    const nowMs = Date.now()
+    if (cycleStartedAtMs > cycleEndedAtMs && nowMs - cycleStartedAtMs < CYCLE_OVERLAP_WINDOW_MS) {
+        dlog('cycle', '[reveddit] checkForChanges: previous cycle still running — skipping this trigger')
+        return
+    }
     // If Reddit recently rate-limited us, skip cycles until the backoff expires
     // rather than hammering and prolonging the lockout (see recordRateLimitHit).
     const backoffRemainingMs = await getRateLimitBackoffRemainingMs()
@@ -251,6 +266,7 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
             `checkForChanges: running despite rate-limit backoff (${Math.ceil(backoffRemainingMs / 1000)}s remaining, manual)`,
         )
     }
+    cycleStartedAtMs = Date.now()
     dlog('cycle', `[reveddit] checkForChanges: cycle start${opts.bypassBackoff ? ' (manual)' : ''}`)
     if (applyJitter) {
         await new Promise(r => setTimeout(r, Math.floor(Math.random() * POLL_JITTER_MAX_MS)))
@@ -300,10 +316,12 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
                     newStorage.options.monitor_quarantined = true
                 }
                 chrome.storage.sync.set(newStorage)
+                cycleEndedAtMs = Date.now()
                 dlog('cycle', '[reveddit] checkForChanges: cycle done')
                 return maybeFireBacklogSummary(storage)
             })
             .catch(error => {
+                cycleEndedAtMs = Date.now()
                 dlog('cycle', 'Error in checkForChanges:', String(error?.message || error))
                 // Clear warning badge on error
                 updateBadgeUnseenCount()

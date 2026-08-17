@@ -200,6 +200,23 @@ export type CommentPageStatus = 'live' | 'removed' | 'unknown'
 export const buildCommentPageUrl = (commentId: string, linkId: string): string =>
     `${newReddit}/comments/${linkId.replace(/^t3_/, '')}/comment/${commentId.replace(/^t1_/, '')}/`
 
+// The /svc partial is the XHR route the site itself lazy-loads comment trees
+// with. Verified live 2026-08-17 (logged-out, clean client: 200, no redirect,
+// no challenge): a live comment renders <shreddit-comment thingId= author=>,
+// a removed one returns the tree scaffold without the comment element — the
+// exact signals classifyCommentPage already reads on full pages. Because the
+// route is XHR-native (Sec-Fetch-Dest: empty is normal there, and walling it
+// would break Reddit's own logged-in clients), it may stay readable for
+// clients whose full permalink pages are walled (issue #14: front page or
+// captcha served instead). Needs the subreddit, so it requires a permalink.
+export const buildCommentPartialUrl = (permalink: string, commentId: string): string | null => {
+    const m = permalink.match(/^\/r\/([^/]+)\/comments\/([^/]+)\//)
+    if (!m) {
+        return null
+    }
+    return `${newReddit}/svc/shreddit/comments/r/${m[1]}/${m[2]}/${commentId.replace(/^t1_/, '')}?render-mode=partial`
+}
+
 // (?![\w-]) so this can't match <shreddit-comment-tree ...>, which carries the
 // focal comment's thingId even when that comment is removed (verified live).
 const COMMENT_TAG_REGEX = /<shreddit-comment(?![\w-])([^>]*)>/g
@@ -253,9 +270,19 @@ export const solveChallenge = (html: string, originalUrl: string): string | null
 // (Issue #14's log had verdicts but no reason — this is the missing "why".)
 export const describePageForDiag = (html: string): string => {
     const title = (html.match(/<title[^>]*>([^<]{0,60})/) || [])[1] || ''
+    // Wall shapes observed in issue #14's 2026-08-17 log: the front page
+    // served in place of a permalink (even after an accepted challenge solve),
+    // and the captcha interstitial. Naming them beats byte-size archaeology.
+    // (challenge= is a plain substring test: full pages embed "js_challenge"
+    // incidentally, so only the solver's puzzle regexes prove a real one.)
+    const wall = /Prove your humanity/i.test(title)
+        ? ' wall=captcha'
+        : title === 'Reddit - The heart of the internet'
+          ? ' wall=frontpage'
+          : ''
     return (
         `bytes=${html.length} challenge=${CHALLENGE_REGEX.test(html) ? 1 : 0} ` +
-        `scaffold=${COMMENT_PAGE_VALID_REGEX.test(html) ? 1 : 0} title=${JSON.stringify(title)}`
+        `scaffold=${COMMENT_PAGE_VALID_REGEX.test(html) ? 1 : 0} title=${JSON.stringify(title)}${wall}`
     )
 }
 

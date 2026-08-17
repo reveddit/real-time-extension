@@ -17,6 +17,7 @@ import {
     classifyPostPage,
     PostPageStatus,
     buildCommentPageUrl,
+    buildCommentPartialUrl,
     classifyCommentPage,
     solveChallenge,
     describePageForDiag,
@@ -488,6 +489,37 @@ const fetchAndClassifyAbsentItem = async (
     }
     const classify = (html: string): PostPageStatus =>
         id.startsWith('t3_') ? classifyPostPage(html).status : classifyCommentPage(html, id)
+    // Comments: try the site's own /svc comment-tree partial first — same
+    // classifier signals, a fraction of the page weight, and the route most
+    // likely to stay readable for clients whose full permalink pages are
+    // walled (see buildCommentPartialUrl). Unreadable or failed → fall through
+    // to the full page exactly as before.
+    if (!id.startsWith('t3_') && meta.permalink) {
+        const partialUrl = buildCommentPartialUrl(meta.permalink, id)
+        if (partialUrl) {
+            try {
+                const partial = await fetchHtml(partialUrl)
+                const verdict = classifyCommentPage(partial, id)
+                if (verdict !== 'unknown') {
+                    return verdict
+                }
+                dlog(
+                    'verify',
+                    `[reveddit] ${id} svc partial unreadable, trying full page`,
+                    describePageForDiag(partial),
+                )
+            } catch (err: any) {
+                // A 429 on the partial is a real client-level signal even if
+                // the full-page fallback below happens to be served.
+                flagIfRateLimited(err)
+                dlog(
+                    'verify',
+                    `[reveddit] ${id} svc partial fetch failed, trying full page:`,
+                    String(err?.message || err),
+                )
+            }
+        }
+    }
     let html = await fetchHtml(url)
     let verdict = classify(html)
     if (verdict === 'unknown') {
