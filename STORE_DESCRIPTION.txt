@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/08/18 - 0.0.5.18
+- fix duplicate backlog notification: the 12-hour follow-up re-announced the same older removed/locked items covered right after install; it now reports only items found since then, and backlog entries in the notification log include item IDs
+
 2026/08/17 - 0.0.5.17
 - check comment removals through reddit's own comment-loading route, which can stay readable when reddit walls off regular page checks; pause scans while reddit is rate limiting so monitoring recovers first; skip overlapping checks; name the exact block page in the diagnostic log
 

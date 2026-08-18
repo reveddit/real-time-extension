@@ -1124,7 +1124,7 @@ function markChanges(
     } as MarkChangesResult
 }
 
-export const countUnseenBacklogItems = (storage: Record<string, any>): number => {
+export const getUnseenBacklogItemIds = (storage: Record<string, any>): string[] => {
     const now = Math.floor(Date.now() / 1000)
     const options = storage.options || {}
     const trackRemoval = (options.removal_status || {}).track !== false
@@ -1135,7 +1135,7 @@ export const countUnseenBacklogItems = (storage: Record<string, any>): number =>
         { thing: 'other', isUser: false },
     ]
 
-    let count = 0
+    const ids: string[] = []
     for (const { thing, isUser } of things) {
         const keys = getObjectNamesForThing(thing, isUser)
         const typesToCount: string[] = []
@@ -1147,25 +1147,32 @@ export const countUnseenBacklogItems = (storage: Record<string, any>): number =>
             for (const id of Object.keys(obj)) {
                 const item = obj[id]
                 if (item && item.u === true && item.c && now - item.c > BACKLOG_AGE_THRESHOLD_SECONDS) {
-                    count++
+                    ids.push(id)
                 }
             }
         }
     }
-    return count
+    return ids
 }
 
-const maybeFireBacklogSummary = async (storage: Record<string, any>): Promise<void> => {
+// Old (backlog) content notifies in two phases: one notification as soon as the
+// first backlog items are found after install, then a single follow-up summary
+// after BACKLOG_SUMMARY_DELAY_MS covering only items gathered since that first
+// notification. The ids announced in phase 1 are snapshotted because "unseen"
+// (item.u) tracks whether the user has reviewed an item, not whether it was
+// already announced — without the snapshot, an unreviewed backlog would be
+// re-announced identically by the summary.
+export const maybeFireBacklogSummary = async (storage: Record<string, any>): Promise<void> => {
     const state = await getBacklogSummaryState()
     if (state.summarySent) return
     if (state.installedAt == null) return
 
-    const count = countUnseenBacklogItems(storage)
+    const unseenBacklogIds = getUnseenBacklogItemIds(storage)
 
     if (!state.initialBacklogNotified) {
-        if (count === 0) return
-        await markBacklogInitialNotified()
-        const msg = `${count} older removed/locked posts or comments found in your history. Click to review.`
+        if (unseenBacklogIds.length === 0) return
+        await markBacklogInitialNotified(unseenBacklogIds)
+        const msg = `${unseenBacklogIds.length} older removed/locked posts or comments found in your history. Click to review.`
         createNotification({
             notificationId: 'backlog_summary',
             title: 'reveddit real-time',
@@ -1176,6 +1183,7 @@ const maybeFireBacklogSummary = async (storage: Record<string, any>): Promise<vo
             id: 'backlog_summary',
             title: 'reveddit real-time',
             message: msg,
+            itemIds: unseenBacklogIds,
             source: 'backlog_summary',
         }).catch(() => {})
         return
@@ -1184,9 +1192,11 @@ const maybeFireBacklogSummary = async (storage: Record<string, any>): Promise<vo
     if (Date.now() - state.installedAt < BACKLOG_SUMMARY_DELAY_MS) return
 
     await markBacklogSummarySent()
-    if (count === 0) return
+    const alreadyNotified = new Set(state.initialNotifiedIds)
+    const newIds = unseenBacklogIds.filter(id => !alreadyNotified.has(id))
+    if (newIds.length === 0) return
 
-    const msg = `${count} older removed/locked posts or comments found in your history. Click to review.`
+    const msg = `${newIds.length} more older removed/locked posts or comments found in your history. Click to review.`
     createNotification({
         notificationId: 'backlog_summary',
         title: 'reveddit real-time',
@@ -1197,6 +1207,7 @@ const maybeFireBacklogSummary = async (storage: Record<string, any>): Promise<vo
         id: 'backlog_summary',
         title: 'reveddit real-time',
         message: msg,
+        itemIds: newIds,
         source: 'backlog_summary',
     }).catch(() => {})
 }

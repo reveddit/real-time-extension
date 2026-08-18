@@ -166,7 +166,12 @@ export const appendNotificationLog = (entry: NotificationLogEntry): Promise<void
 const BACKLOG_SUMMARY_KEY = 'backlog_summary'
 export const BACKLOG_SUMMARY_DELAY_MS = 12 * 60 * 60 * 1000
 
-type BacklogSummaryState = { installedAt: number | null; initialBacklogNotified: boolean; summarySent: boolean }
+type BacklogSummaryState = {
+    installedAt: number | null
+    initialBacklogNotified: boolean
+    initialNotifiedIds: string[]
+    summarySent: boolean
+}
 
 export const getBacklogSummaryState = (): Promise<BacklogSummaryState> => {
     return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
@@ -174,6 +179,7 @@ export const getBacklogSummaryState = (): Promise<BacklogSummaryState> => {
         return {
             installedAt: state.installedAt ?? null,
             initialBacklogNotified: !!state.initialBacklogNotified,
+            initialNotifiedIds: Array.isArray(state.initialNotifiedIds) ? state.initialNotifiedIds : [],
             summarySent: !!state.summarySent,
         }
     })
@@ -187,10 +193,11 @@ export const setBacklogSummaryInstalledAt = (ts: number): Promise<void> => {
     })
 }
 
-export const markBacklogInitialNotified = (): Promise<void> => {
+export const markBacklogInitialNotified = (notifiedIds: string[]): Promise<void> => {
     return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
         const state = r[BACKLOG_SUMMARY_KEY] || {}
         state.initialBacklogNotified = true
+        state.initialNotifiedIds = notifiedIds
         return browser.storage.local.set({ [BACKLOG_SUMMARY_KEY]: state }) as unknown as void
     })
 }
