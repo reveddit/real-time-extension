@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { css } from '@emotion/react'
-import { goToOptions, getFullIDsFromURL, createNotification } from './common'
+import { goToOptions, getFullIDsFromURL, createNotification, getTestNotificationMessage } from './common'
 import { AppGlobal, setThemeMode, THEME_STORAGE_KEY } from './ui/global'
 import { ActionBtn, MessageBanner, MiniSpinner, Card } from './ui/components'
 import { tokens } from './ui/tokens'
@@ -541,7 +541,7 @@ function Popup() {
     createNotification({
       notificationId: 'test',
       title: 'Reveddit test notification',
-      message: 'If you see this, notifications are working.'
+      message: getTestNotificationMessage((syncStorage || {}).options || {})
     })
   }
 

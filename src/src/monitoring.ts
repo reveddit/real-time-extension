@@ -36,6 +36,7 @@ import {
     markBacklogInitialNotified,
     markBacklogSummarySent,
     BACKLOG_SUMMARY_DELAY_MS,
+    getNotifyFlags,
 } from './storage'
 import {
     createNotification,
@@ -1132,24 +1133,11 @@ function markChanges(
     } as MarkChangesResult
 }
 
-// A change type is eligible for backlog notifications only when it is both
-// tracked and notify-enabled. Track alone still records changes for the badge
-// and history — notify is what permits a system notification (issue: backlog
-// notices used to ignore the notify settings).
-const getBacklogNotifyFlags = (options: Record<string, any>): { removal: boolean; lock: boolean } => {
-    const removal = (options || {}).removal_status || {}
-    const lock = (options || {}).lock_status || {}
-    return {
-        removal: removal.track !== false && removal.notify !== false,
-        lock: lock.track !== false && lock.notify !== false,
-    }
-}
-
 // Ids that the backlog notifications may announce — a type counts only when
-// its notify setting (and track) is on; see getBacklogNotifyFlags.
+// its notify setting (and track) is on; see getNotifyFlags in storage.
 export const getUnseenBacklogItemIds = (storage: Record<string, any>): string[] => {
     const now = Math.floor(Date.now() / 1000)
-    const { removal: notifyRemoval, lock: notifyLock } = getBacklogNotifyFlags(storage.options || {})
+    const { removal: notifyRemoval, lock: notifyLock } = getNotifyFlags(storage.options || {})
 
     const things: { thing: string; isUser: boolean }[] = [
         ...Object.keys(storage.user_subscriptions || {}).map(u => ({ thing: u, isUser: true })),
@@ -1188,7 +1176,7 @@ export const maybeFireBacklogSummary = async (storage: Record<string, any>): Pro
     if (state.summarySent) return
     if (state.installedAt == null) return
 
-    const notifyFlags = getBacklogNotifyFlags(storage.options || {})
+    const notifyFlags = getNotifyFlags(storage.options || {})
     // Notifications are off for every type: return before consuming either
     // one-shot phase marker, so a user who re-enables notifications later
     // still gets the backlog notice.

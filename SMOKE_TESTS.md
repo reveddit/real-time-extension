@@ -30,6 +30,7 @@ Testing subreddit: **r/CantSayAnything** (auto-removes all posts/comments).
 - [ ] "options" link opens options page
 - [ ] "clear notifications" link works
 - [ ] Badge count shows correctly (or is empty when no unseen changes)
+- [ ] "send a test notification" shows a notification; with a notify setting off, its message names the disabled type(s)
 
 ---
 

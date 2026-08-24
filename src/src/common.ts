@@ -1,4 +1,13 @@
-import { REMOVED, DELETED, APPROVED, LOCKED, UNLOCKED, EDITED, getSubscribedUsers_withUnseenIDs } from './storage'
+import {
+    REMOVED,
+    DELETED,
+    APPROVED,
+    LOCKED,
+    UNLOCKED,
+    EDITED,
+    getSubscribedUsers_withUnseenIDs,
+    getNotifyFlags,
+} from './storage'
 
 export interface RedditItem {
     name: string
@@ -451,6 +460,20 @@ export const getPrettyTimeLength = (seconds: number): string | undefined => {
 export const getPrettyDate = (createdUTC: number): string => {
     const seconds = Math.floor(new Date().getTime() / 1000) - createdUTC
     return getPrettyTimeLength(seconds) + ' ago'
+}
+
+// Message for the popup's "send a test notification" link: confirms the
+// system-level pipeline works, and flags any notification types turned off in
+// options so a quiet extension isn't mistaken for a broken one.
+export const getTestNotificationMessage = (options: Record<string, any>): string => {
+    const flags = getNotifyFlags(options)
+    const base = 'If you see this, notifications are working.'
+    if (!flags.removal && !flags.lock) {
+        return 'If you see this, notifications are working, but notifications for removed and locked content are turned off in options.'
+    }
+    if (!flags.removal) return base + ' Note: notifications for removed content are turned off in options.'
+    if (!flags.lock) return base + ' Note: notifications for locked content are turned off in options.'
+    return base
 }
 
 export const createNotification = ({

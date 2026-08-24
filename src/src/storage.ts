@@ -481,6 +481,19 @@ export const getAllChanges = (callback: (changesByUser: Record<string, any[]>) =
     })
 }
 
+// Per-type notification eligibility: a change type can produce system
+// notifications only when it is both tracked and notify-enabled. Track alone
+// still records changes for the badge and history. Missing settings default
+// to enabled, matching the stored defaults.
+export const getNotifyFlags = (options: Record<string, any>): { removal: boolean; lock: boolean } => {
+    const removal = (options || {}).removal_status || {}
+    const lock = (options || {}).lock_status || {}
+    return {
+        removal: removal.track !== false && removal.notify !== false,
+        lock: lock.track !== false && lock.notify !== false,
+    }
+}
+
 export const getOptions = (callback: (users: string[], others: string[], options: Record<string, any>) => any) => {
     return browser.storage.sync
         .get(['user_subscriptions', 'other_subscriptions', 'options'])

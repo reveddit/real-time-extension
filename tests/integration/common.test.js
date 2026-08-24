@@ -19,6 +19,7 @@ import {
     ItemForStorage,
     ChangeForStorage,
     LocalStorageItem,
+    getTestNotificationMessage,
 } from '../../src/src/common.ts'
 
 describe('getFullIDsFromPath', () => {
@@ -274,5 +275,48 @@ describe('LocalStorageItem', () => {
         expect(item.getSeenCount()).toBe(5)
         expect(item.getRemovalCount()).toBe(2)
         expect(item.getPostID()).toBe('t3_post')
+    })
+})
+
+describe('getTestNotificationMessage', () => {
+    const base = 'If you see this, notifications are working.'
+
+    it('plain message when all notification types are on', () => {
+        const msg = getTestNotificationMessage({
+            removal_status: { track: true, notify: true },
+            lock_status: { track: true, notify: true },
+        })
+        expect(msg).toBe(base)
+    })
+
+    it('defaults to on when options are missing', () => {
+        expect(getTestNotificationMessage({})).toBe(base)
+    })
+
+    it('notes a single disabled type', () => {
+        const msg = getTestNotificationMessage({
+            removal_status: { track: true, notify: false },
+            lock_status: { track: true, notify: true },
+        })
+        expect(msg).toContain('notifications are working')
+        expect(msg).toContain('removed content')
+        expect(msg).not.toContain('locked')
+    })
+
+    it('treats untracked ("off") the same as notify-off', () => {
+        const msg = getTestNotificationMessage({
+            removal_status: { track: true, notify: true },
+            lock_status: { track: false, notify: false },
+        })
+        expect(msg).toContain('locked content')
+        expect(msg).not.toContain('removed content')
+    })
+
+    it('notes both disabled types', () => {
+        const msg = getTestNotificationMessage({
+            removal_status: { track: true, notify: false },
+            lock_status: { track: false },
+        })
+        expect(msg).toContain('removed and locked content')
     })
 })
