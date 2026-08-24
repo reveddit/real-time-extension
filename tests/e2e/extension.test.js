@@ -40,11 +40,8 @@ test.describe('Options page', () => {
         await expect(page.getByText('locked content', { exact: true })).toBeVisible()
         const pickers = page.locator('select').filter({ hasText: 'badge + notifications' })
         await expect(pickers).toHaveCount(2)
-        // The page reads options once on mount and can beat the background's
-        // install-time initStorage in this fresh profile — reload so it reads
-        // the initialized defaults.
-        await page.reload()
-        await expect(page.locator('h2', { hasText: 'Subscriptions' }).first()).toBeVisible({ timeout: 10000 })
+        // No reload needed: the page stays on its loading screen until the
+        // background's install-time initStorage has written the defaults.
         await expect(pickers.first()).toHaveValue('notify')
         await expect(pickers.nth(1)).toHaveValue('notify')
         // "turn off all notifications" macro drops both pickers to badge only,

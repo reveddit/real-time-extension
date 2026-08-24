@@ -142,24 +142,40 @@ function Options() {
   const [diagBusy, setDiagBusy] = useState(false)
 
   useEffect(() => {
-    getOptions((_users, _others, options) => {
-      const opts = options || {}
-      const removal = opts.removal_status || {}
-      const lock = opts.lock_status || {}
-      setInterval_(String(opts.interval ?? INTERVAL_DEFAULT))
-      setSeenCount(String(opts.seen_count || SEEN_COUNT_DEFAULT))
-      setClientId(opts.custom_clientid || '')
-      setRemovedMode(modeFromStatus(removal))
-      setLockedMode(modeFromStatus(lock))
-      setHideSubscribe(!!opts.hide_subscribe)
-      setMonitorQuarantined(!!opts.monitor_quarantined)
-      setShowScanOnOwnProfile(!!opts.show_scan_on_own_profile)
-      setShowScanOnOtherProfiles(opts.show_scan_on_other_profiles !== false)
-      setShowThreadScanButtons(opts.show_thread_scan_buttons !== false)
-      setHighlightOwnProfileStatus(opts.highlight_own_profile_status !== false)
-      setAutoFilterRemovedThreads(opts.auto_filter_removed_threads !== false)
-      setLoaded(true)
-    })
+    // On a fresh install this page can mount before the background's
+    // initStorage has written the defaults. Rendering that empty state would
+    // show every setting as off — and "save" would persist it. Stay on the
+    // loading screen until the options object exists, picking it up via
+    // onChanged when initStorage lands.
+    let optionsLoaded = false
+    const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === 'sync' && changes.options) tryLoadOptions()
+    }
+    const tryLoadOptions = () => {
+      getOptions((_users, _others, options) => {
+        if (optionsLoaded || !options || !Object.keys(options).length) return
+        optionsLoaded = true
+        chrome.storage.onChanged.removeListener(onStorageChanged)
+        const opts = options
+        const removal = opts.removal_status || {}
+        const lock = opts.lock_status || {}
+        setInterval_(String(opts.interval ?? INTERVAL_DEFAULT))
+        setSeenCount(String(opts.seen_count || SEEN_COUNT_DEFAULT))
+        setClientId(opts.custom_clientid || '')
+        setRemovedMode(modeFromStatus(removal))
+        setLockedMode(modeFromStatus(lock))
+        setHideSubscribe(!!opts.hide_subscribe)
+        setMonitorQuarantined(!!opts.monitor_quarantined)
+        setShowScanOnOwnProfile(!!opts.show_scan_on_own_profile)
+        setShowScanOnOtherProfiles(opts.show_scan_on_other_profiles !== false)
+        setShowThreadScanButtons(opts.show_thread_scan_buttons !== false)
+        setHighlightOwnProfileStatus(opts.highlight_own_profile_status !== false)
+        setAutoFilterRemovedThreads(opts.auto_filter_removed_threads !== false)
+        setLoaded(true)
+      })
+    }
+    chrome.storage.onChanged.addListener(onStorageChanged)
+    tryLoadOptions()
     chrome.storage.local.get([THEME_STORAGE_KEY], res => {
       setThemeModeState((res?.[THEME_STORAGE_KEY] as ThemeMode) || 'auto')
     })
@@ -180,6 +196,7 @@ function Options() {
         if (parts.length) setDiagStatus(parts.join(' · '))
       },
     )
+    return () => chrome.storage.onChanged.removeListener(onStorageChanged)
   }, [])
 
   const copyDiagLog = () => {
