@@ -37,7 +37,9 @@ Testing subreddit: **r/CantSayAnything** (auto-removes all posts/comments).
 
 - [ ] All checkboxes render with correct defaults
 - [ ] Change "minutes between updates" → save → reopen → value persists
-- [ ] Toggle removed/locked track/notify checkboxes → save → verify persistence
+- [ ] Change removed/locked pickers (off / badge only / badge + notifications) → save → verify persistence
+- [ ] "turn off all notifications" link sets both pickers to badge only, leaves "off" pickers alone, and hides itself
+- [ ] With both pickers on "badge only": detection updates badge and history, no notification appears (including the install-time backlog notice)
 - [ ] "hide subscribe" and "monitor quarantined" toggles work
 - [ ] "advanced" section reveals client ID field
 - [ ] "reset to defaults" restores default values

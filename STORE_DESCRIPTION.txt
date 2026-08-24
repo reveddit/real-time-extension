@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/08/24 - 0.0.5.19
+- fix notification settings being ignored for notices about older removed/locked content, so the toolbar badge can count removals without any notifications; clarify the options page with per-type "off / badge only / badge + notifications" pickers and a "turn off all notifications" link
+
 2026/08/18 - 0.0.5.18
 - fix duplicate backlog notification: the 12-hour follow-up re-announced the same older removed/locked items covered right after install; it now reports only items found since then, and backlog entries in the notification log include item IDs
 

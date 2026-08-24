@@ -54,26 +54,18 @@ const Hint = styled.div`
   max-width: 28em;
 `
 
-const TrackingGrid = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 70px 70px;
-  align-items: center;
-  gap: ${tokens.space.xs} ${tokens.space.md};
-  padding: ${tokens.space.sm} 0;
-  & > .hcell {
-    color: var(--text-secondary);
-    font-size: 0.82em;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    text-align: center;
+// && beats Field's "& > select" 90px width rule — these labels are longer.
+const ModeSelect = styled.select`
+  && {
+    width: auto;
+    min-width: 175px;
+    text-align: left;
   }
-  & > .rowlabel {
-    color: var(--text-primary);
-  }
-  & > .cbcell {
-    text-align: center;
-  }
-  & > .spacer { height: 4px; }
+`
+
+const LinkRow = styled.div`
+  font-size: 0.9em;
+  margin-top: ${tokens.space.xs};
 `
 
 const Footer = styled.div`
@@ -115,14 +107,24 @@ const sendMessageAny = chrome.runtime.sendMessage as any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const runtimeAny = chrome.runtime as any
 
+// The two stored booleans per type ({track, notify}) have three valid states;
+// the picker names them. track:false with notify:true is unreachable from this
+// UI and behaves as 'off' in monitoring, so it displays as 'off'.
+type TrackMode = 'off' | 'badge' | 'notify'
+const modeFromStatus = (s: { track?: boolean; notify?: boolean }): TrackMode =>
+  !s.track ? 'off' : s.notify ? 'notify' : 'badge'
+const MODE_OPTIONS: { value: TrackMode; label: string }[] = [
+  { value: 'notify', label: 'badge + notifications' },
+  { value: 'badge', label: 'badge only' },
+  { value: 'off', label: 'off' },
+]
+
 function Options() {
   const [interval, setInterval_] = useState('')
   const [seenCount, setSeenCount] = useState('')
   const [clientId, setClientId] = useState('')
-  const [removedTrack, setRemovedTrack] = useState(false)
-  const [removedNotify, setRemovedNotify] = useState(false)
-  const [lockedTrack, setLockedTrack] = useState(false)
-  const [lockedNotify, setLockedNotify] = useState(false)
+  const [removedMode, setRemovedMode] = useState<TrackMode>('off')
+  const [lockedMode, setLockedMode] = useState<TrackMode>('off')
   const [hideSubscribe, setHideSubscribe] = useState(false)
   const [monitorQuarantined, setMonitorQuarantined] = useState(false)
   const [showScanOnOwnProfile, setShowScanOnOwnProfile] = useState(false)
@@ -147,10 +149,8 @@ function Options() {
       setInterval_(String(opts.interval ?? INTERVAL_DEFAULT))
       setSeenCount(String(opts.seen_count || SEEN_COUNT_DEFAULT))
       setClientId(opts.custom_clientid || '')
-      setRemovedTrack(!!removal.track)
-      setRemovedNotify(!!removal.notify)
-      setLockedTrack(!!lock.track)
-      setLockedNotify(!!lock.notify)
+      setRemovedMode(modeFromStatus(removal))
+      setLockedMode(modeFromStatus(lock))
       setHideSubscribe(!!opts.hide_subscribe)
       setMonitorQuarantined(!!opts.monitor_quarantined)
       setShowScanOnOwnProfile(!!opts.show_scan_on_own_profile)
@@ -233,23 +233,6 @@ function Options() {
     chrome.storage.local.set({ dev_simulate_endpoint_deprecation: checked })
   }
 
-  const handleRemovedNotifyChange = (checked: boolean) => {
-    setRemovedNotify(checked)
-    if (checked) setRemovedTrack(true)
-  }
-  const handleRemovedTrackChange = (checked: boolean) => {
-    setRemovedTrack(checked)
-    if (!checked) setRemovedNotify(false)
-  }
-  const handleLockedNotifyChange = (checked: boolean) => {
-    setLockedNotify(checked)
-    if (checked) setLockedTrack(true)
-  }
-  const handleLockedTrackChange = (checked: boolean) => {
-    setLockedTrack(checked)
-    if (!checked) setLockedNotify(false)
-  }
-
   const handleThemeChange = (mode: ThemeMode) => {
     setThemeModeState(mode)
     setThemeMode(mode)
@@ -278,8 +261,8 @@ function Options() {
     }
 
     setError('')
-    saveOptions(seenCountNum, intervalNum, customClientId, removedTrack, removedNotify,
-                lockedTrack, lockedNotify, hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, showThreadScanButtons, highlightOwnProfileStatus, autoFilterRemovedThreads, () => {
+    saveOptions(seenCountNum, intervalNum, customClientId, removedMode !== 'off', removedMode === 'notify',
+                lockedMode !== 'off', lockedMode === 'notify', hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, showThreadScanButtons, highlightOwnProfileStatus, autoFilterRemovedThreads, () => {
       setAlarm(intervalNum)
       chrome.runtime.sendMessage({ action: 'update-badge' })
       window.close()
@@ -311,31 +294,38 @@ function Options() {
         </FieldStack>
 
         <SectionHeader>Tracking &amp; notification</SectionHeader>
-        <TrackingGrid>
-          <div />
-          <div className="hcell">track</div>
-          <div className="hcell">notify</div>
-
-          <div className="rowlabel">removed</div>
-          <div className="cbcell">
-            <input type="checkbox" checked={removedTrack}
-              onChange={e => handleRemovedTrackChange(e.target.checked)} />
-          </div>
-          <div className="cbcell">
-            <input type="checkbox" checked={removedNotify}
-              onChange={e => handleRemovedNotifyChange(e.target.checked)} />
-          </div>
-
-          <div className="rowlabel">locked</div>
-          <div className="cbcell">
-            <input type="checkbox" checked={lockedTrack}
-              onChange={e => handleLockedTrackChange(e.target.checked)} />
-          </div>
-          <div className="cbcell">
-            <input type="checkbox" checked={lockedNotify}
-              onChange={e => handleLockedNotifyChange(e.target.checked)} />
-          </div>
-        </TrackingGrid>
+        <FieldStack>
+          <Field>
+            <label>removed content</label>
+            <ModeSelect value={removedMode} onChange={e => setRemovedMode(e.target.value as TrackMode)}>
+              {MODE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </ModeSelect>
+          </Field>
+          <Field>
+            <label>locked content</label>
+            <ModeSelect value={lockedMode} onChange={e => setLockedMode(e.target.value as TrackMode)}>
+              {MODE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </ModeSelect>
+          </Field>
+        </FieldStack>
+        {(removedMode === 'notify' || lockedMode === 'notify') && (
+          <LinkRow>
+            <BlueLink href="#" onClick={e => {
+              e.preventDefault()
+              // A UI macro, not a setting: drops "badge + notifications" to
+              // "badge only". Never upgrades "off" — that would re-enable
+              // tracking the user turned off.
+              if (removedMode === 'notify') setRemovedMode('badge')
+              if (lockedMode === 'notify') setLockedMode('badge')
+            }}>
+              turn off all notifications
+            </BlueLink>
+          </LinkRow>
+        )}
+        <Note>
+          "badge only" counts changes on the toolbar icon and in history, without showing system
+          notifications.
+        </Note>
 
         <SectionHeader>Polling</SectionHeader>
         <FieldStack>

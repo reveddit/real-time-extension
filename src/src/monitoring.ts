@@ -832,6 +832,14 @@ const checkForChanges_thing_byId = async (
                     getPendingNotification(thing)
                         .then(pending => {
                             if (!pending) return
+                            // The user turned notifications off after this entry
+                            // was queued — drop it rather than retry a
+                            // notification they opted out of. The badge still
+                            // counts the items.
+                            if (!removal_status.notify && !lock_status.notify) {
+                                clearPendingNotification(thing).catch(() => {})
+                                return
+                            }
                             const MAX_RETRY_ATTEMPTS = 5
                             if (pending.attempts >= MAX_RETRY_ATTEMPTS) return
                             const MIN_RETRY_DELAY_MS = 2 * 60 * 1000
@@ -1124,11 +1132,24 @@ function markChanges(
     } as MarkChangesResult
 }
 
+// A change type is eligible for backlog notifications only when it is both
+// tracked and notify-enabled. Track alone still records changes for the badge
+// and history — notify is what permits a system notification (issue: backlog
+// notices used to ignore the notify settings).
+const getBacklogNotifyFlags = (options: Record<string, any>): { removal: boolean; lock: boolean } => {
+    const removal = (options || {}).removal_status || {}
+    const lock = (options || {}).lock_status || {}
+    return {
+        removal: removal.track !== false && removal.notify !== false,
+        lock: lock.track !== false && lock.notify !== false,
+    }
+}
+
+// Ids that the backlog notifications may announce — a type counts only when
+// its notify setting (and track) is on; see getBacklogNotifyFlags.
 export const getUnseenBacklogItemIds = (storage: Record<string, any>): string[] => {
     const now = Math.floor(Date.now() / 1000)
-    const options = storage.options || {}
-    const trackRemoval = (options.removal_status || {}).track !== false
-    const trackLock = (options.lock_status || {}).track !== false
+    const { removal: notifyRemoval, lock: notifyLock } = getBacklogNotifyFlags(storage.options || {})
 
     const things: { thing: string; isUser: boolean }[] = [
         ...Object.keys(storage.user_subscriptions || {}).map(u => ({ thing: u, isUser: true })),
@@ -1139,8 +1160,8 @@ export const getUnseenBacklogItemIds = (storage: Record<string, any>): string[] 
     for (const { thing, isUser } of things) {
         const keys = getObjectNamesForThing(thing, isUser)
         const typesToCount: string[] = []
-        if (trackRemoval) typesToCount.push(keys['removed'])
-        if (trackLock) typesToCount.push(keys['locked'])
+        if (notifyRemoval) typesToCount.push(keys['removed'])
+        if (notifyLock) typesToCount.push(keys['locked'])
 
         for (const key of typesToCount) {
             const obj = storage[key] || {}
@@ -1167,12 +1188,19 @@ export const maybeFireBacklogSummary = async (storage: Record<string, any>): Pro
     if (state.summarySent) return
     if (state.installedAt == null) return
 
+    const notifyFlags = getBacklogNotifyFlags(storage.options || {})
+    // Notifications are off for every type: return before consuming either
+    // one-shot phase marker, so a user who re-enables notifications later
+    // still gets the backlog notice.
+    if (!notifyFlags.removal && !notifyFlags.lock) return
+    const typeText = [notifyFlags.removal ? 'removed' : '', notifyFlags.lock ? 'locked' : ''].filter(Boolean).join('/')
+
     const unseenBacklogIds = getUnseenBacklogItemIds(storage)
 
     if (!state.initialBacklogNotified) {
         if (unseenBacklogIds.length === 0) return
         await markBacklogInitialNotified(unseenBacklogIds)
-        const msg = `${unseenBacklogIds.length} older removed/locked posts or comments found in your history. Click to review.`
+        const msg = `${unseenBacklogIds.length} older ${typeText} posts or comments found in your history. Click to review.`
         createNotification({
             notificationId: 'backlog_summary',
             title: 'reveddit real-time',
@@ -1196,7 +1224,7 @@ export const maybeFireBacklogSummary = async (storage: Record<string, any>): Pro
     const newIds = unseenBacklogIds.filter(id => !alreadyNotified.has(id))
     if (newIds.length === 0) return
 
-    const msg = `${newIds.length} more older removed/locked posts or comments found in your history. Click to review.`
+    const msg = `${newIds.length} more older ${typeText} posts or comments found in your history. Click to review.`
     createNotification({
         notificationId: 'backlog_summary',
         title: 'reveddit real-time',

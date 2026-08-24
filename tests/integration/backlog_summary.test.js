@@ -54,6 +54,15 @@ describe('getUnseenBacklogItemIds', () => {
         storage.options.lock_status = { track: false }
         expect(getUnseenBacklogItemIds(storage)).toEqual(['t3_removed'])
     })
+
+    it('respects notify settings', () => {
+        const storage = makeSyncStorage({
+            removed_u_alice: { t3_removed: { c: OLD_UTC(), u: true } },
+            locked_u_alice: { t3_locked: { c: OLD_UTC(), u: true } },
+        })
+        storage.options.lock_status = { track: true, notify: false }
+        expect(getUnseenBacklogItemIds(storage)).toEqual(['t3_removed'])
+    })
 })
 
 describe('maybeFireBacklogSummary', () => {
@@ -177,6 +186,67 @@ describe('maybeFireBacklogSummary', () => {
 
         expect(notifySpy).not.toHaveBeenCalled()
         expect(__getLocalStorage().backlog_summary.summarySent).toBeFalsy()
+    })
+
+    it('notifications off: stays silent without consuming phase 1, which fires after re-enable', async () => {
+        __resetStorage({}, { backlog_summary: { installedAt: Date.now() } })
+        const storage = makeSyncStorage({
+            removed_u_alice: { t3_a: { c: OLD_UTC(), u: true } },
+        })
+        storage.options.removal_status = { track: true, notify: false }
+        storage.options.lock_status = { track: true, notify: false }
+
+        await maybeFireBacklogSummary(storage)
+
+        expect(notifySpy).not.toHaveBeenCalled()
+        expect(await getNotificationLog()).toHaveLength(0)
+        // one-shot phase 1 marker must not be consumed by the silent pass
+        expect(__getLocalStorage().backlog_summary.initialBacklogNotified).toBeFalsy()
+
+        storage.options.removal_status = { track: true, notify: true }
+        await maybeFireBacklogSummary(storage)
+
+        expect(notifySpy).toHaveBeenCalledTimes(1)
+        expect(__getLocalStorage().backlog_summary.initialBacklogNotified).toBe(true)
+    })
+
+    it('notifications off: phase 2 is not consumed either', async () => {
+        const storage = makeSyncStorage({
+            removed_u_alice: { t3_new: { c: OLD_UTC(), u: true } },
+        })
+        storage.options.removal_status = { track: true, notify: false }
+        storage.options.lock_status = { track: true, notify: false }
+        __resetStorage(
+            {},
+            {
+                backlog_summary: {
+                    installedAt: Date.now() - BACKLOG_SUMMARY_DELAY_MS - 60000,
+                    initialBacklogNotified: true,
+                    initialNotifiedIds: [],
+                },
+            },
+        )
+
+        await maybeFireBacklogSummary(storage)
+
+        expect(notifySpy).not.toHaveBeenCalled()
+        expect(__getLocalStorage().backlog_summary.summarySent).toBeFalsy()
+    })
+
+    it('names only notify-enabled types in the message', async () => {
+        __resetStorage({}, { backlog_summary: { installedAt: Date.now() } })
+        const storage = makeSyncStorage({
+            removed_u_alice: { t3_a: { c: OLD_UTC(), u: true } },
+            locked_u_alice: { t3_b: { c: OLD_UTC(), u: true } },
+        })
+        storage.options.lock_status = { track: true, notify: false }
+
+        await maybeFireBacklogSummary(storage)
+
+        expect(notifySpy).toHaveBeenCalledTimes(1)
+        const msg = notifySpy.mock.calls[0][1].message
+        expect(msg).toMatch(/^1 older removed posts/)
+        expect(msg).not.toContain('locked')
     })
 
     it('does nothing once the summary was sent', async () => {

@@ -34,11 +34,27 @@ test.describe('Options page', () => {
         // Tracking & Notification header
         await expect(page.locator('h2', { hasText: 'Tracking & notification' })).toBeVisible()
 
-        // Tracking grid should have checkboxes for removed/locked
-        await expect(page.getByText('removed', { exact: true })).toBeVisible()
-        await expect(page.getByText('locked', { exact: true })).toBeVisible()
-        const checkboxes = page.locator('input[type="checkbox"]')
-        await expect(checkboxes.first()).toBeVisible()
+        // Tracking section should have a three-state picker per type,
+        // defaulting to badge + notifications
+        await expect(page.getByText('removed content', { exact: true })).toBeVisible()
+        await expect(page.getByText('locked content', { exact: true })).toBeVisible()
+        const pickers = page.locator('select').filter({ hasText: 'badge + notifications' })
+        await expect(pickers).toHaveCount(2)
+        // The page reads options once on mount and can beat the background's
+        // install-time initStorage in this fresh profile — reload so it reads
+        // the initialized defaults.
+        await page.reload()
+        await expect(page.locator('h2', { hasText: 'Subscriptions' }).first()).toBeVisible({ timeout: 10000 })
+        await expect(pickers.first()).toHaveValue('notify')
+        await expect(pickers.nth(1)).toHaveValue('notify')
+        // "turn off all notifications" macro drops both pickers to badge only,
+        // then hides itself
+        const turnOffAll = page.getByText('turn off all notifications')
+        await expect(turnOffAll).toBeVisible()
+        await turnOffAll.click()
+        await expect(pickers.first()).toHaveValue('badge')
+        await expect(pickers.nth(1)).toHaveValue('badge')
+        await expect(turnOffAll).not.toBeVisible()
 
         // Polling section with interval input
         await expect(page.locator('h2', { hasText: 'Polling' })).toBeVisible()
