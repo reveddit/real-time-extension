@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/08/27 - 0.0.5.20
+- alert in the popup when a newer version has been out for days but your browser has not installed it, with a link to reveddit.com/update-help; apply a downloaded update immediately instead of waiting; news messages can target specific versions; the diagnostic log header now records news-fetch state
+
 2026/08/24 - 0.0.5.19
 - fix notification settings being ignored for notices about older removed/locked content, so the toolbar badge can count removals without any notifications; clarify the options page with per-type "off / badge only / badge + notifications" pickers and a "turn off all notifications" link; the test notification now says when some notification types are off
 

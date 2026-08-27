@@ -13,10 +13,13 @@ import {
   getPendingPostQueueSize,
 } from './storage'
 import { setCurrentStateForId } from './monitoring'
-import { fetchNews, getUnreadMessages, markNewsRead, NewsMessage } from './news'
+import { fetchNews, getUnreadMessages, getPendingUpdateVersion, markNewsRead, NewsMessage } from './news'
 import { markdownToHTML } from './ui/markdown'
 
 declare const __LATEST_RELEASE__: { version: string; description: string } | null
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const runtimeAny = chrome.runtime as any
 
 const PopupContainer = styled.div`
   width: 320px;
@@ -356,6 +359,7 @@ function Popup() {
   const [connectResult, setConnectResult] = useState<{ success: boolean; user?: string } | null>(null)
   const [connectMessage, setConnectMessage] = useState<string | null>(null)
   const [newsMessage, setNewsMessage] = useState<NewsMessage | null>(null)
+  const [pendingUpdate, setPendingUpdate] = useState<string | null>(null)
   const [pendingPostCount, setPendingPostCount] = useState(0)
   const [pendingProgress, setPendingProgress] = useState<{ processed: number; total: number } | null>(null)
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
@@ -429,6 +433,23 @@ function Popup() {
       getUnreadMessages().then(unread => {
         setNewsMessage(unread[0] || null)
       })
+      // Update notice: the feed says a newer version has been out for days
+      // but this browser hasn't applied it (the 0.0.5.14 stuck-cohort case).
+      getPendingUpdateVersion().then(latest => {
+        if (!latest) return
+        chrome.storage.local.get(['dismissed_update_notice_version'], result => {
+          if (result.dismissed_update_notice_version !== latest) {
+            setPendingUpdate(latest)
+            // Nudge the browser to fetch the update; if it downloads, the
+            // background onUpdateAvailable listener applies it immediately.
+            try {
+              runtimeAny.requestUpdateCheck?.(() => void runtimeAny.lastError)
+            } catch {
+              /* unsupported in some browsers */
+            }
+          }
+        })
+      })
     })
   }, [])
 
@@ -493,6 +514,13 @@ function Popup() {
     markNewsRead(id).then(() => getUnreadMessages()).then(unread => {
       setNewsMessage(unread[0] || null)
     })
+  }
+
+  const handleDismissUpdateNotice = () => {
+    if (pendingUpdate) {
+      chrome.storage.local.set({ dismissed_update_notice_version: pendingUpdate })
+    }
+    setPendingUpdate(null)
   }
 
   const handleReconnect = () => {
@@ -621,6 +649,20 @@ function Popup() {
             {theme === 'dark' ? '\u{1F319}' : '\u{2600}\u{FE0F}'}
           </ThemeToggleBtn>
         </TopRow>
+
+        {pendingUpdate && (
+          <NewsCard>
+            <button className="dismiss" onClick={handleDismissUpdateNotice} aria-label="Dismiss">&times;</button>
+            <h4>Update available: v{pendingUpdate}</h4>
+            <div className="md-body">
+              Your browser hasn't installed it yet. Open chrome://extensions, turn on
+              Developer mode (top right), and press Update.{' '}
+              <a href="https://www.reveddit.com/update-help" target="_blank" rel="noopener noreferrer">
+                Still stuck?
+              </a>
+            </div>
+          </NewsCard>
+        )}
 
         {showRelease && __LATEST_RELEASE__ && (
           <NewsCard>

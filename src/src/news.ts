@@ -16,6 +16,11 @@ export interface NewsMessage {
     title: string
     body_markdown: string
     severity?: 'info' | 'warning' | 'success'
+    // Optional version targeting: the message only shows to installs inside
+    // the range, so e.g. a "you're stuck on an old version" notice never
+    // nags people who already updated.
+    min_version?: string
+    max_version?: string
 }
 
 // Remote options: an optional "options" block in the same JSON. Each mechanism
@@ -42,6 +47,11 @@ export const MECHANISM_ME_CHALLENGE = 'meJsonChallengeSolve'
 export interface NewsFeed {
     messages: NewsMessage[]
     options?: RemoteOptions
+    // Latest published store version and its release date (epoch ms). Lets a
+    // client notice that its browser has failed to apply an update for days
+    // (see the 0.0.5.14 stuck-cohort incident, Aug 2026).
+    latest_version?: string
+    latest_version_published_utc?: number
 }
 
 export interface NewsCache {
@@ -86,10 +96,91 @@ export const markNewsRead = (id: string): Promise<void> =>
         }
     })
 
+const VERSION_RE = /^\d+(\.\d+){0,3}$/
+
+export const isValidVersion = (v: unknown): v is string => typeof v === 'string' && VERSION_RE.test(v)
+
+// Numeric dotted-version compare: negative when a < b, zero when equal.
+export const compareVersions = (a: string, b: string): number => {
+    const pa = a.split('.').map(n => parseInt(n, 10) || 0)
+    const pb = b.split('.').map(n => parseInt(n, 10) || 0)
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0)
+        if (d !== 0) {
+            return d
+        }
+    }
+    return 0
+}
+
+// Pure, unit-tested: applies each message's min/max_version range.
+export const filterMessagesForVersion = (messages: NewsMessage[], ownVersion: string): NewsMessage[] =>
+    messages.filter(m => {
+        if (isValidVersion(m.min_version) && compareVersions(ownVersion, m.min_version) < 0) {
+            return false
+        }
+        if (isValidVersion(m.max_version) && compareVersions(ownVersion, m.max_version) > 0) {
+            return false
+        }
+        return true
+    })
+
+// Grace window before the "your browser hasn't installed the update" notice:
+// store review and rollout normally take days, so only a client still behind
+// this long after the release date is worth alerting.
+export const UPDATE_NOTICE_GRACE_MS = 5 * 24 * 60 * 60 * 1000
+
+// Pure, unit-tested. True when latest_version is valid, newer than the
+// running version, and released at least the grace window ago. A missing or
+// invalid release date never alerts: without it there is no way to tell a
+// stuck client from a normal rollout in progress.
+export const shouldShowUpdateNotice = (
+    ownVersion: string,
+    latestVersion: unknown,
+    latestPublishedUtcMs: unknown,
+    nowMs: number,
+    graceMs: number = UPDATE_NOTICE_GRACE_MS,
+): boolean => {
+    if (!isValidVersion(latestVersion)) {
+        return false
+    }
+    const published = Number(latestPublishedUtcMs)
+    if (!published || !Number.isFinite(published)) {
+        return false
+    }
+    if (compareVersions(ownVersion, latestVersion) >= 0) {
+        return false
+    }
+    return nowMs - published >= graceMs
+}
+
+// The newer version the store should have delivered by now, or null when up
+// to date, unknown, or still within the rollout grace window.
+export const getPendingUpdateVersion = async (): Promise<string | null> => {
+    try {
+        const cache = await getCachedNews()
+        const feed = cache?.feed
+        const own = chrome.runtime.getManifest().version
+        if (feed && shouldShowUpdateNotice(own, feed.latest_version, feed.latest_version_published_utc, Date.now())) {
+            return feed.latest_version as string
+        }
+    } catch {
+        /* ignored */
+    }
+    return null
+}
+
 export const getUnreadMessages = async (): Promise<NewsMessage[]> => {
     const [cache, readIds] = await Promise.all([getCachedNews(), getReadIds()])
     const feed = cache?.feed || emptyFeed()
-    return feed.messages.filter(m => !readIds[m.id]).sort((a, b) => (b.published_utc || 0) - (a.published_utc || 0))
+    let ownVersion = ''
+    try {
+        ownVersion = chrome.runtime.getManifest().version
+    } catch {
+        /* ignored: no chrome in tests; empty version skips targeting */
+    }
+    const targeted = ownVersion ? filterMessagesForVersion(feed.messages, ownVersion) : feed.messages
+    return targeted.filter(m => !readIds[m.id]).sort((a, b) => (b.published_utc || 0) - (a.published_utc || 0))
 }
 
 // Current remote state of a mechanism switch, from the cached feed. 'auto' when
@@ -156,8 +247,14 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
                     title: m.title,
                     body_markdown: m.body_markdown,
                     severity: m.severity,
+                    ...(isValidVersion(m.min_version) ? { min_version: m.min_version } : {}),
+                    ...(isValidVersion(m.max_version) ? { max_version: m.max_version } : {}),
                 })),
             options: { mechanisms },
+            ...(isValidVersion(feed.latest_version) ? { latest_version: feed.latest_version } : {}),
+            ...(Number(feed.latest_version_published_utc) > 0
+                ? { latest_version_published_utc: Number(feed.latest_version_published_utc) }
+                : {}),
         }
         const newCache: NewsCache = { feed: sanitized, lastFetched: now }
         chrome.storage.local.set({ [NEWS_CACHE_KEY]: newCache })

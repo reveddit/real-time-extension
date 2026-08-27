@@ -100,6 +100,9 @@ import browser from 'webextension-polyfill'
     }
     window.localStorage.setItem('hasSeenLanguageModal', 'true')
     window.localStorage.setItem('hasNotifierExtension', 'true')
+    // Version for the website (e.g. /update-help): Firefox has no
+    // externally_connectable, so the page can read this instead.
+    window.localStorage.setItem('notifierExtensionVersion', browser.runtime.getManifest().version)
     browser.runtime.onMessage.addListener(queryUser as any)
 
     const extensionSaysNoSubscriptions = 'extensionSaysNoSubscriptions'

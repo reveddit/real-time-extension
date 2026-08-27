@@ -29,7 +29,7 @@ import {
 import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
 import { getItems_fromOld, getPost_fromOld } from './src/parse_html/old'
-import { fetchNews } from './src/news'
+import { fetchNews, getCachedNews } from './src/news'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs } from './src/storage'
 
@@ -359,12 +359,19 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         sendResponse({ response: 'done' })
         return true
     } else if (request.action === 'get-diag-log') {
-        getRateLimitBackoffRemainingMs()
-            .then(backoffMs =>
+        Promise.all([getRateLimitBackoffRemainingMs(), getCachedNews()])
+            .then(([backoffMs, newsCache]) =>
                 buildDiagReport({
                     includeUsername: !!request.includeUsername,
                     extraHeaderLines: [
                         `rate-limit backoff: ${backoffMs > 0 ? Math.ceil(backoffMs / 1000) + 's remaining' : 'none'}`,
+                        `news: ${
+                            newsCache
+                                ? `fetched ${new Date(newsCache.lastFetched).toISOString()}, ${
+                                      newsCache.feed?.messages?.length ?? 0
+                                  } messages, latest_version=${newsCache.feed?.latest_version || 'unset'}`
+                                : 'never fetched'
+                        }`,
                     ],
                 }),
             )
@@ -634,6 +641,14 @@ async function injectContentScriptIntoExistingRedditTabs() {
 }
 // Runs on every service-worker start (including reload) and after install/update.
 injectContentScriptIntoExistingRedditTabs()
+
+// A downloaded update is waiting for the extension to go idle. Apply it now:
+// a long-lived worker or open extension page can otherwise defer it
+// indefinitely (see the 0.0.5.14 stuck-cohort incident, Aug 2026).
+chrome.runtime.onUpdateAvailable.addListener(details => {
+    dlog('cycle', `[reveddit] update ${details?.version || '?'} downloaded, reloading to apply`)
+    setTimeout(() => chrome.runtime.reload(), 250)
+})
 
 // On browser startup, if no user is currently tracked, re-check connection and
 // surface a warning badge if Reddit can't be reached.
