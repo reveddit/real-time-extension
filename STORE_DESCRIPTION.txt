@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/08/29 - 0.0.5.21
+- reveddit.com can now fetch public reddit data through the extension over a typed, allowlisted bridge; it covers what the website's own fallback cannot serve and keeps the site working for extension users if reddit blocks it further; bridge requests always yield to your own monitoring, run through the same rate limiter, and share its backoff
+
 2026/08/27 - 0.0.5.20
 - alert in the popup when a newer version has been out for days but your browser has not installed it, with a link to reveddit.com/update-help; apply a downloaded update immediately instead of waiting; news messages can target specific versions; the diagnostic log header now records news-fetch state
 

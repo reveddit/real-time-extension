@@ -23,6 +23,7 @@ export type DiagArea =
     | 'verify' // feed-absent page verification
     | 'legacy' // old.reddit tiebreak paths
     | 'ratelimit' // 429 hits and backoff decisions
+    | 'bridge' // website bridge requests (refusals and failures)
     | 'news' // remote news/mechanism fetches
     | 'ui' // user-initiated actions (manual check, clear)
 

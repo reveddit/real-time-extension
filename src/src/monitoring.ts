@@ -242,6 +242,11 @@ let cycleStartedAtMs = 0
 let cycleEndedAtMs = 0
 const CYCLE_OVERLAP_WINDOW_MS = 3 * 60 * 1000
 
+// The bridge (bridge.ts) yields to monitoring: it refuses requests while a
+// cycle is running, using the same staleness window as the overlap guard.
+export const isCycleInFlight = () =>
+    cycleStartedAtMs > cycleEndedAtMs && Date.now() - cycleStartedAtMs < CYCLE_OVERLAP_WINDOW_MS
+
 export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff?: boolean } = {}) => {
     const nowMs = Date.now()
     if (cycleStartedAtMs > cycleEndedAtMs && nowMs - cycleStartedAtMs < CYCLE_OVERLAP_WINDOW_MS) {

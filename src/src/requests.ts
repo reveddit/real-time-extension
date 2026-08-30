@@ -69,7 +69,7 @@ export const throwIfLegacyDisabled = async (label: string) => {
 }
 
 const RATE_LIMIT_STATUSES = new Set([403, 429])
-const flagIfRateLimited = (err: Error) => {
+export const flagIfRateLimited = (err: Error) => {
     const m = err.message.match(/request failed: (\d+)/)
     if (!m) return
     const status = Number(m[1])

@@ -103,6 +103,31 @@ import browser from 'webextension-polyfill'
     // Version for the website (e.g. /update-help): Firefox has no
     // externally_connectable, so the page can read this instead.
     window.localStorage.setItem('notifierExtensionVersion', browser.runtime.getManifest().version)
+    // Bridge relay for the website: Firefox has no externally_connectable, so
+    // reveddit.com pages postMessage here and the background does the fetch
+    // (typed and allowlisted in bridge.ts). Not registered on reddit.com pages.
+    if (matches && matches[1] !== 'reddit.com') {
+        window.addEventListener('message', (e: MessageEvent) => {
+            const d: any = e.data
+            if (e.source !== window || !d || d.type !== 'reveddit-bridge-request' || typeof d.id !== 'number') {
+                return
+            }
+            Promise.resolve(browser.runtime.sendMessage({ action: 'bridge-fetch', url: d.url }))
+                .catch((err: any) => ({ ok: false, status: 0, error: String(err?.message || err) }))
+                .then((resp: any) => {
+                    window.postMessage(
+                        {
+                            type: 'reveddit-bridge-response',
+                            id: d.id,
+                            ...(resp && typeof resp === 'object'
+                                ? resp
+                                : { ok: false, status: 0, error: 'no response' }),
+                        },
+                        window.location.origin,
+                    )
+                })
+        })
+    }
     browser.runtime.onMessage.addListener(queryUser as any)
 
     const extensionSaysNoSubscriptions = 'extensionSaysNoSubscriptions'

@@ -29,6 +29,7 @@ import {
 import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
 import { getItems_fromOld, getPost_fromOld } from './src/parse_html/old'
+import { handleBridgeFetch } from './src/bridge'
 import { fetchNews, getCachedNews } from './src/news'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs } from './src/storage'
@@ -267,6 +268,20 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                 })
         })
         return true
+    } else if (request.action === 'bridge-fetch') {
+        // Relay from the reveddit.com content script (Firefox has no
+        // externally_connectable). Guard on the sender tab's origin; the
+        // Chrome path arrives via onMessageExternal below instead.
+        const senderUrl = sender?.tab?.url || sender?.url || ''
+        const senderAllowed =
+            /^https:\/\/([a-z0-9-]+\.)?reveddit\.com\//.test(senderUrl) ||
+            (__DEV__ && /^https?:\/\/localhost[:/]/.test(senderUrl))
+        if (!senderAllowed) {
+            sendResponse({ ok: false, status: 0, error: 'forbidden' })
+            return true
+        }
+        handleBridgeFetch(request).then(sendResponse)
+        return true
     } else if (request.action === 'store-reddit-cookies') {
         // Trigger cookie capture in background context
         storeRedditCookies()
@@ -464,6 +479,11 @@ chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResp
             break
         case 'version':
             sendResponse({ version: chrome.runtime.getManifest().version, name: chrome.runtime.getManifest().name })
+            break
+        case 'bridge-fetch':
+            // reveddit.com pages fetch public reddit JSON through the
+            // extension; origins are limited by externally_connectable
+            handleBridgeFetch(message).then(sendResponse)
             break
     }
     // Dev-only introspection for automated testing from reveddit.com (the SW
