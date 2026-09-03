@@ -1,3 +1,5 @@
+import { getRemoteLegacyHost, LEGACY_HOST_DEFAULT } from '../news'
+
 // consume() from https://qwtel.com/posts/software/how-to-use-htmlrewriter-for-web-scraping/
 // also handy: https://blog.csdn.net/wk3368/article/details/129483898
 
@@ -10,6 +12,21 @@ export const consume = async (stream: ReadableStream) => {
 
 export const oldReddit = 'https://old.reddit.com'
 export const newReddit = 'https://www.reddit.com'
+
+// Base URL for reddit's legacy (pre-Shreddit) HTML, fetched logged out. On
+// 2026-08-31 old.reddit.com started 302ing logged-out requests to /login
+// (reason=lor2), but www.reddit.com still runs the same renderer for
+// legacy-only routes such as /api/info?id= with no login and no JS challenge,
+// so the legacy parsers keep working with just the host swapped. The host is
+// remotely adjustable via the news feed (news.ts legacy_host) so the next move
+// needs no store republish.
+export const getLegacyBase = async (): Promise<string> => {
+    try {
+        return 'https://' + (await getRemoteLegacyHost())
+    } catch {
+        return 'https://' + LEGACY_HOST_DEFAULT
+    }
+}
 
 // old.reddit serves logged-out pages with Cache-Control: private, max-age=3600.
 // Without 'reload', polls re-read the disk cache and a removal can go unseen for

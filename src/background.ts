@@ -33,6 +33,7 @@ import { handleBridgeFetch } from './src/bridge'
 import { fetchNews, getCachedNews } from './src/news'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs } from './src/storage'
+import { getLegacyBase } from './src/parse_html/common'
 
 // The background context is the diagnostic log's single writer — see diaglog.ts.
 initDiagPersistence()
@@ -124,23 +125,24 @@ if (__BUILT_FOR__ !== 'chrome') {
 // END webRequest API code
 
 // Strip the chrome-extension:// Origin header off the background's reddit
-// requests (old.reddit profile-scan fetches, www.reddit public-profile fetches).
-// Reddit 403s requests carrying that Origin; the Sec-Fetch-* trio marks them as
-// cross-site programmatic fetches, which Reddit also rejects for these pages (a
-// navigation, Mode:navigate/Dest:document, returns 200). Stripping both makes
-// them look like plain requests.
+// requests (legacy profile-scan fetches, www.reddit public-profile fetches):
+// Reddit 403s requests carrying that Origin.
+//
+// The Sec-Fetch-* trio is deliberately LEFT INTACT. Earlier versions removed it
+// too (it marks a cross-site programmatic fetch, which Reddit once rejected for
+// these pages), but as of 2026-09-03 the opposite holds: a Chrome User-Agent
+// with no Sec-Fetch headers is a fingerprint no real browser produces, and
+// Reddit's WAF answers it with the "blocked by network security" 403 page.
+// Verified from the built extension's service worker against live Reddit:
+// origin+sec-fetch stripped → 403 block page for both the solved profile page
+// and /api/info; origin-only stripped → 200 with real content for both.
 // Uses declarativeNetRequest (Chrome/Edge MV3); Firefox uses the webRequest
 // handler above. Session rules (not dynamic) because the tabIds condition is
 // session-rule-only; the service worker re-registers them on every start.
 ;(() => {
     const dnr = (chrome as any).declarativeNetRequest
     if (!dnr?.updateSessionRules) return
-    const stripHeaders = [
-        { header: 'origin', operation: 'remove' },
-        { header: 'sec-fetch-site', operation: 'remove' },
-        { header: 'sec-fetch-mode', operation: 'remove' },
-        { header: 'sec-fetch-dest', operation: 'remove' },
-    ]
+    const stripHeaders = [{ header: 'origin', operation: 'remove' }]
     const makeRule = (id: number, urlFilter: string) => ({
         id,
         priority: 1,
@@ -292,7 +294,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         return true
     } else if (request.action === 'get-from-old') {
         // Unauthenticated old.reddit.com thread page — dying endpoint, gated
-        throwIfLegacyDisabled('old.reddit.com post page')
+        throwIfLegacyDisabled('legacy reddit post page')
             .then(() => getPost_fromOld(request.path))
             .then(data => {
                 sendResponse(data)
@@ -308,11 +310,16 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         // text back to the content script to parse.
         // Use the explicit path if provided (e.g. /user/X/comments?sort=new),
         // otherwise fall back to the overview for backward compatibility.
-        const url = request.path
-            ? `https://old.reddit.com${request.path}`
-            : `https://old.reddit.com/user/${encodeURIComponent(request.username)}${request.qs || ''}`
-        throwIfLegacyDisabled('old.reddit.com userpage HTML')
-            .then(() => fetch(url, { credentials: 'omit' }))
+        const path = request.path
+            ? String(request.path)
+            : `/user/${encodeURIComponent(request.username)}${request.qs || ''}`
+        let url = ''
+        throwIfLegacyDisabled('legacy reddit userpage HTML')
+            .then(() => getLegacyBase())
+            .then(base => {
+                url = base + path
+                return fetch(url, { credentials: 'omit' })
+            })
             .then(async r => {
                 console.log(`[reveddit] bg fetch-userpage-html ${url} -> ${r.status}`)
                 const text = r.ok ? await r.text() : ''
@@ -468,7 +475,7 @@ chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResp
     switch (message.action) {
         case 'fetch-old':
             // Unauthenticated old.reddit.com user page HTML — dying endpoint, gated
-            throwIfLegacyDisabled('old.reddit.com HTML')
+            throwIfLegacyDisabled('legacy reddit HTML')
                 .then(() => getItems_fromOld(message.path))
                 .then(data => {
                     sendResponse({ data })

@@ -39,6 +39,16 @@ const challengePage =
     `<input type="hidden" name="js_challenge" value="1"/></form>` +
     `<script>document.cookie; const solution = await(async e=>e+e)("dbl");</script></body>`
 
+// Shape served since 2026-08-31: hidden GET form, token renamed jsc_token, plus
+// an (empty) jsc_orig_r field that must be echoed back.
+const challengePageJsc =
+    `<script nonce="n">const solution = await(async e=>e+e)("c0d4");</script>` +
+    `<form hidden method="GET" action="/user/x/comments/">` +
+    `<input type="hidden" name="solution" />` +
+    `<input type="hidden" name="js_challenge" value="1"/>` +
+    `<input type="hidden" name="jsc_token" value="7afd7253"/>` +
+    `<input type="hidden" name="jsc_orig_r" value=""/></form>`
+
 describe('parseProfileHtml', () => {
     it('extracts comment ids from thing-id attributes and action rows', () => {
         const html =
@@ -89,6 +99,19 @@ describe('solveChallenge', () => {
 
     it('returns null for non-challenge pages', () => {
         expect(solveChallenge('<html>regular page</html>', 'https://www.reddit.com/')).toBe(null)
+    })
+
+    it('solves the jsc_token form shape and echoes jsc_orig_r', () => {
+        const url = solveChallenge(challengePageJsc, 'https://www.reddit.com/user/x/comments/?sort=new')
+        expect(url).toBe(
+            'https://www.reddit.com/user/x/comments/?sort=new&solution=c0d4c0d4&js_challenge=1' +
+                '&jsc_token=7afd7253&jsc_orig_r=',
+        )
+    })
+
+    it('returns null when the puzzle is present but no token field is', () => {
+        const noToken = challengePageJsc.replace(/<input[^>]*jsc_token[^>]*>/, '')
+        expect(solveChallenge(noToken, 'https://www.reddit.com/user/x/comments/')).toBe(null)
     })
 })
 

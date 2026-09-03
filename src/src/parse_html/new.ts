@@ -251,18 +251,48 @@ export const classifyCommentPage = (html: string, commentId: string): CommentPag
 // solution string in await(async e=>e+e)("..."), token in a hidden input.
 // Best-effort fallback for background-worker fetches — the primary content
 // script path is verified to never receive it.
+//
+// Two page shapes exist. The original form carried the token as
+// name="token". Since 2026-08-31 reddit serves a hidden GET form with
+// name="jsc_token" plus a "jsc_orig_r" field (empty in the wild); the solved
+// request must echo each field under its own name or reddit re-serves the
+// challenge. Verified live 2026-09-03: the jsc_token shape solved this way
+// returns the real profile page (thing-ids + cursors) from a challenged IP.
+const CHALLENGE_TOKEN_FIELDS = ['jsc_token', 'token']
 export const solveChallenge = (html: string, originalUrl: string): string | null => {
     if (!CHALLENGE_REGEX.test(html)) {
         return null
     }
     const stringMatch = html.match(/await\(async e=>e\+e\)\("([^"]*)"\)/)
-    const tokenMatch = html.match(/<input[^>]*\bname="token"[^>]*\bvalue="([^"]*)"/)
-    if (!stringMatch || !tokenMatch) {
+    if (!stringMatch) {
+        return null
+    }
+    const hiddenInput = (name: string): string | null => {
+        const m = html.match(new RegExp(`<input[^>]*\\bname="${name}"[^>]*\\bvalue="([^"]*)"`))
+        return m ? m[1] : null
+    }
+    let tokenField: string | null = null
+    let token: string | null = null
+    for (const field of CHALLENGE_TOKEN_FIELDS) {
+        token = hiddenInput(field)
+        if (token !== null) {
+            tokenField = field
+            break
+        }
+    }
+    if (tokenField === null || token === null) {
         return null
     }
     const solution = stringMatch[1] + stringMatch[1]
     const sep = originalUrl.includes('?') ? '&' : '?'
-    return `${originalUrl}${sep}solution=${encodeURIComponent(solution)}&js_challenge=1&token=${encodeURIComponent(tokenMatch[1])}`
+    let solved =
+        `${originalUrl}${sep}solution=${encodeURIComponent(solution)}` +
+        `&js_challenge=1&${tokenField}=${encodeURIComponent(token)}`
+    const origR = hiddenInput('jsc_orig_r')
+    if (origR !== null) {
+        solved += `&jsc_orig_r=${encodeURIComponent(origR)}`
+    }
+    return solved
 }
 
 // Compact page-shape line for the diagnostic log: enough to tell a challenge

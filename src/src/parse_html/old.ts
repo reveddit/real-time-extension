@@ -1,4 +1,4 @@
-import { consume, oldReddit, redditHTMLRequestOptions, fetchWithTimeout, ErrorCollector } from './common'
+import { consume, getLegacyBase, redditHTMLRequestOptions, fetchWithTimeout, ErrorCollector } from './common'
 import { DOMParser } from 'linkedom/worker'
 import TurndownService from 'turndown'
 import { HTMLRewriter } from '@worker-tools/html-rewriter'
@@ -478,6 +478,17 @@ class MetaRobots extends ErrorCollector {
     }
 }
 
+class ThingCounter extends ErrorCollector {
+    count: number
+    constructor(url: string) {
+        super(url)
+        this.count = 0
+    }
+    element(_element: any) {
+        this.count++
+    }
+}
+
 class ThreadPageAuthor extends ErrorCollector {
     author: string
     constructor(url: string) {
@@ -490,7 +501,7 @@ class ThreadPageAuthor extends ErrorCollector {
 }
 
 export const getItems_fromOld = async (path: string) => {
-    const url = oldReddit + path
+    const url = (await getLegacyBase()) + path
 
     const response = await fetchWithTimeout(url, redditHTMLRequestOptions)
     if (!response.ok) {
@@ -538,7 +549,7 @@ export const getItems_fromOld = async (path: string) => {
 }
 
 const getCommentsInfo_fromOld = async (ids: string[]) => {
-    const url = oldReddit + '/api/info?id=' + ids.join(',')
+    const url = (await getLegacyBase()) + '/api/info?id=' + ids.join(',')
     const response = await fetch(url, { ...redditHTMLRequestOptions, credentials: 'omit' })
     if (!response.ok) {
         console.error('request failed:', url)
@@ -576,10 +587,10 @@ export const getItemsById_fromOldHTML = async (
         addToPendingPostQueue(postIds)
     }
 
-    const url = oldReddit + '/api/info?id=' + idsArray.join(',')
+    const url = (await getLegacyBase()) + '/api/info?id=' + idsArray.join(',')
     const response = await fetch(url, { ...redditHTMLRequestOptions, credentials: 'omit' })
     if (!response.ok) {
-        throw new Error(`old.reddit.com HTML request failed: ${response.status}`)
+        throw new Error(`legacy reddit HTML request failed: ${response.status}`)
     }
     const itemsObj = new Items(url)
     const rewriter = new HTMLRewriter()
@@ -604,17 +615,26 @@ export const getItemsById_fromOldHTML = async (
 }
 
 export const getPost_fromOld = async (path: string) => {
-    const url = oldReddit + path
+    const url = (await getLegacyBase()) + path
     const response = await fetchWithTimeout(url, redditHTMLRequestOptions)
     if (!response.ok) {
         return { error: 'request failed' }
     }
     const metaRobotsObj = new MetaRobots(url)
     const authorObj = new ThreadPageAuthor(url)
+    const thingsObj = new ThingCounter(url)
     const rewriter = new HTMLRewriter()
         .on('meta[name="robots"][content="noindex,nofollow"]', metaRobotsObj)
         .on('#siteTable .thing .tagline span', authorObj)
+        .on('#siteTable .thing', thingsObj)
     await consume(rewriter.transform(response).body!)
+    if (thingsObj.count === 0) {
+        // Not a legacy thread page: on www a post route without the
+        // redesign_optout cookie serves the Shreddit JS challenge, and a login
+        // wall serves a form. Neither carries the meta-robots removal signal, so
+        // "not removed" would be a false live verdict — report no page instead.
+        return { error: 'unrecognized page (no thread things)' }
+    }
     return {
         is_removed: metaRobotsObj.is_removed,
         ...(authorObj.author && { author: authorObj.author }),

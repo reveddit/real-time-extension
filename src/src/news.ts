@@ -30,7 +30,15 @@ export interface NewsMessage {
 export type RemoteMechanismState = 'auto' | 'on' | 'off'
 export interface RemoteOptions {
     mechanisms: Record<string, RemoteMechanismState>
+    // Host that serves reddit's legacy (pre-Shreddit) HTML logged out. Set to
+    // www.reddit.com on 2026-08-31 when old.reddit.com began requiring login
+    // while the same renderer stayed reachable on www for legacy-only routes
+    // (/api/info?id=, and user/post pages with the redesign_optout cookie).
+    // Allowlisted: only LEGACY_HOSTS values survive sanitization.
+    legacy_host?: string
 }
+export const LEGACY_HOSTS = ['www.reddit.com', 'old.reddit.com'] as const
+export const LEGACY_HOST_DEFAULT = 'www.reddit.com'
 // The unauthenticated legacy paths (old.reddit HTML, unauth www .json). Flip to
 // 'off' once Reddit's deprecation actually lands, to stop the doomed attempts.
 export const MECHANISM_LEGACY = 'legacyOldReddit'
@@ -191,6 +199,14 @@ export const getRemoteMechanism = async (name: string): Promise<RemoteMechanismS
     return value === 'on' || value === 'off' ? value : 'auto'
 }
 
+// Legacy-HTML host from the cached feed, else the compiled default. Lets the
+// host move again without a store republish.
+export const getRemoteLegacyHost = async (): Promise<string> => {
+    const cache = await getCachedNews()
+    const value = cache?.feed?.options?.legacy_host
+    return (LEGACY_HOSTS as readonly string[]).includes(value || '') ? (value as string) : LEGACY_HOST_DEFAULT
+}
+
 // Resolution for a three-state mechanism switch, returning whether the mechanism
 // is DISABLED: an explicit dev override wins, then the remote state ('off' →
 // disabled, 'on' → enabled), then the compiled default. Pure, for testability.
@@ -250,7 +266,12 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
                     ...(isValidVersion(m.min_version) ? { min_version: m.min_version } : {}),
                     ...(isValidVersion(m.max_version) ? { max_version: m.max_version } : {}),
                 })),
-            options: { mechanisms },
+            options: {
+                mechanisms,
+                ...((LEGACY_HOSTS as readonly string[]).includes((feed.options as any)?.legacy_host)
+                    ? { legacy_host: (feed.options as any).legacy_host }
+                    : {}),
+            },
             ...(isValidVersion(feed.latest_version) ? { latest_version: feed.latest_version } : {}),
             ...(Number(feed.latest_version_published_utc) > 0
                 ? { latest_version_published_utc: Number(feed.latest_version_published_utc) }

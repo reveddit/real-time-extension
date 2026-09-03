@@ -963,7 +963,7 @@ const lookupItemsByID_legacy = (
     monitor_quarantined_remote: boolean,
     ids: string | string[],
 ) => {
-    return throwIfLegacyDisabled('old.reddit.com HTML')
+    return throwIfLegacyDisabled('legacy reddit HTML')
         .then(() => getItemsById_fromOldHTML(ids, addToPendingPostQueue))
         .then(result => {
             clearRateLimitBackoff()
