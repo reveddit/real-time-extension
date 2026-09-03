@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { setChallengeConfig, resetChallengeConfig, sanitizeChallengeConfig } from '../../src/src/challenge-config'
 
 import {
     parseProfileHtml,
@@ -117,9 +118,7 @@ describe('solveChallenge', () => {
 
 describe('url builders', () => {
     it('builds tab and partial urls', () => {
-        expect(buildTabUrl('some_user', 'comments')).toBe(
-            'https://www.reddit.com/user/some_user/comments/?sort=new',
-        )
+        expect(buildTabUrl('some_user', 'comments')).toBe('https://www.reddit.com/user/some_user/comments/?sort=new')
         expect(buildTabUrl('some_user', 'posts')).toBe('https://www.reddit.com/user/some_user/submitted/?sort=new')
         expect(buildPartialUrl('some_user', 'comments', 'dDFfYWJj=')).toBe(
             'https://www.reddit.com/svc/shreddit/profiles/profile_comments-more-posts/new/' +
@@ -162,10 +161,7 @@ describe('classifyPostPage', () => {
 
     it('ignores banner-like phrases in the comments below the post', () => {
         const html = postPage('') // live post
-        const withComment = html.replace(
-            'unrelated comment text',
-            'my comment was removed by the moderators once',
-        )
+        const withComment = html.replace('unrelated comment text', 'my comment was removed by the moderators once')
         expect(classifyPostPage(withComment).status).toBe('live')
     })
 

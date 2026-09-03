@@ -565,6 +565,7 @@ const legacyTiebreakAbsent = async (
     canaryCommentIds: string[],
     verdicts: Record<string, PostPageStatus>,
     record: (id: string, v: Exclude<PostPageStatus, 'unknown'>) => void,
+    authItemsMeta: AuthItemsMeta = {},
 ): Promise<void> => {
     const unresolved = ids.filter(id => !(id in verdicts))
     if (!unresolved.length || (await isLegacyDisabled())) {
@@ -620,7 +621,11 @@ const legacyTiebreakAbsent = async (
         }
         postFetches++
         try {
-            const page = (await _legacyLookups.postByPath('/comments/' + id.substring(3) + '/')) as any
+            // Canonical permalink when the auth view supplied one: /comments/<id>/
+            // 301s to it, and the redirect drops the legacy cookie marker.
+            const permalink = authItemsMeta[id]?.permalink
+            const path = permalink && permalink.startsWith('/r/') ? permalink : '/comments/' + id.substring(3) + '/'
+            const page = (await _legacyLookups.postByPath(path)) as any
             if (page && !page.error) {
                 record(id, page.is_removed ? 'removed' : 'live')
             } else {
@@ -705,12 +710,18 @@ export const verifyFeedAbsentItems = async (
         }
     }
     let cacheMutated = fetched > 0
-    await legacyTiebreakAbsent(ids, canaryCommentIds, verdicts, (id, v) => {
-        verdicts[id] = v
-        cache[id] = { v, t: nowMs }
-        cacheMutated = true
-        freshDefinitive++
-    })
+    await legacyTiebreakAbsent(
+        ids,
+        canaryCommentIds,
+        verdicts,
+        (id, v) => {
+            verdicts[id] = v
+            cache[id] = { v, t: nowMs }
+            cacheMutated = true
+            freshDefinitive++
+        },
+        authItemsMeta,
+    )
     if (fetched > 0 || recentUnknownSkipped > 0) {
         dlog(
             'verify',

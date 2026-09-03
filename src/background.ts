@@ -30,10 +30,10 @@ import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
 import { getItems_fromOld, getPost_fromOld } from './src/parse_html/old'
 import { handleBridgeFetch } from './src/bridge'
-import { fetchNews, getCachedNews } from './src/news'
+import { applyRemoteChallengeConfig, fetchNews, getCachedNews } from './src/news'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs } from './src/storage'
-import { getLegacyBase } from './src/parse_html/common'
+import { getLegacyBase, legacyPageUrl, LEGACY_PAGE_MARKER } from './src/parse_html/common'
 
 // The background context is the diagnostic log's single writer — see diaglog.ts.
 initDiagPersistence()
@@ -88,6 +88,18 @@ if (__BUILT_FOR__ !== 'chrome') {
 
     browser.webRequest.onBeforeSendHeaders.addListener(
         function (details) {
+            // Legacy user/post pages on www: background requests carrying the
+            // legacy marker get the redesign_optout cookie (see the DNR rule
+            // below for Chrome/Edge and parse_html/common.ts legacyPageUrl).
+            if (
+                details.tabId === -1 &&
+                details.url.startsWith('https://www.reddit.com/') &&
+                details.url.includes(LEGACY_PAGE_MARKER)
+            ) {
+                const headers = (details.requestHeaders || []).filter(h => h.name.toLowerCase() !== 'cookie')
+                headers.push({ name: 'Cookie', value: 'redesign_optout=true; over18=1' })
+                return { requestHeaders: headers }
+            }
             //chrome uses details.initiator, but since chrome doesn't support webRequest anymore,
             //only need to check the value supported by firefox
             if (
@@ -117,7 +129,7 @@ if (__BUILT_FOR__ !== 'chrome') {
             return { requestHeaders: details.requestHeaders }
         },
         {
-            urls: ['https://oauth.reddit.com/*.json*', 'https://*.reddit.com/api/info*'],
+            urls: ['https://oauth.reddit.com/*.json*', 'https://*.reddit.com/api/info*', 'https://www.reddit.com/*'],
         },
         opt_extraInfoSpec,
     )
@@ -158,11 +170,29 @@ if (__BUILT_FOR__ !== 'chrome') {
             tabIds: [-1],
         },
     })
+    // Legacy user/post pages on www render old markup only with the
+    // redesign_optout cookie; without it the Shreddit challenge comes back.
+    // fetch() cannot set Cookie, so set it here for background requests that
+    // carry the legacy marker (parse_html/common.ts legacyPageUrl). Scoped to
+    // tabId -1 like the strip rules, so it never touches the user's browsing.
+    const cookieRule = {
+        id: 9003,
+        priority: 2,
+        action: {
+            type: 'modifyHeaders',
+            requestHeaders: [{ header: 'cookie', operation: 'set', value: 'redesign_optout=true; over18=1' }],
+        },
+        condition: {
+            regexFilter: '^https://www\\.reddit\\.com/.*[?&]' + LEGACY_PAGE_MARKER,
+            resourceTypes: ['xmlhttprequest', 'other'],
+            tabIds: [-1],
+        },
+    }
     // Prior versions persisted 9001 as a dynamic rule (no tab scoping) — clean it up
     dnr.updateDynamicRules({ removeRuleIds: [9001, 9002] }).catch(() => {})
     dnr.updateSessionRules({
-        removeRuleIds: [9001, 9002],
-        addRules: [makeRule(9001, '||old.reddit.com/'), makeRule(9002, '||www.reddit.com/')],
+        removeRuleIds: [9001, 9002, 9003],
+        addRules: [makeRule(9001, '||old.reddit.com/'), makeRule(9002, '||www.reddit.com/'), cookieRule],
     })
         .then(() => console.log('[reveddit] DNR header-strip rules installed for old+www reddit'))
         .catch((e: any) => console.log('[reveddit] DNR rule setup failed:', e?.message || e))
@@ -317,7 +347,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         throwIfLegacyDisabled('legacy reddit userpage HTML')
             .then(() => getLegacyBase())
             .then(base => {
-                url = base + path
+                url = legacyPageUrl(base, path)
                 return fetch(url, { credentials: 'omit' })
             })
             .then(async r => {
@@ -608,6 +638,7 @@ chrome.runtime.onInstalled.addListener(function (details) {
         }
         // Refresh the news feed cache on update.
         fetchNews({ force: true }).catch(() => {})
+        applyRemoteChallengeConfig().catch(() => {})
     }
 })
 

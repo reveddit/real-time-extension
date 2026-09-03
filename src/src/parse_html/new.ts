@@ -23,6 +23,7 @@
 // - empty profiles show "u/<name> doesn't have any posts/comments yet"
 
 import { newReddit } from './common'
+import { getChallengeConfig } from '../challenge-config'
 
 export interface PublicItem {
     name: string
@@ -258,13 +259,22 @@ export const classifyCommentPage = (html: string, commentId: string): CommentPag
 // request must echo each field under its own name or reddit re-serves the
 // challenge. Verified live 2026-09-03: the jsc_token shape solved this way
 // returns the real profile page (thing-ids + cursors) from a challenged IP.
-const CHALLENGE_TOKEN_FIELDS = ['jsc_token', 'token']
+// Field names and the puzzle regex come from challenge-config.ts (defaults
+// there; overridable from the news feed).
 export const solveChallenge = (html: string, originalUrl: string): string | null => {
     if (!CHALLENGE_REGEX.test(html)) {
         return null
     }
-    const stringMatch = html.match(/await\(async e=>e\+e\)\("([^"]*)"\)/)
-    if (!stringMatch) {
+    const config = getChallengeConfig()
+    const matchSolution = (): RegExpMatchArray | null => {
+        try {
+            return html.match(new RegExp(config.solutionRegex))
+        } catch {
+            return null
+        }
+    }
+    const stringMatch = matchSolution()
+    if (!stringMatch || stringMatch[1] === undefined) {
         return null
     }
     const hiddenInput = (name: string): string | null => {
@@ -273,7 +283,7 @@ export const solveChallenge = (html: string, originalUrl: string): string | null
     }
     let tokenField: string | null = null
     let token: string | null = null
-    for (const field of CHALLENGE_TOKEN_FIELDS) {
+    for (const field of config.tokenFields) {
         token = hiddenInput(field)
         if (token !== null) {
             tokenField = field

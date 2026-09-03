@@ -378,18 +378,11 @@ export async function fetchUserPageHTML(username: string, sort = 'new', comments
     const subpath = commentsOnly ? '/comments' : ''
     const qs = sort && sort !== 'new' ? `?sort=${encodeURIComponent(sort)}` : ''
     const path = `/user/${encodeURIComponent(username)}${subpath}${qs}`
-    let html: string
-    if (location.hostname === 'old.reddit.com') {
-        // Unauthenticated (credentials omitted) old.reddit fetch — dying endpoint, gated
-        await throwIfLegacyDisabled('legacy reddit userpage HTML')
-        const url = `https://old.reddit.com${path}`
-        const response = await fetch(url, { credentials: 'omit' })
-        if (!response.ok) throw new Error(`User page fetch failed: ${response.status}`)
-        html = await response.text()
-        console.log(`[reveddit scan] user-page direct fetch ok (${html.length} bytes)`)
-    } else {
-        html = await fetchUserPageHTMLViaBackground(username, path)
-    }
+    // Always via the background: old.reddit.com login-walls logged-out requests
+    // since 2026-08-31, so the same-origin fetch that used to work from an
+    // old.reddit tab now returns a login form. The background fetches the
+    // legacy page from www with the redesign_optout cookie injected.
+    const html = await fetchUserPageHTMLViaBackground(username, path)
     return parseUserPageHTML(html)
 }
 

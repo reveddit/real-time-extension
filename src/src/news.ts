@@ -4,6 +4,7 @@
 // empty; when messages are added, the popup renders them in a banner.
 
 import { dlog } from './diaglog'
+import { sanitizeChallengeConfig, setChallengeConfig, ChallengeConfig } from './challenge-config'
 
 export const NEWS_URL = 'https://www.reveddit.com/extension-news.json'
 export const NEWS_CACHE_KEY = 'news_cache'
@@ -36,6 +37,10 @@ export interface RemoteOptions {
     // (/api/info?id=, and user/post pages with the redesign_optout cookie).
     // Allowlisted: only LEGACY_HOSTS values survive sanitization.
     legacy_host?: string
+    // Solver inputs for the logged-out challenge page (challenge-config.ts):
+    // { token_fields: string[], solution_regex: string }. Sanitized field by
+    // field; stored in camelCase.
+    challenge?: Partial<ChallengeConfig>
 }
 export const LEGACY_HOSTS = ['www.reddit.com', 'old.reddit.com'] as const
 export const LEGACY_HOST_DEFAULT = 'www.reddit.com'
@@ -199,6 +204,13 @@ export const getRemoteMechanism = async (name: string): Promise<RemoteMechanismS
     return value === 'on' || value === 'off' ? value : 'auto'
 }
 
+// Push the cached feed's solver inputs into challenge-config.ts. Called on
+// service-worker start (the cache outlives the worker; the module does not).
+export const applyRemoteChallengeConfig = async (): Promise<void> => {
+    const cache = await getCachedNews()
+    setChallengeConfig(cache?.feed?.options?.challenge || {})
+}
+
 // Legacy-HTML host from the cached feed, else the compiled default. Lets the
 // host move again without a store republish.
 export const getRemoteLegacyHost = async (): Promise<string> => {
@@ -248,6 +260,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
                 }
             }
         }
+        const challenge = sanitizeChallengeConfig((feed.options as any)?.challenge)
         const sanitized: NewsFeed = {
             messages: feed.messages
                 .filter(
@@ -271,6 +284,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
                 ...((LEGACY_HOSTS as readonly string[]).includes((feed.options as any)?.legacy_host)
                     ? { legacy_host: (feed.options as any).legacy_host }
                     : {}),
+                ...(Object.keys(challenge).length ? { challenge } : {}),
             },
             ...(isValidVersion(feed.latest_version) ? { latest_version: feed.latest_version } : {}),
             ...(Number(feed.latest_version_published_utc) > 0
@@ -279,6 +293,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
         }
         const newCache: NewsCache = { feed: sanitized, lastFetched: now }
         chrome.storage.local.set({ [NEWS_CACHE_KEY]: newCache })
+        setChallengeConfig(challenge)
         dlog(
             'news',
             `[reveddit] news fetch ok: ${sanitized.messages.length} messages, mechanisms=${JSON.stringify(mechanisms)}`,

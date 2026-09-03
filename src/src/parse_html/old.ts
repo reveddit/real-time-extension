@@ -1,4 +1,11 @@
-import { consume, getLegacyBase, redditHTMLRequestOptions, fetchWithTimeout, ErrorCollector } from './common'
+import {
+    consume,
+    getLegacyBase,
+    legacyPageUrl,
+    redditHTMLRequestOptions,
+    fetchWithTimeout,
+    ErrorCollector,
+} from './common'
 import { DOMParser } from 'linkedom/worker'
 import TurndownService from 'turndown'
 import { HTMLRewriter } from '@worker-tools/html-rewriter'
@@ -501,7 +508,7 @@ class ThreadPageAuthor extends ErrorCollector {
 }
 
 export const getItems_fromOld = async (path: string) => {
-    const url = (await getLegacyBase()) + path
+    const url = legacyPageUrl(await getLegacyBase(), path)
 
     const response = await fetchWithTimeout(url, redditHTMLRequestOptions)
     if (!response.ok) {
@@ -614,8 +621,10 @@ export const getItemsById_fromOldHTML = async (
     return itemsObj.items.filter(item => !item.name || !item.name.startsWith('t3_')).map(item => ({ data: item }))
 }
 
+// `path` should be the canonical /r/<sub>/comments/<id>/<slug>/ form when
+// known: /comments/<id>/ 301s to it and the redirect drops the cookie marker.
 export const getPost_fromOld = async (path: string) => {
-    const url = (await getLegacyBase()) + path
+    const url = legacyPageUrl(await getLegacyBase(), path)
     const response = await fetchWithTimeout(url, redditHTMLRequestOptions)
     if (!response.ok) {
         return { error: 'request failed' }

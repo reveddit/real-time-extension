@@ -20,6 +20,15 @@ export const newReddit = 'https://www.reddit.com'
 // so the legacy parsers keep working with just the host swapped. The host is
 // remotely adjustable via the news feed (news.ts legacy_host) so the next move
 // needs no store republish.
+// Legacy user and post pages on www need the redesign_optout cookie or the
+// Shreddit challenge comes back instead. The extension can't set a Cookie
+// header from fetch(), so background.ts injects it (DNR on Chrome/Edge,
+// webRequest on Firefox) on background requests carrying this query marker.
+// /api/info needs no cookie and carries no marker.
+export const LEGACY_PAGE_MARKER = 'rv_legacy=1'
+export const legacyPageUrl = (base: string, path: string): string =>
+    base + path + (path.includes('?') ? '&' : '?') + LEGACY_PAGE_MARKER
+
 export const getLegacyBase = async (): Promise<string> => {
     try {
         return 'https://' + (await getRemoteLegacyHost())
