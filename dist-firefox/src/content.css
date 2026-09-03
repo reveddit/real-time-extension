@@ -309,14 +309,28 @@
     line-height: 1;
     font-family: Arial, sans-serif;
 }
-a.rev-note-mark-jump {
+/* Old reddit styles links in the button row itself (ul.buttons li a: gray,
+   bold, padded), which out-specifies the badge and left a gray "!" on a red
+   dot. Force the badge's own look wherever it lands. */
+a.rev-note-mark-jump,
+.flat-list a.rev-note-mark-jump,
+ul.buttons li a.rev-note-mark-jump,
+.rev-own-mark {
     cursor: pointer;
-    text-decoration: none;
-    color: #fff;
+    text-decoration: none !important;
+    color: #fff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    line-height: 1 !important;
+    text-transform: none !important;
 }
-a.rev-note-mark-jump:hover {
+a.rev-note-mark-jump:hover,
+a.rev-note-mark-jump:visited {
     filter: brightness(1.12);
-    text-decoration: none;
+    text-decoration: none !important;
+    color: #fff !important;
 }
 /* Own-profile note sits under the filter bar, same margins as the bar. */
 .rev-own-note {
