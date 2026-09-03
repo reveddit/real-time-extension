@@ -7,7 +7,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect } from 'vitest'
 
-import { validateBridgeUrl, computeBridgeBudget } from '../../src/src/bridge.ts'
+import { validateBridgeUrl, computeBridgeBudget, bridgeRequestUrl, BRIDGE_MARKER } from '../../src/src/bridge.ts'
 import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/requests.ts'
 
 describe('validateBridgeUrl', () => {
@@ -56,5 +56,28 @@ describe('computeBridgeBudget', () => {
         const normal = computeBridgeBudget(null)
         expect(computeBridgeBudget(RECENT_RATE_LIMIT_WINDOW_MS + 1)).toBe(normal)
         expect(computeBridgeBudget(RECENT_RATE_LIMIT_WINDOW_MS - 1)).toBe(Math.floor(normal / 2))
+    })
+})
+
+// The loid cookie is injected only on requests carrying the bridge marker
+// (DNR rule on Chrome/Edge, webRequest on Firefox), so every bridge fetch must
+// carry it and the marker must survive validateBridgeUrl's normalization.
+describe('bridgeRequestUrl', () => {
+    it('appends the marker to URLs with and without a query', () => {
+        expect(bridgeRequestUrl('https://www.reddit.com/api/info.json?id=t3_abc')).toBe(
+            'https://www.reddit.com/api/info.json?id=t3_abc&' + BRIDGE_MARKER,
+        )
+        expect(bridgeRequestUrl('https://www.reddit.com/user/spez/about.json')).toBe(
+            'https://www.reddit.com/user/spez/about.json?' + BRIDGE_MARKER,
+        )
+    })
+    it('matches the header rules the same way on both browsers', () => {
+        const marked = bridgeRequestUrl(
+            validateBridgeUrl('https://www.reddit.com/r/sub/new.json?limit=100&jsonp=cb_1')!,
+        )
+        // Chrome DNR regexFilter (bridge.ts) and Firefox match pattern
+        // 'https://www.reddit.com/*rv_bridge=1' (background.ts) both test the query
+        expect(marked).toMatch(new RegExp('^https://www\\.reddit\\.com/.*[?&]' + BRIDGE_MARKER))
+        expect(marked.endsWith(BRIDGE_MARKER)).toBe(true)
     })
 })

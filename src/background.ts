@@ -29,7 +29,7 @@ import {
 import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
 import { getItems_fromOld, getPost_fromOld, getInfoById_fromLegacyHTML } from './src/parse_html/old'
-import { handleBridgeFetch } from './src/bridge'
+import { handleBridgeFetch, BRIDGE_MARKER, getBridgeLoid } from './src/bridge'
 import { applyRemoteChallengeConfig, fetchNews, getCachedNews } from './src/news'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs } from './src/storage'
@@ -88,6 +88,22 @@ if (__BUILT_FOR__ !== 'chrome') {
 
     browser.webRequest.onBeforeSendHeaders.addListener(
         function (details) {
+            // Bridge fetches for reveddit.com pages: reddit's edge 403s
+            // cookie-less .json requests, and the browser's own loid (device
+            // id, no session) is the one cookie that passes. See bridge.ts
+            // refreshBridgeIdentity; the DNR rule there covers Chrome/Edge.
+            if (
+                details.tabId === -1 &&
+                details.url.startsWith('https://www.reddit.com/') &&
+                details.url.includes(BRIDGE_MARKER)
+            ) {
+                const loid = getBridgeLoid()
+                const headers = (details.requestHeaders || []).filter(h => h.name.toLowerCase() !== 'cookie')
+                if (loid) {
+                    headers.push({ name: 'Cookie', value: `loid=${loid}` })
+                }
+                return { requestHeaders: headers }
+            }
             // Legacy user/post pages on www: background requests carrying the
             // legacy marker get the redesign_optout cookie (see the DNR rule
             // below for Chrome/Edge and parse_html/common.ts legacyPageUrl).
@@ -129,14 +145,15 @@ if (__BUILT_FOR__ !== 'chrome') {
             return { requestHeaders: details.requestHeaders }
         },
         {
-            // The last pattern is the legacy-page marker (match patterns test
-            // the query string too); keeping this list narrow matters because
+            // The last two patterns are the legacy-page and bridge markers (match
+            // patterns test the query string too); keeping this list narrow matters because
             // the listener is blocking and would otherwise run on every request
             // the user's own reddit tabs make.
             urls: [
                 'https://oauth.reddit.com/*.json*',
                 'https://*.reddit.com/api/info*',
                 'https://www.reddit.com/*rv_legacy=1',
+                'https://www.reddit.com/*rv_bridge=1',
             ],
         },
         opt_extraInfoSpec,
