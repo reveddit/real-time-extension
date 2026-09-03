@@ -1126,15 +1126,22 @@ async function handleProfileScan(username: string, container: HTMLElement) {
     // Say so once, at the top, rather than next to every link.
     const note = document.createElement('div')
     note.className = 'rev-scan-note'
-    note.textContent =
-        'Note: reddit shows you your own removed content as if it were still up, so these links ' +
-        'will look normal while you are logged in. To see what everyone else sees, open a link in a ' +
+    note.appendChild(createNoteMark(false))
+    const noteText = document.createElement('span')
+    noteText.textContent =
+        'Reddit shows you your own removed content as if it were still up, so these links will ' +
+        'look normal while you are logged in. To see what everyone else sees, open a link in a ' +
         'private/incognito window or while logged in as another account.'
+    note.appendChild(noteText)
     resultsEl.appendChild(note)
 
     const isNewReddit = detectIsNewReddit()
     const matched = highlightVisibleRemovedComments(results, isNewReddit)
-    const inserted = insertMissingComments(results, matched, isNewReddit)
+    // Only the scanned account's own session sees its removed content as live,
+    // so the jump badge next to links is shown only to that account.
+    const viewer = await getLastLoggedInUser()
+    const isOwnProfile = !!viewer && viewer.toLowerCase() === username.toLowerCase()
+    const inserted = insertMissingComments(results, matched, isNewReddit, isOwnProfile)
 
     renderFilterControls(resultsEl, results)
     applyFilter(currentFilter)
@@ -1147,7 +1154,7 @@ async function handleProfileScan(username: string, container: HTMLElement) {
         header.textContent = `${unplaced.length} removed item(s) from other pages:`
         resultsEl.appendChild(header)
         for (const item of unplaced) {
-            resultsEl.appendChild(createScanResultItem(item))
+            resultsEl.appendChild(createScanResultItem(item, isOwnProfile))
         }
     }
 }
@@ -1271,7 +1278,12 @@ function getVisibleItemPositions(isNewReddit: boolean): VisibleItem[] {
     return items
 }
 
-function insertMissingComments(results: ScanResult[], alreadyMatched: Set<string>, isNewReddit: boolean): Set<string> {
+function insertMissingComments(
+    results: ScanResult[],
+    alreadyMatched: Set<string>,
+    isNewReddit: boolean,
+    showOwnViewMark = false,
+): Set<string> {
     const inserted = new Set<string>()
     const missing = results.filter(r => !alreadyMatched.has(r.id))
     if (missing.length === 0) return inserted
@@ -1284,7 +1296,7 @@ function insertMissingComments(results: ScanResult[], alreadyMatched: Set<string
     for (const item of missing) {
         const position = findInsertPosition(item, visibleItems, currentSort)
         if (position) {
-            const el = createInlineItem(item, isNewReddit)
+            const el = createInlineItem(item, isNewReddit, showOwnViewMark)
             position.element.insertAdjacentElement(position.where, el)
             inserted.add(item.id)
         }
@@ -1319,7 +1331,7 @@ function findInsertPosition(
     }
 }
 
-function createInlineItem(item: ScanResult, isNewReddit: boolean): HTMLElement {
+function createInlineItem(item: ScanResult, isNewReddit: boolean, showOwnViewMark = false): HTMLElement {
     const el = document.createElement(isNewReddit ? 'article' : 'div')
     el.className = 'rev-inserted-comment rev-removed-highlight'
     el.setAttribute('data-rev-id', item.id)
@@ -1357,13 +1369,19 @@ function createInlineItem(item: ScanResult, isNewReddit: boolean): HTMLElement {
     link.className = 'rev-scan-item-link'
     link.href = `https://www.reddit.com${item.permalink}${item.type === 'post' ? '' : '?context=3'}`
     link.target = '_blank'
-    link.title = 'Shows your own view. Open in a private window, or as another account, to see it as others do.'
+    link.title = OWN_VIEW_HINT
     link.textContent = 'View on reddit'
+    const linkRow = document.createElement('div')
+    linkRow.className = 'rev-scan-item-linkrow'
+    linkRow.appendChild(link)
+    if (showOwnViewMark) {
+        linkRow.appendChild(createNoteMark(true))
+    }
 
     el.appendChild(meta)
     if (item.title) el.appendChild(title)
     el.appendChild(body)
-    el.appendChild(link)
+    el.appendChild(linkRow)
     return el
 }
 
@@ -1439,7 +1457,53 @@ function applyFilter(filter: 'all' | 'removed' | 'visible') {
 
 // --- Shared helper ---
 
-function createScanResultItem(item: ScanResult): HTMLElement {
+// The account the background last detected as logged in (set on every
+// successful login detection). Storage only, no request.
+const getLastLoggedInUser = (): Promise<string> =>
+    new Promise(resolve => {
+        try {
+            chrome.storage.local.get(['last_logged_in_user'], r => resolve(String(r?.last_logged_in_user || '')))
+        } catch {
+            resolve('')
+        }
+    })
+
+const OWN_VIEW_HINT = 'Shows your own view. Open in a private window, or as another account, to see it as others do.'
+
+// Footnote-style marker: a small red "!" badge. The same badge heads the note
+// above the results; next to a link it is a jump that scrolls to that note and
+// flashes it, so the two are visibly tied.
+function createNoteMark(jump: boolean): HTMLElement {
+    const mark = document.createElement(jump ? 'a' : 'span')
+    mark.className = 'rev-note-mark' + (jump ? ' rev-note-mark-jump' : '')
+    mark.textContent = '!'
+    if (jump) {
+        const a = mark as HTMLAnchorElement
+        a.href = '#'
+        a.title = OWN_VIEW_HINT
+        a.addEventListener('click', e => {
+            e.preventDefault()
+            // Resolve relative to this panel; reddit's page may host the panel
+            // anywhere, and there is one note per results panel.
+            const note = mark
+                .closest('.rev-profile-scan-results')
+                ?.querySelector('.rev-scan-note') as HTMLElement | null
+            if (!note) return
+            note.scrollIntoView({ block: 'center' })
+            note.classList.remove('rev-scan-note-flash')
+            void note.offsetWidth // restart the animation on repeat clicks
+            note.classList.add('rev-scan-note-flash')
+        })
+    } else {
+        mark.setAttribute('aria-hidden', 'true')
+    }
+    return mark
+}
+
+// showOwnViewMark: only the scanned account's own session sees removed content
+// as if it were live, so the jump badge is only shown when the viewer is that
+// account. The note above the results is shown regardless.
+function createScanResultItem(item: ScanResult, showOwnViewMark: boolean): HTMLElement {
     const el = document.createElement('div')
     el.className = 'rev-scan-item rev-removed-highlight'
 
@@ -1481,6 +1545,9 @@ function createScanResultItem(item: ScanResult): HTMLElement {
         return a
     }
     links.appendChild(mkLink('context', `https://old.reddit.com${item.permalink}?context=3`))
+    if (showOwnViewMark) {
+        links.appendChild(createNoteMark(true))
+    }
     // No reveddit.com link: the site can only show "[removed]" for these now
     // that reddit blocks its data access; the recovered text is already here.
     el.appendChild(links)
