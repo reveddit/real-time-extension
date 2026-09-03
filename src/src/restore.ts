@@ -1,5 +1,5 @@
 import { isRemovedComment, isRemovedPost, isComment } from './common'
-import { throwIfLegacyDisabled, RECENT_RATE_LIMIT_WINDOW_MS } from './requests'
+import { RECENT_RATE_LIMIT_WINDOW_MS } from './requests'
 import { recordRateLimitHit, getMsSinceLastRateLimitHit, getRateLimitBackoffRemainingMs } from './storage'
 import browser from 'webextension-polyfill'
 
@@ -123,9 +123,12 @@ export function commentFullnameFromPermalink(permalink: string | null | undefine
     return m ? 't1_' + m[1] : ''
 }
 
-export function extractCommentTree_oldReddit(postFullname: string): Map<string, CommentTreeNode> {
+export function extractCommentTree_oldReddit(
+    postFullname: string,
+    root: ParentNode = document,
+): Map<string, CommentTreeNode> {
     const map = new Map<string, CommentTreeNode>()
-    const commentEls = document.querySelectorAll('.commentarea .thing.comment')
+    const commentEls = root.querySelectorAll('.commentarea .thing.comment')
 
     for (const el of Array.from(commentEls)) {
         const id = el.getAttribute('data-fullname') || commentFullnameFromPermalink(el.getAttribute('data-permalink'))
@@ -166,6 +169,28 @@ export function extractCommentTree_oldReddit(postFullname: string): Map<string, 
     }
 
     return map
+}
+
+// Same extraction over a fetched legacy thread page. The post author comes
+// from the link thing at the top of the page.
+export function extractCommentTree_fromHTML(
+    html: string,
+    postFullname: string,
+    parse: (html: string) => ParentNode = h => new DOMParser().parseFromString(h, 'text/html'),
+): { map: Map<string, CommentTreeNode>; postAuthor: string; postNumComments: number; postCreatedUtc: number } {
+    const root = parse(html)
+    const link = root.querySelector('#siteTable .thing.link') || root.querySelector('.thing.link')
+    if (!link) {
+        throw new Error('legacy thread page unreadable (no post thing)')
+    }
+    // data-timestamp is epoch milliseconds in the legacy markup
+    const ts = Number(link.getAttribute('data-timestamp') || 0)
+    return {
+        map: extractCommentTree_oldReddit(postFullname, root),
+        postAuthor: link.getAttribute('data-author') || '',
+        postNumComments: Number(link.getAttribute('data-comments-count') || 0) || 0,
+        postCreatedUtc: ts ? Math.floor(ts / 1000) : 0,
+    }
 }
 
 export function extractCommentTree_fromJSON(jsonData: any[]): {
@@ -353,16 +378,11 @@ export async function fetchUserPage(
     return fetchUserPageHTML(author, sort, true)
 }
 
-// Fetch an old.reddit.com JSON URL UNAUTHENTICATED. The content script can't do
-// this itself (credentials:'omit' 403s the JSON API, default sends the user's
-// cookies, and on new reddit it's cross-origin/CORS), so always go through the
-// background — it fetches with no cookies (extension origin) and the DNR header
-// strip, giving the logged-out view (which still has removed bodies).
-async function fetchOldRedditJSON(url: string): Promise<any> {
-    const res = (await browser.runtime.sendMessage({ action: 'fetch-old-reddit-json', url })) as any
-    console.log(`[reveddit] old-reddit-json bg ${url.split('?')[0]} -> status ${res?.status ?? 'none'}`)
-    if (res?.ok && res.data) return res.data
-    throw new Error(`background old-reddit fetch failed (status ${res?.status ?? 'none'})`)
+// Fetch a legacy (old-markup) reddit page by path, logged out, through the
+// background: it resolves the legacy host (www since old.reddit.com began
+// requiring login) and injects the redesign_optout cookie on marked requests.
+async function fetchLegacyPageHTML(path: string): Promise<string> {
+    return fetchUserPageHTMLViaBackground('', path)
 }
 
 // --- User page via HTML ---
@@ -513,12 +533,14 @@ async function setRateLimitCooldown(durationMs: number = 60000) {
     }
 }
 
-// --- Thread JSON Fetch (for new reddit) ---
+// --- Thread page fetch (for new reddit, where the DOM has no usable tree) ---
 
-export async function fetchThreadJSON(postId: string, subreddit: string): Promise<any[]> {
+// The legacy thread page in old markup, the same thing extractCommentTree_oldReddit
+// reads from the live DOM on old.reddit pages. Replaces the thread .json fetch,
+// which is 403 logged out for every host since 2026-08-31.
+export async function fetchThreadHTML(postId: string, subreddit: string): Promise<string> {
     const shortId = postId.replace(/^t3_/, '')
-    const url = `https://old.reddit.com/r/${encodeURIComponent(subreddit)}/comments/${shortId}.json?raw_json=1&limit=500`
-    return fetchOldRedditJSON(url)
+    return fetchLegacyPageHTML(`/r/${encodeURIComponent(subreddit)}/comments/${shortId}/?limit=500`)
 }
 
 // --- Main Restore Function ---
@@ -554,8 +576,8 @@ export async function restoreComment(
 
     try {
         if (isNewReddit) {
-            const jsonData = await fetchThreadJSON(threadPostId, subreddit)
-            const parsed = extractCommentTree_fromJSON(jsonData)
+            const html = await fetchThreadHTML(threadPostId, subreddit)
+            const parsed = extractCommentTree_fromHTML(html, threadPostId)
             treeResult = { treeMap: parsed.map, postAuthor: parsed.postAuthor }
         } else {
             const opEl = document.querySelector('.link .top-matter .author')
@@ -848,26 +870,15 @@ export async function scanUserProfile(
         message: `Checking removal status of ${cachedItems.length} items...`,
     })
 
-    // Batch check via /api/info. Non-OAuth (OAuth shares one per-app rate-limit
-    // bucket across all users). Routed by host like the user page: same-origin on
-    // old.reddit.com, else through the background fetching old.reddit.com
-    // unauthenticated (the DNR rule strips the fetch headers Reddit rejects).
+    // Batch removal check through the background, which reads the legacy
+    // /api/info HTML listing (unauthenticated .json is gone for every host):
+    // absent comments are reported as removed, posts get their own page check.
     const ids = cachedItems.map(item => item.data.name)
     const liveItems: Map<string, any> = new Map()
     let children: any[]
 
     try {
-        if (location.hostname === 'old.reddit.com') {
-            // Unauthenticated old.reddit .json — dying endpoint, gated
-            await throwIfLegacyDisabled('legacy reddit api/info JSON')
-            const infoUrl = `https://old.reddit.com/api/info.json?id=${ids.join(',')}&raw_json=1`
-            const response = await fetch(infoUrl)
-            console.log(`[reveddit scan] /api/info direct -> ${response.status}`)
-            if (!response.ok) throw new Error(`status ${response.status}`)
-            children = (await response.json())?.data?.children || []
-        } else {
-            children = await fetchApiInfoViaBackground(ids.join(','))
-        }
+        children = await fetchApiInfoViaBackground(ids.join(','))
     } catch (err: any) {
         console.log('[reveddit scan] /api/info failed:', err?.message || err)
         onProgress({
@@ -974,7 +985,11 @@ export interface LookedUpComment {
     removed: boolean
 }
 
-// Batched, rate-limited /api/info lookup of comments by fullname.
+// Batched, rate-limited lookup of comments by fullname over the legacy
+// /api/info HTML listing (via the background). Removed comments are absent
+// from that listing; the background reports each absent id with a [removed]
+// body, so `removed` below stays correct. parent_id is not in the legacy HTML,
+// so it is empty here and callers keep their own placement.
 export async function lookupCommentsByIds(ids: string[], limiter: RateLimiter): Promise<Map<string, LookedUpComment>> {
     const out = new Map<string, LookedUpComment>()
     for (let i = 0; i < ids.length; i += 100) {
@@ -1065,12 +1080,11 @@ export async function scanThreadForRemovedComments(
 
     try {
         if (isNewReddit) {
-            const jsonData = await fetchThreadJSON(threadPostId, subreddit)
-            const parsed = extractCommentTree_fromJSON(jsonData)
-            const post = jsonData?.[0]?.data?.children?.[0]?.data
+            const html = await fetchThreadHTML(threadPostId, subreddit)
+            const parsed = extractCommentTree_fromHTML(html, threadPostId)
             postAuthor = parsed.postAuthor
-            numComments = post?.num_comments ?? 0
-            postCreatedUtc = post?.created_utc ?? 0
+            numComments = parsed.postNumComments
+            postCreatedUtc = parsed.postCreatedUtc
             ;({ candidateAuthors, visibleRealIds, tombstoneIds } = summarizeThreadTree(parsed.map))
         } else {
             const treeMap = extractCommentTree_oldReddit(threadPostId)

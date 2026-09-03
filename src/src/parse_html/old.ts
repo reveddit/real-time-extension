@@ -578,8 +578,53 @@ const getCommentsInfo_fromOld = async (ids: string[]) => {
     return info_items
 }
 
-// Exported function for lookupItemsByID fallback - parses HTML from old.reddit.com/api/info
-// Returns array of {data: item} to match JSON API format
+// Parses the legacy /api/info HTML listing for the given ids. Removed comments
+// are NOT rendered there (verified live), so absence is the removal signal;
+// `valid` says whether the response was a real listing (#siteTable present),
+// because a challenge or login page also answers 200 and would otherwise read
+// as "everything removed". Posts render regardless of removal status, so a
+// post's status needs its own page (getPost_fromOld).
+export interface LegacyInfoResult {
+    valid: boolean
+    items: Record<string, any>[]
+}
+class SiteTableCounter extends ErrorCollector {
+    count = 0
+    element(_element: any) {
+        this.count++
+    }
+}
+export const getInfoById_fromLegacyHTML = async (ids: string | string[]): Promise<LegacyInfoResult> => {
+    const idsArray = Array.isArray(ids) ? ids : ids.split(',')
+    const url = (await getLegacyBase()) + '/api/info?id=' + idsArray.join(',')
+    const response = await fetch(url, { ...redditHTMLRequestOptions, credentials: 'omit' })
+    if (!response.ok) {
+        throw new Error(`legacy reddit HTML request failed: ${response.status}`)
+    }
+    const itemsObj = new Items(url)
+    const tableObj = new SiteTableCounter(url)
+    const rewriter = new HTMLRewriter()
+        .on('#siteTable', tableObj)
+        // Handle both posts (.link) and comments (.comment)
+        .on('#siteTable .thing', itemsObj)
+        .on('#siteTable .thing.deleted', new AuthorDeleted(itemsObj))
+        .on('#siteTable .thing .entry .usertext-body .md *', new InnerHTML(itemsObj, 'body'))
+        .on('#siteTable .thing .tagline .score.unvoted', new Score(itemsObj))
+        .on('#siteTable .thing .tagline time', new Times(itemsObj))
+        .on('#siteTable .thing .tagline .locked-tagline', new OneField(itemsObj, 'locked', true))
+    await consume(rewriter.transform(response).body!)
+    itemsObj.fillInDefaultValues()
+    itemsObj.items.forEach(item => {
+        if (item.body) {
+            item.body_html = item.body
+            item.body = getMarkdownFromHTMLString(item.body)
+        }
+    })
+    return { valid: tableObj.count > 0, items: itemsObj.items }
+}
+
+// Exported function for lookupItemsByID fallback - parses HTML from the legacy
+// /api/info listing. Returns array of {data: item} to match JSON API format.
 export const getItemsById_fromOldHTML = async (
     ids: string | string[],
     addToPendingPostQueue: ((postIds: string[]) => void) | null = null,
@@ -594,35 +639,12 @@ export const getItemsById_fromOldHTML = async (
         addToPendingPostQueue(postIds)
     }
 
-    const url = (await getLegacyBase()) + '/api/info?id=' + idsArray.join(',')
-    const response = await fetch(url, { ...redditHTMLRequestOptions, credentials: 'omit' })
-    if (!response.ok) {
-        throw new Error(`legacy reddit HTML request failed: ${response.status}`)
-    }
-    const itemsObj = new Items(url)
-    const rewriter = new HTMLRewriter()
-        // Handle both posts (.link) and comments (.comment)
-        .on('#siteTable .thing', itemsObj)
-        .on('#siteTable .thing.deleted', new AuthorDeleted(itemsObj))
-        .on('#siteTable .thing .entry .usertext-body .md *', new InnerHTML(itemsObj, 'body'))
-        .on('#siteTable .thing .tagline .score.unvoted', new Score(itemsObj))
-        .on('#siteTable .thing .tagline time', new Times(itemsObj))
-        .on('#siteTable .thing .tagline .locked-tagline', new OneField(itemsObj, 'locked', true))
-    await consume(rewriter.transform(response).body!)
-    itemsObj.fillInDefaultValues()
-    // Convert body HTML to markdown
-    itemsObj.items.forEach(item => {
-        if (item.body) {
-            item.body = getMarkdownFromHTMLString(item.body)
-        }
-    })
+    const { items } = await getInfoById_fromLegacyHTML(idsArray)
     // Return only comments — posts are excluded because /api/info HTML cannot
     // determine post removal status. Posts are handled via the pending post queue.
-    return itemsObj.items.filter(item => !item.name || !item.name.startsWith('t3_')).map(item => ({ data: item }))
+    return items.filter(item => !item.name || !item.name.startsWith('t3_')).map(item => ({ data: item }))
 }
 
-// `path` should be the canonical /r/<sub>/comments/<id>/<slug>/ form when
-// known: /comments/<id>/ 301s to it and the redirect drops the cookie marker.
 export const getPost_fromOld = async (path: string) => {
     const url = legacyPageUrl(await getLegacyBase(), path)
     const response = await fetchWithTimeout(url, redditHTMLRequestOptions)

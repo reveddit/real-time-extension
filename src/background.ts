@@ -28,7 +28,7 @@ import {
 } from './src/storage'
 import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
-import { getItems_fromOld, getPost_fromOld } from './src/parse_html/old'
+import { getItems_fromOld, getPost_fromOld, getInfoById_fromLegacyHTML } from './src/parse_html/old'
 import { handleBridgeFetch } from './src/bridge'
 import { applyRemoteChallengeConfig, fetchNews, getCachedNews } from './src/news'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
@@ -220,6 +220,62 @@ if (__BUILT_FOR__ !== 'chrome') {
     }
 })()
 
+// Legacy-HTML replacement for the old unauthenticated api/info.json lookup.
+// Comments: rendered -> live (or [removed]/[deleted] by body), absent -> removed
+// (only when the listing was valid). Posts: one legacy page fetch each, spaced,
+// since the listing renders them regardless of removal; unverifiable posts are
+// reported live so a throttle can never manufacture a removal.
+const LEGACY_POST_CHECK_SPACING_MS = 400
+const legacyApiInfo = async (idsCsv: string): Promise<{ kind: string; data: any }[]> => {
+    const ids = idsCsv.split(',').filter(Boolean)
+    if (!ids.length) {
+        return []
+    }
+    const info = await getInfoById_fromLegacyHTML(ids)
+    if (!info.valid) {
+        throw new Error('legacy api/info listing unreadable (challenge or login page)')
+    }
+    const byName: Record<string, any> = {}
+    for (const item of info.items) {
+        if (item.name) {
+            byName[item.name] = item
+        }
+    }
+    const children: { kind: string; data: any }[] = []
+    let postFetches = 0
+    for (const id of ids) {
+        const item = byName[id]
+        if (id.startsWith('t1_')) {
+            if (item) {
+                children.push({ kind: 't1', data: item })
+            } else {
+                children.push({
+                    kind: 't1',
+                    data: { name: id, author: '[deleted]', body: '[removed]', _absent_from_legacy_listing: true },
+                })
+            }
+        } else if (id.startsWith('t3_')) {
+            if (!item) {
+                continue
+            }
+            let is_removed = false
+            if (item.permalink) {
+                if (postFetches > 0) {
+                    await new Promise(r => setTimeout(r, LEGACY_POST_CHECK_SPACING_MS))
+                }
+                postFetches++
+                const page = (await getPost_fromOld(item.permalink).catch(() => ({ error: 'fetch failed' }))) as any
+                is_removed = !!(page && !page.error && page.is_removed)
+            }
+            children.push({
+                kind: 't3',
+                data: { ...item, is_robot_indexable: !is_removed, ...(is_removed ? { author: '[deleted]' } : {}) },
+            })
+        }
+    }
+    return children
+}
+
 console.log('bg script running')
 // Throttle recovery calls that fetch /api/me.json to at most ~2 per minute
 const ME_RECOVER_MIN_INTERVAL_MS = 30000 // 30 seconds
@@ -383,45 +439,23 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             })
         return true
     } else if (request.action === 'fetch-api-info') {
-        // Profile-scan removal check via old.reddit.com/api/info, unauthenticated
-        // (no cookies from the extension origin). Same CORS/DNR situation as the
-        // user-page fetch, so it also goes through the background on new reddit.
-        // NOTE: no credentials:'omit' — that flag alone 403s the JSON API. From the
-        // background there are no reddit cookies anyway, so a plain fetch is
-        // unauthenticated without tripping that block.
-        const url = `https://old.reddit.com/api/info.json?id=${request.ids}&raw_json=1`
-        throwIfLegacyDisabled('old.reddit.com api/info JSON')
-            .then(() => fetch(url))
-            .then(async r => {
+        // Profile scan / thread restore removal check. Unauthenticated .json is
+        // 403 for every host and cookie since 2026-08-31, so this reads the
+        // legacy /api/info HTML listing on www instead: comments that are
+        // removed are simply not rendered (absence = removed, only trusted when
+        // the response was a real listing), and posts get their own legacy page
+        // for the meta-robots removal signal. Response keeps the JSON shape the
+        // callers already consume: { ok, status, children: [{ kind, data }] }.
+        throwIfLegacyDisabled('legacy reddit api/info HTML')
+            .then(() => legacyApiInfo(String(request.ids || '')))
+            .then(children => {
                 console.log(
-                    `[reveddit] bg fetch-api-info (${String(request.ids).split(',').length} ids) -> ${r.status}`,
+                    `[reveddit] bg fetch-api-info (${String(request.ids).split(',').length} ids) -> ${children.length} rendered`,
                 )
-                const data = r.ok ? await r.json() : null
-                sendResponse({ ok: r.ok, status: r.status, children: data?.data?.children || null })
+                sendResponse({ ok: true, status: 200, children })
             })
             .catch(err => {
                 console.log('[reveddit] bg fetch-api-info error:', err?.message || String(err))
-                sendResponse({ ok: false, status: 0, error: String(err?.message || err) })
-            })
-        return true
-    } else if (request.action === 'fetch-old-reddit-json') {
-        // Thread restore: fetch an old.reddit.com .json URL unauthenticated (no
-        // cookies from the extension origin) so removed bodies are visible. Same
-        // CORS/DNR situation as the profile-scan fetches. Host-checked.
-        const url = String(request.url || '')
-        if (!url.startsWith('https://old.reddit.com/')) {
-            sendResponse({ ok: false, status: 0, error: 'invalid url' })
-            return true
-        }
-        throwIfLegacyDisabled('old.reddit.com JSON')
-            .then(() => fetch(url))
-            .then(async r => {
-                console.log(`[reveddit] bg fetch-old-reddit-json ${url.split('?')[0]} -> ${r.status}`)
-                const data = r.ok ? await r.json() : null
-                sendResponse({ ok: r.ok, status: r.status, data })
-            })
-            .catch(err => {
-                console.log('[reveddit] bg fetch-old-reddit-json error:', err?.message || String(err))
                 sendResponse({ ok: false, status: 0, error: String(err?.message || err) })
             })
         return true

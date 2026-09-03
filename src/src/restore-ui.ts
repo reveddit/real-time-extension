@@ -966,13 +966,9 @@ function recoveredMeta(rc: RecoveredComment): HTMLElement {
         ctx.target = '_blank'
         ctx.rel = 'noopener'
         ctx.textContent = 'context'
-        const rev = document.createElement('a')
-        rev.className = 'rev-scan-item-link'
-        rev.href = `https://www.reveddit.com${rc.permalink}`
-        rev.target = '_blank'
-        rev.rel = 'noopener'
-        rev.textContent = 'view on reveddit'
-        links.append(ctx, rev)
+        // No reveddit.com link: the site can only show "[removed]" for these
+        // now that reddit blocks its data access; the recovered text is here.
+        links.append(ctx)
     }
     meta.appendChild(links)
     return meta
@@ -1343,11 +1339,14 @@ function createInlineItem(item: ScanResult, isNewReddit: boolean): HTMLElement {
         body.textContent = item.body
     }
 
+    // Link to the item in its thread on reddit. The scan row already shows the
+    // body from the author's own view, and reveddit.com can only show
+    // "[removed]" for these, so a reveddit link added nothing.
     const link = document.createElement('a')
     link.className = 'rev-scan-item-link'
-    link.href = `https://www.reveddit.com${item.permalink}`
+    link.href = `https://www.reddit.com${item.permalink}${item.type === 'post' ? '' : '?context=3'}`
     link.target = '_blank'
-    link.textContent = 'View on Reveddit'
+    link.textContent = 'View on reddit'
 
     el.appendChild(meta)
     if (item.title) el.appendChild(title)
@@ -1470,7 +1469,8 @@ function createScanResultItem(item: ScanResult): HTMLElement {
         return a
     }
     links.appendChild(mkLink('context', `https://old.reddit.com${item.permalink}?context=3`))
-    links.appendChild(mkLink('view on reveddit', `https://www.reveddit.com${item.permalink}`))
+    // No reveddit.com link: the site can only show "[removed]" for these now
+    // that reddit blocks its data access; the recovered text is already here.
     el.appendChild(links)
 
     return el
