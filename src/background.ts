@@ -129,7 +129,15 @@ if (__BUILT_FOR__ !== 'chrome') {
             return { requestHeaders: details.requestHeaders }
         },
         {
-            urls: ['https://oauth.reddit.com/*.json*', 'https://*.reddit.com/api/info*', 'https://www.reddit.com/*'],
+            // The last pattern is the legacy-page marker (match patterns test
+            // the query string too); keeping this list narrow matters because
+            // the listener is blocking and would otherwise run on every request
+            // the user's own reddit tabs make.
+            urls: [
+                'https://oauth.reddit.com/*.json*',
+                'https://*.reddit.com/api/info*',
+                'https://www.reddit.com/*rv_legacy=1',
+            ],
         },
         opt_extraInfoSpec,
     )
@@ -152,8 +160,16 @@ if (__BUILT_FOR__ !== 'chrome') {
 // handler above. Session rules (not dynamic) because the tabIds condition is
 // session-rule-only; the service worker re-registers them on every start.
 ;(() => {
+    // Chrome/Edge builds only. Firefox 153 exposes chrome.declarativeNetRequest
+    // even when the manifest does not request the permission, and its methods
+    // then return undefined instead of a promise: the old existence check
+    // passed, `.catch` on undefined threw at top level, and that exception
+    // aborted the rest of this script before any message listener registered
+    // (popup Connect answered "Could not detect user"). Everything below is also
+    // wrapped so no rule-setup failure can ever take the background down.
+    if (__BUILT_FOR__ !== 'chrome') return
     const dnr = (chrome as any).declarativeNetRequest
-    if (!dnr?.updateSessionRules) return
+    if (!dnr?.updateSessionRules || !dnr?.updateDynamicRules) return
     const stripHeaders = [{ header: 'origin', operation: 'remove' }]
     const makeRule = (id: number, urlFilter: string) => ({
         id,
@@ -188,14 +204,20 @@ if (__BUILT_FOR__ !== 'chrome') {
             tabIds: [-1],
         },
     }
-    // Prior versions persisted 9001 as a dynamic rule (no tab scoping) — clean it up
-    dnr.updateDynamicRules({ removeRuleIds: [9001, 9002] }).catch(() => {})
-    dnr.updateSessionRules({
-        removeRuleIds: [9001, 9002, 9003],
-        addRules: [makeRule(9001, '||old.reddit.com/'), makeRule(9002, '||www.reddit.com/'), cookieRule],
-    })
-        .then(() => console.log('[reveddit] DNR header-strip rules installed for old+www reddit'))
-        .catch((e: any) => console.log('[reveddit] DNR rule setup failed:', e?.message || e))
+    try {
+        // Prior versions persisted 9001 as a dynamic rule (no tab scoping) — clean it up
+        Promise.resolve(dnr.updateDynamicRules({ removeRuleIds: [9001, 9002] })).catch(() => {})
+        Promise.resolve(
+            dnr.updateSessionRules({
+                removeRuleIds: [9001, 9002, 9003],
+                addRules: [makeRule(9001, '||old.reddit.com/'), makeRule(9002, '||www.reddit.com/'), cookieRule],
+            }),
+        )
+            .then(() => console.log('[reveddit] DNR header rules installed for old+www reddit'))
+            .catch((e: any) => console.log('[reveddit] DNR rule setup failed:', e?.message || e))
+    } catch (e: any) {
+        console.log('[reveddit] DNR rule setup threw:', e?.message || e)
+    }
 })()
 
 console.log('bg script running')
