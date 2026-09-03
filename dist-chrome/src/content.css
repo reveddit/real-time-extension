@@ -269,12 +269,60 @@
 /* One-time explanation above scan results: the author's own view of removed
    content looks normal, so the reddit links do too. */
 .rev-scan-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
     font-size: 12px;
     color: #787c7e;
     line-height: 1.4;
     margin: 0 0 10px;
     padding: 6px 8px;
     border-left: 3px solid #ff585b;
+    border-radius: 0 4px 4px 0;
+}
+.rev-scan-note-flash {
+    animation: rev-scan-note-flash 1.6s ease-out;
+}
+@keyframes rev-scan-note-flash {
+    0% {
+        background: rgba(255, 88, 91, 0.28);
+    }
+    100% {
+        background: transparent;
+    }
+}
+
+/* The "!" badge: same mark at the head of the note and next to each link. */
+.rev-note-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 14px;
+    height: 14px;
+    margin-top: 1px;
+    border-radius: 50%;
+    background: #ff585b;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    font-family: Arial, sans-serif;
+}
+a.rev-note-mark-jump {
+    cursor: pointer;
+    text-decoration: none;
+    color: #fff;
+}
+a.rev-note-mark-jump:hover {
+    filter: brightness(1.12);
+    text-decoration: none;
+}
+.rev-scan-item-linkrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
 }
 
 .rev-scan-item {
