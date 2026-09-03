@@ -58,8 +58,10 @@ export const globalTokens = css`
         /* Removed / deleted indicators */
         --removed-bg: rgba(99, 54, 54, 1);
         --removed-border: #e03e3e;
+        --removed-text: #ffffff;
         --deleted-bg: rgba(33, 77, 149, 1);
         --deleted-border: #4c6ef5;
+        --deleted-text: #ffffff;
         --approved-bg: rgba(46, 160, 67, 0.22);
         --approved-border: #2ea043;
         --locked-bg: rgba(255, 214, 53, 0.22);
@@ -110,8 +112,10 @@ export const globalTokens = css`
 
         --removed-bg: rgba(255, 230, 230, 1);
         --removed-border: #c92a2a;
+        --removed-text: #9b1c1c;
         --deleted-bg: rgba(219, 234, 254, 1);
         --deleted-border: #1971c2;
+        --deleted-text: #1c4f8a;
         --approved-bg: rgba(43, 138, 62, 0.12);
         --approved-border: #2b8a3e;
         --locked-bg: rgba(255, 214, 53, 0.28);

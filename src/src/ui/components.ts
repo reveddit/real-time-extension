@@ -218,13 +218,13 @@ export const Badge = styled.span<{ variant?: BadgeVariant }>`
                 return css`
                     background: var(--removed-bg);
                     border-color: var(--removed-border);
-                    color: #fff;
+                    color: var(--removed-text);
                 `
             case 'deleted':
                 return css`
                     background: var(--deleted-bg);
                     border-color: var(--deleted-border);
-                    color: #fff;
+                    color: var(--deleted-text);
                 `
             case 'approved':
                 return css`
