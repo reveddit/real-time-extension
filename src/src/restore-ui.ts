@@ -1473,7 +1473,7 @@ const OWN_VIEW_HINT = 'Shows your own view. Open in a private window, or as anot
 // Footnote-style marker: a small red "!" badge. The same badge heads the note
 // above the results; next to a link it is a jump that scrolls to that note and
 // flashes it, so the two are visibly tied.
-function createNoteMark(jump: boolean): HTMLElement {
+function createNoteMark(jump: boolean, noteSelector = '.rev-scan-note'): HTMLElement {
     const mark = document.createElement(jump ? 'a' : 'span')
     mark.className = 'rev-note-mark' + (jump ? ' rev-note-mark-jump' : '')
     mark.textContent = '!'
@@ -1483,11 +1483,10 @@ function createNoteMark(jump: boolean): HTMLElement {
         a.title = OWN_VIEW_HINT
         a.addEventListener('click', e => {
             e.preventDefault()
-            // Resolve relative to this panel; reddit's page may host the panel
-            // anywhere, and there is one note per results panel.
-            const note = mark
-                .closest('.rev-profile-scan-results')
-                ?.querySelector('.rev-scan-note') as HTMLElement | null
+            // Resolve relative to this panel when there is one (scan results);
+            // otherwise the page-level note (own-profile highlights).
+            const note = (mark.closest('.rev-profile-scan-results')?.querySelector(noteSelector) ||
+                document.querySelector(noteSelector)) as HTMLElement | null
             if (!note) return
             note.scrollIntoView({ block: 'center' })
             note.classList.remove('rev-scan-note-flash')
@@ -1683,6 +1682,7 @@ function flagOwnStatus(
     locked: Set<string>,
     getId: (el: HTMLElement) => string,
     getHighlightTarget?: (el: HTMLElement) => HTMLElement,
+    onRemoved?: (el: HTMLElement) => void,
 ) {
     if (el.hasAttribute('data-rev-status')) return
     const id = getId(el)
@@ -1691,8 +1691,47 @@ function flagOwnStatus(
     el.setAttribute('data-rev-status', status)
     if (!status) return
     const target = getHighlightTarget ? getHighlightTarget(el) : el
-    if (status === 'removed') target.classList.add('rev-removed-highlight')
-    else target.classList.add('rev-locked-highlight')
+    if (status === 'removed') {
+        target.classList.add('rev-removed-highlight')
+        onRemoved?.(el)
+    } else {
+        target.classList.add('rev-locked-highlight')
+    }
+}
+
+// Own profile: a removed item looks perfectly normal to its author, so each
+// highlighted item gets the "!" jump badge that leads to the note under the
+// filter bar. Old reddit: a new entry in the item's button row, right after
+// "permalink"/"comments". New reddit: the credit bar (the "r/sub · 2 mo. ago"
+// line) when it is in the light DOM, otherwise a badge riding the red border.
+function addOwnViewMark(el: HTMLElement, isNewReddit: boolean) {
+    if (el.querySelector('.rev-own-mark')) return
+    const mark = createNoteMark(true, '.rev-own-note')
+    mark.classList.add('rev-own-mark')
+    if (!isNewReddit) {
+        const buttons = el.querySelector(':scope > .entry ul.buttons') || el.querySelector('ul.buttons')
+        const first = buttons?.querySelector('li')
+        if (buttons && first) {
+            const li = document.createElement('li')
+            li.className = 'rev-own-mark-li'
+            li.appendChild(mark)
+            first.insertAdjacentElement('afterend', li)
+            return
+        }
+    } else {
+        const creditBar = el.querySelector('[id^="feed-post-credit-bar"]')
+        if (creditBar) {
+            mark.classList.add('rev-own-mark-inline')
+            creditBar.appendChild(mark)
+            return
+        }
+    }
+    // Fallback for either layout: sit on the red border that marks the item.
+    const wrap = document.createElement('span')
+    wrap.className = 'rev-own-mark-overlay'
+    wrap.appendChild(mark)
+    if (getComputedStyle(el).position === 'static') el.style.position = 'relative'
+    el.appendChild(wrap)
 }
 
 export function initOwnThreadStatus(isNewReddit: boolean) {
@@ -1725,7 +1764,7 @@ export function initOwnProfileStatus(username: string, isNewReddit: boolean) {
             el.style.display = filter === 'all' || filter === status ? '' : 'none'
         }
         const flag = (el: HTMLElement) => {
-            flagOwnStatus(el, removed, locked, getId)
+            flagOwnStatus(el, removed, locked, getId, undefined, item => addOwnViewMark(item, isNewReddit))
             applyFilter(el)
         }
 
@@ -1769,11 +1808,28 @@ function injectOwnFilterBar(
     if (hasRemoved) bar.appendChild(mk('removed', 'removed', false))
     if (hasLocked) bar.appendChild(mk('locked', 'locked', false))
 
+    // The own-view note: this bar only exists on the viewer's own profile, and
+    // reddit shows an author their removed content as if it were live.
+    let note: HTMLElement | null = null
+    if (hasRemoved) {
+        note = document.createElement('div')
+        note.className = 'rev-scan-note rev-own-note'
+        note.appendChild(createNoteMark(false))
+        const text = document.createElement('span')
+        text.textContent =
+            'Items marked removed look normal to you: reddit shows you your own removed content as if it ' +
+            'were still up. To see what everyone else sees, open one in a private/incognito window or ' +
+            'while logged in as another account.'
+        note.appendChild(text)
+    }
+
     if (isNewReddit) {
         const feed = document.querySelector('shreddit-feed')
         feed?.parentElement?.insertBefore(bar, feed)
+        if (note) feed?.parentElement?.insertBefore(note, feed)
     } else {
         const siteTable = document.querySelector('#siteTable')
         siteTable?.parentElement?.insertBefore(bar, siteTable)
+        if (note) siteTable?.parentElement?.insertBefore(note, siteTable)
     }
 }
