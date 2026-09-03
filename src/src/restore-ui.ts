@@ -1121,6 +1121,17 @@ async function handleProfileScan(username: string, container: HTMLElement) {
     progressEl.style.display = 'none'
     resultsEl.style.display = ''
 
+    // Reddit shows an author their own removed content as if nothing happened,
+    // so the reddit links below look normal to the person running the scan.
+    // Say so once, at the top, rather than next to every link.
+    const note = document.createElement('div')
+    note.className = 'rev-scan-note'
+    note.textContent =
+        'Note: reddit shows you your own removed content as if it were still up, so these links ' +
+        'will look normal while you are logged in. To see what everyone else sees, open a link in a ' +
+        'private/incognito window or while logged in as another account.'
+    resultsEl.appendChild(note)
+
     const isNewReddit = detectIsNewReddit()
     const matched = highlightVisibleRemovedComments(results, isNewReddit)
     const inserted = insertMissingComments(results, matched, isNewReddit)
@@ -1346,6 +1357,7 @@ function createInlineItem(item: ScanResult, isNewReddit: boolean): HTMLElement {
     link.className = 'rev-scan-item-link'
     link.href = `https://www.reddit.com${item.permalink}${item.type === 'post' ? '' : '?context=3'}`
     link.target = '_blank'
+    link.title = 'Shows your own view. Open in a private window, or as another account, to see it as others do.'
     link.textContent = 'View on reddit'
 
     el.appendChild(meta)
