@@ -318,6 +318,27 @@ a.rev-note-mark-jump:hover {
     filter: brightness(1.12);
     text-decoration: none;
 }
+/* Own-profile note sits under the filter bar, same margins as the bar. */
+.rev-own-note {
+    margin: 0 8px 8px;
+}
+/* Old reddit: the badge as an entry in the item's button row. */
+li.rev-own-mark-li {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+}
+/* New reddit: inline after the credit-bar text. */
+.rev-own-mark-inline {
+    margin-left: 6px;
+}
+/* Fallback: ride the red border that marks the item. */
+.rev-own-mark-overlay {
+    position: absolute;
+    left: -8px;
+    top: 6px;
+    z-index: 2;
+}
 .rev-scan-item-linkrow {
     display: inline-flex;
     align-items: center;
