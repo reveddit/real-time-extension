@@ -7,7 +7,7 @@ import {
     getMsSinceLastRateLimitHit,
 } from './storage'
 import browser from 'webextension-polyfill'
-import { dlog } from './diaglog'
+import { dlog, dlogSummary } from './diaglog'
 import { getItemsById_fromOldHTML, getPost_fromOld } from './parse_html/old'
 import {
     getPublicProfileItems,
@@ -444,7 +444,7 @@ const recordAbsentVerifyOutcome = async (ok: boolean) => {
         const stored = (await browser.storage.local.get({ [ABSENT_VERIFY_FAILURES_KEY]: 0 })) as any
         const failures = Number(stored[ABSENT_VERIFY_FAILURES_KEY] || 0) + 1
         await browser.storage.local.set({ [ABSENT_VERIFY_FAILURES_KEY]: failures })
-        dlog('verify', `[reveddit] absent verification resolved nothing — consecutive cycles: ${failures}`)
+        dlogSummary('verify', `[reveddit] absent verification resolved nothing — consecutive cycles: ${failures}`)
         if (failures >= ABSENT_VERIFY_FAILURE_WARN_THRESHOLD) {
             setWarningBadge(ABSENT_VERIFY_UNAVAILABLE)
         }
@@ -591,7 +591,7 @@ const legacyTiebreakAbsent = async (
             const canaryRendered = canaryCommentIds.some(id => byName[id])
             // The "healthy call, zero items" case was invisible in issue #14's
             // log — it must be distinguishable from "tiebreak resolved things".
-            dlog(
+            dlogSummary(
                 'legacy',
                 `[reveddit] legacy comment tiebreak: ${Object.keys(byName).length}/${batch.length} rendered, canaryRendered=${canaryRendered}`,
             )
@@ -723,7 +723,7 @@ export const verifyFeedAbsentItems = async (
         authItemsMeta,
     )
     if (fetched > 0 || recentUnknownSkipped > 0) {
-        dlog(
+        dlogSummary(
             'verify',
             `[reveddit] absent verify: ${fetched} fetched, ${recentUnknownSkipped} paced (recent unknown), ${freshDefinitive} resolved this cycle`,
         )
