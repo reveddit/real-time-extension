@@ -20,7 +20,7 @@ Note, the extension is not able to track content from private subreddits.
 VERSION HISTORY:
 
 2026/09/03 - 0.0.5.22
-- restore removal detection after reddit changes on 2026-08-31: the logged-out challenge page renamed its token field, which left every public profile check unreadable; old.reddit.com began requiring login, which silenced the fallback check; and reddit started blocking background requests that carried no Sec-Fetch headers. The challenge solver now handles both page shapes, the fallback uses the same legacy pages served by www.reddit.com with the host adjustable from the news feed, and background requests keep their Sec-Fetch headers; legacy user and post pages are fetched from www.reddit.com with the redesign_optout cookie, restoring the profile scan and thread restore; the challenge solver's field names can be updated from the news feed without a release; Firefox: fix the background script failing to start on recent Firefox versions (the popup said "Could not detect user" after Connect)
+- restore removal detection after reddit changes on August 31; fix Firefox failing to connect
 
 2026/08/29 - 0.0.5.21
 - reveddit.com can now fetch public reddit data through the extension over a typed, allowlisted bridge; it covers what the website's own fallback cannot serve and keeps the site working for extension users if reddit blocks it further; bridge requests always yield to your own monitoring, run through the same rate limiter, and share its backoff
