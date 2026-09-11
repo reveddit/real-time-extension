@@ -414,7 +414,9 @@ function History() {
   const handleResolve = (id: string) => {
     const apiJsonUrl = `https://www.reddit.com/api/info.json?id=${encodeURIComponent(id)}`
     const apiPageUrl = `https://www.reddit.com/api/info?id=${encodeURIComponent(id)}`
-    fetch(apiJsonUrl, { credentials: 'omit' })
+    // Credentialed like lookupOtherItemsByID_authed: the unauthenticated form
+    // has 403'd since August 2026, which sent every click to the fallback.
+    fetch(apiJsonUrl, { credentials: 'include' })
       .then(r => r.json())
       .then(json => {
         const children = (json?.data?.children && Array.isArray(json.data.children)) ? json.data.children : []

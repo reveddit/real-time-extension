@@ -7,6 +7,7 @@ import {
     LoginDetectResult,
     storeRedditCookies,
     isLegacyDisabled,
+    flagIfRateLimited,
 } from './requests'
 import { dlog } from './diaglog'
 import {
@@ -406,6 +407,9 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                 }
             })
 
+            // Only a pass that actually processed items may clear the warning
+            // badge below; a failed or skipped lookup must not read as a clean cycle.
+            let processedItems = false
             // Use message passing to get items from content script context
             return new Promise(resolve => {
                 // Try to find a Reddit tab to make the request from
@@ -457,7 +461,22 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                 })
             })
                 .then(items => {
-                    if (!items) return // handle expected errors
+                    if (!items || (items as any).error) {
+                        // The tab-side me.json fetch failed (429, block page,
+                        // network). Do not record a clean pass: a 429 backs off
+                        // like any other, anything else tries the stored-cookie
+                        // path so the cycle still checks something.
+                        const msg = String((items as any)?.error || 'no response')
+                        const status = Number((msg.match(/status: (\d+)/) || [])[1])
+                        dlog(
+                            'cycle',
+                            `tab-side me.json fetch failed (${msg}); ` +
+                                (status === 429 ? 'backing off' : 'trying stored cookies'),
+                        )
+                        if (status) flagIfRateLimited(new Error(`me.json request failed: ${status}`))
+                        if (status === 429) return
+                        items = 'use_stored_cookies'
+                    }
 
                     // Handle stored cookies case
                     if (items === 'use_stored_cookies') {
@@ -498,6 +517,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                                     storage.tempVar_quarantined_content_found = true
                                 }
                             })
+                            processedItems = true
                             return checkForChanges_thing_byId(
                                 ids,
                                 loggedInUser,
@@ -530,6 +550,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                             storage.tempVar_quarantined_content_found = true
                         }
                     })
+                    processedItems = true
                     return checkForChanges_thing_byId(
                         ids,
                         loggedInUser,
@@ -542,6 +563,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     )
                 })
                 .then(() => {
+                    if (!processedItems) return
                     // A completed pass with a directly-detected user is a
                     // definite login-detection success; grace-mode passes stay
                     // neutral (the channel is still broken, but working around

@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/09/11 - 0.0.5.23
+- fix silent failed checks and the check interval resetting to one minute
+
 2026/09/03 - 0.0.5.22
 - restore removal detection after reddit changes on August 31; fix failing to connect
 

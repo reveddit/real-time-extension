@@ -116,8 +116,8 @@ function WhatsNew() {
           </Button>
           <div style={{ marginTop: 16 }}>
             Questions or feedback?{' '}
-            <BlueLink href="https://www.reddit.com/r/reveddit" target="_blank" rel="noreferrer">
-              r/reveddit
+            <BlueLink href="https://github.com/reveddit/real-time-extension/issues" target="_blank" rel="noreferrer">
+              GitHub issues
             </BlueLink>
           </div>
         </Footer>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { getOptions, INTERVAL_DEFAULT, SEEN_COUNT_DEFAULT, saveOptions } from './storage'
+import { DiagStatus, formatDiagStatus } from './diag-status'
 import { setAlarm } from './common'
 import { AppGlobal, setThemeMode, THEME_STORAGE_KEY, ThemeMode } from './ui/global'
 import { BlueLink, Button, SectionHeader, MessageBanner } from './ui/components'
@@ -184,16 +185,10 @@ function Options() {
     })
     sendMessageAny(
       { action: 'get-diag-status' },
-      (resp: { backoffRemainingMs?: number; lastCheck?: number; error?: string }) => {
+      (resp: DiagStatus) => {
         if (runtimeAny.lastError || !resp || resp.error) return
-        const parts: string[] = []
-        if (resp.lastCheck) {
-          parts.push(`last check ${new Date(resp.lastCheck * 1000).toLocaleTimeString()}`)
-        }
-        if (resp.backoffRemainingMs && resp.backoffRemainingMs > 0) {
-          parts.push(`paused ~${Math.max(1, Math.ceil(resp.backoffRemainingMs / 60000))} min (Reddit rate limit)`)
-        }
-        if (parts.length) setDiagStatus(parts.join(' · '))
+        const line = formatDiagStatus(resp)
+        if (line) setDiagStatus(line)
       },
     )
     return () => chrome.storage.onChanged.removeListener(onStorageChanged)

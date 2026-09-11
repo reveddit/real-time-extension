@@ -56,6 +56,12 @@ export const MECHANISM_ABSENT_VERIFICATION = 'absentPageVerification'
 // instead of JSON (login detection would otherwise read it as "not logged in").
 // Enabled by default; flip to 'off' if the retry ever misbehaves.
 export const MECHANISM_ME_CHALLENGE = 'meJsonChallengeSolve'
+// Safety valve for a comment-markup rename: when 'on', a feed-absent item that
+// no page verified (verification off, or its page rendered the thread scaffold
+// without the comment) is omitted instead of reported removed. Can only
+// suppress alerts, never cause false ones. Default off: absence within
+// coverage keeps counting as removed. Cached verdicts (6 h) are unaffected.
+export const MECHANISM_ABSENT_UNVERIFIED_UNKNOWN = 'absentUnverifiedIsUnknown'
 
 export interface NewsFeed {
     messages: NewsMessage[]

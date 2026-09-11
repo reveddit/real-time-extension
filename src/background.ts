@@ -11,6 +11,7 @@ import { checkForChanges } from './src/monitoring'
 import {
     lookupItemsByID,
     getLoggedinUser,
+    getLoggedinUserDetailed,
     getCookie,
     getAuth,
     storeRedditCookies,
@@ -19,6 +20,7 @@ import {
 import {
     initStorage,
     INTERVAL_DEFAULT,
+    getOptions,
     subscribeUser,
     getUnseenIDs_thing,
     markThingAsSeen,
@@ -76,6 +78,10 @@ if (__DEV__) {
     }
 }
 
+// The challenge solver's remote inputs live in the cached news feed, which
+// outlives the worker while the module's config does not: re-apply them on
+// every start, not only in the onInstalled update branch below.
+applyRemoteChallengeConfig().catch(() => {})
 setupContextualMenu()
 
 // BEGIN webRequest API code
@@ -515,8 +521,18 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             new Promise<number>(resolve =>
                 chrome.storage.sync.get(['last_check'], r => resolve(Number(r?.last_check) || 0)),
             ),
+            // The monitoring alarm's next fire (ms), for the 'next ~HH:MM' line.
+            new Promise<number>(resolve => {
+                try {
+                    chrome.alarms.get(ALARM_NAME, (a: any) => resolve(Number(a?.scheduledTime) || 0))
+                } catch {
+                    resolve(0)
+                }
+            }),
         ])
-            .then(([backoffMs, lastCheck]) => sendResponse({ backoffRemainingMs: backoffMs, lastCheck }))
+            .then(([backoffMs, lastCheck, nextCheck]) =>
+                sendResponse({ backoffRemainingMs: backoffMs, lastCheck, nextCheck }),
+            )
             .catch(err => sendResponse({ error: String(err?.message || err) }))
         return true
     } else if (request.action === 'run-check-now') {
@@ -537,8 +553,9 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     } else if (request.action === 'try-reconnect') {
         // Manual reconnect attempt from popup - subscribe user and trigger lookup
         storeRedditCookies()
-            .then(() => getLoggedinUser())
-            .then((user: any) => {
+            .then(() => getLoggedinUserDetailed())
+            .then(detail => {
+                const user = detail.user
                 if (user) {
                     chrome.storage.local.set({ last_logged_in_user: user })
                     // Subscribe the user (if not already subscribed)
@@ -563,7 +580,9 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                         },
                     )
                 } else {
-                    sendResponse({ success: false })
+                    // indeterminate: reddit did not answer the probe (challenge,
+                    // block, 429), which is not the same as being logged out.
+                    sendResponse({ success: false, indeterminate: detail.indeterminate, reason: detail.reason })
                 }
             })
             .catch(err => {
@@ -927,6 +946,15 @@ if (__BUILT_FOR__ === 'chrome') {
 
 let lastAlarm = 0
 
+// Recreate the monitoring alarm at the interval the user chose on the options
+// page, never the compiled default: the watchdog must not undo a raised interval.
+function setAlarmFromOptions() {
+    getOptions((_users, _others, options) => {
+        const interval = Number(options?.interval)
+        setAlarm(Number.isInteger(interval) && interval > 0 ? interval : INTERVAL_DEFAULT)
+    })
+}
+
 if (!chrome.extension.inIncognitoContext) {
     // ### BEGIN WORKAROUND for broken alarms
     // https://bugs.chromium.org/p/chromium/issues/detail?id=1316588#c99
@@ -935,15 +963,24 @@ if (!chrome.extension.inIncognitoContext) {
         while (true) {
             await new Promise(resolve => setTimeout(resolve, 65000))
             const now = Date.now()
-            const age = now - lastAlarm
-            console.log(`lostEventsWatchdog: last alarm ${age / 1000}s ago`)
-            if (age < 95000) {
+            // Judge health by the alarm's own schedule, not by the last tick this
+            // worker saw: a worker woken by the popup or a bridge fetch has seen no
+            // tick yet, and an interval above one minute never ticks within 95 s.
+            // Lost (the Chromium bug) means the alarm exists but is overdue.
+            const alarm: any = await new Promise(resolve => chrome.alarms.get(ALARM_NAME, resolve))
+            const overdueMs = alarm?.scheduledTime ? now - alarm.scheduledTime : Infinity
+            console.log(
+                `lostEventsWatchdog: last alarm ${(now - lastAlarm) / 1000}s ago, next ${
+                    alarm?.scheduledTime ? `${Math.round(-overdueMs / 1000)}s` : 'missing'
+                }`,
+            )
+            if (overdueMs < 95000) {
                 quietCount = 0 // alarm still works.
             } else if (++quietCount >= 3) {
                 console.error('lostEventsWatchdog: reloading!')
                 return chrome.runtime.reload()
             } else {
-                setAlarm(INTERVAL_DEFAULT)
+                setAlarmFromOptions()
             }
         }
     })()

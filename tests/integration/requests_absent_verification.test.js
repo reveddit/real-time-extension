@@ -282,3 +282,72 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         expect(results[0].data._public_view).toBe(true)
     })
 })
+
+// Remote safety valve (MECHANISM_ABSENT_UNVERIFIED_UNKNOWN): an absent comment
+// that no page explicitly confirmed is omitted, never reported removed.
+describe('absentUnverifiedIsUnknown remote option', () => {
+    const cacheWith = mechanisms => ({
+        news_cache: { feed: { messages: [], options: { mechanisms } }, lastFetched: 1 },
+    })
+    beforeEach(() => stubLegacy())
+    afterEach(() => {
+        Object.assign(_legacyLookups, originalLegacyLookups)
+    })
+
+    it('downgrades a scaffold-only page to unknown while a live page still counts', async () => {
+        __resetStorage({}, cacheWith({ absentUnverifiedIsUnknown: 'on' }))
+        installFetch(defaultRoutes())
+        const ids = [FEED_OK, HIDDEN, GONE]
+        const authItemsMeta = Object.fromEntries(ids.map(id => [id, meta(id)]))
+        const results = await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
+        const names = results.map(r => r.data.name)
+        expect(names).toContain(FEED_OK)
+        expect(names).toContain(HIDDEN)
+        expect(names).not.toContain(GONE)
+    })
+
+    it('also omits absent items when page verification is switched off', async () => {
+        __resetStorage({}, cacheWith({ absentPageVerification: 'off', absentUnverifiedIsUnknown: 'on' }))
+        installFetch(defaultRoutes())
+        const ids = [FEED_OK, GONE]
+        const authItemsMeta = Object.fromEntries(ids.map(id => [id, meta(id)]))
+        const results = await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
+        expect(results.map(r => r.data.name)).toEqual([FEED_OK])
+    })
+})
+
+// A publicly empty profile is only a shadowban signal when something on it
+// could have been public: an all-NSFW / quarantined / private account is
+// empty by design and must keep being monitored.
+describe('publicly empty profile versus NSFW-only accounts', () => {
+    const emptyRoutes = () => [
+        [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
+        [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+    ]
+    beforeEach(() => {
+        __resetStorage()
+        stubLegacy()
+    })
+    afterEach(() => {
+        Object.assign(_legacyLookups, originalLegacyLookups)
+    })
+
+    it('still flags a shadowban when an item could have been public', async () => {
+        installFetch(emptyRoutes())
+        const authItemsMeta = { [GONE]: meta(GONE) }
+        await expect(lookupItemsByID_fromPublicProfile([GONE], USER, authItemsMeta)).rejects.toThrow(
+            'profile_publicly_empty',
+        )
+        expect(__getLocalStorage().error_status).toBe('profile_publicly_empty')
+    })
+
+    it('does not flag an account whose every item is NSFW, quarantined or private', async () => {
+        installFetch(emptyRoutes())
+        const authItemsMeta = {
+            [GONE]: meta(GONE, { over_18: true }),
+            [HIDDEN]: meta(HIDDEN, { subreddit_type: 'private' }),
+        }
+        await expect(lookupItemsByID_fromPublicProfile([GONE, HIDDEN], USER, authItemsMeta)).resolves.toBeDefined()
+        expect(__getLocalStorage().error_status).toBeUndefined()
+    })
+})

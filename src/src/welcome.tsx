@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { subscribeUser } from './storage'
-import { getLoggedinUser } from './requests'
+import { getLoggedinUserDetailed } from './requests'
 import { AppGlobal } from './ui/global'
 import { BlueLink, Button, Card } from './ui/components'
 import { tokens } from './ui/tokens'
@@ -98,9 +98,9 @@ function Welcome() {
       setStatusType('checking')
     }
 
-    getLoggedinUser()
+    getLoggedinUserDetailed()
       .then((result) => {
-        const user = result as string | null
+        const user = result.user
         inFlight.current = false
         if (user) {
           setSucceeded(true)
@@ -127,7 +127,14 @@ function Welcome() {
             redirect()
           }, redirect)
         } else {
-          if (attemptCount.current === 1) {
+          if (result.indeterminate) {
+            // Reddit did not answer the probe (challenge page, block, 429).
+            // Signing in again would not help; a www.reddit.com tab usually does.
+            setStatusMessage(
+              `Reddit isn't answering the login check right now${result.reason ? ` (${result.reason})` : ''}. ` +
+                "If you're already signed in, open www.reddit.com in a tab and try again. There's no need to sign in again.",
+            )
+          } else if (attemptCount.current === 1) {
             setStatusMessage("We couldn't detect your Reddit session yet. If you're already signed in, open a Reddit tab so the extension can read your session. Otherwise, sign in to Reddit below.")
           } else {
             setStatusMessage('Waiting for Reddit session… (we\'ll detect it automatically)')

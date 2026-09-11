@@ -61,9 +61,15 @@ function modify(buffer) {
         host_permissions_location = 'permissions'
         let id = 'real-time-stable@reveddit.com'
         manifest.browser_specific_settings = {
-            "gecko": { id },
+            // data_collection_permissions: AMO lint warns without it and will
+            // refuse. 'none' is accurate while the diag log stays local-only;
+            // revisit if remote log upload ever ships.
+            "gecko": { id, strict_min_version: '109.0', data_collection_permissions: { required: ['none'] } },
             "gecko_android": {}
         }
+        // The cookie header rules run through webRequest on Firefox (the DNR
+        // calls in background.ts are guarded), so the permission is dead weight.
+        manifest.permissions = manifest.permissions.filter(p => p !== 'declarativeNetRequestWithHostAccess')
         manifest.permissions.push(
             'activeTab', 'webRequest', 'webRequestBlocking',
             'https://*.reddit.com/*', 'https://*.reveddit.com/*',
@@ -161,7 +167,9 @@ export default {
     // prevents webpack from using 'eval' statements when mode = development.
     //   - useful for extensions b/c browsers' "Content Security Policy (CSP)"
     //     suggests not using eval statements
-    devtool: "inline-source-map",
+    // Production packages carried ~5.5 MB of inline maps per store zip; keep
+    // them for development only (still no eval, so the CSP is unaffected).
+    devtool: mode === 'production' ? false : 'inline-source-map',
     optimization: {
         minimizer: [new TerserPlugin({
           extractComments: false,

@@ -29,6 +29,7 @@ import {
     resolveMechanismDisabled,
     MECHANISM_LEGACY,
     MECHANISM_ABSENT_VERIFICATION,
+    MECHANISM_ABSENT_UNVERIFIED_UNKNOWN,
     MECHANISM_ME_CHALLENGE,
 } from './news'
 
@@ -68,13 +69,19 @@ export const throwIfLegacyDisabled = async (label: string) => {
     }
 }
 
-const RATE_LIMIT_STATUSES = new Set([403, 429])
+// Only a 429 is rate limiting. A 403 is a block (challenge page, structural
+// block on unauthenticated JSON) and gets its own status so the popup and
+// support triage stop calling it rate limiting. The synthetic '(legacy
+// endpoints disabled)' 403 is a build-time simulation, not a live block.
+const RATE_LIMIT_STATUSES = new Set([429])
 export const flagIfRateLimited = (err: Error) => {
     const m = err.message.match(/request failed: (\d+)/)
     if (!m) return
     const status = Number(m[1])
     if (RATE_LIMIT_STATUSES.has(status)) {
         setWarningBadge('rate_limited')
+    } else if (status === 403 && !err.message.includes('legacy endpoints disabled')) {
+        setWarningBadge('reddit_blocked')
     }
     // Only a real 429 means rate-limited. A 403 is Reddit's structural block on
     // unauthenticated JSON requests (it happens every cycle now), so it must NOT
@@ -276,6 +283,12 @@ export const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTa
 }
 
 export const PROFILE_PUBLICLY_EMPTY = 'profile_publicly_empty'
+
+// Set per lookup from the remote option; read by the page classifier calls
+// below so a scaffold-only page can be downgraded to 'unknown' remotely.
+let scaffoldAbsenceVerdict: 'removed' | 'unknown' = 'removed'
+const isAbsentUnverifiedUnknown = async (): Promise<boolean> =>
+    (await getRemoteMechanism(MECHANISM_ABSENT_UNVERIFIED_UNKNOWN).catch(() => 'auto')) === 'on'
 const WWW_DETECT_FAILURES_KEY = 'www_detect_consecutive_failures'
 const WWW_DETECT_FAILURE_WARN_THRESHOLD = 5
 
@@ -488,7 +501,7 @@ const fetchAndClassifyAbsentItem = async (
         return 'unknown'
     }
     const classify = (html: string): PostPageStatus =>
-        id.startsWith('t3_') ? classifyPostPage(html).status : classifyCommentPage(html, id)
+        id.startsWith('t3_') ? classifyPostPage(html).status : classifyCommentPage(html, id, scaffoldAbsenceVerdict)
     // Comments: try the site's own /svc comment-tree partial first — same
     // classifier signals, a fraction of the page weight, and the route most
     // likely to stay readable for clients whose full permalink pages are
@@ -499,7 +512,7 @@ const fetchAndClassifyAbsentItem = async (
         if (partialUrl) {
             try {
                 const partial = await fetchHtml(partialUrl)
-                const verdict = classifyCommentPage(partial, id)
+                const verdict = classifyCommentPage(partial, id, scaffoldAbsenceVerdict)
                 if (verdict !== 'unknown') {
                     return verdict
                 }
@@ -809,14 +822,30 @@ export const lookupItemsByID_fromPublicProfile = async (
     }
     await recordWwwDetectOutcome(true)
     if (profile.emptyProfile && ids.length) {
-        // The whole profile is publicly empty while the authenticated view has
-        // items — the shadowban signature. One dedicated warning instead of N
-        // removal alerts. Thrown (not returned) so the fallback chain doesn't
-        // run the legacy paths, and so monitoring skips this cycle without
-        // clearing the warning.
-        dlog('feed', `[reveddit] public profile for ${username} is empty - possible shadowban`)
-        setWarningBadge(PROFILE_PUBLICLY_EMPTY)
-        throw new Error(PROFILE_PUBLICLY_EMPTY)
+        // An account whose every item is NSFW, quarantined or in a private
+        // subreddit is publicly empty by design, not shadowbanned: fall through
+        // so the classification loop marks those approved (invisibleToPublicView)
+        // instead of parking the account behind a permanent banner. An id with
+        // no meta could be visible, so it keeps the shadowban reading.
+        const anyPubliclyVisibleClass = ids.some(id => {
+            const meta = authItemsMeta[id]
+            return !meta || !(meta.quarantine || meta.over_18 || meta.subreddit_type === 'private')
+        })
+        if (!anyPubliclyVisibleClass) {
+            dlog(
+                'feed',
+                `[reveddit] public profile for ${username} is empty, but every item is NSFW, quarantined or private; not treated as a shadowban`,
+            )
+        } else {
+            // The whole profile is publicly empty while the authenticated view has
+            // items — the shadowban signature. One dedicated warning instead of N
+            // removal alerts. Thrown (not returned) so the fallback chain doesn't
+            // run the legacy paths, and so monitoring skips this cycle without
+            // clearing the warning.
+            dlog('feed', `[reveddit] public profile for ${username} is empty - possible shadowban`)
+            setWarningBadge(PROFILE_PUBLICLY_EMPTY)
+            throw new Error(PROFILE_PUBLICLY_EMPTY)
+        }
     }
     const postVerdicts = await verifyFeedPresentPosts(
         ids,
@@ -830,6 +859,8 @@ export const lookupItemsByID_fromPublicProfile = async (
     // Skipped: auth-confirmed removals, and publicly-invisible classes whose
     // pages are gated logged-out (monitoring exempts those from removal anyway).
     const absentVerificationDisabled = await isAbsentVerificationDisabled()
+    const absentUnverifiedIsUnknown = await isAbsentUnverifiedUnknown()
+    scaffoldAbsenceVerdict = absentUnverifiedIsUnknown ? 'unknown' : 'removed'
     const absentToVerify = ids.filter(id => {
         if (absentVerificationDisabled) {
             return false
@@ -923,8 +954,9 @@ export const lookupItemsByID_fromPublicProfile = async (
             } else if (covered) {
                 if (absentVerificationDisabled) {
                     // Remote fallback: pre-verification behavior — absence
-                    // within coverage counts as removed.
-                    results.push(syntheticRemoved)
+                    // within coverage counts as removed, unless the
+                    // unverified-is-unknown valve says omit.
+                    if (!absentUnverifiedIsUnknown) results.push(syntheticRemoved)
                 } else {
                     const verdict = absentVerdicts[id]
                     if (verdict === 'live') {

@@ -67,7 +67,9 @@ import browser from 'webextension-polyfill'
                 })
                 .catch(error => {
                     console.log('Error fetching logged-in user items:', error)
-                    return null
+                    // Tell the background why, so a failed fetch is not mistaken
+                    // for a clean pass (see checkForChanges_loggedInUser).
+                    return { error: String(error?.message || error) }
                 })
         } else if (message.action === 'fetch-www-profile-public') {
             // Public-view fetch for removal detection: what logged-out users see.
@@ -99,14 +101,17 @@ import browser from 'webextension-polyfill'
         }
     }
     window.localStorage.setItem('hasSeenLanguageModal', 'true')
-    window.localStorage.setItem('hasNotifierExtension', 'true')
-    // Version for the website (e.g. /update-help): Firefox has no
-    // externally_connectable, so the page can read this instead.
-    window.localStorage.setItem('notifierExtensionVersion', browser.runtime.getManifest().version)
     // Bridge relay for the website: Firefox has no externally_connectable, so
     // reveddit.com pages postMessage here and the background does the fetch
     // (typed and allowlisted in bridge.ts). Not registered on reddit.com pages.
     if (matches && matches[1] !== 'reddit.com') {
+        // Presence and version stamps are for the website only. reddit.com's
+        // own storage never needed them and should not learn the extension
+        // is installed.
+        window.localStorage.setItem('hasNotifierExtension', 'true')
+        // Version for the website (e.g. /update-help): Firefox has no
+        // externally_connectable, so the page can read this instead.
+        window.localStorage.setItem('notifierExtensionVersion', browser.runtime.getManifest().version)
         window.addEventListener('message', (e: MessageEvent) => {
             const d: any = e.data
             if (e.source !== window || !d || d.type !== 'reveddit-bridge-request' || typeof d.id !== 'number') {

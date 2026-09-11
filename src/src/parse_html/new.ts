@@ -225,7 +225,14 @@ const COMMENT_TAG_REGEX = /<shreddit-comment(?![\w-])([^>]*)>/g
 // only if the thread scaffolding rendered.
 const COMMENT_PAGE_VALID_REGEX = /<shreddit-comment-tree\b|<shreddit-post\b/
 
-export const classifyCommentPage = (html: string, commentId: string): CommentPageStatus => {
+// scaffoldAbsence: what a valid thread page that lacks the comment means.
+// 'removed' (default) is the ordinary reading; 'unknown' is the remote
+// safety valve for a markup rename (MECHANISM_ABSENT_UNVERIFIED_UNKNOWN).
+export const classifyCommentPage = (
+    html: string,
+    commentId: string,
+    scaffoldAbsence: 'removed' | 'unknown' = 'removed',
+): CommentPageStatus => {
     for (const m of html.matchAll(COMMENT_TAG_REGEX)) {
         const attrs: Record<string, string> = {}
         for (const a of m[1].matchAll(ATTR_REGEX)) {
@@ -245,7 +252,7 @@ export const classifyCommentPage = (html: string, commentId: string): CommentPag
             return author.startsWith('[') ? 'removed' : 'live'
         }
     }
-    return COMMENT_PAGE_VALID_REGEX.test(html) ? 'removed' : 'unknown'
+    return COMMENT_PAGE_VALID_REGEX.test(html) ? scaffoldAbsence : 'unknown'
 }
 
 // The challenge is a string-doubling puzzle served instead of the real page:

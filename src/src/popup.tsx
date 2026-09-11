@@ -5,6 +5,7 @@ import { css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification, getTestNotificationMessage } from './common'
 import { AppGlobal, setThemeMode, THEME_STORAGE_KEY } from './ui/global'
 import { ActionBtn, MessageBanner, MiniSpinner, Card } from './ui/components'
+import { DiagStatus, formatDiagStatus } from './diag-status'
 import { tokens } from './ui/tokens'
 import {
   getSubscribedUsers_withSeenAndUnseenIDs,
@@ -39,6 +40,12 @@ const Brand = styled.div`
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: 0.01em;
+`
+
+const StatusLine = styled.div`
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: -6px 0 8px;
 `
 
 
@@ -358,6 +365,27 @@ function Popup() {
   const [connecting, setConnecting] = useState(false)
   const [connectResult, setConnectResult] = useState<{ success: boolean; user?: string } | null>(null)
   const [connectMessage, setConnectMessage] = useState<string | null>(null)
+  const [diagStatus, setDiagStatus] = useState<string>('')
+
+  // 'last check 14:02 · next ~14:07' under the brand line: answers "is it
+  // still checking?" without the options page. Refreshed every 30 s.
+  useEffect(() => {
+    const refresh = () => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(chrome.runtime.sendMessage as any)({ action: 'get-diag-status' }, (resp: DiagStatus) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          if ((chrome.runtime as any).lastError || !resp || resp.error) return
+          setDiagStatus(formatDiagStatus(resp))
+        })
+      } catch {
+        /* ignored */
+      }
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 30000)
+    return () => window.clearInterval(timer)
+  }, [])
   const [newsMessage, setNewsMessage] = useState<NewsMessage | null>(null)
   const [pendingUpdate, setPendingUpdate] = useState<string | null>(null)
   const [pendingPostCount, setPendingPostCount] = useState(0)
@@ -543,15 +571,23 @@ function Popup() {
   const handleConnect = () => {
     setConnecting(true)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(chrome.runtime.sendMessage as any)({ action: 'try-reconnect' }, (response: {success?: boolean; user?: string}) => {
+    ;(chrome.runtime.sendMessage as any)(
+      { action: 'try-reconnect' },
+      (response: { success?: boolean; user?: string; indeterminate?: boolean; reason?: string }) => {
       if (response?.success) {
         setConnectResult({ success: true, user: response.user })
         setTimeout(() => loadData(), 1000)
       } else {
         setConnecting(false)
-        setConnectMessage('Could not detect user. Make sure you are logged in to Reddit.')
+        setConnectMessage(
+          response?.indeterminate
+            ? `Reddit isn't answering the login check${response.reason ? ` (${response.reason})` : ''}. ` +
+              "If you're already logged in, open www.reddit.com in a tab and try again."
+            : 'Could not detect user. Make sure you are logged in to Reddit.',
+        )
       }
-    })
+      },
+    )
   }
 
   const handleToggle = (id: string, subscribe: boolean, url: string) => {
@@ -649,6 +685,7 @@ function Popup() {
             {theme === 'dark' ? '\u{1F319}' : '\u{2600}\u{FE0F}'}
           </ThemeToggleBtn>
         </TopRow>
+        {diagStatus && <StatusLine>{diagStatus}</StatusLine>}
 
         {pendingUpdate && (
           <NewsCard>
@@ -674,13 +711,18 @@ function Popup() {
 
         {newsMessage && <NewsBanner message={newsMessage} onDismiss={handleDismissNews} />}
 
-        {errorStatus && currentUser && (
+        {errorStatus && (currentUser || errorStatus === 'logged_in_view_unavailable') && (
           <div>
             {reconnectSuccess ? (
               <MessageBanner variant="success">✓ Connected!</MessageBanner>
             ) : errorStatus === 'rate_limited' ? (
               <MessageBanner variant="warning">
                 ⚠ Reddit is rate-limiting requests. Monitoring will resume automatically.
+              </MessageBanner>
+            ) : errorStatus === 'reddit_blocked' ? (
+              <MessageBanner variant="warning">
+                ⚠ Reddit blocked the extension&apos;s last request (HTTP 403). It keeps retrying; opening a
+                www.reddit.com tab usually clears this.
               </MessageBanner>
             ) : errorStatus === 'profile_publicly_empty' ? (
               <MessageBanner variant="warning">
@@ -796,7 +838,7 @@ function Popup() {
           <FooterLink href="#" onClick={e => { e.preventDefault(); handleTestNotification() }}>
             send a test notification
           </FooterLink>
-          <FooterLink href="https://www.reddit.com/r/reveddit" target="_blank" rel="noopener noreferrer">
+          <FooterLink href="https://github.com/reveddit/real-time-extension/issues" target="_blank" rel="noopener noreferrer">
             feedback
           </FooterLink>
         </FooterRow>

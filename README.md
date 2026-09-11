@@ -10,7 +10,7 @@ This extension can be installed directly via [Chrome](https://chrome.google.com/
 </p>
 
 
-![chrome](images/chrome.png) Note: the Chrome Store may or may not have the latest update (details [here](https://www.reddit.com/r/reveddit/comments/ehequ8/update_on_chrome_store_realtime_extension_its/)).
+![chrome](images/chrome.png) Note: the Chrome Store can lag behind the newest release. The version history is in [STORE_DESCRIPTION.txt](STORE_DESCRIPTION.txt); questions and bug reports go to [GitHub issues](https://github.com/reveddit/real-time-extension/issues).
 
 ## Install from source
 
