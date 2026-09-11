@@ -1,7 +1,7 @@
 {
   "name": "reveddit real-time",
   "description": "reveddit notifies you when any of your content on reddit has been removed.",
-  "version": "0.0.5.22",
+  "version": "0.0.5.23",
   "permissions": [
     "cookies",
     "notifications",
@@ -9,7 +9,6 @@
     "storage",
     "contextMenus",
     "scripting",
-    "declarativeNetRequestWithHostAccess",
     "activeTab",
     "webRequest",
     "webRequestBlocking",
@@ -54,7 +53,13 @@
   "manifest_version": 2,
   "browser_specific_settings": {
     "gecko": {
-      "id": "real-time-stable@reveddit.com"
+      "id": "real-time-stable@reveddit.com",
+      "strict_min_version": "109.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
     },
     "gecko_android": {}
   },
