@@ -15,7 +15,10 @@ export const test = base.extend({
     // eslint-disable-next-line no-empty-pattern
     context: async ({}, use) => {
         const context = await chromium.launchPersistentContext('', {
-            headless: false,
+            // No window: the `chromium` channel runs Chromium's new headless mode, which
+            // (unlike the default headless shell) loads extensions. E2E_HEADED=1 shows it.
+            channel: 'chromium',
+            headless: !process.env.E2E_HEADED,
             args: [
                 `--disable-extensions-except=${extensionPath}`,
                 `--load-extension=${extensionPath}`,

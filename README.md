@@ -36,7 +36,7 @@ Firefox: `yarn start-firefox`, load `dist-dev-firefox/`
 
 `yarn test:watch` — Vitest in watch mode
 
-`yarn test:e2e` — Playwright E2E tests against a real Chromium instance with the extension loaded. Requires a fresh build first:
+`yarn test:e2e` — Playwright E2E tests against a real Chromium instance with the extension loaded. Runs headless, with no window (`E2E_HEADED=1 yarn test:e2e` shows the browser). Requires a fresh build first:
 
 ```bash
 yarn build-chrome-dev
