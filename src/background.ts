@@ -742,7 +742,10 @@ chrome.runtime.onInstalled.addListener(function (details) {
 // challenges on post pages. The content script's own __reveddit_cs_loaded guard
 // makes a redundant injection a no-op, but we still check first to avoid the work.
 async function injectContentScriptIntoExistingRedditTabs() {
-    const scripting = (chrome as any).scripting
+    // browser.scripting: in the Firefox (MV2) build, chrome.* calls take
+    // callbacks and return undefined, so awaiting chrome.scripting threw for
+    // every tab ("can't access property Symbol.iterator of undefined")
+    const scripting = (browser as any).scripting || (chrome as any).scripting
     if (!scripting?.executeScript) return // older Firefox MV2 — skip gracefully
     let tabs: any[]
     try {
