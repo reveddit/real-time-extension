@@ -17,6 +17,8 @@ import {
     _fetchViaExecuteScript,
     _legacyLookups,
     ABSENT_VERIFY_UNAVAILABLE,
+    PUBLIC_VIEW_FETCH_INIT,
+    pageContextFetch,
 } from '../../src/src/requests'
 
 const CACHE_KEY = 'www_absent_item_verdicts'
@@ -280,5 +282,90 @@ describe('_fetchViaExecuteScript contract', () => {
         expect(failed.ok).toBe(false)
         expect(failed.status).toBe(0)
         expect(failed.err).toContain('net down')
+    })
+
+    it('hands the injected function the public-view options', async () => {
+        browserMock.scripting = { executeScript: vi.fn(async () => [{ result: { ok: true, status: 200, text: '' } }]) }
+        await _fetchViaExecuteScript(1, 'https://www.reddit.com/x')
+        expect(browserMock.scripting.executeScript.mock.calls[0][0].args).toEqual([
+            'https://www.reddit.com/x',
+            PUBLIC_VIEW_FETCH_INIT,
+        ])
+    })
+
+    it("the injected function uses the page's own fetch when Firefox exposes content.fetch", async () => {
+        browserMock.scripting = { executeScript: vi.fn(async () => [{ result: { ok: true, status: 200, text: '' } }]) }
+        await _fetchViaExecuteScript(1, 'u')
+        const func = browserMock.scripting.executeScript.mock.calls[0][0].func
+        globalThis.fetch = vi.fn(async () => res(200, 'SANDBOX'))
+        globalThis.content = { fetch: vi.fn(async () => res(200, 'PAGE')) }
+        try {
+            expect(await func('u', PUBLIC_VIEW_FETCH_INIT)).toEqual({ ok: true, status: 200, text: 'PAGE' })
+            expect(globalThis.content.fetch).toHaveBeenCalledWith('u', PUBLIC_VIEW_FETCH_INIT)
+            expect(globalThis.fetch).not.toHaveBeenCalled()
+        } finally {
+            delete globalThis.content
+        }
+    })
+})
+
+// Firefox (MV2) content-script fetch() is the extension's privileged fetch, which
+// reddit treats like a background request (JS challenge, then a 403 on the
+// solved request). The page's own fetch (content.fetch) is what Chrome content
+// scripts get natively.
+describe('public-view fetch options and page-context fetch', () => {
+    it('every leg omits credentials', () => {
+        expect(PUBLIC_VIEW_FETCH_INIT.credentials).toBe('omit')
+    })
+
+    it('the background leg sends the public-view options', async () => {
+        globalThis.fetch = vi.fn(async () => res(200, 'BGPAGE'))
+        const { fetchHtml, viaTab } = await getWwwHtmlFetcher()
+        expect(viaTab).toBe(false)
+        expect(await fetchHtml('https://www.reddit.com/user/u/comments/?sort=new')).toBe('BGPAGE')
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            'https://www.reddit.com/user/u/comments/?sort=new',
+            PUBLIC_VIEW_FETCH_INIT,
+        )
+    })
+
+    it('the background fallback behind a tab sends the public-view options too', async () => {
+        browserMock.tabs.query = vi.fn(async () => [{ id: 7 }])
+        browserMock.scripting = {
+            executeScript: vi.fn(async () => {
+                throw new Error('No tab with id: 7')
+            }),
+        }
+        globalThis.fetch = vi.fn(async () => res(200, 'BGPAGE'))
+        const { fetchHtml } = await getWwwHtmlFetcher()
+        expect(await fetchHtml('https://www.reddit.com/x')).toBe('BGPAGE')
+        expect(globalThis.fetch).toHaveBeenCalledWith('https://www.reddit.com/x', PUBLIC_VIEW_FETCH_INIT)
+    })
+
+    it('pageContextFetch prefers content.fetch (Firefox) and keeps fetch elsewhere (Chrome)', async () => {
+        globalThis.fetch = vi.fn(async () => res(200, 'SANDBOX'))
+        const viaFetch = await pageContextFetch('u', PUBLIC_VIEW_FETCH_INIT)
+        expect(await viaFetch.text()).toBe('SANDBOX')
+        expect(globalThis.fetch).toHaveBeenCalledWith('u', PUBLIC_VIEW_FETCH_INIT)
+
+        globalThis.content = { fetch: vi.fn(async () => res(200, 'PAGE')) }
+        try {
+            const viaPage = await pageContextFetch('u', PUBLIC_VIEW_FETCH_INIT)
+            expect(await viaPage.text()).toBe('PAGE')
+            expect(globalThis.content.fetch).toHaveBeenCalledWith('u', PUBLIC_VIEW_FETCH_INIT)
+            expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+        } finally {
+            delete globalThis.content
+        }
+    })
+
+    it('pageContextFetch ignores a content global without fetch', async () => {
+        globalThis.fetch = vi.fn(async () => res(200, 'SANDBOX'))
+        globalThis.content = {}
+        try {
+            expect(await (await pageContextFetch('u', PUBLIC_VIEW_FETCH_INIT)).text()).toBe('SANDBOX')
+        } finally {
+            delete globalThis.content
+        }
     })
 })

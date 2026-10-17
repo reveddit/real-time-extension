@@ -162,11 +162,29 @@ export const lookupItemsByID = (
     )
 }
 
-// The public fetch MUST omit credentials: rehydrateStoredRedditCookies() can put
-// the user's real session in the browser jar, and sending it would turn this
+// Options for every public-view (logged-out) www fetch, whichever leg makes it.
+// credentials MUST be omitted: rehydrateStoredRedditCookies() can put the
+// user's real session in the browser jar, and sending it would turn this
 // "public" view into the authenticated view — removals would never be detected.
+export const PUBLIC_VIEW_FETCH_INIT: RequestInit = {
+    credentials: 'omit',
+    headers: { 'Accept-Language': 'en' },
+}
+
+// Firefox's (MV2) content scripts get a privileged fetch(): reddit sees it as an
+// extension request, identical on the wire to a background fetch (tabId -1, no
+// Referer), so it gets the JS challenge too, and the solved request got the 403
+// block page. content.fetch is the page's own fetch, which acts like a Chrome
+// content script's: same-origin with the tab, Referer set, no challenge
+// (verified 2026-10-17). Chrome has no `content` global and keeps its fetch.
+declare const content: { fetch?: typeof fetch } | undefined
+export const pageContextFetch = (url: string, init: RequestInit): Promise<Response> => {
+    const page = typeof content !== 'undefined' && content && typeof content.fetch === 'function' ? content : null
+    return page ? page.fetch!(url, init) : fetch(url, init)
+}
+
 const fetchWwwHtml_viaBackground: FetchHtml = async (url: string) => {
-    const response = await fetch(url, { credentials: 'omit', headers: { 'Accept-Language': 'en' } })
+    const response = await fetch(url, PUBLIC_VIEW_FETCH_INIT)
     if (!response.ok) {
         throw new Error(`www.reddit.com request failed: ${response.status}`)
     }
@@ -188,15 +206,18 @@ export const _fetchViaExecuteScript = async (tabId: number, url: string): Promis
     }
     const results = (await scripting.executeScript({
         target: { tabId },
-        func: async (u: string) => {
+        func: async (u: string, init: RequestInit) => {
             try {
-                const resp = await fetch(u, { credentials: 'omit', headers: { 'Accept-Language': 'en' } })
+                // pageContextFetch, inlined: an injected function can't call out
+                const page =
+                    typeof content !== 'undefined' && content && typeof content.fetch === 'function' ? content : null
+                const resp = await (page ? page.fetch!(u, init) : fetch(u, init))
                 return { ok: resp.ok, status: resp.status, text: resp.ok ? await resp.text() : '' }
             } catch (e) {
                 return { ok: false, status: 0, text: '', err: String(e) }
             }
         },
-        args: [url],
+        args: [url, PUBLIC_VIEW_FETCH_INIT],
     })) as any[]
     const value = results && results[0] && results[0].result
     if (!value || typeof value.text !== 'string') {
@@ -211,11 +232,12 @@ export const _fetchViaExecuteScript = async (tabId: number, url: string): Promis
 }
 
 // Prefer fetching through a www.reddit.com tab's content script: a same-origin
-// fetch there is verified to never receive Reddit's JS challenge. old.reddit.com
+// fetch there is verified to never receive Reddit's JS challenge (in Firefox
+// only through the page's own fetch, see pageContextFetch). old.reddit.com
 // and sh.reddit.com tabs cannot help — content scripts follow the page's origin
 // rules, so cross-origin reads to www.reddit.com are CORS-blocked from them.
 // Without a www tab, the background fetch works via host_permissions (bypasses
-// CORS) but may hit the challenge; parse_html/new.ts carries a best-effort solver.
+// CORS) but gets the challenge on full pages; parse_html/new.ts solves it.
 export const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTab: boolean }> => {
     let tabs: any[] = []
     try {

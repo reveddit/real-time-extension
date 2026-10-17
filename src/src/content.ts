@@ -1,7 +1,7 @@
 import { getSubscribedUsers_withSeenAndUnseenIDs, subscribeUser } from './storage'
 import { redditModifications } from './content-reddit'
 import { revdditModifications } from './content-revddit'
-import { getLoggedinUser } from './requests'
+import { getLoggedinUser, pageContextFetch, PUBLIC_VIEW_FETCH_INIT } from './requests'
 import browser from 'webextension-polyfill'
 ;(function () {
     // Guard against double-execution: the background injects this script into
@@ -75,18 +75,16 @@ import browser from 'webextension-polyfill'
             // Public-view fetch for removal detection: what logged-out users see.
             // Runs in a www.reddit.com tab so the fetch is same-origin, which is
             // verified to bypass Reddit's JS challenge (the background worker's
-            // fetch may not). URLs (profile tabs and /svc/ pagination partials)
-            // are built by parse_html/new.ts; this handler just fetches.
-            // credentials MUST stay omitted or the logged-in view comes back and
-            // removals become undetectable.
+            // fetch may not). Firefox needs the page's own fetch for that (see
+            // pageContextFetch). URLs (profile tabs and /svc/ pagination
+            // partials) are built by parse_html/new.ts; this handler just
+            // fetches. credentials MUST stay omitted (PUBLIC_VIEW_FETCH_INIT) or
+            // the logged-in view comes back and removals become undetectable.
             const url = String(message.url || '')
             if (!url.startsWith('https://www.reddit.com/')) {
                 return Promise.resolve({ success: false, error: 'invalid url' })
             }
-            return fetch(url, {
-                credentials: 'omit',
-                headers: { 'Accept-Language': 'en' },
-            })
+            return pageContextFetch(url, PUBLIC_VIEW_FETCH_INIT)
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`www.reddit.com request failed: ${response.status}`)
