@@ -22,24 +22,27 @@
 //    IP affects monitoring no matter who heated it, and the next cycle should
 //    know.
 //
-// Fetches MUST keep credentials:'omit': rehydrateStoredRedditCookies() can put
-// the user's real session in the browser jar, and sending it would turn this
-// public view into the authenticated view (see fetchWwwHtml_viaBackground).
+// Identity: the user's own reddit login. By 2026-10 reddit's edge answered
+// every logged-out .json fetch from the extension with its 189 KB "network
+// security" 403 page, in Chrome and Firefox alike, whatever cookies or headers
+// it carried (the browser's loid alone had got through since 2026-09).
+// Requests carrying the user's session still pass, so bridge fetches send the
+// browser's reddit cookies, and without a reddit_session the bridge refuses
+// with not_logged_in, which the website explains.
 //
-// Identity: since 2026-09 reddit's edge answers a cookie-less .json fetch with
-// its 189 KB "network security" 403 page, in Chrome and Firefox alike, while a
-// cookie-less top-level navigation still gets JSON (and is handed first-contact
-// cookies). Tested cookie by cookie from the built extension: `loid` alone
-// turns the same fetch into a 200; token_v2, session_tracker, edgebucket and
-// csv without it do nothing. loid is the device id reddit assigns to every
-// browser on first contact, logged in or out, and carries no session, so
-// attaching it keeps the bridge view logged out. It is attached only to bridge
-// requests (URL marker below) by a DNR session rule (Chrome/Edge) or the
-// webRequest listener in background.ts (Firefox); monitoring's own public
-// fetches read legacy HTML and stay cookie-less.
+// The logged-in view is the user's, not the public's, and toPublicView turns
+// it back into what logged-out visitors see:
+// - Reddit shows authors their own removed items as if nothing happened. The
+//   items the extension's own monitoring has confirmed removed are marked
+//   removed. That costs no extra reddit requests and covers what monitoring
+//   has seen (the newest ~130 per subscribed user).
+// - Moderators see removed items in their subreddits with the text intact and
+//   removed: true or banned_by (the remover) set, verified 2026-10-17 on
+//   r/pushshift; spam marks spam-filter removals.
+// Monitoring's own public-view fetches stay logged out.
 
 import browser from 'webextension-polyfill'
-import { getRateLimitBackoffRemainingMs, getMsSinceLastRateLimitHit } from './storage'
+import { getRateLimitBackoffRemainingMs, getMsSinceLastRateLimitHit, getObjectNamesForThing } from './storage'
 import { flagIfRateLimited, RECENT_RATE_LIMIT_WINDOW_MS } from './requests'
 import { isCycleInFlight } from './monitoring'
 import { dlog } from './diaglog'
@@ -86,108 +89,79 @@ export const validateBridgeUrl = (raw: any): string | null => {
     return www_reddit + u.pathname + u.search
 }
 
-// Query marker that scopes the loid cookie injection to bridge fetches only
-// (reddit ignores unknown parameters). Same pattern as LEGACY_PAGE_MARKER.
-export const BRIDGE_MARKER = 'rv_bridge=1'
-export const bridgeRequestUrl = (url: string): string => url + (url.includes('?') ? '&' : '?') + BRIDGE_MARKER
-
-const BRIDGE_COOKIE_RULE_ID = 9004
-const IDENTITY_CACHE_MS = 60 * 1000
-const www_reddit_slash = www_reddit + '/'
-
-let bridgeLoid: string | null = null
-let bridgeLoidCheckedAt = 0
-let installedRuleLoid: string | null = null
-
-// Read by the Firefox webRequest listener (background.ts) when it sees the marker.
-export const getBridgeLoid = (): string | null => bridgeLoid
-
-const readCookie = async (name: string): Promise<string | null> => {
+// Checked on every request: a cookie read is cheap, and someone who just
+// logged in shouldn't have to wait
+const hasRedditLogin = async (): Promise<boolean> => {
     try {
-        const c = await browser.cookies.get({ url: www_reddit_slash, name })
-        return c?.value || null
+        return Boolean(await browser.cookies.get({ url: www_reddit + '/', name: 'reddit_session' }))
     } catch {
-        return null
+        return false
     }
 }
 
-// A browser that has never contacted reddit has no loid. One credentialed
-// request then carries nothing (the jar holds no reddit cookie at all) and
-// receives reddit's first-contact cookies, exactly like a first visit. The
-// legacy /api/info HTML page is the one endpoint verified to answer such a
-// request with 200 and a loid (a cookie-less .json gets the block page, which
-// sets no loid; the homepage sets only edgebucket). Never done while a
-// session cookie exists: the jar is then the user's, not ours.
-const bootstrapLoid = async (): Promise<string | null> => {
-    if (await readCookie('reddit_session')) {
-        return null
-    }
+// Fullnames monitoring has confirmed removed, for every subscribed user and
+// individually followed item (the removed_* hashes in sync storage)
+const getKnownRemovedIds = async (): Promise<Set<string>> => {
+    const ids = new Set<string>()
     try {
-        await fetch(www_reddit_slash + 'api/info?id=t3_87', {
-            credentials: 'include',
-            headers: { 'Accept-Language': 'en' },
-        })
+        const { user_subscriptions } = (await browser.storage.sync.get({ user_subscriptions: {} })) as any
+        const keys = Object.keys(user_subscriptions || {}).map(user => getObjectNamesForThing(user, true).removed)
+        keys.push(getObjectNamesForThing('other', false).removed)
+        const stored = (await browser.storage.sync.get(keys)) as Record<string, any>
+        keys.forEach(key => Object.keys(stored[key] || {}).forEach(id => ids.add(id)))
     } catch {
-        /* ignored; readCookie below decides */
+        // storage unreadable: nothing to mark
     }
-    return readCookie('loid')
+    return ids
 }
 
-// Chrome/Edge: session rule (tabIds is session-rule-only) that sets the Cookie
-// header on marked background requests. Re-applied whenever the value changes
-// or after a service-worker restart (installedRuleLoid resets to null).
-const installBridgeCookieRule = async (loid: string | null): Promise<void> => {
-    if (__BUILT_FOR__ !== 'chrome') {
-        return
+const PLACEHOLDER = /^\[(removed|deleted)\]$/
+
+// One item rewritten to what logged-out visitors see, in the shape the
+// website reads (its utils.tsx commentIsRemoved and itemIsRemovedOrDeleted).
+// Items their authors deleted already read [deleted] in every view and are
+// left alone.
+const markPubliclyRemoved = (kind: string, item: any) => {
+    if (kind === 't1') {
+        if (!PLACEHOLDER.test(item.body ?? '')) {
+            item.body = '[removed]'
+            item.author = '[deleted]'
+        }
+    } else if (item.author !== '[deleted]') {
+        item.is_robot_indexable = false
+        if (item.is_self) {
+            item.selftext = '[removed]'
+        }
     }
-    const dnr = (chrome as any).declarativeNetRequest
-    if (!dnr?.updateSessionRules || loid === installedRuleLoid) {
-        return
-    }
-    await dnr.updateSessionRules({
-        removeRuleIds: [BRIDGE_COOKIE_RULE_ID],
-        addRules: loid
-            ? [
-                  {
-                      id: BRIDGE_COOKIE_RULE_ID,
-                      priority: 2,
-                      action: {
-                          type: 'modifyHeaders',
-                          requestHeaders: [{ header: 'cookie', operation: 'set', value: `loid=${loid}` }],
-                      },
-                      condition: {
-                          regexFilter: '^https://www\\.reddit\\.com/.*[?&]' + BRIDGE_MARKER,
-                          resourceTypes: ['xmlhttprequest', 'other'],
-                          tabIds: [-1],
-                      },
-                  },
-              ]
-            : [],
-    })
-    installedRuleLoid = loid
 }
 
-// Resolves the loid to send with bridge fetches (cached a minute; null when
-// none could be obtained, in which case the bridge refuses with no_identity
-// and the page falls back to its own transport).
-export const refreshBridgeIdentity = async (): Promise<string | null> => {
-    const now = Date.now()
-    if (now - bridgeLoidCheckedAt < IDENTITY_CACHE_MS) {
-        return bridgeLoid
+// The logged-in view rewritten to the public one (see the top). Walks the
+// shapes the allowlisted endpoints return: listings, a thread's [post,
+// comments] pair, nested replies, and morechildren's json.data.things.
+export const toPublicView = (json: any, knownRemoved: Set<string>): any => {
+    const visit = (node: any): void => {
+        if (!node || typeof node !== 'object') {
+            return
+        }
+        if (Array.isArray(node)) {
+            node.forEach(visit)
+            return
+        }
+        const data = node.data
+        if ((node.kind === 't1' || node.kind === 't3') && data) {
+            const removedInModView = data.removed === true || data.spam === true || Boolean(data.banned_by)
+            if (knownRemoved.has(data.name) || removedInModView) {
+                markPubliclyRemoved(node.kind, data)
+            }
+            visit(data.replies)
+        } else if (node.kind === 'Listing') {
+            visit(data?.children)
+        } else if (node.json?.data?.things) {
+            visit(node.json.data.things)
+        }
     }
-    let loid = await readCookie('loid')
-    if (!loid) {
-        loid = await bootstrapLoid()
-        dlog('bridge', `[reveddit] bridge: no loid cookie; bootstrap ${loid ? 'succeeded' : 'failed'}`)
-    }
-    bridgeLoid = loid
-    bridgeLoidCheckedAt = now
-    try {
-        await installBridgeCookieRule(loid)
-    } catch (err: any) {
-        dlog('bridge', `[reveddit] bridge: identity rule failed: ${String(err?.message || err)}`)
-    }
-    return loid
+    visit(json)
+    return json
 }
 
 const BRIDGE_WINDOW_MS = 10 * 60 * 1000
@@ -231,13 +205,13 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
         dlog('bridge', `[reveddit] bridge: window budget exhausted (${budget}/${BRIDGE_WINDOW_MS / 60000}min)`)
         return { ok: false, status: 0, error: 'budget_exhausted', retryAfterMs: 60 * 1000 }
     }
-    if (!(await refreshBridgeIdentity())) {
-        return { ok: false, status: 0, error: 'no_identity', retryAfterMs: IDENTITY_CACHE_MS }
+    if (!(await hasRedditLogin())) {
+        return { ok: false, status: 0, error: 'not_logged_in' }
     }
     recentTimes.push(now)
     const run = lane.then(async (): Promise<BridgeResponse> => {
-        const r = await fetch(bridgeRequestUrl(url), { credentials: 'omit', headers: { 'Accept-Language': 'en' } })
-        const data = r.ok ? await r.json() : null
+        const r = await fetch(url, { credentials: 'include', headers: { 'Accept-Language': 'en' } })
+        const data = r.ok ? toPublicView(await r.json(), await getKnownRemovedIds()) : null
         if (!r.ok) {
             dlog('bridge', `[reveddit] bridge: ${url.split('?')[0]} -> ${r.status}`)
             // a bridge 429 must enter the shared backoff; monitoring's next
