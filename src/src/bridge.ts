@@ -175,6 +175,26 @@ export const computeBridgeBudget = (msSinceLastRateLimitHit: number | null): num
         ? Math.floor(BRIDGE_MAX_PER_WINDOW / 2)
         : BRIDGE_MAX_PER_WINDOW
 
+// A monitoring cycle takes seconds (about 6 s in a 2026-10-17 Firefox log).
+// Waiting it out beats refusing at once, which made the page sit out a flat
+// 15 s before its one retry. The cap keeps the answer inside the page's 10 s
+// timeout (website bridge.ts BRIDGE_TIMEOUT_MS).
+const BUSY_WAIT_MAX_MS = 6000
+const BUSY_POLL_MS = 250
+const BUSY_RETRY_AFTER_MS = 5000
+
+// Resolves true once isBusy() turns false, or false when maxMs runs out first
+export const waitUntilIdle = async (isBusy: () => boolean, maxMs: number, pollMs: number): Promise<boolean> => {
+    const deadline = Date.now() + maxMs
+    while (isBusy()) {
+        if (Date.now() >= deadline) {
+            return false
+        }
+        await new Promise(resolve => setTimeout(resolve, pollMs))
+    }
+    return true
+}
+
 let recentTimes: number[] = []
 // single-lane serialization with spacing between fetches
 let lane: Promise<void> = Promise.resolve()
@@ -192,13 +212,22 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
     if (!url) {
         return { ok: false, status: 0, error: 'invalid url' }
     }
+    // Before the backoff check: a cycle that ends in a 429 starts one
+    if (isCycleInFlight()) {
+        const waitStart = Date.now()
+        const idle = await waitUntilIdle(isCycleInFlight, BUSY_WAIT_MAX_MS, BUSY_POLL_MS)
+        dlog(
+            'bridge',
+            `[reveddit] bridge: ${idle ? 'waited' : 'gave up after'} ${Date.now() - waitStart}ms for a monitoring cycle`,
+        )
+        if (!idle) {
+            return { ok: false, status: 0, error: 'busy', retryAfterMs: BUSY_RETRY_AFTER_MS }
+        }
+    }
     const backoffMs = await getRateLimitBackoffRemainingMs()
     if (backoffMs > 0) {
         dlog('bridge', `[reveddit] bridge: refusing during rate-limit backoff (${Math.ceil(backoffMs / 1000)}s left)`)
         return { ok: false, status: 0, error: 'rate_limited', retryAfterMs: backoffMs }
-    }
-    if (isCycleInFlight()) {
-        return { ok: false, status: 0, error: 'busy', retryAfterMs: 15000 }
     }
     const now = Date.now()
     recentTimes = recentTimes.filter(t => now - t < BRIDGE_WINDOW_MS)

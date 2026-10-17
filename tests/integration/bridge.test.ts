@@ -7,7 +7,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect } from 'vitest'
 
-import { validateBridgeUrl, computeBridgeBudget, toPublicView } from '../../src/src/bridge.ts'
+import { validateBridgeUrl, computeBridgeBudget, toPublicView, waitUntilIdle } from '../../src/src/bridge.ts'
 import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/requests.ts'
 
 describe('validateBridgeUrl', () => {
@@ -49,6 +49,26 @@ describe('validateBridgeUrl', () => {
         ]) {
             expect(validateBridgeUrl(url), url).toBeNull()
         }
+    })
+})
+
+// A bridge request that arrives during a monitoring cycle waits for the cycle
+// instead of being refused outright, up to a cap
+describe('waitUntilIdle', () => {
+    it('resolves true as soon as the cycle ends', async () => {
+        let polls = 0
+        const started = Date.now()
+        expect(await waitUntilIdle(() => ++polls < 3, 1000, 10)).toBe(true)
+        expect(polls).toBe(3)
+        expect(Date.now() - started).toBeLessThan(500)
+    })
+    it('resolves false when the cycle outlasts the cap', async () => {
+        const started = Date.now()
+        expect(await waitUntilIdle(() => true, 60, 10)).toBe(false)
+        expect(Date.now() - started).toBeGreaterThanOrEqual(55)
+    })
+    it('resolves true at once when nothing is running', async () => {
+        expect(await waitUntilIdle(() => false, 0, 10)).toBe(true)
     })
 })
 
