@@ -399,9 +399,23 @@ describe('describePageForDiag wall tags', () => {
         expect(d).toContain('wall=captcha')
     })
 
-    it('names the front page served in place of a permalink', () => {
-        const d = describePageForDiag('<html><title>Reddit - The heart of the internet</title></html>')
-        expect(d).toContain('wall=frontpage')
+    it('shows which page was served, so a front page in place of a permalink reads canonical="/"', () => {
+        const d = describePageForDiag(
+            '<html><head><link rel="canonical" href="https://www.reddit.com/"/>' +
+                '<title>Reddit - The heart of the internet</title></head></html>',
+        )
+        expect(d).toContain('canonical="/"')
+    })
+
+    it("doesn't take reddit's generic title for the front page", () => {
+        // by 2026-10 real thread pages carried the front page's title too
+        const d = describePageForDiag(
+            '<html><head><title>Reddit - The heart of the internet</title>' +
+                '<link href="https://www.reddit.com/r/sub/comments/abc/t/" rel="canonical"></head>' +
+                '<shreddit-post></shreddit-post></html>',
+        )
+        expect(d).not.toContain('wall=')
+        expect(d).toContain('canonical="/r/sub/comments/abc/t/"')
     })
 
     it('adds no wall tag to ordinary pages', () => {

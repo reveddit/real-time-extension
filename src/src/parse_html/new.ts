@@ -317,19 +317,23 @@ export const solveChallenge = (html: string, originalUrl: string): string | null
 // (Issue #14's log had verdicts but no reason — this is the missing "why".)
 export const describePageForDiag = (html: string): string => {
     const title = (html.match(/<title[^>]*>([^<]{0,60})/) || [])[1] || ''
-    // Wall shapes observed in issue #14's 2026-08-17 log: the front page
-    // served in place of a permalink (even after an accepted challenge solve),
-    // and the captcha interstitial. Naming them beats byte-size archaeology.
-    // (challenge= is a plain substring test: full pages embed "js_challenge"
-    // incidentally, so only the solver's puzzle regexes prove a real one.)
-    const wall = /Prove your humanity/i.test(title)
-        ? ' wall=captcha'
-        : title === 'Reddit - The heart of the internet'
-          ? ' wall=frontpage'
-          : ''
+    // Which page reddit actually served, from its canonical URL rather than
+    // its title. Issue #14's 2026-08-17 log had the front page served in place
+    // of a permalink (even after an accepted challenge solve); that shows as
+    // canonical="/". The old test matched the front page's title, and by
+    // 2026-10 reddit gave every page that title.
+    const canonicalTag = (html.match(/<link\b[^>]*\brel="canonical"[^>]*>/) || [])[0]
+    const canonical = canonicalTag && (canonicalTag.match(/\bhref="(?:https?:\/\/[^/"]+)?([^"]{0,80})"/) || [])[1]
+    // The captcha interstitial is still named by its title, which the log
+    // keeps either way. (challenge= is a plain substring test: full pages
+    // embed "js_challenge" incidentally, so only the solver's puzzle regexes
+    // prove a real one.)
+    const wall = /Prove your humanity/i.test(title) ? ' wall=captcha' : ''
     return (
         `bytes=${html.length} challenge=${CHALLENGE_REGEX.test(html) ? 1 : 0} ` +
-        `scaffold=${COMMENT_PAGE_VALID_REGEX.test(html) ? 1 : 0} title=${JSON.stringify(title)}${wall}`
+        `scaffold=${COMMENT_PAGE_VALID_REGEX.test(html) ? 1 : 0} title=${JSON.stringify(title)}` +
+        (canonical !== undefined ? ` canonical=${JSON.stringify(canonical)}` : '') +
+        wall
     )
 }
 
