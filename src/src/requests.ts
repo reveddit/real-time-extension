@@ -171,6 +171,21 @@ export const PUBLIC_VIEW_FETCH_INIT: RequestInit = {
     headers: { 'Accept-Language': 'en' },
 }
 
+// The background leg also bypasses caches, as redditHTMLRequestOptions does for
+// the legacy HTML. Its fetch isn't the tab's own, and reddit's edge answers a
+// cookie-less request like that with the 190 KB "network security" 403 unless
+// it carries the Pragma/Cache-Control: no-cache that cache 'reload' adds.
+// Measured 2026-10-17 from Firefox's background page: without them the
+// solved-challenge request, the /svc partials and legacy /api/info got the
+// 403; with them, 200 and real pages. Chrome's service worker the same day:
+// without them every solved request got the 403, though each challenge was
+// fresh (so no stale cache entry was to blame); with them a full lookup read
+// 100 items. Logged-out .json stays 403 either way. The tab legs must NOT send
+// them: with no-cache, Firefox's tab got its comment pages back as the "Prove
+// your humanity" captcha in both monitoring cycles tried, and without it in
+// neither.
+export const BACKGROUND_FETCH_INIT: RequestInit = { ...PUBLIC_VIEW_FETCH_INIT, cache: 'reload' }
+
 // Firefox's (MV2) content scripts get a privileged fetch(): reddit sees it as an
 // extension request, identical on the wire to a background fetch (tabId -1, no
 // Referer), so it gets the JS challenge too, and the solved request got the 403
@@ -184,7 +199,7 @@ export const pageContextFetch = (url: string, init: RequestInit): Promise<Respon
 }
 
 const fetchWwwHtml_viaBackground: FetchHtml = async (url: string) => {
-    const response = await fetch(url, PUBLIC_VIEW_FETCH_INIT)
+    const response = await fetch(url, BACKGROUND_FETCH_INIT)
     if (!response.ok) {
         throw new Error(`www.reddit.com request failed: ${response.status}`)
     }
@@ -232,13 +247,37 @@ export const _fetchViaExecuteScript = async (tabId: number, url: string): Promis
 }
 
 // Prefer fetching through a www.reddit.com tab's content script: a same-origin
-// fetch there is verified to never receive Reddit's JS challenge (in Firefox
+// fetch there was verified to never receive Reddit's JS challenge (in Firefox
 // only through the page's own fetch, see pageContextFetch). old.reddit.com
 // and sh.reddit.com tabs cannot help — content scripts follow the page's origin
 // rules, so cross-origin reads to www.reddit.com are CORS-blocked from them.
 // Without a www tab, the background fetch works via host_permissions (bypasses
 // CORS) but gets the challenge on full pages; parse_html/new.ts solves it.
-export const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTab: boolean }> => {
+//
+// Neither leg works everywhere. Since about 2026-09-14 Chrome's tab fetches get
+// the 403 block page (the content script's, and one injected into the page's
+// main world), while its background no-cache fetch reads real pages; Firefox's
+// tab works. So a 403 on whichever leg leads gets one try through the other.
+// A refused tab hands the lead to the background for TAB_REFUSAL_MEMORY_MS,
+// so later cycles don't each spend a 190 KB block page rediscovering it; a
+// refused background hands it back when the tab serves the page.
+export const WWW_TAB_REFUSED_AT_KEY = 'www_tab_refused_at'
+export const TAB_REFUSAL_MEMORY_MS = 6 * 3600 * 1000
+const TAB_UNAVAILABLE = 'www tab fetch unavailable'
+
+// Reddit's block page comes with a 403. Other statuses say nothing about the
+// leg: a 429 is rate limiting (monitoring backs off), a 404 is about the page.
+const isRefusal = (err: any) => /request failed: 403\b/.test(String(err?.message))
+const isHttpFailure = (err: any) => /request failed: \d/.test(String(err?.message))
+
+export interface WwwHtmlFetcher {
+    fetchHtml: FetchHtml
+    // Whether the tab leg leads right now. Post pages read reliably only
+    // through a tab, so per-post verification checks it after the profile.
+    viaTab: boolean
+}
+
+export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
     let tabs: any[] = []
     try {
         if (typeof chrome !== 'undefined' && chrome.tabs) {
@@ -252,9 +291,18 @@ export const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTa
     if (!tab) {
         return { fetchHtml: fetchWwwHtml_viaBackground, viaTab: false }
     }
+    let refusedAt = 0
+    try {
+        const stored = (await browser.storage.local.get({ [WWW_TAB_REFUSED_AT_KEY]: 0 })) as any
+        refusedAt = Number(stored[WWW_TAB_REFUSED_AT_KEY]) || 0
+    } catch {
+        /* ignored */
+    }
     let contentScriptAlive = true
     let injectionUsable = true
-    const fetchHtml: FetchHtml = async (url: string) => {
+    // Rejects with Reddit's HTTP failure when the tab got one, and with
+    // TAB_UNAVAILABLE when neither tab leg can run.
+    const fetchViaTab: FetchHtml = async (url: string) => {
         if (contentScriptAlive) {
             try {
                 const response = (await browser.tabs.sendMessage(tab.id, {
@@ -266,6 +314,11 @@ export const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTa
                 }
                 throw new Error(response?.error || 'content-script www fetch failed')
             } catch (err: any) {
+                // Reddit answered the tab. The injected fetch would make the
+                // same same-origin request and get the same answer.
+                if (isHttpFailure(err)) {
+                    throw err
+                }
                 // The tab may predate the extension install/update (orphaned
                 // content script); stop retrying it this cycle. Logged because
                 // this transition decides which fetch leg produced every page
@@ -284,9 +337,7 @@ export const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTa
             try {
                 return await _fetchViaExecuteScript(tab.id, url)
             } catch (err: any) {
-                // An HTTP failure from inside the tab is a real outcome (the
-                // background fetch would fare no better) — let callers see it.
-                if (/request failed: \d/.test(String(err?.message))) {
+                if (isHttpFailure(err)) {
                     throw err
                 }
                 // Injection itself unavailable (tab closed/navigated mid-cycle,
@@ -299,9 +350,61 @@ export const getWwwHtmlFetcher = async (): Promise<{ fetchHtml: FetchHtml; viaTa
                 )
             }
         }
-        return fetchWwwHtml_viaBackground(url)
+        throw new Error(TAB_UNAVAILABLE)
     }
-    return { fetchHtml, viaTab: true }
+    const fetcher: WwwHtmlFetcher = {
+        viaTab: Date.now() - refusedAt >= TAB_REFUSAL_MEMORY_MS,
+        fetchHtml: async (url: string) => {
+            if (fetcher.viaTab) {
+                try {
+                    return await fetchViaTab(url)
+                } catch (err: any) {
+                    if (!isRefusal(err) && err?.message !== TAB_UNAVAILABLE) {
+                        throw err
+                    }
+                    // The comments and posts tabs fetch in parallel, so both can
+                    // be refused; the first one records it.
+                    const firstRefusal = isRefusal(err) && fetcher.viaTab
+                    fetcher.viaTab = false
+                    if (firstRefusal) {
+                        dlog(
+                            'feed',
+                            `[reveddit] www tab fetch refused (${err.message}); ` +
+                                `the background fetch leads for ${TAB_REFUSAL_MEMORY_MS / 3600000}h`,
+                        )
+                        await browser.storage.local.set({ [WWW_TAB_REFUSED_AT_KEY]: Date.now() }).catch(() => {})
+                    }
+                    return fetchWwwHtml_viaBackground(url)
+                }
+            }
+            try {
+                return await fetchWwwHtml_viaBackground(url)
+            } catch (err: any) {
+                if (!isRefusal(err) || !(contentScriptAlive || injectionUsable)) {
+                    throw err
+                }
+                let html: string
+                try {
+                    html = await fetchViaTab(url)
+                } catch (tabErr: any) {
+                    dlog(
+                        'feed',
+                        `[reveddit] background www fetch refused (${err.message}), and the tab failed too:`,
+                        String(tabErr?.message || tabErr),
+                    )
+                    throw err
+                }
+                dlog(
+                    'feed',
+                    `[reveddit] background www fetch refused (${err.message}); the tab served it and leads again`,
+                )
+                fetcher.viaTab = true
+                await browser.storage.local.remove(WWW_TAB_REFUSED_AT_KEY).catch(() => {})
+                return html
+            }
+        },
+    }
+    return fetcher
 }
 
 export const PROFILE_PUBLICLY_EMPTY = 'profile_publicly_empty'
@@ -836,7 +939,8 @@ export const lookupItemsByID_fromPublicProfile = async (
     username: string,
     authItemsMeta: AuthItemsMeta = {},
 ) => {
-    const { fetchHtml, viaTab } = await getWwwHtmlFetcher()
+    const fetcher = await getWwwHtmlFetcher()
+    const { fetchHtml } = fetcher
     const profile = await getPublicProfileItems(username, fetchHtml, ids)
     if (!profile.valid) {
         await recordWwwDetectOutcome(false)
@@ -874,7 +978,7 @@ export const lookupItemsByID_fromPublicProfile = async (
         new Set(profile.items.keys()),
         authItemsMeta,
         fetchHtml,
-        viaTab,
+        fetcher.viaTab,
     )
     // Feed-absent items within coverage can be profile-hidden rather than
     // removed — verify against their own pages before concluding anything.
@@ -1009,10 +1113,9 @@ export const lookupItemsByID_fromPublicProfile = async (
         `[reveddit] www lookup ${username}: ${ids.length} requested, ${results.length} returned ` +
             `(${removedCount} removed, ${ids.length - results.length} omitted/uncovered), ` +
             `coverage t1=${profile.coverage.t1} t3=${profile.coverage.t3}, verdicts=${JSON.stringify(postVerdicts)}, ` +
-            // via=tab means a www tab existed at cycle start, not that it served
-            // every fetch — the "fetch failed, trying next fetch mode" lines
-            // record any mid-cycle handoff.
-            `absentVerdicts=${JSON.stringify(absentVerdicts)}, via=${viaTab ? 'tab' : 'background'}`,
+            // via= names the leg leading when the lookup finished; the "refused"
+            // and "trying next fetch mode" lines record any handoff mid-cycle.
+            `absentVerdicts=${JSON.stringify(absentVerdicts)}, via=${fetcher.viaTab ? 'tab' : 'background'}`,
     )
     return results
 }

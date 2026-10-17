@@ -18,6 +18,9 @@ import {
     _legacyLookups,
     ABSENT_VERIFY_UNAVAILABLE,
     PUBLIC_VIEW_FETCH_INIT,
+    BACKGROUND_FETCH_INIT,
+    WWW_TAB_REFUSED_AT_KEY,
+    TAB_REFUSAL_MEMORY_MS,
     pageContextFetch,
 } from '../../src/src/requests'
 
@@ -259,6 +262,106 @@ describe('getWwwHtmlFetcher executeScript fallback', () => {
     })
 })
 
+// Chrome's tab fetches get the 403 block page while its background no-cache
+// fetch reads real pages; Firefox's tab works. A 403 on the leading leg gets
+// one try through the other, and a refused tab stays behind for a while.
+describe('getWwwHtmlFetcher refusal fallback', () => {
+    const openTab = () => {
+        browserMock.tabs.query = vi.fn(async () => [{ id: 7 }])
+    }
+    const tabAnswers = answer => {
+        browserMock.tabs.sendMessage = vi.fn(async () => answer)
+        browserMock.scripting = { executeScript: vi.fn() }
+    }
+    const refused = { success: false, error: 'www.reddit.com request failed: 403' }
+
+    it('a 403 in the tab moves this and later fetches to the background and remembers it', async () => {
+        openTab()
+        tabAnswers(refused)
+        globalThis.fetch = vi.fn(async () => res(200, 'BGPAGE'))
+        const fetcher = await getWwwHtmlFetcher()
+        expect(fetcher.viaTab).toBe(true)
+        expect(await fetcher.fetchHtml('https://www.reddit.com/x')).toBe('BGPAGE')
+        expect(fetcher.viaTab).toBe(false)
+        expect(await fetcher.fetchHtml('https://www.reddit.com/y')).toBe('BGPAGE')
+        expect(browserMock.tabs.sendMessage).toHaveBeenCalledTimes(1)
+        // the injected fetch would get the same answer, so it isn't tried
+        expect(browserMock.scripting.executeScript).not.toHaveBeenCalled()
+        expect(globalThis.fetch).toHaveBeenCalledWith('https://www.reddit.com/x', BACKGROUND_FETCH_INIT)
+        expect(Date.now() - __getLocalStorage()[WWW_TAB_REFUSED_AT_KEY]).toBeLessThan(5000)
+    })
+
+    it('a remembered refusal leads with the background', async () => {
+        openTab()
+        tabAnswers({ success: true, html: 'CSPAGE' })
+        __getLocalStorage()[WWW_TAB_REFUSED_AT_KEY] = Date.now() - 3600 * 1000
+        globalThis.fetch = vi.fn(async () => res(200, 'BGPAGE'))
+        const fetcher = await getWwwHtmlFetcher()
+        expect(fetcher.viaTab).toBe(false)
+        expect(await fetcher.fetchHtml('https://www.reddit.com/x')).toBe('BGPAGE')
+        expect(browserMock.tabs.sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('the tab leads again once the refusal is old', async () => {
+        openTab()
+        tabAnswers({ success: true, html: 'CSPAGE' })
+        __getLocalStorage()[WWW_TAB_REFUSED_AT_KEY] = Date.now() - TAB_REFUSAL_MEMORY_MS - 1000
+        const fetcher = await getWwwHtmlFetcher()
+        expect(fetcher.viaTab).toBe(true)
+        expect(await fetcher.fetchHtml('https://www.reddit.com/x')).toBe('CSPAGE')
+    })
+
+    it('a refused background hands the lead back to a tab that serves the page', async () => {
+        openTab()
+        tabAnswers({ success: true, html: 'CSPAGE' })
+        __getLocalStorage()[WWW_TAB_REFUSED_AT_KEY] = Date.now() - 3600 * 1000
+        globalThis.fetch = vi.fn(async () => res(403, 'BLOCK'))
+        const fetcher = await getWwwHtmlFetcher()
+        expect(await fetcher.fetchHtml('https://www.reddit.com/x')).toBe('CSPAGE')
+        expect(fetcher.viaTab).toBe(true)
+        expect(__getLocalStorage()[WWW_TAB_REFUSED_AT_KEY]).toBeUndefined()
+    })
+
+    it("when both legs are refused, the leading leg's failure surfaces", async () => {
+        openTab()
+        tabAnswers(refused)
+        __getLocalStorage()[WWW_TAB_REFUSED_AT_KEY] = Date.now() - 3600 * 1000
+        globalThis.fetch = vi.fn(async () => res(403, 'BLOCK'))
+        const fetcher = await getWwwHtmlFetcher()
+        await expect(fetcher.fetchHtml('https://www.reddit.com/x')).rejects.toThrow('request failed: 403')
+        expect(browserMock.tabs.sendMessage).toHaveBeenCalledTimes(1)
+        expect(fetcher.viaTab).toBe(false)
+    })
+
+    it('a 429 or a 404 in the tab is not a refusal: no switch, nothing remembered', async () => {
+        for (const status of [429, 404]) {
+            __resetStorage()
+            openTab()
+            tabAnswers({ success: false, error: `www.reddit.com request failed: ${status}` })
+            globalThis.fetch = vi.fn(async () => res(200, 'BGPAGE'))
+            const fetcher = await getWwwHtmlFetcher()
+            await expect(fetcher.fetchHtml('https://www.reddit.com/x')).rejects.toThrow(`request failed: ${status}`)
+            expect(globalThis.fetch).not.toHaveBeenCalled()
+            expect(fetcher.viaTab).toBe(true)
+            expect(__getLocalStorage()[WWW_TAB_REFUSED_AT_KEY]).toBeUndefined()
+        }
+    })
+
+    it('a tab that can run neither leg hands off without remembering a refusal', async () => {
+        openTab()
+        browserMock.scripting = {
+            executeScript: vi.fn(async () => {
+                throw new Error('No tab with id: 7')
+            }),
+        }
+        globalThis.fetch = vi.fn(async () => res(200, 'BGPAGE'))
+        const fetcher = await getWwwHtmlFetcher()
+        expect(await fetcher.fetchHtml('https://www.reddit.com/x')).toBe('BGPAGE')
+        expect(fetcher.viaTab).toBe(false)
+        expect(__getLocalStorage()[WWW_TAB_REFUSED_AT_KEY]).toBeUndefined()
+    })
+})
+
 describe('_fetchViaExecuteScript contract', () => {
     it('throws when no scripting API exists', async () => {
         await expect(_fetchViaExecuteScript(1, 'u')).rejects.toThrow('scripting API unavailable')
@@ -314,22 +417,27 @@ describe('_fetchViaExecuteScript contract', () => {
 // solved request). The page's own fetch (content.fetch) is what Chrome content
 // scripts get natively.
 describe('public-view fetch options and page-context fetch', () => {
-    it('every leg omits credentials', () => {
+    it('every leg omits credentials; the background leg also bypasses caches', () => {
         expect(PUBLIC_VIEW_FETCH_INIT.credentials).toBe('omit')
+        expect(BACKGROUND_FETCH_INIT.credentials).toBe('omit')
+        // reddit's edge 403s a cookie-less background fetch without no-cache
+        expect(BACKGROUND_FETCH_INIT.cache).toBe('reload')
+        // ...and serves the tab a captcha with it
+        expect(PUBLIC_VIEW_FETCH_INIT.cache).toBeUndefined()
     })
 
-    it('the background leg sends the public-view options', async () => {
+    it('the background leg sends the background options', async () => {
         globalThis.fetch = vi.fn(async () => res(200, 'BGPAGE'))
         const { fetchHtml, viaTab } = await getWwwHtmlFetcher()
         expect(viaTab).toBe(false)
         expect(await fetchHtml('https://www.reddit.com/user/u/comments/?sort=new')).toBe('BGPAGE')
         expect(globalThis.fetch).toHaveBeenCalledWith(
             'https://www.reddit.com/user/u/comments/?sort=new',
-            PUBLIC_VIEW_FETCH_INIT,
+            BACKGROUND_FETCH_INIT,
         )
     })
 
-    it('the background fallback behind a tab sends the public-view options too', async () => {
+    it('the background fallback behind a tab sends the background options too', async () => {
         browserMock.tabs.query = vi.fn(async () => [{ id: 7 }])
         browserMock.scripting = {
             executeScript: vi.fn(async () => {
@@ -339,7 +447,7 @@ describe('public-view fetch options and page-context fetch', () => {
         globalThis.fetch = vi.fn(async () => res(200, 'BGPAGE'))
         const { fetchHtml } = await getWwwHtmlFetcher()
         expect(await fetchHtml('https://www.reddit.com/x')).toBe('BGPAGE')
-        expect(globalThis.fetch).toHaveBeenCalledWith('https://www.reddit.com/x', PUBLIC_VIEW_FETCH_INIT)
+        expect(globalThis.fetch).toHaveBeenCalledWith('https://www.reddit.com/x', BACKGROUND_FETCH_INIT)
     })
 
     it('pageContextFetch prefers content.fetch (Firefox) and keeps fetch elsewhere (Chrome)', async () => {
