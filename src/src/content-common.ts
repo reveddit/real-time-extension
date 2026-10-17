@@ -5,7 +5,8 @@ import { setCurrentStateForId } from './monitoring'
 let UNSUBSCRIBE_TEXT = 'unsubscribe-rev'
 let SUBSCRIBE_TEXT = 'subscribe-rev'
 
-const ON_REVEDDIT = !!location.hostname.match(/reveddit\.com$/)
+// localhost is the dev builds' reveddit site (production builds never match it)
+const ON_REVEDDIT = !!location.hostname.match(/reveddit\.com$/) || location.hostname === 'localhost'
 if (ON_REVEDDIT) {
     UNSUBSCRIBE_TEXT = 'unsubscribe'
     SUBSCRIBE_TEXT = 'subscribe'
