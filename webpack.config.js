@@ -87,7 +87,7 @@ function modify(buffer) {
     if (mode === 'development' || process.env.STAGING) {
 		const localhostPattern = browserIsFirefox ? "http://localhost/*" : "http://localhost:*/*"
 		manifest[host_permissions_location].push(localhostPattern)
-		manifest.content_scripts[0].matches.push(localhostPattern)
+		manifest.content_scripts.forEach(script => script.matches.push(localhostPattern))
         if (manifest.externally_connectable && manifest.externally_connectable.matches) {
             manifest.externally_connectable.matches.push(localhostPattern)
         }
@@ -105,6 +105,7 @@ const contentScripts = {
     content: './src/src/content.ts',
     'content-reddit': './src/src/content-reddit.ts',
     'content-revddit': './src/src/content-revddit.ts',
+    'content-revddit-start': './src/src/content-revddit-start.ts',
     'content-common': './src/src/content-common.ts',
     contextMenus: './src/src/contextMenus.ts',
     requests: './src/src/requests.ts',

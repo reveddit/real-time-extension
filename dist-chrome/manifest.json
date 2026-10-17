@@ -55,6 +55,15 @@
       "css": [
         "src/content.css"
       ]
+    },
+    {
+      "matches": [
+        "https://*.reveddit.com/*"
+      ],
+      "js": [
+        "src/content-revddit-start.js"
+      ],
+      "run_at": "document_start"
     }
   ],
   "background": {
