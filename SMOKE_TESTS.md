@@ -85,6 +85,20 @@ Testing subreddit: **r/CantSayAnything** (auto-removes all posts/comments).
 
 ---
 
+## Website connection (reveddit.com)
+
+The site reaches Reddit through the extension's bridge, using your Reddit login. Chrome: test a dev build against the dev site (`yarn start` in the website repo, http://localhost:8080), because the live site only messages the store version's ID. Firefox: the live site works with any build (`scripts/firefox-bidi.cjs` checks it; see README).
+
+- [ ] Status shows right at first paint: the green "running" banner appears immediately, with no install pitch flashing first
+- [ ] Turn the extension off and reload: the red "isn't running" banner appears immediately, not green for a few seconds
+- [ ] Logged in to Reddit: your user page (`/y/<you>/`) and a thread load with no "Could not connect" box
+- [ ] Your own removed items, e.g. the r/CantSayAnything comment from the monitoring test above, show as removed on `/y/<you>/`, not intact
+- [ ] With a moderator account: a subreddit you moderate shows mod-removed posts as removed
+- [ ] Logged out of Reddit: the "Could not connect" box says this browser isn't logged in to Reddit
+- [ ] Options → "check now", then reload a reveddit page while the check runs: the page loads once the check ends (the diagnostic log shows "bridge: waited …ms for a monitoring cycle")
+
+---
+
 ## Cross-Browser
 
 - [ ] Firefox: load extension via `about:debugging` → all above features work
