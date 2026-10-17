@@ -64,6 +64,8 @@ const ALLOWED_PATHS = [
     /^\/r\/[\w+.-]{1,60}\/about\/(log|spam)\.json$/,
     /^\/r\/[\w+.-]{1,60}\/search\.json$/,
     /^\/user\/[\w-]{1,30}\/(comments|submitted|overview|gilded)\.json$/,
+    // the overview as the website requests it (/user/<name>/.json, normalized below)
+    /^\/user\/[\w-]{1,30}\.json$/,
     /^\/user\/[\w-]{1,30}\/about\.json$/,
     /^\/user\/[\w-]{1,30}\/moderated_subreddits\.json$/,
 ]

@@ -15,6 +15,7 @@ describe('validateBridgeUrl', () => {
         for (const url of [
             'https://www.reddit.com/api/info.json?id=t3_abc,t1_def&raw_json=1',
             'https://www.reddit.com/user/spez/comments.json?limit=100&sort=new',
+            'https://www.reddit.com/user/spez/.json?sort=new&limit=100&t=all', // the user page's overview
             'https://www.reddit.com/user/spez/about/.json',
             'https://www.reddit.com/user/spez/moderated_subreddits/.json',
             'https://www.reddit.com/api/user_data_by_account_ids.json?ids=t2_abc',
