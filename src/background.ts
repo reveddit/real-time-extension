@@ -385,6 +385,15 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                 })
         })
         return true
+    } else if (__DEV__ && request.action === 'dev-relay') {
+        // Dev builds: the localhost reveddit page's content script relays test
+        // scripts' dev actions here (Firefox has no externally_connectable).
+        if (/^https?:\/\/localhost[:/]/.test(sender?.tab?.url || '')) {
+            handleDevAction?.(request.message || {}, sendResponse)
+        } else {
+            sendResponse({ error: 'forbidden' })
+        }
+        return true
     } else if (request.action === 'bridge-fetch') {
         // Relay from the reveddit.com content script (Firefox has no
         // externally_connectable). Guard on the sender tab's origin; the
@@ -577,6 +586,84 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     }
 })
 
+// Dev-only introspection for automated testing (the SW console and
+// chrome://extensions are unreachable for automation): Chrome pages reach it
+// through externally_connectable, Firefox pages through the content script's
+// dev relay. Absent from production builds.
+const handleDevAction = __DEV__
+    ? (message: any, sendResponse: (response: any) => void) => {
+          switch (message.action) {
+              case 'dev-get-log':
+                  sendResponse({ log: (globalThis as any).__devLog || [] })
+                  break
+              case 'dev-get-storage':
+                  // browser.*: Firefox's chrome.* calls take callbacks and return undefined
+                  Promise.all([browser.storage.local.get(null), browser.storage.sync.get(null)])
+                      .then(([local, sync]) => sendResponse({ local, sync }))
+                      .catch(err => sendResponse({ error: String(err?.message || err) }))
+                  break
+              case 'dev-clear-storage':
+                  Promise.all([browser.storage.local.clear(), browser.storage.sync.clear()])
+                      .then(() => sendResponse({ ok: true }))
+                      .catch(err => sendResponse({ error: String(err?.message || err) }))
+                  break
+              case 'dev-run-check':
+                  Promise.resolve(checkForChanges())
+                      .then(() => sendResponse({ ok: true }))
+                      .catch(err => sendResponse({ error: String(err?.message || err) }))
+                  break
+              case 'dev-reload':
+                  sendResponse({ ok: true })
+                  setTimeout(() => chrome.runtime.reload(), 200)
+                  break
+              case 'dev-inject':
+                  injectContentScriptIntoExistingRedditTabs()
+                      .then(() => sendResponse({ ok: true }))
+                      .catch((err: any) => sendResponse({ error: String(err?.message || err) }))
+                  break
+              case 'dev-open-page':
+                  // Open an extension page (e.g. src/history.html) as a real tab so
+                  // its rendered output/console can be inspected by automation.
+                  try {
+                      const rel = String(message.page || 'src/history.html')
+                      const url = chrome.runtime.getURL(rel) + (message.query || '')
+                      chrome.tabs.create({ url, active: true }, tab => sendResponse({ ok: true, tabId: tab?.id }))
+                  } catch (err: any) {
+                      sendResponse({ error: String(err?.message || err) })
+                  }
+                  break
+              case 'dev-replay-install':
+                  // Reruns the exact install-time flow (clear storage, detect user,
+                  // subscribe, immediate lookup) — replicates a remove/re-add.
+                  Promise.resolve((globalThis as any).__replayInstall?.())
+                      .then(() => sendResponse({ ok: true }))
+                      .catch((err: any) => sendResponse({ error: String(err?.message || err) }))
+                  break
+              case 'dev-fetch': {
+                  // Fetch an arbitrary reddit URL from the background (host_permissions
+                  // CORS bypass) exactly as the detection paths do, and report what
+                  // came back — so background-only fetch behavior is diagnosable.
+                  const credentials = message.credentials === 'include' ? 'include' : 'omit'
+                  fetch(message.url, { credentials, headers: { 'Accept-Language': 'en' } })
+                      .then(async r => {
+                          const text = await r.text()
+                          sendResponse({
+                              status: r.status,
+                              redirected: r.redirected,
+                              finalUrl: r.url,
+                              len: text.length,
+                              hasShredditPost: text.includes('<shreddit-post'),
+                              hasFeed: text.includes('<shreddit-feed'),
+                              head: text.slice(0, message.maxLen || 600),
+                          })
+                      })
+                      .catch(err => sendResponse({ error: String(err?.message || err) }))
+                  break
+              }
+          }
+      }
+    : null
+
 chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResponse) {
     switch (message.action) {
         case 'fetch-old':
@@ -599,78 +686,8 @@ chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResp
             handleBridgeFetch(message).then(sendResponse)
             break
     }
-    // Dev-only introspection for automated testing from reveddit.com (the SW
-    // console and chrome://extensions are unreachable for automation). Absent
-    // from production builds.
     if (__DEV__) {
-        switch (message.action) {
-            case 'dev-get-log':
-                sendResponse({ log: (globalThis as any).__devLog || [] })
-                break
-            case 'dev-get-storage':
-                Promise.all([chrome.storage.local.get(undefined), chrome.storage.sync.get(undefined)])
-                    .then(([local, sync]) => sendResponse({ local, sync }))
-                    .catch(err => sendResponse({ error: String(err?.message || err) }))
-                break
-            case 'dev-clear-storage':
-                Promise.all([chrome.storage.local.clear(), chrome.storage.sync.clear()])
-                    .then(() => sendResponse({ ok: true }))
-                    .catch(err => sendResponse({ error: String(err?.message || err) }))
-                break
-            case 'dev-run-check':
-                Promise.resolve(checkForChanges())
-                    .then(() => sendResponse({ ok: true }))
-                    .catch(err => sendResponse({ error: String(err?.message || err) }))
-                break
-            case 'dev-reload':
-                sendResponse({ ok: true })
-                setTimeout(() => chrome.runtime.reload(), 200)
-                break
-            case 'dev-inject':
-                injectContentScriptIntoExistingRedditTabs()
-                    .then(() => sendResponse({ ok: true }))
-                    .catch((err: any) => sendResponse({ error: String(err?.message || err) }))
-                break
-            case 'dev-open-page':
-                // Open an extension page (e.g. src/history.html) as a real tab so
-                // its rendered output/console can be inspected by automation.
-                try {
-                    const rel = String(message.page || 'src/history.html')
-                    const url = chrome.runtime.getURL(rel) + (message.query || '')
-                    chrome.tabs.create({ url, active: true }, tab => sendResponse({ ok: true, tabId: tab?.id }))
-                } catch (err: any) {
-                    sendResponse({ error: String(err?.message || err) })
-                }
-                break
-            case 'dev-replay-install':
-                // Reruns the exact install-time flow (clear storage, detect user,
-                // subscribe, immediate lookup) — replicates a remove/re-add.
-                Promise.resolve((globalThis as any).__replayInstall?.())
-                    .then(() => sendResponse({ ok: true }))
-                    .catch((err: any) => sendResponse({ error: String(err?.message || err) }))
-                break
-            case 'dev-fetch': {
-                // Fetch an arbitrary reddit URL from the background (host_permissions
-                // CORS bypass) exactly as the detection paths do, and report what
-                // came back — so background-only fetch behavior is diagnosable.
-                const credentials = message.credentials === 'include' ? 'include' : 'omit'
-                fetch(message.url, { credentials, headers: { 'Accept-Language': 'en' } })
-                    .then(async r => {
-                        const text = await r.text()
-                        sendResponse({
-                            status: r.status,
-                            redirected: r.redirected,
-                            finalUrl: r.url,
-                            len: text.length,
-                            hasShredditPost: text.includes('<shreddit-post'),
-                            hasFeed: text.includes('<shreddit-feed'),
-                            head: text.slice(0, message.maxLen || 600),
-                        })
-                    })
-                    .catch(err => sendResponse({ error: String(err?.message || err) }))
-                break
-            }
-        }
+        handleDevAction?.(message, sendResponse)
     }
     return true
 })

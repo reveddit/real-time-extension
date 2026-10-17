@@ -130,6 +130,24 @@ import browser from 'webextension-polyfill'
                     )
                 })
         })
+        // Dev builds: test scripts on the localhost site reach the background's
+        // dev actions through here, as Chrome pages do directly.
+        if (__DEV__ && window.location.hostname === 'localhost') {
+            window.addEventListener('message', (e: MessageEvent) => {
+                const d: any = e.data
+                if (e.source !== window || !d || d.type !== 'reveddit-dev-request' || typeof d.id !== 'number') {
+                    return
+                }
+                Promise.resolve(browser.runtime.sendMessage({ action: 'dev-relay', message: d.message }))
+                    .catch((err: any) => ({ error: String(err?.message || err) }))
+                    .then((response: any) => {
+                        window.postMessage(
+                            { type: 'reveddit-dev-response', id: d.id, response },
+                            window.location.origin,
+                        )
+                    })
+            })
+        }
     }
     browser.runtime.onMessage.addListener(queryUser as any)
 

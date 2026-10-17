@@ -58,6 +58,8 @@ Playwright can't load extensions into Firefox, so `scripts/firefox-bidi.cjs` dri
 
 It loads the build as a temporary add-on, opens its own tab, and prints the page's items (removed ones marked), any connect error, and each bridge request with its answer. On macOS, don't launch Firefox from an automated session: a Firefox started that way cost the session its `~/Desktop` access.
 
+To run one monitoring check in that Firefox and read the diagnostic log it wrote, start the dev site (`yarn start` in the website repo), then run `node --experimental-websocket scripts/firefox-run-check.cjs [--install <copy>] [--reddit-tab]`. Dev builds pass the same test actions Chrome dev builds take through externally_connectable (`dev-run-check`, `dev-get-log`, `dev-get-storage`, …) from the localhost page's content script to the background. `--reddit-tab` opens www.reddit.com first, so the check can take the tab path.
+
 ## Dev: Code quality
 
 `yarn lint` / `yarn lint:fix` — ESLint
