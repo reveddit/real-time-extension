@@ -48,6 +48,16 @@ yarn test:e2e
 
 `yarn preflight` — full pre-publish verification: typecheck, unit tests, dev build, then E2E
 
+## Dev: Checking a build in real Firefox
+
+Playwright can't load extensions into Firefox, so `scripts/firefox-bidi.cjs` drives a Firefox you start yourself with its remote-control port open (WebDriver BiDi, nothing to install in Firefox):
+
+1. Make the launcher once, then keep it in the Dock: `osacompile -o ~/Applications/"Firefox for Claude.app" scripts/firefox-for-claude.applescript`. It starts Firefox with `--remote-debugging-port 9222`; quit Firefox first, since a running Firefox ignores startup flags. While it's open that way, Firefox shows its remote-control icon, so use it for test sessions.
+2. `yarn build-firefox-dev`, and copy `dist-dev-firefox` out of `~/Desktop` (Firefox asks for Desktop access otherwise).
+3. `node --experimental-websocket scripts/firefox-bidi.cjs --install <copy> https://www.reveddit.com/y/<user>/`
+
+It loads the build as a temporary add-on, opens its own tab, and prints the page's items (removed ones marked), any connect error, and each bridge request with its answer. On macOS, don't launch Firefox from an automated session: a Firefox started that way cost the session its `~/Desktop` access.
+
 ## Dev: Code quality
 
 `yarn lint` / `yarn lint:fix` — ESLint
