@@ -1,5 +1,8 @@
 // Webpack DefinePlugin global
 declare const __BUILT_FOR__: 'chrome' | 'firefox' | 'edge'
+// The store this build is for. Unlike __BUILT_FOR__, which is 'chrome' in the
+// Edge build too, this tells the two apart.
+declare const __STORE__: 'chrome' | 'edge' | 'firefox'
 declare const __DEV__: boolean
 declare const __SIMULATE_DEPRECATION__: boolean
 

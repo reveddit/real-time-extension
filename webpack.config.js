@@ -40,6 +40,9 @@ if (browserIsFirefox) {
     built_for = '"firefox"'
     chromelike = false
 }
+// The store this build is for. __BUILT_FOR__ stays "chrome" for the Edge
+// build, which differs only in its update_url.
+const store = ['chrome', 'edge', 'firefox'].includes(process.env.BROWSER) ? process.env.BROWSER : 'chrome'
 
 const manifestPath = path.join(distPath,
                               'manifest.json')
@@ -140,6 +143,7 @@ const plugins = [
     ]}),
     new webpack.DefinePlugin({
         __BUILT_FOR__: built_for,
+        __STORE__: JSON.stringify(store),
         __DEV__: JSON.stringify(mode !== 'production'),
         __LATEST_RELEASE__: JSON.stringify(latestRelease),
         __SIMULATE_DEPRECATION__: JSON.stringify(process.env.SIMULATE_DEPRECATION === 'true'),

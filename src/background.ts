@@ -32,7 +32,7 @@ import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
 import { getItems_fromOld, getPost_fromOld, getInfoById_fromLegacyHTML } from './src/parse_html/old'
 import { handleBridgeFetch } from './src/bridge'
-import { applyRemoteChallengeConfig, fetchNews, getCachedNews } from './src/news'
+import { applyRemoteChallengeConfig, fetchNews, getCachedNews, requestStoreUpdateIfBehind } from './src/news'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs } from './src/storage'
 import { getLegacyBase, legacyPageUrl, LEGACY_PAGE_MARKER } from './src/parse_html/common'
@@ -995,8 +995,11 @@ if (!chrome.extension.inIncognitoContext) {
             lastAlarm = Date.now() // part of WORKAROUND for broken alarms
             checkForChanges(true) // apply jitter to periodic (alarm-driven) polls
             // Piggyback the news feed refresh on the alarm tick; fetchNews
-            // enforces its own 6-hour throttle internally.
-            fetchNews().catch(() => {})
+            // enforces its own hourly throttle internally. The update check
+            // reads the cached feed, which the popup may have fetched instead.
+            fetchNews()
+                .then(requestStoreUpdateIfBehind)
+                .catch(() => {})
         }
     })
 }

@@ -118,6 +118,7 @@ globalThis.chrome = {
 
 // Needed by common.js for the __BUILT_FOR__ DefinePlugin variable
 globalThis.__BUILT_FOR__ = 'chrome'
+globalThis.__STORE__ = 'chrome'
 
 // Needed by common.js location checks
 if (typeof globalThis.location === 'undefined') {

@@ -9,7 +9,9 @@ import { sanitizeChallengeConfig, setChallengeConfig, ChallengeConfig } from './
 export const NEWS_URL = 'https://www.reveddit.com/extension-news.json'
 export const NEWS_CACHE_KEY = 'news_cache'
 export const NEWS_READ_IDS_KEY = 'news_read_ids'
-const MIN_FETCH_INTERVAL_MS = 6 * 60 * 60 * 1000 // 6 hours
+// Hourly, so a newly published version is noticed within the hour
+// (requestStoreUpdateIfBehind). The feed is a small static file behind Cloudflare.
+const MIN_FETCH_INTERVAL_MS = 60 * 60 * 1000
 
 export interface NewsMessage {
     id: string
@@ -71,7 +73,15 @@ export interface NewsFeed {
     // (see the 0.0.5.14 stuck-cohort incident, Aug 2026).
     latest_version?: string
     latest_version_published_utc?: number
+    // Each store's live version. Stores review at different speeds, so a build
+    // compares with its own store's entry to update as soon as that store
+    // publishes, rather than waiting for latest_version, the minimum across
+    // stores. Both are written by the website's scripts/sync-store-version.py.
+    store_versions?: StoreVersions
 }
+
+export const STORES = ['chrome', 'edge', 'firefox'] as const
+export type StoreVersions = Partial<Record<(typeof STORES)[number], string>>
 
 export interface NewsCache {
     feed: NewsFeed
@@ -189,6 +199,69 @@ export const getPendingUpdateVersion = async (): Promise<string | null> => {
     return null
 }
 
+export const UPDATE_CHECK_REQUESTED_KEY = 'update_check_requested_version'
+
+// Pure, unit-tested. The version to ask the browser for: this store's version
+// in the feed, when it is newer than the running version and newer than the
+// last one asked for. Otherwise null.
+export const storeUpdateToRequest = (
+    ownVersion: string,
+    storeVersion: unknown,
+    lastRequested: unknown,
+): string | null => {
+    if (!isValidVersion(storeVersion) || compareVersions(ownVersion, storeVersion) >= 0) {
+        return null
+    }
+    if (isValidVersion(lastRequested) && compareVersions(storeVersion, lastRequested) <= 0) {
+        return null
+    }
+    return storeVersion
+}
+
+const getRequestedVersion = (): Promise<unknown> =>
+    new Promise(resolve => {
+        try {
+            chrome.storage.local.get([UPDATE_CHECK_REQUESTED_KEY], res => {
+                resolve(res && res[UPDATE_CHECK_REQUESTED_KEY])
+            })
+        } catch {
+            resolve(undefined)
+        }
+    })
+
+// When the cached feed shows a newer version in this build's store, ask the
+// browser to check for updates now instead of on its own schedule (about every
+// 5 hours in Chrome and Edge). The onUpdateAvailable listener in background.ts
+// then applies the download right away. Chrome throttles extra checks to about
+// one per update period, so this asks once per new version. Firefox has no
+// requestUpdateCheck; reveddit.com tells its users how to update by hand.
+export const requestStoreUpdateIfBehind = async (): Promise<void> => {
+    if (__STORE__ === 'firefox' || typeof chrome.runtime?.requestUpdateCheck !== 'function') {
+        return
+    }
+    try {
+        const [cache, requested] = await Promise.all([getCachedNews(), getRequestedVersion()])
+        const own = chrome.runtime.getManifest().version
+        const target = storeUpdateToRequest(own, cache?.feed?.store_versions?.[__STORE__], requested)
+        if (!target) {
+            return
+        }
+        // Remembered before asking, so a worker that stops mid-check doesn't ask again
+        await new Promise<void>(resolve =>
+            chrome.storage.local.set({ [UPDATE_CHECK_REQUESTED_KEY]: target }, () => resolve()),
+        )
+        const result: any = await chrome.runtime.requestUpdateCheck()
+        dlog(
+            'news',
+            `[reveddit] ${__STORE__} store has ${target}, running ${own}: update check ${result?.status ?? result}${
+                result?.version ? ` (${result.version})` : ''
+            }`,
+        )
+    } catch (err: any) {
+        dlog('news', `[reveddit] update check error: ${String(err?.message || err)}`)
+    }
+}
+
 export const getUnreadMessages = async (): Promise<NewsMessage[]> => {
     const [cache, readIds] = await Promise.all([getCachedNews(), getReadIds()])
     const feed = cache?.feed || emptyFeed()
@@ -239,7 +312,7 @@ export const resolveMechanismDisabled = (
     return buildDefaultDisabled
 }
 
-// Fetch the feed with the 6h throttle. Silent on failure — missing/404 feed
+// Fetch the feed with the hourly throttle. Silent on failure — missing/404 feed
 // simply leaves the cache untouched so the popup shows no banner.
 export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> => {
     const cache = await getCachedNews()
@@ -267,6 +340,15 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
             }
         }
         const challenge = sanitizeChallengeConfig((feed.options as any)?.challenge)
+        const storeVersions: StoreVersions = {}
+        const rawStoreVersions = (feed as any).store_versions
+        if (rawStoreVersions && typeof rawStoreVersions === 'object') {
+            for (const store of STORES) {
+                if (isValidVersion(rawStoreVersions[store])) {
+                    storeVersions[store] = rawStoreVersions[store]
+                }
+            }
+        }
         const sanitized: NewsFeed = {
             messages: feed.messages
                 .filter(
@@ -296,6 +378,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
             ...(Number(feed.latest_version_published_utc) > 0
                 ? { latest_version_published_utc: Number(feed.latest_version_published_utc) }
                 : {}),
+            ...(Object.keys(storeVersions).length ? { store_versions: storeVersions } : {}),
         }
         const newCache: NewsCache = { feed: sanitized, lastFetched: now }
         chrome.storage.local.set({ [NEWS_CACHE_KEY]: newCache })
