@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/10/17 - 0.0.5.24
+- fix reveddit.com and removal checks after reddit began blocking logged-out requests
+
 2026/09/11 - 0.0.5.23
 - fix silent failed checks and the check interval resetting to one minute
 
