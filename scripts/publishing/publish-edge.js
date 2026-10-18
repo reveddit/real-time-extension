@@ -4,7 +4,7 @@ import path from 'path';
 import FormData from 'form-data';
 import open from 'open';
 import dotenv from 'dotenv';
-import { getManifest, readDescription, copyToClipboard, setupAbortHandler, prompt, buildFresh } from './common.js';
+import { getManifest, readDescription, copyToClipboard, setupAbortHandler, prompt, buildFresh, markPublished } from './common.js';
 
 setupAbortHandler();
 dotenv.config();
@@ -142,6 +142,7 @@ async function main() {
          }, { headers: { ...headers, 'Content-Type': 'application/json' } });
 
          console.log(`\x1b[32m✔ Submitted! ID: ${submitResp.data.id || 'Success'}\x1b[0m`);
+         markPublished('edge');
     } catch (error) {
         console.error('\x1b[31mFailed to submit:\x1b[0m');
         if (error.response) {

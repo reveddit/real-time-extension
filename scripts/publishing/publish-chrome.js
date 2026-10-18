@@ -3,7 +3,7 @@ import chromeWebstoreUpload from 'chrome-webstore-upload';
 import open from 'open';
 import dotenv from 'dotenv';
 import { spawnSync } from 'child_process';
-import { CONFIG, readDescription, getManifest, copyToClipboard, setupAbortHandler, prompt, buildFresh } from './common.js';
+import { CONFIG, readDescription, getManifest, copyToClipboard, setupAbortHandler, prompt, buildFresh, markPublished } from './common.js';
 
 setupAbortHandler();
 dotenv.config();
@@ -120,6 +120,7 @@ async function executeUploadAndPublish(store) {
     
     if (publishResult.status.length > 0 && publishResult.status[0] === 'OK') {
          console.log('\x1b[32m✔ Successfully Published!\x1b[0m');
+         markPublished('chrome');
     } else {
          console.error('\x1b[31mPublish potentially failed or returned warnings:\x1b[0m', publishResult);
     }

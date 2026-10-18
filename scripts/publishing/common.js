@@ -100,3 +100,59 @@ export function prompt(query) {
         });
     });
 }
+
+/**
+ * Which stores already have the current manifest version, so a publish run
+ * that failed partway finishes by running `yarn publish:all` again: it skips
+ * those stores, and the preflight while the extension's files are unchanged.
+ * Kept in .publish-status.json (gitignored); deleting it starts over.
+ */
+const STATUS_FILE = path.join(process.cwd(), '.publish-status.json');
+
+// What the built extension is made from. One version must not ship different
+// code to different stores.
+const EXTENSION_PATHS = ['src', 'webpack.config.js', 'STORE_DESCRIPTION.txt'];
+
+function git(...args) {
+    const result = spawnSync('git', args, { cwd: process.cwd(), encoding: 'utf8' });
+    return { ok: result.status === 0, out: (result.stdout || '').trim() };
+}
+
+export function headCommit() {
+    return git('rev-parse', 'HEAD').out;
+}
+
+/**
+ * Whether the extension's files differ from `commit`, committed or not.
+ * @param {string} commit
+ */
+export function extensionChangedSince(commit) {
+    return !git('diff', '--quiet', commit, '--', ...EXTENSION_PATHS).ok;
+}
+
+export function readPublishStatus() {
+    const { version } = getManifest();
+    try {
+        const status = JSON.parse(fs.readFileSync(STATUS_FILE, 'utf8'));
+        if (status.version === version) return { ...status, published: status.published || {} };
+    } catch (e) {
+        // Missing or unreadable: nothing recorded yet
+    }
+    return { version, published: {} };
+}
+
+export function writePublishStatus(status) {
+    fs.writeFileSync(STATUS_FILE, JSON.stringify(status, null, 2) + '\n');
+}
+
+/**
+ * Record that a store accepted the current version. Each publish script calls
+ * this once its store has it, whether or not publish-all started it.
+ * @param {string} store - "chrome", "edge" or "firefox"
+ */
+export function markPublished(store) {
+    const status = readPublishStatus();
+    status.commit = status.commit || headCommit();
+    status.published[store] = new Date().toISOString();
+    writePublishStatus(status);
+}

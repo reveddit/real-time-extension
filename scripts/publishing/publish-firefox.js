@@ -5,7 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import jwt from 'jsonwebtoken';
 import { execSync } from 'child_process';
-import { CONFIG, readDescription, getManifest, setupAbortHandler, buildFresh } from './common.js';
+import { CONFIG, readDescription, getManifest, setupAbortHandler, buildFresh, markPublished } from './common.js';
 
 setupAbortHandler();
 dotenv.config();
@@ -135,6 +135,7 @@ async function main() {
         });
 
         console.log('\x1b[32m✔ Firefox Signing/Publishing process completed!\x1b[0m');
+        markPublished('firefox');
         
         // Clean up source zip
         if (fs.existsSync(sourceZipPath)) fs.unlinkSync(sourceZipPath);

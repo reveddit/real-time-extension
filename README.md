@@ -74,6 +74,10 @@ To run one monitoring check in that Firefox and read the diagnostic log it wrote
 
 [GitHub Actions](.github/workflows/ci.yml) runs on push/PR to master/main: lint, typecheck, unit tests, and dev builds, followed by Playwright E2E in a separate job.
 
+## Publishing
+
+`yarn publish:all` runs `yarn preflight`, then publishes to Chrome, Edge and Firefox in turn. A store that fails doesn't stop the others. Each store that takes the current version is recorded in `.publish-status.json` (gitignored), so after fixing a failure (an expired key, say), run `yarn publish:all` again: it publishes only to the stores still missing this version, and skips the preflight while the extension's files are unchanged since it passed. It refuses to go on if the extension's files changed after a store got the version; bump the version instead. `yarn publish:chrome`, `publish:edge` and `publish:firefox` publish to one store (after the preflight) and record it the same way. To publish to one store without the preflight, run its script directly, e.g. `node scripts/publishing/publish-firefox.js`.
+
 ## Smoke testing
 
 See [SMOKE_TESTS.md](SMOKE_TESTS.md) for the manual pre-release verification checklist.
