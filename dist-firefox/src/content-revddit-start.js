@@ -1,1 +1,1 @@
-(()=>{"use strict";document.documentElement.setAttribute("data-reveddit-extension",chrome.runtime.getManifest().version)})();
+(()=>{"use strict";document.documentElement.setAttribute("data-reveddit-extension",chrome.runtime.getManifest().version),document.documentElement.setAttribute("data-reveddit-extension-store","firefox")})();
