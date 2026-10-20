@@ -9,6 +9,7 @@ import {
     getFullIDsFromPath,
     getFullIDsFromURL,
     reformatRedditText,
+    isRemovedItem,
     isRemovedComment,
     isRemovedPost,
     isUserDeletedComment,
@@ -124,6 +125,43 @@ describe('removal detection', () => {
 
     it('does not flag removed-by-mod post as user-deleted', () => {
         expect(isUserDeletedPost({ is_robot_indexable: false, author: 'realuser' })).toBe(false)
+    })
+})
+
+// A moderator's logged-in view of a removal in their subreddit keeps the text
+// and sets the moderation flags (shape verified on r/pushshift 2026-10-17)
+describe("removal detection in a moderator's view", () => {
+    const modView = (name, flags) => ({
+        name,
+        author: 'someone',
+        body: 'still readable',
+        title: 'still readable',
+        created_utc: 1,
+        is_robot_indexable: true,
+        removal_reason: null,
+        approved: false,
+        removed: false,
+        spam: false,
+        banned_by: null,
+        ...flags,
+    })
+
+    it('reads removed, spam or banned_by as removed, for comments and posts', () => {
+        for (const name of ['t1_c1', 't3_p1']) {
+            expect(isRemovedItem(modView(name, { removed: true, banned_by: 'a_mod' }))).toBe(true)
+            expect(isRemovedItem(modView(name, { removed: true }))).toBe(true)
+            expect(isRemovedItem(modView(name, { spam: true, banned_by: true }))).toBe(true)
+            expect(isRemovedItem(modView(name, { banned_by: 'AutoModerator' }))).toBe(true)
+        }
+    })
+
+    it('leaves approved and untouched items live', () => {
+        for (const name of ['t1_c1', 't3_p1']) {
+            expect(isRemovedItem(modView(name, {}))).toBe(false)
+            expect(isRemovedItem(modView(name, { approved: true, approved_by: 'a_mod' }))).toBe(false)
+        }
+        // other views carry no flags at all
+        expect(isRemovedItem({ name: 't1_c2', author: 'someone', body: 'hi', created_utc: 1 })).toBe(false)
     })
 })
 

@@ -17,6 +17,10 @@ export interface RedditItem {
     created_utc: number
     is_robot_indexable?: boolean
     removal_reason?: string | null
+    // set only in a moderator's view, see isRemovedInModView
+    removed?: boolean
+    spam?: boolean
+    banned_by?: string | boolean | null
     locked?: boolean
     link_id?: string
     subreddit?: string
@@ -117,8 +121,16 @@ export const reformatRedditText = (body: string): string => {
         .substr(0, maxRedditContentLength)
 }
 
+// Moderators see removed items in subreddits they moderate with the text
+// intact and removed: true or banned_by (the remover) set; spam marks
+// spam-filter removals (verified on r/pushshift 2026-10-17). Followed items
+// are read from the user's own logged-in /api/info, so for a moderator these
+// flags are the only sign of a removal there. Other views leave them unset.
+export const isRemovedInModView = (item: RedditItem): boolean =>
+    item.removed === true || item.spam === true || Boolean(item.banned_by)
+
 export const isRemovedItem = (item: RedditItem): boolean => {
-    if (item.removal_reason) {
+    if (item.removal_reason || isRemovedInModView(item)) {
         return true
     }
     if (isComment(item.name)) {

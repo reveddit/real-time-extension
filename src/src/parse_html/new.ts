@@ -65,6 +65,14 @@ const CHALLENGE_REGEX = /js_challenge/
 
 export const fullnameValue = (fullname: string): number => parseInt(fullname.split('_')[1], 36)
 
+const parseAttrs = (tagAttrs: string): Record<string, string> => {
+    const attrs: Record<string, string> = {}
+    for (const a of tagAttrs.matchAll(ATTR_REGEX)) {
+        attrs[a[1]] = a[2]
+    }
+    return attrs
+}
+
 const TAB_CONFIG = {
     comments: { path: 'comments', partialFeed: 'profile_comments-more-posts', typePrefix: 't1_' },
     posts: { path: 'submitted', partialFeed: 'profile_posts-more-posts', typePrefix: 't3_' },
@@ -134,6 +142,13 @@ export const parseProfileHtml = (html: string, typePrefix: string): ParsedPage =
 // with a held post). The post's own logged-out page tells the truth via banner
 // text inside the <shreddit-post> element — also verified: the held post's page
 // shows "Post is awaiting moderator approval." even to logged-out visitors.
+//
+// Only the requested post's own element decides. Reddit has served its front
+// page in place of a permalink (issue #14's 2026-08-17 log), and the logged-out
+// front page lists other posts as <shreddit-post> feed items, which read as
+// 'live' (verified 2026-10-17). That page names itself with <link
+// rel="canonical" href="https://www.reddit.com/">, but thread pages carry no
+// such link to compare, so the element's id is the check.
 // ---------------------------------------------------------------------------
 
 export type PostPageStatus = 'live' | 'held' | 'removed' | 'unknown'
@@ -151,15 +166,18 @@ const POST_REMOVED_REGEX =
 
 export const buildPostPageUrl = (postId: string): string => `${newReddit}/comments/${postId.replace(/^t3_/, '')}/`
 
-export const classifyPostPage = (html: string): PostPageResult => {
-    const postTag = html.match(/<shreddit-post\b([^>]*)>/)
+// (?![\w-]) as in COMMENT_TAG_REGEX: <shreddit-post-overflow-menu> and
+// <shreddit-post-flair> match a bare \b, and on the front page the first
+// match is an ad's overflow menu.
+const POST_TAG_REGEX = /<shreddit-post(?![\w-])([^>]*)>/g
+
+// postId is the fullname (t3_…), the form the element's id attribute carries
+export const classifyPostPage = (html: string, postId: string): PostPageResult => {
+    const postTag = [...html.matchAll(POST_TAG_REGEX)].find(m => parseAttrs(m[1])['id'] === postId)
     if (!postTag) {
         return { status: 'unknown' }
     }
-    const attrs: Record<string, string> = {}
-    for (const a of postTag[1].matchAll(ATTR_REGEX)) {
-        attrs[a[1]] = a[2]
-    }
+    const attrs = parseAttrs(postTag[1])
     const createdMs = attrs['created-timestamp'] ? Date.parse(attrs['created-timestamp']) : NaN
     const meta = {
         ...(attrs['author'] && { author: attrs['author'] }),
@@ -201,6 +219,25 @@ export type CommentPageStatus = 'live' | 'removed' | 'unknown'
 export const buildCommentPageUrl = (commentId: string, linkId: string): string =>
     `${newReddit}/comments/${linkId.replace(/^t3_/, '')}/comment/${commentId.replace(/^t1_/, '')}/`
 
+// Subreddit and post of a thread permalink, in the API's form
+// (/r/<sub>/comments/<post>/<slug>/<comment>/) and the site's
+// (/r/<sub>/comments/<post>/comment/<comment>/)
+const THREAD_PERMALINK_REGEX = /^\/r\/([^/]+)\/comments\/([^/]+)\//
+
+// The comment's own page in the form the site links to. The API's permalink
+// form now comes back as a shell that only redirects here in the browser, with
+// no comment tree and no post (3 of 3 samples, live and removed, 2026-10-17).
+// buildCommentPageUrl's form 301s here instead, and a cookie-less background
+// fetch can't follow that: the redirect drops the solved challenge and lands
+// on a new one (2026-10-17). This form gets neither.
+export const buildCommentThreadUrl = (permalink: string, commentId: string): string | null => {
+    const m = permalink.match(THREAD_PERMALINK_REGEX)
+    if (!m) {
+        return null
+    }
+    return `${newReddit}/r/${m[1]}/comments/${m[2]}/comment/${commentId.replace(/^t1_/, '')}/`
+}
+
 // The /svc partial is the XHR route the site itself lazy-loads comment trees
 // with. Verified live 2026-08-17 (logged-out, clean client: 200, no redirect,
 // no challenge): a live comment renders <shreddit-comment thingId= author=>,
@@ -211,7 +248,7 @@ export const buildCommentPageUrl = (commentId: string, linkId: string): string =
 // clients whose full permalink pages are walled (issue #14: front page or
 // captcha served instead). Needs the subreddit, so it requires a permalink.
 export const buildCommentPartialUrl = (permalink: string, commentId: string): string | null => {
-    const m = permalink.match(/^\/r\/([^/]+)\/comments\/([^/]+)\//)
+    const m = permalink.match(THREAD_PERMALINK_REGEX)
     if (!m) {
         return null
     }
@@ -221,11 +258,18 @@ export const buildCommentPartialUrl = (permalink: string, commentId: string): st
 // (?![\w-]) so this can't match <shreddit-comment-tree ...>, which carries the
 // focal comment's thingId even when that comment is removed (verified live).
 const COMMENT_TAG_REGEX = /<shreddit-comment(?![\w-])([^>]*)>/g
-// A page qualifies as a real comments page (vs challenge/error/interstitial)
-// only if the thread scaffolding rendered.
+// That thingId is what says a page or /svc partial was served for the
+// requested comment (partial verified 2026-10-17), so a missing comment
+// counts only where it matches. The front page, served in place of
+// permalinks in issue #14, has <shreddit-post> feed items but no comment tree
+// (verified 2026-10-17), and neither thread pages nor the partial carry a
+// <link rel="canonical"> to compare instead.
+const COMMENT_TREE_TAG_REGEX = /<shreddit-comment-tree(?![\w-])([^>]*)>/g
+// Whether any thread scaffolding rendered, for the diagnostic line. It doesn't
+// say which page: the front page's feed items match it too.
 const COMMENT_PAGE_VALID_REGEX = /<shreddit-comment-tree\b|<shreddit-post\b/
 
-// scaffoldAbsence: what a valid thread page that lacks the comment means.
+// scaffoldAbsence: what the comment's own thread lacking it means.
 // 'removed' (default) is the ordinary reading; 'unknown' is the remote
 // safety valve for a markup rename (MECHANISM_ABSENT_UNVERIFIED_UNKNOWN).
 export const classifyCommentPage = (
@@ -234,10 +278,7 @@ export const classifyCommentPage = (
     scaffoldAbsence: 'removed' | 'unknown' = 'removed',
 ): CommentPageStatus => {
     for (const m of html.matchAll(COMMENT_TAG_REGEX)) {
-        const attrs: Record<string, string> = {}
-        for (const a of m[1].matchAll(ATTR_REGEX)) {
-            attrs[a[1]] = a[2]
-        }
+        const attrs = parseAttrs(m[1])
         // Comment pages use thingId=; profile feeds use thing-id=. Accept both
         // in case the SSR attribute style changes.
         if ((attrs['thingId'] || attrs['thing-id']) === commentId) {
@@ -252,7 +293,11 @@ export const classifyCommentPage = (
             return author.startsWith('[') ? 'removed' : 'live'
         }
     }
-    return COMMENT_PAGE_VALID_REGEX.test(html) ? scaffoldAbsence : 'unknown'
+    const servedForComment = [...html.matchAll(COMMENT_TREE_TAG_REGEX)].some(m => {
+        const attrs = parseAttrs(m[1])
+        return (attrs['thingId'] || attrs['thing-id']) === commentId
+    })
+    return servedForComment ? scaffoldAbsence : 'unknown'
 }
 
 // The challenge is a string-doubling puzzle served instead of the real page:
@@ -329,11 +374,16 @@ export const describePageForDiag = (html: string): string => {
     // embed "js_challenge" incidentally, so only the solver's puzzle regexes
     // prove a real one.)
     const wall = /Prove your humanity/i.test(title) ? ' wall=captcha' : ''
+    // A page whose only job is a script redirect, as the API's comment
+    // permalinks came back on 2026-10-17 (see buildCommentThreadUrl). Tagged
+    // rather than logging the target, whose path names the thread.
+    const shell = /\bid="shreddit-redirect"/.test(html) ? ' shell=redirect' : ''
     return (
         `bytes=${html.length} challenge=${CHALLENGE_REGEX.test(html) ? 1 : 0} ` +
         `scaffold=${COMMENT_PAGE_VALID_REGEX.test(html) ? 1 : 0} title=${JSON.stringify(title)}` +
         (canonical !== undefined ? ` canonical=${JSON.stringify(canonical)}` : '') +
-        wall
+        wall +
+        shell
     )
 }
 

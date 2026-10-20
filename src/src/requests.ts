@@ -17,6 +17,7 @@ import {
     classifyPostPage,
     PostPageStatus,
     buildCommentPageUrl,
+    buildCommentThreadUrl,
     buildCommentPartialUrl,
     classifyCommentPage,
     solveChallenge,
@@ -490,7 +491,7 @@ const verifyFeedPresentPosts = async (
             toFetch.map(async id => {
                 try {
                     const html = await fetchHtml(buildPostPageUrl(id))
-                    const page = classifyPostPage(html)
+                    const page = classifyPostPage(html, id)
                     verdicts[id] = page.status
                     console.log(`[reveddit] post page verdict ${id}: ${page.status} (html ${html.length}b)`)
                     if (page.status !== 'unknown') {
@@ -615,18 +616,26 @@ const fetchAndClassifyAbsentItem = async (
     meta: AuthItemMeta,
     fetchHtml: FetchHtml,
 ): Promise<PostPageStatus> => {
+    // URLs reddit answers without a redirect. A background fetch loses its
+    // solved challenge on one and gets a new challenge (2026-10-17), so
+    // /comments/<id>/ is the fallback for posts: it 301s to the permalink.
+    // Comments get the site's form, since the API's permalink form is a
+    // redirect shell (see buildCommentThreadUrl).
+    const threadUrl = !id.startsWith('t3_') && meta.permalink ? buildCommentThreadUrl(meta.permalink, id) : null
     let url: string
     if (id.startsWith('t3_')) {
-        url = buildPostPageUrl(id)
-    } else if (meta.permalink) {
-        url = newReddit + meta.permalink
+        url = meta.permalink?.startsWith('/r/') ? newReddit + meta.permalink : buildPostPageUrl(id)
+    } else if (threadUrl) {
+        url = threadUrl
     } else if (meta.link_id) {
         url = buildCommentPageUrl(id, meta.link_id)
+    } else if (meta.permalink) {
+        url = newReddit + meta.permalink
     } else {
         return 'unknown'
     }
     const classify = (html: string): PostPageStatus =>
-        id.startsWith('t3_') ? classifyPostPage(html).status : classifyCommentPage(html, id, scaffoldAbsenceVerdict)
+        id.startsWith('t3_') ? classifyPostPage(html, id).status : classifyCommentPage(html, id, scaffoldAbsenceVerdict)
     // Comments: try the site's own /svc comment-tree partial first — same
     // classifier signals, a fraction of the page weight, and the route most
     // likely to stay readable for clients whose full permalink pages are

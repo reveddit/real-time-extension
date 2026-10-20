@@ -35,10 +35,20 @@ const commentEl = (id, author) =>
     `permalink="/r/test/comments/abc123/comment/${id.slice(3)}/" score="1">` +
     `<div slot="comment">some text</div></shreddit-comment>`
 
-const commentsPage = inner =>
+// focalId: the comment the thread page was served for, which its tree names
+// even when that comment is gone
+const commentsPage = (inner, focalId) =>
     `<html><body><shreddit-post class="block" id="t3_abc123" author="someone" ` +
     `subreddit-name="test" permalink="/r/test/comments/abc123/title/"></shreddit-post>` +
-    `<shreddit-comment-tree>${inner}</shreddit-comment-tree></body></html>`
+    `<shreddit-comment-tree id="comment-tree"${focalId ? ` thingId="${focalId}"` : ''} post-id="t3_abc123">` +
+    `${inner}</shreddit-comment-tree></body></html>`
+
+// The logged-out front page (trimmed), which reddit has served in place of
+// permalinks: feed items, no comment tree
+const FRONT_PAGE =
+    `<html><head><link rel="canonical" href="https://www.reddit.com/"></head><body><shreddit-feed>` +
+    `<shreddit-post id="t3_feed1" author="someone" post-title="A feed post" subreddit-name="pics" ` +
+    `permalink="/r/pics/comments/feed1/a/"></shreddit-post></shreddit-feed></body></html>`
 
 // Absent from the feed, but live on its own page (profile-hidden subreddit)
 const HIDDEN = 't1_hidden1'
@@ -47,10 +57,22 @@ const GONE = 't1_gone11'
 // Present in the feed
 const FEED_OK = 't1_feedok1'
 
+// The auth view's permalinks, in the API's form
 const PERMALINKS = {
     [HIDDEN]: `/r/hiddensub/comments/abc123/title/${HIDDEN.slice(3)}/`,
     [GONE]: `/r/somesub/comments/abc123/title/${GONE.slice(3)}/`,
 }
+// The comments' own pages, in the site's form: the API's form is only a
+// redirect shell now (2026-10-17)
+const THREAD_PAGES = {
+    [HIDDEN]: `/r/hiddensub/comments/abc123/comment/${HIDDEN.slice(3)}/`,
+    [GONE]: `/r/somesub/comments/abc123/comment/${GONE.slice(3)}/`,
+}
+// What the API's form returned, trimmed
+const REDIRECT_SHELL =
+    `<html><body><div id="shreddit-redirect"><ac-call delay="0" ` +
+    `method="location.replace(&quot;${THREAD_PAGES[GONE]}&quot;)" target="window" trigger="init">` +
+    `</ac-call></div></body></html>`
 
 const meta = (id, extra = {}) => ({
     locked: false,
@@ -77,9 +99,9 @@ const installFetch = routes => {
 const defaultRoutes = () => [
     [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
     [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
-    [PERMALINKS[HIDDEN], commentsPage(commentEl(HIDDEN, USER))],
-    // valid comments page without the target comment → removed
-    [PERMALINKS[GONE], commentsPage(commentEl('t1_other11', 'SomeoneElse'))],
+    [THREAD_PAGES[HIDDEN], commentsPage(commentEl(HIDDEN, USER), HIDDEN)],
+    // the comment's own thread page without the comment → removed
+    [THREAD_PAGES[GONE], commentsPage(commentEl('t1_other11', 'SomeoneElse'), GONE)],
 ]
 
 describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
@@ -127,12 +149,65 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         expect(byId[GONE].author).toBe('[deleted]')
     })
 
+    it('leaves items unresolved when reddit serves its front page for their pages', async () => {
+        const POST = 't3_post22'
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
+            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+            [THREAD_PAGES[GONE], FRONT_PAGE],
+            [`/comments/${POST.slice(3)}/`, FRONT_PAGE],
+        ])
+        const ids = [FEED_OK, GONE, POST]
+        const authItemsMeta = {
+            [FEED_OK]: meta(FEED_OK),
+            [GONE]: meta(GONE),
+            [POST]: { locked: false, created_utc: 1700000000 },
+        }
+        const results = await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
+        const names = results.map(r => r.data.name)
+        expect(names).toContain(FEED_OK)
+        // the front page's feed items once made the comment read removed and
+        // the post live
+        expect(names).not.toContain(GONE)
+        expect(names).not.toContain(POST)
+    })
+
+    it('reads comment and post pages at URLs reddit answers without a redirect', async () => {
+        const POST = 't3_post33'
+        const POST_PERMALINK = '/r/somesub/comments/post33/a_title/'
+        const calls = installFetch([
+            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
+            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+            [PERMALINKS[GONE], REDIRECT_SHELL],
+            [THREAD_PAGES[GONE], commentsPage(commentEl('t1_other11', 'SomeoneElse'), GONE)],
+            [
+                POST_PERMALINK,
+                `<html><body><shreddit-post id="${POST}" author="${USER}" permalink="${POST_PERMALINK}">` +
+                    `<div>Sorry, this post was removed by the moderators.</div></shreddit-post></body></html>`,
+            ],
+        ])
+        const ids = [FEED_OK, GONE, POST]
+        const authItemsMeta = {
+            [FEED_OK]: meta(FEED_OK),
+            [GONE]: meta(GONE),
+            [POST]: { locked: false, created_utc: 1700000000, permalink: POST_PERMALINK },
+        }
+        const results = await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
+        const byId = Object.fromEntries(results.map(r => [r.data.name, r.data]))
+        expect(byId[GONE].author).toBe('[deleted]')
+        expect(byId[POST].is_robot_indexable).toBe(false)
+        // not the API's comment permalink (a redirect shell), and not
+        // /comments/<id>/, whose 301 costs a background fetch its solved challenge
+        expect(calls).not.toContain('https://www.reddit.com' + PERMALINKS[GONE])
+        expect(calls).not.toContain(`https://www.reddit.com/comments/${POST.slice(3)}/`)
+    })
+
     it('omits an absent comment whose page is unrecognizable (no false alert)', async () => {
         installFetch([
             [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
             [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
             // challenge/error page, no solvable puzzle → verdict unknown
-            [PERMALINKS[HIDDEN], '<html><body>please wait</body></html>'],
+            [THREAD_PAGES[HIDDEN], '<html><body>please wait</body></html>'],
         ])
         const ids = [FEED_OK, HIDDEN]
         const authItemsMeta = Object.fromEntries(ids.map(id => [id, meta(id)]))
@@ -188,8 +263,8 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         installFetch([
             [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
             [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
-            [PERMALINKS[HIDDEN], '<html><body>shell</body></html>'],
-            [PERMALINKS[GONE], '<html><body>shell</body></html>'],
+            [THREAD_PAGES[HIDDEN], '<html><body>shell</body></html>'],
+            [THREAD_PAGES[GONE], '<html><body>shell</body></html>'],
         ])
         // old.reddit /api/info drops removed comments: GONE is absent from the
         // response; the feed-present canary (FEED_OK) and the hidden-but-live
@@ -219,7 +294,7 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         installFetch([
             [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
             [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
-            [PERMALINKS[GONE], '<html><body>shell</body></html>'],
+            [THREAD_PAGES[GONE], '<html><body>shell</body></html>'],
         ])
         // Legacy response renders nothing (unhealthy/blocked) → no absence verdict
         stubLegacy(async () => [])
@@ -235,7 +310,7 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         installFetch([
             [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
             [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
-            [PERMALINKS[GONE], '<html><body>shell</body></html>'],
+            [THREAD_PAGES[GONE], '<html><body>shell</body></html>'],
         ])
         let called = false
         stubLegacy(async () => {

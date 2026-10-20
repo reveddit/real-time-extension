@@ -45,6 +45,7 @@ import browser from 'webextension-polyfill'
 import { getRateLimitBackoffRemainingMs, getMsSinceLastRateLimitHit, getObjectNamesForThing } from './storage'
 import { flagIfRateLimited, RECENT_RATE_LIMIT_WINDOW_MS } from './requests'
 import { isCycleInFlight } from './monitoring'
+import { isRemovedInModView } from './common'
 import { dlog } from './diaglog'
 
 const www_reddit = 'https://www.reddit.com'
@@ -151,8 +152,7 @@ export const toPublicView = (json: any, knownRemoved: Set<string>): any => {
         }
         const data = node.data
         if ((node.kind === 't1' || node.kind === 't3') && data) {
-            const removedInModView = data.removed === true || data.spam === true || Boolean(data.banned_by)
-            if (knownRemoved.has(data.name) || removedInModView) {
+            if (knownRemoved.has(data.name) || isRemovedInModView(data)) {
                 markPubliclyRemoved(node.kind, data)
             }
             visit(data.replies)

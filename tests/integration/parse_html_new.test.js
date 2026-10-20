@@ -10,6 +10,7 @@ import {
     buildPostPageUrl,
     classifyPostPage,
     buildCommentPageUrl,
+    buildCommentThreadUrl,
     buildCommentPartialUrl,
     classifyCommentPage,
     describePageForDiag,
@@ -49,6 +50,23 @@ const challengePageJsc =
     `<input type="hidden" name="js_challenge" value="1"/>` +
     `<input type="hidden" name="jsc_token" value="7afd7253"/>` +
     `<input type="hidden" name="jsc_orig_r" value=""/></form>`
+
+// The logged-out front page, trimmed from one served 2026-10-17. Issue #14's
+// log had reddit serve it in place of a permalink. An ad's overflow menu comes
+// first, the feed lists other posts as <shreddit-post> items, and there is no
+// comment tree.
+const frontPage =
+    `<html><head><link rel="canonical" href="https://www.reddit.com/">` +
+    `<title>Reddit - The heart of the internet</title></head><body>` +
+    `<shreddit-post-overflow-menu is-desktop-viewport is-ad post-id="t3_ad1" placement="sidebars">` +
+    `</shreddit-post-overflow-menu>` +
+    `<shreddit-feed><article><shreddit-post permalink="/r/delta/comments/feed1/a_title/" ` +
+    `view-context="AggregateFeed" feedIndex="0" created-timestamp="2026-10-17T18:55:37.273000+0000" ` +
+    `id="t3_feed1" post-title="A feed post" post-type="image" author="someone" subreddit-name="delta">` +
+    `<shreddit-post-flair></shreddit-post-flair></shreddit-post></article>` +
+    `<article><shreddit-post permalink="/r/pics/comments/feed2/b_title/" view-context="AggregateFeed" ` +
+    `feedIndex="1" id="t3_feed2" post-title="Another" author="someone_else" subreddit-name="pics">` +
+    `</shreddit-post></article></shreddit-feed></body></html>`
 
 describe('parseProfileHtml', () => {
     it('extracts comment ids from thing-id attributes and action rows', () => {
@@ -139,8 +157,10 @@ describe('classifyPostPage', () => {
         `<div slot="post-body">some body</div>${bannerHtml}</shreddit-post>` +
         `<shreddit-comment-tree><p>unrelated comment text</p></shreddit-comment-tree></body></html>`
 
+    const POST = 't3_1ukv6vb'
+
     it('classifies a held post (awaiting moderator approval)', () => {
-        const result = classifyPostPage(postPage('<div><span>Post is awaiting moderator approval.</span></div>'))
+        const result = classifyPostPage(postPage('<div><span>Post is awaiting moderator approval.</span></div>'), POST)
         expect(result.status).toBe('held')
         expect(result.author).toBe('GiveUsNetNeutrality')
         expect(result.title).toBe('testtest')
@@ -149,24 +169,40 @@ describe('classifyPostPage', () => {
     })
 
     it('classifies removed-by-moderators and spam-filtered posts', () => {
-        expect(classifyPostPage(postPage('<div>Sorry, this post was removed by the moderators.</div>')).status).toBe(
-            'removed',
-        )
-        expect(classifyPostPage(postPage("<div>Removed by Reddit's spam filters.</div>")).status).toBe('removed')
+        expect(
+            classifyPostPage(postPage('<div>Sorry, this post was removed by the moderators.</div>'), POST).status,
+        ).toBe('removed')
+        expect(classifyPostPage(postPage("<div>Removed by Reddit's spam filters.</div>"), POST).status).toBe('removed')
     })
 
     it('classifies a normal post page as live', () => {
-        expect(classifyPostPage(postPage('')).status).toBe('live')
+        expect(classifyPostPage(postPage(''), POST).status).toBe('live')
     })
 
     it('ignores banner-like phrases in the comments below the post', () => {
         const html = postPage('') // live post
         const withComment = html.replace('unrelated comment text', 'my comment was removed by the moderators once')
-        expect(classifyPostPage(withComment).status).toBe('live')
+        expect(classifyPostPage(withComment, POST).status).toBe('live')
     })
 
     it('returns unknown for pages without a shreddit-post element', () => {
-        expect(classifyPostPage('<html><body>error page</body></html>').status).toBe('unknown')
+        expect(classifyPostPage('<html><body>error page</body></html>', POST).status).toBe('unknown')
+    })
+
+    it('returns unknown when the page is another post', () => {
+        expect(classifyPostPage(postPage(''), 't3_other1').status).toBe('unknown')
+    })
+
+    it('returns unknown, not live, for the front page served in place of the post', () => {
+        expect(classifyPostPage(frontPage, POST).status).toBe('unknown')
+    })
+
+    it('reads a post from its own element, never an overflow menu or flair', () => {
+        // a post that is on the front page is read from its feed item
+        const result = classifyPostPage(frontPage, 't3_feed1')
+        expect(result.status).toBe('live')
+        expect(result.author).toBe('someone')
+        expect(classifyPostPage(frontPage, 't3_ad1').status).toBe('unknown')
     })
 
     it('builds post page urls from fullnames', () => {
@@ -233,6 +269,31 @@ describe('classifyCommentPage', () => {
     it('returns unknown when the element matches but has no author attribute', () => {
         const html = commentsPage(`<shreddit-comment thingId="t1_target1" depth="0"></shreddit-comment>`)
         expect(classifyCommentPage(html, 't1_target1')).toBe('unknown')
+    })
+
+    it('returns unknown, not removed, for the front page served in place of the permalink', () => {
+        expect(classifyCommentPage(frontPage, 't1_target1')).toBe('unknown')
+    })
+
+    it('reads absence as removed only on the thread served for that comment', () => {
+        // the tree names t1_target1, so it says nothing about another comment
+        expect(classifyCommentPage(commentsPage(''), 't1_elsewhere')).toBe('unknown')
+    })
+
+    // The /svc partial as served 2026-10-17: no <shreddit-post> and no
+    // canonical link; the tree names the focal comment, a removed one too.
+    const partial = inner =>
+        `<faceplate-loader name="TopCommentsPermalink" loading="eager"></faceplate-loader>` +
+        `<shreddit-comment-tree-ads></shreddit-comment-tree-ads>` +
+        `<shreddit-comment-tree-stats total-comments="20" sort="CONFIDENCE"></shreddit-comment-tree-stats>` +
+        `<shreddit-comment-tree id="comment-tree" thingId="t1_target1" post-id="t3_abc123" totalComments="20" ` +
+        `permalink="/r/test/comments/abc123/title/" ui="desktop">${inner}</shreddit-comment-tree>`
+
+    it('reads the /svc partial like the full page', () => {
+        expect(classifyCommentPage(partial(commentEl('t1_target1', 'SomeUser')), 't1_target1')).toBe('live')
+        expect(classifyCommentPage(partial(commentEl('t1_target1', '[deleted]')), 't1_target1')).toBe('removed')
+        expect(classifyCommentPage(partial(commentEl('t1_other11', 'SomeoneElse')), 't1_target1')).toBe('removed')
+        expect(classifyCommentPage(partial(''), 't1_target1', 'unknown')).toBe('unknown')
     })
 
     it('builds comment page urls from fullnames', () => {
@@ -393,7 +454,49 @@ describe('buildCommentPartialUrl', () => {
     })
 })
 
+// What the API's comment permalink form returned on 2026-10-17, trimmed: a
+// script redirect to the site's form, with no comment tree and no post
+const redirectShell =
+    `<html><head><title>Reddit - The heart of the internet</title></head><body>` +
+    `<div id="canonical-url-updater" value="https://www.reddit.com/r/delta/comments/1x8b2za/a_title/"></div>` +
+    `<div id="shreddit-redirect"><ac-call delay="0" ` +
+    `method="location.replace(&quot;/r/delta/comments/1x8b2za/comment/phb7gaf/&quot;)" target="window" ` +
+    `trigger="init"></ac-call></div></body></html>`
+
+describe('buildCommentThreadUrl', () => {
+    it("builds the site's comment page URL from the API's permalink form", () => {
+        expect(
+            buildCommentThreadUrl(
+                '/r/CantSayAnything/comments/1u1u4am/write_any_comment_here_20260610/p36brqf/',
+                't1_p36brqf',
+            ),
+        ).toBe('https://www.reddit.com/r/CantSayAnything/comments/1u1u4am/comment/p36brqf/')
+    })
+
+    it("keeps a permalink already in the site's form", () => {
+        expect(buildCommentThreadUrl('/r/delta/comments/1x8b2za/comment/phb7gaf/', 't1_phb7gaf')).toBe(
+            'https://www.reddit.com/r/delta/comments/1x8b2za/comment/phb7gaf/',
+        )
+    })
+
+    it('returns null for permalinks that do not carry a subreddit thread path', () => {
+        expect(buildCommentThreadUrl('/user/someone/comments/abc/title/', 't1_x')).toBe(null)
+        expect(buildCommentThreadUrl('', 't1_x')).toBe(null)
+    })
+
+    it("can't read a comment from the API permalink's redirect shell", () => {
+        expect(classifyCommentPage(redirectShell, 't1_phb7gaf')).toBe('unknown')
+    })
+})
+
 describe('describePageForDiag wall tags', () => {
+    it('tags a redirect shell without logging where it points', () => {
+        const d = describePageForDiag(redirectShell)
+        expect(d).toContain('shell=redirect')
+        expect(d).toContain('scaffold=0')
+        expect(d).not.toContain('1x8b2za')
+    })
+
     it('names the captcha interstitial', () => {
         const d = describePageForDiag('<html><title>Reddit - Prove your humanity</title></html>')
         expect(d).toContain('wall=captcha')
@@ -421,6 +524,7 @@ describe('describePageForDiag wall tags', () => {
     it('adds no wall tag to ordinary pages', () => {
         const d = describePageForDiag('<html><title>Some thread title</title><shreddit-post></shreddit-post></html>')
         expect(d).not.toContain('wall=')
+        expect(d).not.toContain('shell=')
         expect(d).toContain('scaffold=1')
     })
 })
