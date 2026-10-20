@@ -20,7 +20,7 @@ Note, the extension is not able to track content from private subreddits.
 VERSION HISTORY:
 
 2026/10/17 - 0.0.5.25
-- Chrome and Edge get new versions sooner after their store approves them
+- fix false and missed removal alerts; Chrome and Edge get new versions sooner
 
 2026/10/17 - 0.0.5.24
 - fix reveddit.com and removal checks after reddit began blocking logged-out requests
