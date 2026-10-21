@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/10/21 - 0.0.5.26
+- fix removal checks reddit began refusing; future changes like it are handled without an update
+
 2026/10/17 - 0.0.5.25
 - fix false and missed removal alerts; Chrome and Edge get new versions sooner
 
