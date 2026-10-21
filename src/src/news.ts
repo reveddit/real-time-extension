@@ -5,6 +5,7 @@
 
 import { dlog } from './diaglog'
 import { sanitizeChallengeConfig, setChallengeConfig, ChallengeConfig } from './challenge-config'
+import { sanitizeWwwRoutes, WwwRoute } from './www-routes'
 
 export const NEWS_URL = 'https://www.reveddit.com/extension-news.json'
 export const NEWS_CACHE_KEY = 'news_cache'
@@ -43,6 +44,11 @@ export interface RemoteOptions {
     // { token_fields: string[], solution_regex: string }. Sanitized field by
     // field; stored in camelCase.
     challenge?: Partial<ChallengeConfig>
+    // Order of the public-view fetch routes ('leg:cache' strings, see
+    // www-routes.ts), replacing the built-in order. A client's learned lead
+    // route still goes first while it stays listed; an unlisted route is
+    // never tried. Only known routes survive sanitization.
+    www_routes?: WwwRoute[]
 }
 export const LEGACY_HOSTS = ['www.reddit.com', 'old.reddit.com'] as const
 export const LEGACY_HOST_DEFAULT = 'www.reddit.com'
@@ -298,6 +304,13 @@ export const getRemoteLegacyHost = async (): Promise<string> => {
     return (LEGACY_HOSTS as readonly string[]).includes(value || '') ? (value as string) : LEGACY_HOST_DEFAULT
 }
 
+// Public-view fetch route order from the cached feed; empty when unset, and
+// the caller keeps its built-in order.
+export const getRemoteWwwRoutes = async (): Promise<WwwRoute[]> => {
+    const cache = await getCachedNews()
+    return sanitizeWwwRoutes(cache?.feed?.options?.www_routes)
+}
+
 // Resolution for a three-state mechanism switch, returning whether the mechanism
 // is DISABLED: an explicit dev override wins, then the remote state ('off' →
 // disabled, 'on' → enabled), then the compiled default. Pure, for testability.
@@ -340,6 +353,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
             }
         }
         const challenge = sanitizeChallengeConfig((feed.options as any)?.challenge)
+        const wwwRoutes = sanitizeWwwRoutes((feed.options as any)?.www_routes)
         const storeVersions: StoreVersions = {}
         const rawStoreVersions = (feed as any).store_versions
         if (rawStoreVersions && typeof rawStoreVersions === 'object') {
@@ -373,6 +387,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
                     ? { legacy_host: (feed.options as any).legacy_host }
                     : {}),
                 ...(Object.keys(challenge).length ? { challenge } : {}),
+                ...(wwwRoutes.length ? { www_routes: wwwRoutes } : {}),
             },
             ...(isValidVersion(feed.latest_version) ? { latest_version: feed.latest_version } : {}),
             ...(Number(feed.latest_version_published_utc) > 0
@@ -385,7 +400,8 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
         setChallengeConfig(challenge)
         dlog(
             'news',
-            `[reveddit] news fetch ok: ${sanitized.messages.length} messages, mechanisms=${JSON.stringify(mechanisms)}`,
+            `[reveddit] news fetch ok: ${sanitized.messages.length} messages, mechanisms=${JSON.stringify(mechanisms)}` +
+                (wwwRoutes.length ? `, www_routes=${wwwRoutes.join(',')}` : ''),
         )
     } catch (err: any) {
         // Network failures are expected and the cached feed keeps working, but

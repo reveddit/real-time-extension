@@ -12,6 +12,7 @@ Testing subreddit: **r/CantSayAnything** (auto-removes all posts/comments).
 - [ ] `yarn test` — all integration tests pass
 - [ ] `yarn test:e2e` — all E2E tests pass
 - [ ] `yarn lint` — no errors
+- [ ] `node scripts/chrome-run-lookup.cjs` (after `yarn build-chrome-dev`, outside the sandbox) — the removal check against live Reddit with no login: the canary comes back REMOVED and the log names the fetch routes that served
 
 ---
 

@@ -393,6 +393,29 @@ describe('getPublicProfileItems', () => {
         expect(result.valid).toBe(false)
     })
 
+    it('says why a tab is invalid, for the diagnostic log', async () => {
+        const unsolvable = await getPublicProfileItems(
+            'user1',
+            makeFetcher([
+                ['/comments/?sort=new', '<html><head><title>Reddit</title></head><body>something else</body></html>'],
+                ['/submitted/?sort=new', emptyStatePage('posts')],
+            ]),
+            ['t1_abc'],
+        )
+        expect(unsolvable.error).toMatch(/^comments page unrecognized: bytes=\d+ challenge=0 scaffold=0 title="Reddit"/)
+
+        const walledAfterSolve = await getPublicProfileItems(
+            'user1',
+            async url => {
+                if (!url.includes('/submitted/')) return emptyStatePage('comments')
+                return url.includes('js_challenge=1') ? '<html>still something else</html>' : challengePage
+            },
+            ['t1_abc'],
+        )
+        expect(walledAfterSolve.valid).toBe(false)
+        expect(walledAfterSolve.error).toMatch(/^posts page unrecognized after challenge solve: bytes=\d+/)
+    })
+
     it('solves the js challenge and retries once', async () => {
         let commentsCalls = 0
         const fetchHtml = async url => {

@@ -401,6 +401,8 @@ interface TabResult {
     valid: boolean
     emptyState: boolean
     floor: number
+    // Why the tab is invalid, for the diagnostic log
+    error?: string
 }
 
 const fetchTab = async (
@@ -412,7 +414,7 @@ const fetchTab = async (
 ): Promise<TabResult> => {
     const { typePrefix } = TAB_CONFIG[tab]
     const items = new Map<string, PublicItem>()
-    const invalid: TabResult = { items, valid: false, emptyState: false, floor: Infinity }
+    const invalid = (error: string): TabResult => ({ items, valid: false, emptyState: false, floor: Infinity, error })
 
     const url = buildTabUrl(username, tab)
     let html = await fetchHtml(url)
@@ -421,12 +423,12 @@ const fetchTab = async (
         // Not recognizable — try the challenge solver once, then give up
         const solutionUrl = solveChallenge(html, url)
         if (!solutionUrl) {
-            return invalid
+            return invalid(`${tab} page unrecognized: ${describePageForDiag(html)}`)
         }
         html = await fetchHtml(solutionUrl)
         page = parseProfileHtml(html, typePrefix)
         if (!page.hasItems && !page.emptyState) {
-            return invalid
+            return invalid(`${tab} page unrecognized after challenge solve: ${describePageForDiag(html)}`)
         }
     }
 
@@ -493,11 +495,13 @@ export const getPublicProfileItems = async (
             fetchTab(username, 'posts', fetchHtml, neededValues('t3_'), maxPartialPages),
         ])
         const items = new Map([...comments.items, ...posts.items])
+        const error = comments.error || posts.error
         return {
             items,
             valid: comments.valid && posts.valid,
             emptyProfile: comments.emptyState && posts.emptyState && items.size === 0,
             coverage: { t1: comments.floor, t3: posts.floor },
+            ...(error && { error }),
         }
     } catch (error: any) {
         return {

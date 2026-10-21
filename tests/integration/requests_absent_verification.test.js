@@ -7,9 +7,15 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
-import { lookupItemsByID_fromPublicProfile, _legacyLookups } from '../../src/src/requests'
+import {
+    lookupItemsByID,
+    lookupItemsByID_fromPublicProfile,
+    _legacyLookups,
+    _wwwRouteTiming,
+} from '../../src/src/requests'
+import { getDiagEntries } from '../../src/src/diaglog'
 
 // The real legacy parsers run HTMLRewriter (WASM) which cannot load under
 // vitest — always stub the seam so no test can reach them.
@@ -20,6 +26,9 @@ const stubLegacy = (commentsById, postByPath) => {
 }
 
 const USER = 'testuser'
+
+// no pause between fetch routes in these tests
+_wwwRouteTiming.switchDelayMs = 0
 
 // --- page fixtures (modeled on live pages, verified 2026-07-20) ---
 
@@ -424,5 +433,94 @@ describe('publicly empty profile versus NSFW-only accounts', () => {
         }
         await expect(lookupItemsByID_fromPublicProfile([GONE, HIDDEN], USER, authItemsMeta)).resolves.toBeDefined()
         expect(__getLocalStorage().error_status).toBeUndefined()
+    })
+})
+
+// Issue #27's log had thousands of "www public-view lookup failed" lines and
+// nothing about why; its last error named only the legacy fallback's 403.
+describe('lookup failure reasons', () => {
+    const blockAll = () => {
+        globalThis.fetch = async () => ({ ok: false, status: 403, text: async () => 'BLOCK' })
+    }
+    beforeEach(() => {
+        __resetStorage()
+        stubLegacy()
+    })
+    afterEach(() => {
+        Object.assign(_legacyLookups, originalLegacyLookups)
+    })
+
+    it('the failure streak line says why the public view failed', async () => {
+        blockAll()
+        await expect(lookupItemsByID_fromPublicProfile([GONE], USER, { [GONE]: meta(GONE) })).rejects.toThrow(
+            'www profile lookup invalid: www.reddit.com request failed: 403 (refused: background:no-store 403',
+        )
+        const lines = (await getDiagEntries()).map(e => e.m)
+        expect(
+            lines.some(l =>
+                l.startsWith(
+                    '[reveddit] www public-view lookup failed — consecutive failures: 1 (www.reddit.com request failed: 403',
+                ),
+            ),
+        ).toBe(true)
+    })
+
+    it('when the legacy fallback fails too, the error names both', async () => {
+        blockAll()
+        __getLocalStorage().dev_simulate_endpoint_deprecation = true
+        await expect(lookupItemsByID([GONE], 'none', false, false, [], USER, { [GONE]: meta(GONE) })).rejects.toThrow(
+            /^www profile lookup invalid: www\.reddit\.com request failed: 403 \(refused: .*\); legacy fallback: legacy reddit HTML request failed: 403 \(legacy endpoints disabled\)$/,
+        )
+    })
+})
+
+// Held and spam-filtered posts linger in the public feed, so young ones get
+// their own page read while a www tab can fetch: at the permalink, which
+// doesn't redirect (a redirect drops a solved challenge), solving a challenge.
+describe('feed-present post verification', () => {
+    const POST = 't3_post11'
+    const POST_PERMALINK = '/r/somesub/comments/post11/a_title/'
+    const heldPostPage =
+        `<html><body><shreddit-post id="${POST}" author="${USER}" post-title="t" subreddit-name="somesub">` +
+        `<div>Post is awaiting moderator approval.</div></shreddit-post></body></html>`
+    const challenge =
+        `<script>const solution = await(async e=>e+e)("ab");</script>` +
+        `<form hidden method="GET"><input type="hidden" name="js_challenge" value="1"/>` +
+        `<input type="hidden" name="jsc_token" value="tok1"/><input type="hidden" name="jsc_orig_r" value=""/></form>`
+    const savedQuery = browserMock.tabs.query
+    beforeEach(() => {
+        __resetStorage()
+        stubLegacy()
+    })
+    afterEach(() => {
+        Object.assign(_legacyLookups, originalLegacyLookups)
+        browserMock.tabs.query = savedQuery
+    })
+
+    it("reads a young post's page at its permalink and solves the challenge", async () => {
+        browserMock.tabs.query = async () => [{ id: 7 }]
+        const calls = installFetch([
+            [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
+            [`/user/${USER}/submitted/?sort=new`, thingIdEl(POST)],
+            [`${POST_PERMALINK}?solution=abab&js_challenge=1&jsc_token=tok1`, heldPostPage],
+            [POST_PERMALINK, challenge],
+        ])
+        const results = await lookupItemsByID_fromPublicProfile([POST], USER, {
+            [POST]: { locked: false, created_utc: Math.floor(Date.now() / 1000) - 3600, permalink: POST_PERMALINK },
+        })
+        expect(results.find(r => r.data.name === POST).data.is_robot_indexable).toBe(false)
+        expect(calls.filter(u => u.includes('/comments/post11/'))).toHaveLength(2)
+    })
+
+    it('without a www tab, posts are not checked page by page', async () => {
+        const calls = installFetch([
+            [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
+            [`/user/${USER}/submitted/?sort=new`, thingIdEl(POST)],
+        ])
+        const results = await lookupItemsByID_fromPublicProfile([POST], USER, {
+            [POST]: { locked: false, created_utc: Math.floor(Date.now() / 1000) - 3600, permalink: POST_PERMALINK },
+        })
+        expect(results.find(r => r.data.name === POST).data.is_robot_indexable).toBe(true)
+        expect(calls.filter(u => u.includes('/comments/post11/'))).toHaveLength(0)
     })
 })

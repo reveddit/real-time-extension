@@ -16,6 +16,7 @@ import {
     getAuth,
     storeRedditCookies,
     throwIfLegacyDisabled,
+    lookupItemsByID_fromPublicProfile,
 } from './src/requests'
 import {
     initStorage,
@@ -660,9 +661,27 @@ const handleDevAction = __DEV__
                       .catch(err => sendResponse({ error: String(err?.message || err) }))
                   break
               }
+              case 'dev-www-lookup':
+                  // The public-view lookup monitoring runs, for any user and
+                  // with no Reddit login: the profile feeds through the fetch
+                  // routes, plus page verification of any ids given with
+                  // permalinks ({ username, ids, meta: { [id]: { permalink } } }).
+                  lookupItemsByID_fromPublicProfile(
+                      Array.isArray(message.ids) ? message.ids : [],
+                      String(message.username || ''),
+                      message.meta || {},
+                  )
+                      .then(results => sendResponse({ results: results.map(r => r.data) }))
+                      .catch(err => sendResponse({ error: String(err?.message || err) }))
+                  break
           }
       }
     : null
+
+if (__DEV__) {
+    // For automation that holds the service worker itself (Playwright)
+    ;(globalThis as any).__devAction = handleDevAction
+}
 
 chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResponse) {
     switch (message.action) {
