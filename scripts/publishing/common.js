@@ -41,12 +41,20 @@ export function getManifest() {
  * @param {string} buildScript - The yarn script to run (e.g. "build-chrome")
  */
 export function buildFresh(buildScript) {
+    assertCleanBuildInputs();
+    // Here too, so a standalone `yarn publish:<store>` can't give a store
+    // other code under a version another store already has
+    assertSameCodeForVersion();
     console.log(`\x1b[33mBuilding fresh production package (yarn ${buildScript})...\x1b[0m`);
     const result = spawnSync('yarn', [buildScript], { stdio: 'inherit', cwd: process.cwd() });
     if (result.status !== 0) {
         console.error(`\x1b[31myarn ${buildScript} failed.\x1b[0m`);
         process.exit(1);
     }
+    // What was built, for markPublished: HEAD can move before the store accepts it
+    const status = readPublishStatus();
+    status.built = { commit: headCommit(), dirty: buildInputsDirty(), at: new Date().toISOString() };
+    writePublishStatus(status);
 }
 
 /**
@@ -106,12 +114,20 @@ export function prompt(query) {
  * that failed partway finishes by running `yarn publish:all` again: it skips
  * those stores, and the preflight while the extension's files are unchanged.
  * Kept in .publish-status.json (gitignored); deleting it starts over.
+ * Publishing needs the build inputs committed (assertCleanBuildInputs), so
+ * the commit recorded there is what the stores got.
  */
 const STATUS_FILE = path.join(process.cwd(), '.publish-status.json');
 
-// What the built extension is made from. One version must not ship different
-// code to different stores.
-const EXTENSION_PATHS = ['src', 'webpack.config.js', 'STORE_DESCRIPTION.txt'];
+// What the built extension is made from: every tracked file but these (the
+// dependencies and build scripts count too). One version must not ship
+// different code to different stores.
+const NOT_BUILD_INPUTS = [
+    'tests', 'scripts', '*.md', 'dist-*', '.claude', '.claude-mcp', '.github', '.husky', 'graphics', 'images',
+    'test-results', 'LICENSE', 'renovate.json', 'eslint.config.js', '.prettierrc', '.prettierignore',
+    '.editorconfig', 'playwright.config.js', 'vitest.config.js', '.gitignore',
+];
+const BUILD_INPUTS = ['.', ...NOT_BUILD_INPUTS.map(p => `:(exclude)${p}`)];
 
 function git(...args) {
     const result = spawnSync('git', args, { cwd: process.cwd(), encoding: 'utf8' });
@@ -127,7 +143,58 @@ export function headCommit() {
  * @param {string} commit
  */
 export function extensionChangedSince(commit) {
-    return !git('diff', '--quiet', commit, '--', ...EXTENSION_PATHS).ok;
+    return !git('diff', '--quiet', commit, '--', ...BUILD_INPUTS).ok;
+}
+
+/**
+ * Whether a build input has uncommitted changes or is untracked, so HEAD
+ * wouldn't say what a build from this tree ships.
+ */
+export function buildInputsDirty() {
+    const status = git('status', '--porcelain', '--', ...BUILD_INPUTS);
+    return !status.ok || status.out !== '';
+}
+
+/**
+ * Stop unless the build inputs match HEAD. PUBLISH_ALLOW_DIRTY=1 publishes
+ * anyway; the run is then recorded as dirty, and publish:all won't resume it.
+ */
+export function assertCleanBuildInputs() {
+    if (!buildInputsDirty()) return;
+    if (process.env.PUBLISH_ALLOW_DIRTY) {
+        console.warn('\x1b[33mWarning: publishing uncommitted changes (PUBLISH_ALLOW_DIRTY)\x1b[0m');
+        return;
+    }
+    console.error(
+        '\x1b[31mThe extension has uncommitted or untracked changes:\x1b[0m\n' +
+        git('status', '--short', '--', ...BUILD_INPUTS).out + '\n' +
+        'Commit or stash them first, so the version in each store is a commit (PUBLISH_ALLOW_DIRTY=1 overrides).'
+    );
+    process.exit(1);
+}
+
+/**
+ * Stop when a store already has this version from other code: one version
+ * must be the same code in every store.
+ */
+export function assertSameCodeForVersion() {
+    const status = readPublishStatus();
+    const already = Object.keys(status.published);
+    if (!already.length) return;
+    if (status.dirty) {
+        console.error(
+            `\x1b[31m${already.join(', ')} got ${status.version} from uncommitted files (PUBLISH_ALLOW_DIRTY), so the other stores can't be given the same code.\x1b[0m\n` +
+            'Bump the version and add its VERSION HISTORY line.'
+        );
+        process.exit(1);
+    }
+    if (status.commit && extensionChangedSince(status.commit)) {
+        console.error(
+            `\x1b[31m${already.join(', ')} already got ${status.version} from ${status.commit.slice(0, 7)}, and the extension's files have changed since.\x1b[0m\n` +
+            'Bump the version and add its VERSION HISTORY line, so every store gets the same code for one version.'
+        );
+        process.exit(1);
+    }
 }
 
 export function readPublishStatus() {
@@ -152,7 +219,8 @@ export function writePublishStatus(status) {
  */
 export function markPublished(store) {
     const status = readPublishStatus();
-    status.commit = status.commit || headCommit();
+    status.commit = status.commit || status.built?.commit || headCommit();
+    if (status.built?.dirty || buildInputsDirty()) status.dirty = true;
     status.published[store] = new Date().toISOString();
     writePublishStatus(status);
 }

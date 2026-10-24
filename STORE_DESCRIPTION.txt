@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/10/24 - 0.0.5.27
+- removal checks recover on their own when reddit refuses some requests; safer reveddit.com connection
+
 2026/10/21 - 0.0.5.26
 - fix removal checks reddit began refusing; future changes like it are handled without an update
 

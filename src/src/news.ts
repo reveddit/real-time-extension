@@ -5,14 +5,21 @@
 
 import { dlog } from './diaglog'
 import { sanitizeChallengeConfig, setChallengeConfig, ChallengeConfig } from './challenge-config'
-import { sanitizeWwwRoutes, WwwRoute } from './www-routes'
+import { sanitizeMarkupConfig, setMarkupConfig, MarkupConfig } from './markup-config'
+import { sanitizeWwwRouteOrder, WwwRouteOrderOption } from './www-routes'
+import { sanitizePublicModlogsFeed, setPublicModlogsFeed } from './bridge-config'
+import { sanitizeNameList } from './name-list'
 
 export const NEWS_URL = 'https://www.reveddit.com/extension-news.json'
 export const NEWS_CACHE_KEY = 'news_cache'
 export const NEWS_READ_IDS_KEY = 'news_read_ids'
 // Hourly, so a newly published version is noticed within the hour
-// (requestStoreUpdateIfBehind). The feed is a small static file behind Cloudflare.
+// (requestStoreUpdateIfBehind, Chrome and Edge) and remote options reach every
+// build within the hour. The feed is a small static file behind Cloudflare.
 const MIN_FETCH_INTERVAL_MS = 60 * 60 * 1000
+// After a failed fetch, so a feed outage doesn't mean a retry every minute
+export const FAILED_FETCH_RETRY_MS = 10 * 60 * 1000
+export const NEWS_FETCH_FAILED_AT_KEY = 'news_fetch_failed_at'
 
 export interface NewsMessage {
     id: string
@@ -45,10 +52,23 @@ export interface RemoteOptions {
     // field; stored in camelCase.
     challenge?: Partial<ChallengeConfig>
     // Order of the public-view fetch routes ('leg:cache' strings, see
-    // www-routes.ts), replacing the built-in order. A client's learned lead
-    // route still goes first while it stays listed; an unlisted route is
-    // never tried. Only known routes survive sanitization.
-    www_routes?: WwwRoute[]
+    // www-routes.ts), per engine, with routes to skip:
+    // { chrome: { order: [...], skip: [...] }, firefox: [...] } (Edge is
+    // chrome). Listed routes go first, the built-in ones follow, and a
+    // background route always stays. Only known routes survive sanitization.
+    // (options.www_routes is 0.0.5.26's bare list, which this build ignores.)
+    www_route_order?: WwwRouteOrderOption
+    // The publicmodlogs feed token the bridge reads mod logs through
+    // (bridge-config.ts), if reddit ever replaces it
+    publicmodlogs_feed?: string
+    // Extra id attribute names for the page classifiers (markup-config.ts):
+    // { comment_id_attributes: string[], post_id_attributes: string[] }.
+    // Added to the built-in names; stored in camelCase.
+    markup?: Partial<MarkupConfig>
+    // Names of reddit's login cookie, for the bridge's and grace mode's
+    // logged-in check (requests.ts hasRedditLoginCookie), in case reddit
+    // renames reddit_session.
+    login_cookies?: string[]
 }
 export const LEGACY_HOSTS = ['www.reddit.com', 'old.reddit.com'] as const
 export const LEGACY_HOST_DEFAULT = 'www.reddit.com'
@@ -206,32 +226,47 @@ export const getPendingUpdateVersion = async (): Promise<string | null> => {
 }
 
 export const UPDATE_CHECK_REQUESTED_KEY = 'update_check_requested_version'
+export const UPDATE_CHECK_ASKED_AT_KEY = 'update_check_asked_at'
+// How long before asking again for a version already asked for. The browser
+// can answer no_update while the store's update service lags its listing (the
+// feed reads Edge's listing), or throttled; asking once would end the faster
+// update for that version.
+export const UPDATE_CHECK_RETRY_MS = 3 * 3600 * 1000
 
 // Pure, unit-tested. The version to ask the browser for: this store's version
-// in the feed, when it is newer than the running version and newer than the
-// last one asked for. Otherwise null.
+// in the feed, when it is newer than the running version, and either newer
+// than the last one asked for or asked for at least UPDATE_CHECK_RETRY_MS ago.
+// Otherwise null.
 export const storeUpdateToRequest = (
     ownVersion: string,
     storeVersion: unknown,
     lastRequested: unknown,
+    lastAskedAtMs = 0,
+    nowMs = Date.now(),
 ): string | null => {
     if (!isValidVersion(storeVersion) || compareVersions(ownVersion, storeVersion) >= 0) {
         return null
     }
     if (isValidVersion(lastRequested) && compareVersions(storeVersion, lastRequested) <= 0) {
-        return null
+        const sinceAsked = nowMs - lastAskedAtMs
+        if (sinceAsked >= 0 && sinceAsked < UPDATE_CHECK_RETRY_MS) {
+            return null
+        }
     }
     return storeVersion
 }
 
-const getRequestedVersion = (): Promise<unknown> =>
+const getRequested = (): Promise<{ version: unknown; askedAt: number }> =>
     new Promise(resolve => {
         try {
-            chrome.storage.local.get([UPDATE_CHECK_REQUESTED_KEY], res => {
-                resolve(res && res[UPDATE_CHECK_REQUESTED_KEY])
+            chrome.storage.local.get([UPDATE_CHECK_REQUESTED_KEY, UPDATE_CHECK_ASKED_AT_KEY], res => {
+                resolve({
+                    version: res && res[UPDATE_CHECK_REQUESTED_KEY],
+                    askedAt: Number(res && res[UPDATE_CHECK_ASKED_AT_KEY]) || 0,
+                })
             })
         } catch {
-            resolve(undefined)
+            resolve({ version: undefined, askedAt: 0 })
         }
     })
 
@@ -239,22 +274,31 @@ const getRequestedVersion = (): Promise<unknown> =>
 // browser to check for updates now instead of on its own schedule (about every
 // 5 hours in Chrome and Edge). The onUpdateAvailable listener in background.ts
 // then applies the download right away. Chrome throttles extra checks to about
-// one per update period, so this asks once per new version. Firefox has no
+// one per update period, so this asks once per new version, and again only
+// every UPDATE_CHECK_RETRY_MS while still behind. Firefox has no
 // requestUpdateCheck; reveddit.com tells its users how to update by hand.
 export const requestStoreUpdateIfBehind = async (): Promise<void> => {
     if (__STORE__ === 'firefox' || typeof chrome.runtime?.requestUpdateCheck !== 'function') {
         return
     }
     try {
-        const [cache, requested] = await Promise.all([getCachedNews(), getRequestedVersion()])
+        const [cache, requested] = await Promise.all([getCachedNews(), getRequested()])
         const own = chrome.runtime.getManifest().version
-        const target = storeUpdateToRequest(own, cache?.feed?.store_versions?.[__STORE__], requested)
+        const target = storeUpdateToRequest(
+            own,
+            cache?.feed?.store_versions?.[__STORE__],
+            requested.version,
+            requested.askedAt,
+        )
         if (!target) {
             return
         }
         // Remembered before asking, so a worker that stops mid-check doesn't ask again
         await new Promise<void>(resolve =>
-            chrome.storage.local.set({ [UPDATE_CHECK_REQUESTED_KEY]: target }, () => resolve()),
+            chrome.storage.local.set(
+                { [UPDATE_CHECK_REQUESTED_KEY]: target, [UPDATE_CHECK_ASKED_AT_KEY]: Date.now() },
+                () => resolve(),
+            ),
         )
         const result: any = await chrome.runtime.requestUpdateCheck()
         dlog(
@@ -289,11 +333,16 @@ export const getRemoteMechanism = async (name: string): Promise<RemoteMechanismS
     return value === 'on' || value === 'off' ? value : 'auto'
 }
 
-// Push the cached feed's solver inputs into challenge-config.ts. Called on
-// service-worker start (the cache outlives the worker; the module does not).
-export const applyRemoteChallengeConfig = async (): Promise<void> => {
-    const cache = await getCachedNews()
-    setChallengeConfig(cache?.feed?.options?.challenge || {})
+// Push the cached feed's options into the modules that read them on every
+// page (the challenge solver, the page classifiers, the bridge's mod-log
+// guard). Called on service-worker start: the cache outlives the worker, the
+// modules don't. The markup names are sanitized again, since any version's
+// cache can be read here.
+export const applyRemoteConfig = async (): Promise<void> => {
+    const options: any = (await getCachedNews())?.feed?.options || {}
+    setChallengeConfig(options.challenge || {})
+    setMarkupConfig(sanitizeMarkupConfig(options.markup))
+    setPublicModlogsFeed(options.publicmodlogs_feed || '')
 }
 
 // Legacy-HTML host from the cached feed, else the compiled default. Lets the
@@ -304,11 +353,26 @@ export const getRemoteLegacyHost = async (): Promise<string> => {
     return (LEGACY_HOSTS as readonly string[]).includes(value || '') ? (value as string) : LEGACY_HOST_DEFAULT
 }
 
-// Public-view fetch route order from the cached feed; empty when unset, and
-// the caller keeps its built-in order.
-export const getRemoteWwwRoutes = async (): Promise<WwwRoute[]> => {
+// Public-view fetch route order from the cached feed, per engine; empty when
+// unset, and the caller keeps its built-in order. Sanitized again on read.
+export const getRemoteWwwRouteOrder = async (): Promise<WwwRouteOrderOption> => {
     const cache = await getCachedNews()
-    return sanitizeWwwRoutes(cache?.feed?.options?.www_routes)
+    return sanitizeWwwRouteOrder(cache?.feed?.options?.www_route_order)
+}
+
+const COOKIE_NAME = /^[A-Za-z0-9_.-]{1,64}$/
+export const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList(raw, COOKIE_NAME, 4)
+
+// When a legacy path was refused, every legacy request rests for a while
+// (requests.ts isLegacyResting). Kept here so a feed change to the legacy host
+// or switch can end the rest at once: the new setting deserves a try.
+export const LEGACY_REFUSED_UNTIL_KEY = 'legacy_refused_until'
+
+// The login cookie names (requests.ts hasRedditLoginCookie): the feed's, else reddit_session
+export const getRemoteLoginCookies = async (): Promise<string[]> => {
+    const cache = await getCachedNews()
+    const names = sanitizeLoginCookies(cache?.feed?.options?.login_cookies)
+    return names.length ? names : ['reddit_session']
 }
 
 // Resolution for a three-state mechanism switch, returning whether the mechanism
@@ -330,13 +394,30 @@ export const resolveMechanismDisabled = (
 export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> => {
     const cache = await getCachedNews()
     const now = Date.now()
-    if (!opts.force && cache && now - cache.lastFetched < MIN_FETCH_INTERVAL_MS) {
+    const age = cache ? now - cache.lastFetched : Infinity
+    if (!opts.force && age >= 0 && age < MIN_FETCH_INTERVAL_MS) {
         return
+    }
+    const noteFailure = () => chrome.storage.local.set({ [NEWS_FETCH_FAILED_AT_KEY]: now })
+    if (!opts.force) {
+        const failedAt = await new Promise<number>(resolve => {
+            try {
+                chrome.storage.local.get([NEWS_FETCH_FAILED_AT_KEY], res =>
+                    resolve(Number(res?.[NEWS_FETCH_FAILED_AT_KEY]) || 0),
+                )
+            } catch {
+                resolve(0)
+            }
+        })
+        if (now - failedAt >= 0 && now - failedAt < FAILED_FETCH_RETRY_MS) {
+            return
+        }
     }
     try {
         const res = await fetch(NEWS_URL, { credentials: 'omit', cache: 'no-cache' })
         if (!res.ok) {
             dlog('news', `[reveddit] news fetch failed: ${res.status}`)
+            noteFailure()
             return
         }
         const feed = (await res.json()) as NewsFeed
@@ -353,7 +434,10 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
             }
         }
         const challenge = sanitizeChallengeConfig((feed.options as any)?.challenge)
-        const wwwRoutes = sanitizeWwwRoutes((feed.options as any)?.www_routes)
+        const wwwRouteOrder = sanitizeWwwRouteOrder((feed.options as any)?.www_route_order)
+        const markup = sanitizeMarkupConfig((feed.options as any)?.markup)
+        const loginCookies = sanitizeLoginCookies((feed.options as any)?.login_cookies)
+        const publicModlogsFeed = sanitizePublicModlogsFeed((feed.options as any)?.publicmodlogs_feed)
         const storeVersions: StoreVersions = {}
         const rawStoreVersions = (feed as any).store_versions
         if (rawStoreVersions && typeof rawStoreVersions === 'object') {
@@ -387,7 +471,10 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
                     ? { legacy_host: (feed.options as any).legacy_host }
                     : {}),
                 ...(Object.keys(challenge).length ? { challenge } : {}),
-                ...(wwwRoutes.length ? { www_routes: wwwRoutes } : {}),
+                ...(Object.keys(wwwRouteOrder).length ? { www_route_order: wwwRouteOrder } : {}),
+                ...(Object.keys(markup).length ? { markup } : {}),
+                ...(loginCookies.length ? { login_cookies: loginCookies } : {}),
+                ...(publicModlogsFeed ? { publicmodlogs_feed: publicModlogsFeed } : {}),
             },
             ...(isValidVersion(feed.latest_version) ? { latest_version: feed.latest_version } : {}),
             ...(Number(feed.latest_version_published_utc) > 0
@@ -398,14 +485,28 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
         const newCache: NewsCache = { feed: sanitized, lastFetched: now }
         chrome.storage.local.set({ [NEWS_CACHE_KEY]: newCache })
         setChallengeConfig(challenge)
+        setMarkupConfig(markup)
+        setPublicModlogsFeed(publicModlogsFeed)
+        // A new legacy host or switch ends a refusal rest at once
+        const before = cache?.feed?.options
+        if (
+            cache &&
+            (before?.legacy_host !== sanitized.options?.legacy_host ||
+                before?.mechanisms?.[MECHANISM_LEGACY] !== mechanisms[MECHANISM_LEGACY])
+        ) {
+            chrome.storage.local.remove(LEGACY_REFUSED_UNTIL_KEY)
+        }
         dlog(
             'news',
             `[reveddit] news fetch ok: ${sanitized.messages.length} messages, mechanisms=${JSON.stringify(mechanisms)}` +
-                (wwwRoutes.length ? `, www_routes=${wwwRoutes.join(',')}` : ''),
+                (Object.keys(wwwRouteOrder).length ? `, www_route_order=${JSON.stringify(wwwRouteOrder)}` : '') +
+                (Object.keys(markup).length ? `, markup=${JSON.stringify(markup)}` : '') +
+                (publicModlogsFeed ? ', publicmodlogs_feed set' : ''),
         )
     } catch (err: any) {
         // Network failures are expected and the cached feed keeps working, but
         // record them — remote-gate staleness matters when reading a diag log.
         dlog('news', `[reveddit] news fetch error: ${String(err?.message || err)}`)
+        noteFailure()
     }
 }

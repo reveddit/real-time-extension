@@ -33,6 +33,8 @@ const latestRelease = (() => {
 
 const mode = process.env.NODE_ENV
 const distSrcPath = path.join(distPath, 'src')
+// Dev and staging builds work with the local website (localhost:8080)
+const localSite = mode === 'development' || Boolean(process.env.STAGING)
 
 let built_for = '"chrome"', chromelike = true
 const browserIsFirefox = process.env.BROWSER === 'firefox'
@@ -87,8 +89,10 @@ function modify(buffer) {
         manifest.web_accessible_resources = manifest.web_accessible_resources[0].resources
         manifest.content_security_policy = manifest.content_security_policy.extension_pages
     }
-    if (mode === 'development' || process.env.STAGING) {
-		const localhostPattern = browserIsFirefox ? "http://localhost/*" : "http://localhost:*/*"
+    if (localSite) {
+		// The local website's port (Firefox patterns can't name one; the
+		// content script and background check the origin themselves)
+		const localhostPattern = browserIsFirefox ? "http://localhost/*" : "http://localhost:8080/*"
 		manifest[host_permissions_location].push(localhostPattern)
 		manifest.content_scripts.forEach(script => script.matches.push(localhostPattern))
         if (manifest.externally_connectable && manifest.externally_connectable.matches) {
@@ -145,6 +149,7 @@ const plugins = [
         __BUILT_FOR__: built_for,
         __STORE__: JSON.stringify(store),
         __DEV__: JSON.stringify(mode !== 'production'),
+        __LOCAL_SITE__: JSON.stringify(localSite),
         __LATEST_RELEASE__: JSON.stringify(latestRelease),
         __SIMULATE_DEPRECATION__: JSON.stringify(process.env.SIMULATE_DEPRECATION === 'true'),
     }),

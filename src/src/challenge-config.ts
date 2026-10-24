@@ -5,7 +5,9 @@
 // (news.ts options.challenge), so the next rename is a feed edit. Structural
 // changes (a new puzzle, a POST form) still need code.
 //
-// Kept import-free: news.ts and parse_html/new.ts both import it.
+// Imports only name-list.ts, which is import-free: news.ts and
+// parse_html/new.ts both import this module.
+import { sanitizeNameList } from './name-list'
 
 export interface ChallengeConfig {
     // Hidden-input names that carry the token, tried in order. The solved URL
@@ -31,10 +33,8 @@ export const getChallengeConfig = (): ChallengeConfig => current
 export const sanitizeChallengeConfig = (raw: any): Partial<ChallengeConfig> => {
     const out: Partial<ChallengeConfig> = {}
     if (raw && typeof raw === 'object') {
-        if (Array.isArray(raw.token_fields)) {
-            const fields = raw.token_fields.filter((f: any) => typeof f === 'string' && FIELD_NAME.test(f))
-            if (fields.length) out.tokenFields = fields.slice(0, 8)
-        }
+        const fields = sanitizeNameList(raw.token_fields, FIELD_NAME, 8)
+        if (fields.length) out.tokenFields = fields
         if (typeof raw.solution_regex === 'string' && raw.solution_regex.length <= 200) {
             try {
                 new RegExp(raw.solution_regex) // throws on an invalid pattern

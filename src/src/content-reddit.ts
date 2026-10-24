@@ -157,7 +157,9 @@ const ifThreadPage_showRemovalStatus = (
         browser.runtime
             .sendMessage({ action: 'get-from-old', path: `/r/${subreddit}/comments/${postID!.substring(3)}/` })
             .then((response: any) => {
-                if (!response) return
+                // No answer, or the page couldn't be read (refused, resting):
+                // say nothing rather than "not removed"
+                if (!response || response.error) return
                 showRemovalStatus({
                     isNewReddit,
                     newRedditTarget,

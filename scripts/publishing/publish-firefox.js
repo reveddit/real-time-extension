@@ -5,7 +5,19 @@ import path from 'path';
 import fs from 'fs';
 import jwt from 'jsonwebtoken';
 import { execSync } from 'child_process';
-import { CONFIG, readDescription, getManifest, setupAbortHandler, buildFresh, markPublished } from './common.js';
+import {
+    CONFIG,
+    readDescription,
+    getManifest,
+    setupAbortHandler,
+    buildFresh,
+    markPublished,
+    readPublishStatus,
+    writePublishStatus,
+    headCommit,
+    buildInputsDirty,
+    extensionChangedSince,
+} from './common.js';
 
 setupAbortHandler();
 dotenv.config();
@@ -118,6 +130,13 @@ async function main() {
 
     const sourceZipPath = await createSourceZip();
 
+    // Recorded before AMO sees it: when a run stops after AMO has the version,
+    // the next run's "already exists" can then be checked against this code
+    const status = readPublishStatus();
+    const earlierSubmission = status.firefoxSubmitted;
+    status.firefoxSubmitted = { commit: headCommit(), dirty: buildInputsDirty(), at: new Date().toISOString() };
+    writePublishStatus(status);
+
     console.log('\n\x1b[33m[2/3] Signing and Submitting to AMO...\x1b[0m');
 
     try {
@@ -130,23 +149,48 @@ async function main() {
             shouldExitProgram: false,
             amoBaseUrl: 'https://addons.mozilla.org/api/v5/', 
             uploadSourceCode: sourceZipPath, // This attaches the source for review
+            // Return once AMO has the version. Waiting for approval (15 min by
+            // default) threw after the version already existed on AMO, and
+            // every rerun then failed on it.
+            approvalTimeout: 0,
         }, {
             shouldExitProgram: false,
         });
 
         console.log('\x1b[32m✔ Firefox Signing/Publishing process completed!\x1b[0m');
         markPublished('firefox');
-        
-        // Clean up source zip
-        if (fs.existsSync(sourceZipPath)) fs.unlinkSync(sourceZipPath);
-
-        // Update the description
-        await updateStoreListing();
-        
     } catch (error) {
-        console.error('\x1b[31mFirefox Publish Failed:\x1b[0m', error);
-        process.exit(1);
+        // An earlier run submitted this version and stopped before recording
+        // it. That counts as published only if that run submitted these files.
+        if (/already exists/i.test(String(error?.message || error))) {
+            const sameCode =
+                earlierSubmission?.commit &&
+                !earlierSubmission.dirty &&
+                !extensionChangedSince(earlierSubmission.commit);
+            if (sameCode) {
+                console.warn(`\x1b[33mAMO already has ${manifest.version} from this code (submitted ${earlierSubmission.at}); recording it as published.\x1b[0m`);
+                markPublished('firefox');
+            } else if (process.env.PUBLISH_FIREFOX_ACCEPT_EXISTING) {
+                console.warn(`\x1b[33mAMO already has ${manifest.version}; recording it as published (PUBLISH_FIREFOX_ACCEPT_EXISTING).\x1b[0m`);
+                markPublished('firefox');
+            } else {
+                console.error(
+                    `\x1b[31mAMO already has ${manifest.version}, and nothing here shows it was submitted from these files.\x1b[0m\n` +
+                    'Bump the version, or if you know AMO has this code, run again with PUBLISH_FIREFOX_ACCEPT_EXISTING=1.'
+                );
+                process.exit(1);
+            }
+        } else {
+            console.error('\x1b[31mFirefox Publish Failed:\x1b[0m', error);
+            process.exit(1);
+        }
     }
+
+    // Clean up source zip
+    if (fs.existsSync(sourceZipPath)) fs.unlinkSync(sourceZipPath);
+
+    // Update the description
+    await updateStoreListing();
 }
 
 main();

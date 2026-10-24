@@ -10,6 +10,10 @@ export const consume = async (stream: ReadableStream) => {
     }
 }
 
+// Reddit's rate limiting, the one failure every request loop stops on and
+// monitoring backs off from. Other statuses are about a route or a page.
+export const isRateLimitError = (err: any): boolean => /request failed: 429\b/.test(String(err?.message || err))
+
 export const oldReddit = 'https://old.reddit.com'
 export const newReddit = 'https://www.reddit.com'
 
@@ -28,6 +32,11 @@ export const newReddit = 'https://www.reddit.com'
 export const LEGACY_PAGE_MARKER = 'rv_legacy=1'
 export const legacyPageUrl = (base: string, path: string): string =>
     base + path + (path.includes('?') ? '&' : '?') + LEGACY_PAGE_MARKER
+// The marker as a whole query parameter: the Firefox header rule tests URLs
+// with the predicate, and Chrome's DNR rule matches the same pattern (RE2)
+export const LEGACY_PAGE_MARKER_PATTERN = '[?&]' + LEGACY_PAGE_MARKER + '(&|$)'
+const LEGACY_PAGE_MARKER_REGEX = new RegExp(LEGACY_PAGE_MARKER_PATTERN)
+export const isLegacyPageUrl = (url: string): boolean => LEGACY_PAGE_MARKER_REGEX.test(url)
 
 export const getLegacyBase = async (): Promise<string> => {
     try {

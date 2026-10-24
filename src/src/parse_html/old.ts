@@ -633,13 +633,14 @@ export const getItemsById_fromOldHTML = async (
 
     // Separate posts (t3_) from comments (t1_)
     const postIds = idsArray.filter(id => id.startsWith('t3_'))
-    // For posts, we need to fetch individual pages because /api/info HTML doesn't contain removal status
-    if (postIds.length > 0 && addToPendingPostQueue) {
-        // Add posts to a pending queue for throttled lookup
-        addToPendingPostQueue(postIds)
-    }
 
     const { items } = await getInfoById_fromLegacyHTML(idsArray)
+    // For posts, we need to fetch individual pages because /api/info HTML
+    // doesn't contain removal status. Queued only once the listing came back:
+    // a refused one means the post pages would be refused too.
+    if (postIds.length > 0 && addToPendingPostQueue) {
+        addToPendingPostQueue(postIds)
+    }
     // Return only comments — posts are excluded because /api/info HTML cannot
     // determine post removal status. Posts are handled via the pending post queue.
     return items.filter(item => !item.name || !item.name.startsWith('t3_')).map(item => ({ data: item }))
@@ -649,7 +650,9 @@ export const getPost_fromOld = async (path: string) => {
     const url = legacyPageUrl(await getLegacyBase(), path)
     const response = await fetchWithTimeout(url, redditHTMLRequestOptions)
     if (!response.ok) {
-        return { error: 'request failed' }
+        // The status lets callers tell a refusal (403: the legacy paths rest)
+        // from a missing page
+        return { error: `legacy reddit HTML request failed: ${response.status}`, status: response.status }
     }
     const metaRobotsObj = new MetaRobots(url)
     const authorObj = new ThreadPageAuthor(url)

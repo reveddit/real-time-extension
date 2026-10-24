@@ -11,9 +11,10 @@
 //
 // --user   whose public profile to read (default GiveUsNetNeutrality; the
 //          canary is only checked for that user)
-// --lead   start every kind of page on this route, e.g. background:reload, to
-//          see the extension move off a refused one
-// --tab    open a www.reddit.com tab first and lead with tab:no-cache, so the
+// --lead   put this route first for every kind of page, e.g. background:reload,
+//          to see the extension move off a refused one (it goes in the cached
+//          news feed's www_route_order, as a remote option would put it)
+// --tab    open a www.reddit.com tab first and put tab:no-cache first, so the
 //          tab legs run (content script, injected fetch)
 //
 // Needs the Bash sandbox off (it launches a browser and reaches reddit.com).
@@ -35,6 +36,12 @@ const flag = name => {
 const user = opt('--user') || 'GiveUsNetNeutrality'
 const lead = opt('--lead')
 const withTab = flag('--tab')
+if (lead && !/^(background|tab):(default|no-store|no-cache|reload)$/.test(lead)) {
+    console.error(
+        `--lead ${lead}: not a route ('background' or 'tab', ':', then default, no-store, no-cache or reload)`,
+    )
+    process.exit(1)
+}
 const extDir = path.join(__dirname, '..', 'dist-dev-chrome')
 
 const CANARY = 't1_ouz0d47'
@@ -68,15 +75,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
         }
         const seed = withTab ? 'tab:no-cache' : lead
         await sw.evaluate(async seed => {
-            await chrome.storage.local.remove(['www_route_state', 'www_absent_item_verdicts'])
+            await chrome.storage.local.remove(['www_routes_v2', 'www_absent_item_verdicts'])
             if (seed) {
-                await chrome.storage.local.set({
-                    www_route_state: { lead: { feed: seed, partial: seed, page: seed }, exhaustedAt: {} },
-                })
+                // A fresh install fetches the feed on its first alarm, an hour's
+                // throttle after a cache's lastFetched, so this one stays
+                const { news_cache } = await chrome.storage.local.get('news_cache')
+                const cache = news_cache || { feed: { messages: [] }, lastFetched: Date.now() }
+                cache.feed.options = { ...cache.feed.options, www_route_order: { chrome: [seed] } }
+                await chrome.storage.local.set({ news_cache: cache })
             }
         }, seed)
         const canary = user === 'GiveUsNetNeutrality'
-        const mark = await sw.evaluate(() => globalThis.__devLog.length)
+        // By time: the log is a ring buffer, so once full its length stops growing
+        const started = new Date().toISOString()
         const result = await sw.evaluate(
             message =>
                 new Promise(resolve => {
@@ -93,9 +104,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
                 meta: canary ? { [CANARY]: CANARY_META } : {},
             },
         )
-        const log = await sw.evaluate(mark => globalThis.__devLog.slice(mark), mark)
-        for (const line of log.filter(l => l.includes('[reveddit]'))) console.log(line)
-        const state = await sw.evaluate(async () => (await chrome.storage.local.get('www_route_state')).www_route_state)
+        const log = await sw.evaluate(() => globalThis.__devLog.slice())
+        for (const line of log.filter(l => l >= started && l.includes('[reveddit]'))) console.log(line)
+        const state = await sw.evaluate(async () => (await chrome.storage.local.get('www_routes_v2')).www_routes_v2)
         console.log('\nroute state:', JSON.stringify(state))
         if (result.error) {
             console.log('lookup failed:', result.error)

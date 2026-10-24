@@ -14,6 +14,10 @@ import {
     storeUpdateToRequest,
     NEWS_CACHE_KEY,
     UPDATE_CHECK_REQUESTED_KEY,
+    UPDATE_CHECK_ASKED_AT_KEY,
+    UPDATE_CHECK_RETRY_MS,
+    NEWS_FETCH_FAILED_AT_KEY,
+    FAILED_FETCH_RETRY_MS,
 } from '../../src/src/news'
 import { clearDiagLog, getDiagEntries } from '../../src/src/diaglog'
 
@@ -30,10 +34,17 @@ describe('storeUpdateToRequest', () => {
         expect(storeUpdateToRequest('0.0.5.27', '0.0.5.26', undefined)).toBeNull()
     })
 
-    it('once per version: not again for one already asked for, but again for a newer one', () => {
-        expect(storeUpdateToRequest('0.0.5.25', '0.0.5.26', '0.0.5.26')).toBeNull()
-        expect(storeUpdateToRequest('0.0.5.25', '0.0.5.26', '0.0.5.27')).toBeNull()
-        expect(storeUpdateToRequest('0.0.5.25', '0.0.5.27', '0.0.5.26')).toBe('0.0.5.27')
+    it('not again soon for a version already asked for; again after the retry interval, and at once for a newer one', () => {
+        const now = Date.now()
+        expect(storeUpdateToRequest('0.0.5.25', '0.0.5.26', '0.0.5.26', now - 1000, now)).toBeNull()
+        expect(storeUpdateToRequest('0.0.5.25', '0.0.5.26', '0.0.5.27', now - 1000, now)).toBeNull()
+        expect(storeUpdateToRequest('0.0.5.25', '0.0.5.27', '0.0.5.26', now - 1000, now)).toBe('0.0.5.27')
+        // the store's update service can lag its listing, or the check be throttled
+        expect(storeUpdateToRequest('0.0.5.25', '0.0.5.26', '0.0.5.26', now - UPDATE_CHECK_RETRY_MS, now)).toBe(
+            '0.0.5.26',
+        )
+        // an ask recorded in the future (a clock set back) doesn't hold off asking
+        expect(storeUpdateToRequest('0.0.5.25', '0.0.5.26', '0.0.5.26', now + 3600 * 1000, now)).toBe('0.0.5.26')
     })
 
     it('ignores a missing or malformed store version, and a malformed record of the last ask', () => {
@@ -73,6 +84,7 @@ describe('requestStoreUpdateIfBehind', () => {
         await requestStoreUpdateIfBehind()
         expect(chrome.runtime.requestUpdateCheck).toHaveBeenCalledTimes(1)
         expect(__getLocalStorage()[UPDATE_CHECK_REQUESTED_KEY]).toBe('0.0.5.26')
+        expect(Date.now() - __getLocalStorage()[UPDATE_CHECK_ASKED_AT_KEY]).toBeLessThan(5000)
         expect(await loggedLines()).toContain(
             '[reveddit] chrome store has 0.0.5.26, running 0.0.5.25: update check update_available (0.0.5.26)',
         )
@@ -97,6 +109,14 @@ describe('requestStoreUpdateIfBehind', () => {
         await requestStoreUpdateIfBehind()
         expect(chrome.runtime.requestUpdateCheck).toHaveBeenCalledTimes(1)
         expect((await loggedLines()).some(m => m.endsWith(': update check throttled'))).toBe(true)
+    })
+
+    it('asks again for the same version once the retry interval has passed, while still behind', async () => {
+        chrome.runtime.requestUpdateCheck = vi.fn(async () => ({ status: 'no_update' }))
+        await requestStoreUpdateIfBehind()
+        __getLocalStorage()[UPDATE_CHECK_ASKED_AT_KEY] = Date.now() - UPDATE_CHECK_RETRY_MS - 1000
+        await requestStoreUpdateIfBehind()
+        expect(chrome.runtime.requestUpdateCheck).toHaveBeenCalledTimes(2)
     })
 
     it('asks again when its store moves on to a newer version', async () => {
@@ -161,6 +181,22 @@ describe('fetchNews store versions and throttle', () => {
         fetchMock.mockImplementation(async () => ({ ok: true, json: async () => ({ messages: [] }) }))
         await fetchNews({ force: true })
         expect(__getLocalStorage()[NEWS_CACHE_KEY].feed).not.toHaveProperty('store_versions')
+    })
+
+    it('after a failed fetch waits before trying again, unless forced', async () => {
+        fetchMock.mockImplementation(async () => ({ ok: false, status: 503 }))
+        await fetchNews()
+        await fetchNews()
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        await fetchNews({ force: true })
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+        __getLocalStorage()[NEWS_FETCH_FAILED_AT_KEY] = Date.now() - FAILED_FETCH_RETRY_MS - 1000
+        fetchMock.mockImplementation(async () => {
+            throw new TypeError('Failed to fetch')
+        })
+        await fetchNews()
+        await fetchNews()
+        expect(fetchMock).toHaveBeenCalledTimes(3)
     })
 
     it('fetches again after an hour, not before', async () => {

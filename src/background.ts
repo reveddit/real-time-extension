@@ -16,6 +16,7 @@ import {
     getAuth,
     storeRedditCookies,
     throwIfLegacyDisabled,
+    throwIfLegacyOff,
     lookupItemsByID_fromPublicProfile,
 } from './src/requests'
 import {
@@ -33,10 +34,10 @@ import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
 import { getItems_fromOld, getPost_fromOld, getInfoById_fromLegacyHTML } from './src/parse_html/old'
 import { handleBridgeFetch } from './src/bridge'
-import { applyRemoteChallengeConfig, fetchNews, getCachedNews, requestStoreUpdateIfBehind } from './src/news'
+import { applyRemoteConfig, fetchNews, getCachedNews, requestStoreUpdateIfBehind } from './src/news'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs } from './src/storage'
-import { getLegacyBase, legacyPageUrl, LEGACY_PAGE_MARKER } from './src/parse_html/common'
+import { getLegacyBase, legacyPageUrl, isLegacyPageUrl, LEGACY_PAGE_MARKER_PATTERN } from './src/parse_html/common'
 
 // The background context is the diagnostic log's single writer — see diaglog.ts.
 initDiagPersistence()
@@ -47,8 +48,15 @@ const WHATSNEW_SHOWN_KEY = 'whatsnew_shown_version'
 // 0.0.5.0 → 0.0.5.1 don't re-show the same what's-new page.
 const whatsnewGeneration = (version: string) => version.split('.').slice(0, 3).join('.')
 
+// Pages that may use the bridge: reveddit.com, and the local website in dev
+// and staging builds. Dev actions take the local website only.
+const isDevSitePage = (url: string) => __DEV__ && url.startsWith('http://localhost:8080/')
+const isBridgePage = (url: string) =>
+    /^https:\/\/([a-z0-9-]+\.)?reveddit\.com\//.test(url) ||
+    (__LOCAL_SITE__ && url.startsWith('http://localhost:8080/'))
+
 // Dev builds keep a ring buffer of background console output, readable from
-// reveddit.com via the dev-* external messages below. The service worker
+// the local dev site (localhost:8080) via the dev-* messages below. The service worker
 // console is otherwise unreachable for automated testing.
 if (__DEV__) {
     const MAX_DEV_LOG_LINES = 400
@@ -82,7 +90,7 @@ if (__DEV__) {
 // The challenge solver's remote inputs live in the cached news feed, which
 // outlives the worker while the module's config does not: re-apply them on
 // every start, not only in the onInstalled update branch below.
-applyRemoteChallengeConfig().catch(() => {})
+applyRemoteConfig().catch(() => {})
 setupContextualMenu()
 
 // BEGIN webRequest API code
@@ -101,7 +109,7 @@ if (__BUILT_FOR__ !== 'chrome') {
             if (
                 details.tabId === -1 &&
                 details.url.startsWith('https://www.reddit.com/') &&
-                details.url.includes(LEGACY_PAGE_MARKER)
+                isLegacyPageUrl(details.url)
             ) {
                 const headers = (details.requestHeaders || []).filter(h => h.name.toLowerCase() !== 'cookie')
                 headers.push({ name: 'Cookie', value: 'redesign_optout=true; over18=1' })
@@ -206,7 +214,7 @@ if (__BUILT_FOR__ !== 'chrome') {
             requestHeaders: [{ header: 'cookie', operation: 'set', value: 'redesign_optout=true; over18=1' }],
         },
         condition: {
-            regexFilter: '^https://www\\.reddit\\.com/.*[?&]' + LEGACY_PAGE_MARKER,
+            regexFilter: '^https://www\\.reddit\\.com/.*' + LEGACY_PAGE_MARKER_PATTERN,
             resourceTypes: ['xmlhttprequest', 'other'],
             tabIds: [-1],
         },
@@ -387,9 +395,9 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         })
         return true
     } else if (__DEV__ && request.action === 'dev-relay') {
-        // Dev builds: the localhost reveddit page's content script relays test
-        // scripts' dev actions here (Firefox has no externally_connectable).
-        if (/^https?:\/\/localhost[:/]/.test(sender?.tab?.url || '')) {
+        // Dev builds: the local website's content script relays test scripts'
+        // dev actions here (Firefox has no externally_connectable).
+        if (isDevSitePage(sender?.tab?.url || '')) {
             handleDevAction?.(request.message || {}, sendResponse)
         } else {
             sendResponse({ error: 'forbidden' })
@@ -399,12 +407,20 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         // Relay from the reveddit.com content script (Firefox has no
         // externally_connectable). Guard on the sender tab's origin; the
         // Chrome path arrives via onMessageExternal below instead.
-        const senderUrl = sender?.tab?.url || sender?.url || ''
-        const senderAllowed =
-            /^https:\/\/([a-z0-9-]+\.)?reveddit\.com\//.test(senderUrl) ||
-            (__DEV__ && /^https?:\/\/localhost[:/]/.test(senderUrl))
-        if (!senderAllowed) {
+        if (!isBridgePage(sender?.tab?.url || sender?.url || '')) {
             sendResponse({ ok: false, status: 0, error: 'forbidden' })
+            return true
+        }
+        // Firefox runs one background for every window and container, and its
+        // fetches carry the default container's cookies: a private window or
+        // a container tab would get another identity's logged-in view.
+        // (Chrome and Edge run incognito tabs in their own instance.)
+        const cookieStoreId = (sender?.tab as any)?.cookieStoreId
+        if (
+            __BUILT_FOR__ === 'firefox' &&
+            (sender?.tab?.incognito || (cookieStoreId && cookieStoreId !== 'firefox-default'))
+        ) {
+            sendResponse({ ok: false, status: 0, error: 'unsupported_context' })
             return true
         }
         handleBridgeFetch(request).then(sendResponse)
@@ -418,8 +434,9 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         // This will be handled by content script, just pass it through
         return true
     } else if (request.action === 'get-from-old') {
-        // Unauthenticated old.reddit.com thread page — dying endpoint, gated
-        throwIfLegacyDisabled('legacy reddit post page')
+        // Unauthenticated legacy thread page — dying endpoint, gated, and
+        // resting after a refusal (a reddit page view sends this, not the user)
+        throwIfLegacyOff('legacy reddit post page')
             .then(() => getPost_fromOld(request.path))
             .then(data => {
                 sendResponse(data)
@@ -674,6 +691,8 @@ const handleDevAction = __DEV__
                       .then(results => sendResponse({ results: results.map(r => r.data) }))
                       .catch(err => sendResponse({ error: String(err?.message || err) }))
                   break
+              default:
+                  sendResponse({ error: 'unknown dev action' })
           }
       }
     : null
@@ -683,11 +702,23 @@ if (__DEV__) {
     ;(globalThis as any).__devAction = handleDevAction
 }
 
+// A reveddit.com page (externally_connectable, Chrome and Edge). Another
+// extension's message carries its id, even from a content script on a reveddit
+// page, and Firefox delivers only those here (it has no
+// externally_connectable).
+const isFromBridgePage = (sender: chrome.runtime.MessageSender) => !sender.id && isBridgePage(sender.url || '')
+
 chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResponse) {
+    const fromBridgePage = isFromBridgePage(sender)
+    if (!fromBridgePage && message?.action !== 'version') {
+        sendResponse({ ok: false, status: 0, error: 'forbidden' })
+        return true
+    }
     switch (message.action) {
         case 'fetch-old':
-            // Unauthenticated old.reddit.com user page HTML — dying endpoint, gated
-            throwIfLegacyDisabled('legacy reddit HTML')
+            // Unauthenticated legacy user page HTML — dying endpoint, gated,
+            // and resting after a refusal
+            throwIfLegacyOff('legacy reddit HTML')
                 .then(() => getItems_fromOld(message.path))
                 .then(data => {
                     sendResponse({ data })
@@ -700,13 +731,21 @@ chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResp
             sendResponse({ version: chrome.runtime.getManifest().version, name: chrome.runtime.getManifest().name })
             break
         case 'bridge-fetch':
-            // reveddit.com pages fetch public reddit JSON through the
-            // extension; origins are limited by externally_connectable
+            // reveddit.com pages fetch public reddit JSON through the extension
             handleBridgeFetch(message).then(sendResponse)
             break
-    }
-    if (__DEV__) {
-        handleDevAction?.(message, sendResponse)
+        default:
+            // Dev actions answer only the local dev site of a dev build. Any
+            // other message gets an answer too, so no page waits on silence.
+            if (__DEV__ && handleDevAction && isDevSitePage(sender.url || '')) {
+                handleDevAction(message, sendResponse)
+            } else {
+                sendResponse({
+                    ok: false,
+                    status: 0,
+                    error: String(message?.action || '').startsWith('dev-') ? 'forbidden' : 'unknown action',
+                })
+            }
     }
     return true
 })
@@ -750,7 +789,7 @@ chrome.runtime.onInstalled.addListener(function (details) {
         }
         // Refresh the news feed cache on update.
         fetchNews({ force: true }).catch(() => {})
-        applyRemoteChallengeConfig().catch(() => {})
+        applyRemoteConfig().catch(() => {})
     }
 })
 

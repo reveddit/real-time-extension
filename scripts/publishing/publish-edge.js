@@ -42,6 +42,33 @@ function checkApiKeyExpiry() {
     }
 }
 
+// Edge answers an upload or a submit with 202 and an operation ID in the
+// Location header, then works on it: the submit can still fail (a submission
+// already in review, no changes, a validation error). Poll until it settles.
+const API_BASE = 'https://api.addons.microsoftedge.microsoft.com/v1/products';
+const POLL_INTERVAL_MS = 5000;
+const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
+const operationIdFrom = (response) => String(response.headers['location'] || '').split('/').filter(Boolean).pop() || '';
+
+async function pollOperation(url, headers, label) {
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+    for (;;) {
+        const { data } = await axios.get(url, { headers });
+        if (data?.status && data.status !== 'InProgress') {
+            return data;
+        }
+        if (Date.now() >= deadline) {
+            return { status: 'InProgress', timedOut: true };
+        }
+        process.stdout.write(`\x1b[2m${label}: in progress...\x1b[0m\n`);
+        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+}
+
+const describeOperation = (op) =>
+    [op.errorCode, op.message, ...(op.errors || []).map(e => e?.message || JSON.stringify(e))].filter(Boolean).join('\n  ');
+
 function printKeyRenewalInstructions() {
     console.error(`\nRenew your API key at:\n  https://partner.microsoft.com/en-us/dashboard/microsoftedge/publishapi\n`);
     console.error(`Then update both EDGE_API_KEY and EDGE_API_KEY_EXPIRY in .env`);
@@ -90,7 +117,7 @@ async function main() {
 
     // 1. Upload Package
     console.log('\n\x1b[33m[1/3] Uploading package to Edge Add-ons Store...\x1b[0m');
-    const uploadUrl = `https://api.addons.microsoftedge.microsoft.com/v1/products/${productId}/submissions/draft/package`;
+    const uploadUrl = `${API_BASE}/${productId}/submissions/draft/package`;
 
     try {
         const zipBuffer = fs.readFileSync(zipPath);
@@ -101,9 +128,16 @@ async function main() {
             maxContentLength: Infinity
         });
 
-        const operationId = response.headers['location']; // Often returned in Location header for async ops
-        console.log(`\x1b[32m✔ Package uploaded successfully!\x1b[0m`);
-        if (operationId) console.log(`Operation ID: ${operationId}`);
+        const operationId = operationIdFrom(response);
+        if (!operationId) {
+            throw new Error('the upload response had no operation ID (Location header)');
+        }
+        const op = await pollOperation(`${uploadUrl}/operations/${operationId}`, headers, 'Package processing');
+        if (op.status !== 'Succeeded') {
+            console.error(`\x1b[31mEdge ${op.timedOut ? 'is still processing the package' : 'rejected the package'} (operation ${operationId}):\x1b[0m\n  ${describeOperation(op)}`);
+            process.exit(1);
+        }
+        console.log(`\x1b[32m✔ Package uploaded and processed!\x1b[0m`);
 
     } catch (error) {
         console.error('\x1b[31mFailed to upload package:\x1b[0m');
@@ -135,13 +169,27 @@ async function main() {
 
     // 3. Submit
     console.log('\n\x1b[33m[3/3] Submitting for Certification...\x1b[0m');
-    const submitUrl = `https://api.addons.microsoftedge.microsoft.com/v1/products/${productId}/submissions`;
+    const submitUrl = `${API_BASE}/${productId}/submissions`;
     try {
          const submitResp = await axios.post(submitUrl, {
             notes: `Version ${manifest.version} automated submission`
          }, { headers: { ...headers, 'Content-Type': 'application/json' } });
 
-         console.log(`\x1b[32m✔ Submitted! ID: ${submitResp.data.id || 'Success'}\x1b[0m`);
+         const operationId = operationIdFrom(submitResp);
+         if (!operationId) {
+             throw new Error('the submit response had no operation ID (Location header)');
+         }
+         const op = await pollOperation(`${submitUrl}/operations/${operationId}`, headers, 'Submission');
+         if (op.timedOut) {
+             // Exiting cleanly without recording it: publish-all reports Edge as unconfirmed
+             console.warn(`\x1b[33m⚠ Edge is still processing the submission (operation ${operationId}). Check Partner Center, then run publish:all again if it failed.\x1b[0m`);
+             return;
+         }
+         if (op.status !== 'Succeeded') {
+             console.error(`\x1b[31mEdge did not accept the submission (operation ${operationId}):\x1b[0m\n  ${describeOperation(op)}`);
+             process.exit(1);
+         }
+         console.log(`\x1b[32m✔ Submitted for certification!\x1b[0m`);
          markPublished('edge');
     } catch (error) {
         console.error('\x1b[31mFailed to submit:\x1b[0m');

@@ -49,6 +49,10 @@ export const getObjectNamesForThing = (thing: string, isUser = true): Record<str
     return names
 }
 
+// The user's items monitoring's last pass saw in the logged-out view,
+// { ids, t } in local storage (bridge.ts reads it)
+export const getPublicLiveKey = (user: string): string => 'public_live_u_' + user
+
 export const getOldestDateKey = (thing: string, isUser: boolean): string => {
     if (isUser) {
         return 'oldest_date_u_' + thing

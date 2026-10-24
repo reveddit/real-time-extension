@@ -6,8 +6,13 @@ import {
     recordLoginDetectOutcome,
     LoginDetectResult,
     storeRedditCookies,
-    isLegacyDisabled,
+    isLegacyOff,
     flagIfRateLimited,
+    isAbsentVerifyUnavailable,
+    ABSENT_VERIFY_UNAVAILABLE,
+    isProfilePaginationShort,
+    PROFILE_PAGINATION_UNAVAILABLE,
+    hasRedditLoginCookie,
 } from './requests'
 import { dlog } from './diaglog'
 import {
@@ -38,6 +43,7 @@ import {
     markBacklogSummarySent,
     BACKLOG_SUMMARY_DELAY_MS,
     getNotifyFlags,
+    getPublicLiveKey,
 } from './storage'
 import {
     createNotification,
@@ -120,7 +126,9 @@ const processPendingPosts = async (storage: Record<string, any>) => {
     // This whole flow reads unauthenticated old.reddit.com thread pages and
     // www .json — both dying endpoints. It's only fed by the legacy lookup
     // chain; the www public-profile path detects post removals directly.
-    if (await isLegacyDisabled()) {
+    if (await isLegacyOff()) {
+        // Nothing is being scanned, so no "Scanning N posts" banner either
+        await browser.storage.local.remove('pending_post_progress')
         return
     }
     const { posts, totalRemaining } = await getNextPendingPosts(PENDING_POST_BATCH_SIZE)
@@ -241,12 +249,14 @@ const POLL_JITTER_MAX_MS = 10000
 // must not wedge monitoring until the next worker restart.
 let cycleStartedAtMs = 0
 let cycleEndedAtMs = 0
+// When the cycle's requests began: after the start jitter, which sends nothing
+let cycleBusySinceMs = 0
 const CYCLE_OVERLAP_WINDOW_MS = 3 * 60 * 1000
 
-// The bridge (bridge.ts) yields to monitoring: it refuses requests while a
-// cycle is running, using the same staleness window as the overlap guard.
+// The bridge (bridge.ts) yields to monitoring: it waits while a cycle's
+// requests are running, using the same staleness window as the overlap guard.
 export const isCycleInFlight = () =>
-    cycleStartedAtMs > cycleEndedAtMs && Date.now() - cycleStartedAtMs < CYCLE_OVERLAP_WINDOW_MS
+    cycleBusySinceMs > cycleEndedAtMs && Date.now() - cycleBusySinceMs < CYCLE_OVERLAP_WINDOW_MS
 
 export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff?: boolean } = {}) => {
     const nowMs = Date.now()
@@ -278,6 +288,7 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
     if (applyJitter) {
         await new Promise(r => setTimeout(r, Math.floor(Math.random() * POLL_JITTER_MAX_MS)))
     }
+    cycleBusySinceMs = Date.now()
     chrome.storage.sync.get(undefined as any, function (storage: Record<string, any>) {
         const other = Object.keys(storage.other_subscriptions)
         const now = Math.floor(Date.now() / 1000)
@@ -347,8 +358,7 @@ const getGraceUser = async (): Promise<string | null> => {
         if (!cached) {
             return null
         }
-        const cookie = await browser.cookies.get({ url: 'https://www.reddit.com', name: 'reddit_session' })
-        return cookie ? String(cached) : null
+        return (await hasRedditLoginCookie()) ? String(cached) : null
     } catch {
         return null
     }
@@ -571,10 +581,24 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     if (!usedGrace) {
                         recordLoginDetectOutcome(false)
                     }
-                    // Clear warning badge and error state if we successfully processed items
-                    chrome.storage.local.remove('error_status', () => {
-                        updateBadgeUnseenCount()
-                    })
+                    // Clear warning badge and error state if we successfully
+                    // processed items. A verification or pagination outage
+                    // outlives one pass: only its own recovery clears it.
+                    return Promise.all([isAbsentVerifyUnavailable(), isProfilePaginationShort()]).then(
+                        ([verifyUnavailable, paginationShort]) => {
+                            if (verifyUnavailable) {
+                                setWarningBadge(ABSENT_VERIFY_UNAVAILABLE)
+                                return
+                            }
+                            if (paginationShort) {
+                                setWarningBadge(PROFILE_PAGINATION_UNAVAILABLE)
+                                return
+                            }
+                            chrome.storage.local.remove('error_status', () => {
+                                updateBadgeUnseenCount()
+                            })
+                        },
+                    )
                 })
         })
         .catch(error => {
@@ -582,10 +606,32 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
         })
 }
 
+// The user's items the logged-out view showed this pass, for the bridge
+// (bridge.ts PUBLIC_LIVE_MAX_AGE_MS trusts it for 2 h). Written when the set
+// changes, else every half hour, not on every 1-minute cycle.
+const PUBLIC_LIVE_REFRESH_MS = 30 * 60 * 1000
+const notePubliclyLive = async (user: string, ids: string[]) => {
+    const key = getPublicLiveKey(user)
+    const sorted = [...ids].sort()
+    const stored = ((await browser.storage.local.get({ [key]: null })) as any)[key]
+    const age = Date.now() - Number(stored?.t || 0)
+    const storedIds: string[] = Array.isArray(stored?.ids) ? [...stored.ids].sort() : []
+    const same = storedIds.length === sorted.length && storedIds.every((id, i) => id === sorted[i])
+    if (same && age >= 0 && age < PUBLIC_LIVE_REFRESH_MS) {
+        return
+    }
+    await browser.storage.local.set({ [key]: { ids: sorted, t: Date.now() } })
+}
+
+// Returns the lookup, so the cycle (and the bridge's wait on it) lasts until it
+// ends. Its failure is logged here: reaching the cycle's catch would skip the
+// pending posts and last_check, and reset the badge a warning had set.
 function checkForChanges_other(auth: any, storage: Record<string, any>) {
     const ids = Object.keys(storage.other_subscriptions)
     if (ids.length) {
-        checkForChanges_thing_byId(ids, 'other', false, auth, storage, SUBSCRIBED_FROM_NA)
+        return checkForChanges_thing_byId(ids, 'other', false, auth, storage, SUBSCRIBED_FROM_NA).catch(error => {
+            dlog('cycle', 'Error checking followed items:', String(error?.message || error))
+        })
     }
 }
 
@@ -676,7 +722,9 @@ const checkForChanges_thing_byId = async (
         const removed: string[] = [],
             approved: string[] = [],
             locked: string[] = [],
-            unlocked: string[] = []
+            unlocked: string[] = [],
+            // seen live in the logged-out view this pass
+            publiclyLive: string[] = []
         items.forEach((itemWrap: any) => {
             const item = itemWrap.data
             if (!isUser) {
@@ -701,6 +749,11 @@ const checkForChanges_thing_byId = async (
                 removed.push(item.name)
             } else {
                 approved.push(item.name)
+                // A young post without a 'live' page verdict may be held or
+                // spam-filtered while it still shows in the feed
+                if (item._public_view && !item._public_view_unverified) {
+                    publiclyLive.push(item.name)
+                }
             }
             if (item.locked) {
                 locked.push(item.name)
@@ -708,6 +761,10 @@ const checkForChanges_thing_byId = async (
                 unlocked.push(item.name)
             }
         })
+
+        if (isUser && items.some((itemWrap: any) => itemWrap.data?._public_view)) {
+            notePubliclyLive(thing, publiclyLive).catch(() => {})
+        }
 
         updateOldestDateThreshold(items, itemLookup, thing, isUser)
 

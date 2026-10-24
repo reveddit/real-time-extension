@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { setChallengeConfig, resetChallengeConfig, sanitizeChallengeConfig } from '../../src/src/challenge-config'
+import { sanitizeMarkupConfig, setMarkupConfig, getMarkupConfig } from '../../src/src/markup-config'
 
 import {
     parseProfileHtml,
@@ -15,6 +16,8 @@ import {
     classifyCommentPage,
     describePageForDiag,
     fullnameValue,
+    isCaptchaPage,
+    isSolvedChallengeUrl,
 } from '../../src/src/parse_html/new'
 
 // HTML fragments modeled on live www.reddit.com responses (verified 2026-07-01)
@@ -357,6 +360,33 @@ describe('getPublicProfileItems', () => {
         expect(fetchHtml.calls.filter(u => u.includes('/svc/')).length).toBe(1)
     })
 
+    it('a refused pagination partial stops pagination with what was collected, and says so', async () => {
+        const page1 = thingIdEl(newestComment) + loadMoreObserver(newestComment)
+        const fetchHtml = async url => {
+            if (url.includes('/svc/')) throw new Error('www.reddit.com request refused: captcha (refused: ...)')
+            if (url.includes('/comments/?sort=new')) return page1
+            return emptyStatePage('posts')
+        }
+        const result = await getPublicProfileItems('user1', fetchHtml, [newestComment, olderComment])
+        expect(result.valid).toBe(true)
+        expect(result.items.has(newestComment)).toBe(true)
+        // coverage ends where pagination stopped
+        expect(result.coverage.t1).toBe(fullnameValue(newestComment))
+        expect(result.paginationStopped).toMatch(/^comments pagination stopped: .*captcha/)
+    })
+
+    it('a 429 on a pagination partial still fails the lookup, so monitoring backs off', async () => {
+        const page1 = thingIdEl(newestComment) + loadMoreObserver(newestComment)
+        const fetchHtml = async url => {
+            if (url.includes('/svc/')) throw new Error('www.reddit.com request failed: 429')
+            if (url.includes('/comments/?sort=new')) return page1
+            return emptyStatePage('posts')
+        }
+        const result = await getPublicProfileItems('user1', fetchHtml, [newestComment, olderComment])
+        expect(result.valid).toBe(false)
+        expect(result.error).toMatch(/429/)
+    })
+
     it('leaves uncovered ids below the floor when the page budget runs out', async () => {
         const page1 = thingIdEl(newestComment) + loadMoreObserver(newestComment)
         const partial = thingIdEl(olderComment) + loadMoreObserver(olderComment)
@@ -549,5 +579,107 @@ describe('describePageForDiag wall tags', () => {
         expect(d).not.toContain('wall=')
         expect(d).not.toContain('shell=')
         expect(d).toContain('scaffold=1')
+    })
+})
+
+// Reddit renamed the challenge's token field once; the id attributes the page
+// classifiers read can come from the news feed too (options.markup)
+describe('markup config', () => {
+    afterEach(() => setMarkupConfig({}))
+
+    it('sanitizes the feed object: valid attribute names only, each once', () => {
+        expect(
+            sanitizeMarkupConfig({
+                comment_id_attributes: ['data-fullname', 'bad name', 'data-fullname', 3, '<x>'],
+                post_id_attributes: 'id',
+            }),
+        ).toEqual({ commentIdAttributes: ['data-fullname'] })
+        expect(sanitizeMarkupConfig(null)).toEqual({})
+        expect(
+            sanitizeMarkupConfig({
+                comment_id_attributes: Array(20)
+                    .fill(0)
+                    .map((_, i) => `a${i}`),
+            }).commentIdAttributes,
+        ).toHaveLength(8)
+    })
+
+    it('adds names to the built-in ones, which always stay', () => {
+        setMarkupConfig({ commentIdAttributes: ['data-fullname'] })
+        expect(getMarkupConfig().commentIdAttributes).toEqual(['data-fullname', 'thingId', 'thing-id'])
+        expect(getMarkupConfig().postIdAttributes).toEqual(['id'])
+        setMarkupConfig({})
+        expect(getMarkupConfig().commentIdAttributes).toEqual(['thingId', 'thing-id'])
+    })
+
+    it('a renamed id attribute reads once the feed names it', () => {
+        const page =
+            `<html><body><shreddit-post id="t3_abc123" author="someone"></shreddit-post>` +
+            `<shreddit-comment-tree data-fullname="t1_target1" post-id="t3_abc123">` +
+            `<shreddit-comment data-fullname="t1_target1" author="SomeUser"></shreddit-comment>` +
+            `</shreddit-comment-tree></body></html>`
+        expect(classifyCommentPage(page, 't1_target1')).toBe('unknown')
+        setMarkupConfig({ commentIdAttributes: ['data-fullname'] })
+        expect(classifyCommentPage(page, 't1_target1')).toBe('live')
+    })
+
+    it('reads a post by a renamed id attribute too', () => {
+        const page =
+            `<html><body><shreddit-post post-id="t3_abc123" author="someone" subreddit-name="s">` +
+            `<div>Post is awaiting moderator approval.</div></shreddit-post></body></html>`
+        expect(classifyPostPage(page, 't3_abc123').status).toBe('unknown')
+        setMarkupConfig({ postIdAttributes: ['post-id'] })
+        expect(classifyPostPage(page, 't3_abc123').status).toBe('held')
+    })
+})
+
+// Fixes from the 0.0.5.27 review (2026-10-22), applied 2026-10-24
+describe('0.0.5.27 review fixes', () => {
+    afterEach(() => setMarkupConfig({}))
+
+    it('an id matches under any configured name, not only the first one present', () => {
+        setMarkupConfig({ commentIdAttributes: ['data-x'] })
+        const page =
+            `<html><body><shreddit-comment-tree thingId="t1_target1">` +
+            `<shreddit-comment data-x="something-else" thingId="t1_target1" author="SomeUser"></shreddit-comment>` +
+            `</shreddit-comment-tree></body></html>`
+        expect(classifyCommentPage(page, 't1_target1')).toBe('live')
+    })
+
+    it("a configured name such as 'constructor' doesn't shadow the built-in names", () => {
+        setMarkupConfig({ commentIdAttributes: ['constructor'] })
+        const page =
+            `<html><body><shreddit-comment-tree thingId="t1_target1">` +
+            `<shreddit-comment thingId="t1_target1" author="SomeUser"></shreddit-comment>` +
+            `</shreddit-comment-tree></body></html>`
+        expect(classifyCommentPage(page, 't1_target1')).toBe('live')
+    })
+
+    it('only a page whose first title is the captcha counts as the captcha', () => {
+        expect(isCaptchaPage('<html><head><title>Reddit - Prove your humanity</title></head></html>')).toBe(true)
+        expect(isCaptchaPage('<title>\n  Prove your humanity\n</title>')).toBe(true)
+        expect(isCaptchaPage('<title>Prove your humanity in 5 steps : r/test</title>')).toBe(false)
+        expect(isCaptchaPage('<title>A thread</title><svg><title>Prove your humanity</title></svg>')).toBe(false)
+    })
+
+    it('knows a URL the challenge solver produced', () => {
+        expect(isSolvedChallengeUrl('https://www.reddit.com/user/x/?sort=new&solution=aa&js_challenge=1&token=t')).toBe(
+            true,
+        )
+        expect(isSolvedChallengeUrl('https://www.reddit.com/user/x/?sort=new')).toBe(false)
+    })
+
+    it('accepts the small empty fragment that can end a profile, and not a whole page without items', async () => {
+        const judged = []
+        const fetchHtml = async (url, accept) => {
+            let html
+            if (url.includes('/comments/?sort=new')) html = thingIdEl('t1_zz999') + loadMoreObserver('t1_zz999')
+            else if (url.includes('/submitted/?sort=new')) html = thingIdEl('t3_pp900')
+            else html = url.includes('after=') && judged.length ? '<html><body>front page</body></html>' : ''
+            if (url.includes('/svc/') && accept) judged.push(accept(html))
+            return html
+        }
+        await getPublicProfileItems('u', fetchHtml, ['t1_aa100'], 1)
+        expect(judged[0]).toBe(true)
     })
 })

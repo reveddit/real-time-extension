@@ -4,14 +4,14 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
-import { applyRemoteChallengeConfig, NEWS_CACHE_KEY } from '../../src/src/news'
+import { applyRemoteConfig, NEWS_CACHE_KEY } from '../../src/src/news'
 import { getChallengeConfig, resetChallengeConfig, DEFAULT_CHALLENGE_CONFIG } from '../../src/src/challenge-config'
 import { flagIfRateLimited } from '../../src/src/requests'
 
 // The worker re-applies the cached feed's solver inputs on every start
 // (background.ts module scope), so a token rename fixed remotely survives the
 // next alarm-tick restart instead of reverting to the compiled defaults.
-describe('applyRemoteChallengeConfig on worker start', () => {
+describe('applyRemoteConfig on worker start', () => {
     beforeEach(() => {
         resetChallengeConfig()
         __resetStorage({}, {})
@@ -22,13 +22,13 @@ describe('applyRemoteChallengeConfig on worker start', () => {
             {},
             { [NEWS_CACHE_KEY]: { feed: { options: { challenge: { tokenFields: ['renamed_token'] } } } } },
         )
-        await applyRemoteChallengeConfig()
+        await applyRemoteConfig()
         expect(getChallengeConfig().tokenFields).toEqual(['renamed_token'])
         expect(getChallengeConfig().solutionRegex).toBe(DEFAULT_CHALLENGE_CONFIG.solutionRegex)
     })
 
     it('leaves the defaults in place when nothing is cached', async () => {
-        await applyRemoteChallengeConfig()
+        await applyRemoteConfig()
         expect(getChallengeConfig()).toEqual(DEFAULT_CHALLENGE_CONFIG)
     })
 })

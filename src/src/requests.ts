@@ -2,6 +2,7 @@ import {
     getOptions,
     addToPendingPostQueue,
     removeMultipleFromPendingPostQueue,
+    getPublicLiveKey,
     recordRateLimitHit,
     clearRateLimitBackoff,
     getMsSinceLastRateLimitHit,
@@ -11,6 +12,7 @@ import { dlog, dlogSummary } from './diaglog'
 import { getItemsById_fromOldHTML, getPost_fromOld } from './parse_html/old'
 import {
     getPublicProfileItems,
+    PublicProfileData,
     fullnameValue,
     FetchHtml,
     buildPostPageUrl,
@@ -21,9 +23,11 @@ import {
     buildCommentPartialUrl,
     classifyCommentPage,
     solveChallenge,
+    isSolvedChallengeUrl,
     describePageForDiag,
+    isCaptchaPage,
 } from './parse_html/new'
-import { newReddit } from './parse_html/common'
+import { newReddit, isRateLimitError } from './parse_html/common'
 import { setWarningBadge, isRemovedComment } from './common'
 import {
     getRemoteMechanism,
@@ -32,9 +36,11 @@ import {
     MECHANISM_ABSENT_VERIFICATION,
     MECHANISM_ABSENT_UNVERIFIED_UNKNOWN,
     MECHANISM_ME_CHALLENGE,
-    getRemoteWwwRoutes,
+    getRemoteWwwRouteOrder,
+    getRemoteLoginCookies,
+    LEGACY_REFUSED_UNTIL_KEY,
 } from './news'
-import { defaultWwwRoutes, isWwwRoute, parseWwwRoute, WwwRoute, WwwRouteCache } from './www-routes'
+import { isWwwRoute, parseWwwRoute, wwwRouteOrder, WwwRoute, WwwRouteCache } from './www-routes'
 
 // Gate for the unauthenticated legacy paths: old.reddit.com HTML and unauth www
 // .json — the endpoints Reddit's announced deprecation removes. Gates exactly the
@@ -69,6 +75,42 @@ export const isLegacyDisabled = (): Promise<boolean> =>
 export const throwIfLegacyDisabled = async (label: string) => {
     if (await isLegacyDisabled()) {
         throw new Error(`${label} request failed: 403 (legacy endpoints disabled)`)
+    }
+}
+
+// A real 403 from the legacy endpoints (not the simulated one above) means
+// reddit refused them, as it did in every cache mode on 2026-10-21. Every
+// legacy path then rests for LEGACY_REFUSAL_MEMORY_MS instead of spending
+// guaranteed-refused requests each cycle; the remote option legacyOldReddit
+// 'off' stops them for good.
+export { LEGACY_REFUSED_UNTIL_KEY }
+export const LEGACY_REFUSAL_MEMORY_MS = 6 * 3600 * 1000
+export const isLegacyResting = async (): Promise<boolean> => {
+    try {
+        const until = Number(
+            ((await browser.storage.local.get({ [LEGACY_REFUSED_UNTIL_KEY]: 0 })) as any)[LEGACY_REFUSED_UNTIL_KEY],
+        )
+        // Held to the memory's length, in case the clock was set back
+        return until > Date.now() && until - Date.now() <= LEGACY_REFUSAL_MEMORY_MS
+    } catch {
+        return false
+    }
+}
+// Off for now: disabled (dev switch, remote option, build), or resting after a
+// refusal. Monitoring and page views honor both; a restore or profile scan the
+// user started honors only the switch.
+export const isLegacyOff = async (): Promise<boolean> => (await isLegacyDisabled()) || (await isLegacyResting())
+export const throwIfLegacyOff = async (label: string) => {
+    await throwIfLegacyDisabled(label)
+    if (await isLegacyResting()) {
+        throw new Error(`${label} skipped: refused within the last ${LEGACY_REFUSAL_MEMORY_MS / 3600000} h`)
+    }
+}
+
+export const noteLegacyRefusal = (err: any) => {
+    const message = String(err?.message || err)
+    if (/request failed: 403\b/.test(message) && !message.includes('legacy endpoints disabled')) {
+        browser.storage.local.set({ [LEGACY_REFUSED_UNTIL_KEY]: Date.now() + LEGACY_REFUSAL_MEMORY_MS }).catch(() => {})
     }
 }
 
@@ -191,12 +233,73 @@ export const pageContextFetch = (url: string, init: RequestInit): Promise<Respon
     return page ? page.fetch!(url, init) : fetch(url, init)
 }
 
-const fetchWwwHtml_viaBackground = async (url: string, cache: WwwRouteCache): Promise<string> => {
-    const response = await fetch(url, publicViewInit(cache))
-    if (!response.ok) {
-        throw new Error(`www.reddit.com request failed: ${response.status}`)
+// How a route failed. Routing decisions read this, not the error's text; the
+// text keeps the 'request failed: N' shape flagIfRateLimited reads.
+// - refused: reddit turned the route away (its 403 block page, the captcha, a
+//   page the caller can't read, a challenge answered with another challenge)
+// - network: no answer at all (a network error, or a stall the timeout ended)
+// - unavailable: the tab legs can't run (no usable tab, injection refused)
+export type RouteFailure = 'refused' | 'network' | 'unavailable'
+class RouteError extends Error {
+    constructor(
+        message: string,
+        readonly failure: RouteFailure,
+        readonly status = 0,
+    ) {
+        super(message)
     }
-    return response.text()
+}
+
+// A fetch, tab message or injected script that never settles (a stalled
+// response, a frozen tab) is given up on, so one stall can't hang a lookup
+export const WWW_FETCH_TIMEOUT_MS = 20 * 1000
+const withTimeout = async <T>(promise: Promise<T>, what: string): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(
+                    () => reject(new RouteError(`${what} timed out after ${WWW_FETCH_TIMEOUT_MS / 1000} s`, 'network')),
+                    WWW_FETCH_TIMEOUT_MS,
+                )
+            }),
+        ])
+    } finally {
+        clearTimeout(timer)
+    }
+}
+
+// An HTTP failure from any leg. Reddit's block page comes with a 403, so that
+// route was refused. Other statuses say nothing about the route (a 429 is rate
+// limiting, which monitoring backs off from; a 404 is about the page), so they
+// end the fetch.
+const httpFailure = (status: number): Error => {
+    const message = `www.reddit.com request failed: ${status}`
+    return status === 403 ? new RouteError(message, 'refused', 403) : new Error(message)
+}
+
+const fetchWwwHtml_viaBackground = async (url: string, cache: WwwRouteCache): Promise<string> => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
+    try {
+        let response: Response
+        try {
+            response = await fetch(url, { ...publicViewInit(cache), signal: controller.signal })
+        } catch (err: any) {
+            throw new RouteError(`www.reddit.com request error: ${String(err?.message || err)}`, 'network')
+        }
+        if (!response.ok) {
+            throw httpFailure(response.status)
+        }
+        try {
+            return await response.text()
+        } catch (err: any) {
+            throw new RouteError(`www.reddit.com response error: ${String(err?.message || err)}`, 'network')
+        }
+    } finally {
+        clearTimeout(timer)
+    }
 }
 
 // Fallback for a tab whose content script is orphaned (every extension update
@@ -214,31 +317,47 @@ export const _fetchViaExecuteScript = async (
 ): Promise<string> => {
     const scripting = (browser as any).scripting || (typeof chrome !== 'undefined' && (chrome as any).scripting)
     if (!scripting) {
-        throw new Error('scripting API unavailable')
+        throw new RouteError('scripting API unavailable', 'unavailable')
     }
-    const results = (await scripting.executeScript({
-        target: { tabId },
-        func: async (u: string, init: RequestInit) => {
-            try {
-                // pageContextFetch, inlined: an injected function can't call out
-                const page =
-                    typeof content !== 'undefined' && content && typeof content.fetch === 'function' ? content : null
-                const resp = await (page ? page.fetch!(u, init) : fetch(u, init))
-                return { ok: resp.ok, status: resp.status, text: resp.ok ? await resp.text() : '' }
-            } catch (e) {
-                return { ok: false, status: 0, text: '', err: String(e) }
-            }
-        },
-        args: [url, init],
-    })) as any[]
+    let results: any[]
+    try {
+        results = (await withTimeout(
+            scripting.executeScript({
+                target: { tabId },
+                func: async (u: string, init: RequestInit) => {
+                    try {
+                        // pageContextFetch, inlined: an injected function can't call out
+                        const page =
+                            typeof content !== 'undefined' && content && typeof content.fetch === 'function'
+                                ? content
+                                : null
+                        const resp = await (page ? page.fetch!(u, init) : fetch(u, init))
+                        return { ok: resp.ok, status: resp.status, text: resp.ok ? await resp.text() : '' }
+                    } catch (e) {
+                        return { ok: false, status: 0, text: '', err: String(e) }
+                    }
+                },
+                args: [url, init],
+            }),
+            'executeScript fetch',
+        )) as any[]
+    } catch (err: any) {
+        // Injection itself failed: the tab closed or navigated, access was
+        // refused, or a frozen tab never ran the script
+        throw new RouteError(String(err?.message || err), 'unavailable')
+    }
     const value = results && results[0] && results[0].result
     if (!value || typeof value.text !== 'string') {
-        throw new Error('executeScript fetch returned no result')
+        throw new RouteError('executeScript fetch returned no result', 'unavailable')
     }
     if (!value.ok) {
-        // Same message shape as fetchWwwHtml_viaBackground so flagIfRateLimited
-        // still recognizes 429s arriving through this path.
-        throw new Error(`www.reddit.com request failed: ${value.status}${value.err ? ` (${value.err})` : ''}`)
+        // Status 0: the injected fetch got no answer (a network error, or CORS
+        // after the tab navigated to another origin). The route failed, not
+        // the injection.
+        if (!value.status) {
+            throw new RouteError(`www.reddit.com tab request error: ${value.err || 'no answer'}`, 'network')
+        }
+        throw httpFailure(value.status)
     }
     return value.text
 }
@@ -267,60 +386,134 @@ export const _fetchViaExecuteScript = async (
 // that reversal, failing every lookup, while its tab legs failed too (likely
 // a discarded tab).
 //
-// So a fetch tries routes in order, a refusal (the 403, or the captcha's 200)
-// sends it to the next route, and the route that served the page leads from
-// then on. A solved challenge's URL still works on the next route (verified
-// 2026-10-21), so a refusal right after a solve costs one request, not a new
-// challenge. Leads are kept per kind of page, since profile feeds, /svc
-// partials and thread pages have been refused differently, and they survive
-// restarts, so a steady state costs one request per page. When every route
-// is refused for a kind of page, its fetches try only one route until
-// WWW_ROUTE_RETRY_MS has passed, so a blocked client keeps its request volume
-// instead of multiplying it. Other failures (a 429, a 404) are about the
-// client or the page, so they never switch routes.
-export const WWW_PAGE_KINDS = ['feed', 'partial', 'page'] as const
+// So a fetch tries routes in order. A refusal sends it to the next route and
+// makes the refused route rest: six hours after a 403 (reddit's deliberate
+// verdict on that request style), half an hour after a captcha, a network
+// error or a page the caller can't read (often momentary). Routes that aren't
+// resting go first, in order, so a route that never got a try (a tab route
+// while no tab was open) is tried as soon as it can be, and a rested route
+// gets its turn again on its own. When every route is resting, a fetch tries
+// only the one that comes back soonest, so a client refused everywhere makes
+// one request per page. A solved challenge's URL still works on the next route
+// (verified 2026-10-21), so a refusal right after a solve costs one request,
+// not a new challenge. Kinds of page keep separate memories, since reddit has
+// refused them differently, and the memory survives restarts. Other failures
+// (a 429, a 404) are about the client or the page, so they never switch
+// routes.
+export const WWW_PAGE_KINDS = ['profile', 'profile-partial', 'partial', 'page'] as const
 export type WwwPageKind = (typeof WWW_PAGE_KINDS)[number]
 export const wwwPageKind = (url: string): WwwPageKind => {
     const path = url.replace(/^https?:\/\/[^/]+/, '')
-    if (/^\/(user|svc\/shreddit\/profiles)\//.test(path)) {
-        return 'feed'
+    if (path.startsWith('/user/')) {
+        return 'profile'
+    }
+    if (path.startsWith('/svc/shreddit/profiles/')) {
+        return 'profile-partial'
     }
     return path.startsWith('/svc/') ? 'partial' : 'page'
 }
-export const WWW_ROUTE_STATE_KEY = 'www_route_state'
-export const WWW_ROUTE_RETRY_MS = 30 * 60 * 1000
+export const WWW_ROUTE_STATE_KEY = 'www_routes_v2'
+// Earlier versions' route memory, removed when found
+const OLD_ROUTE_STATE_KEYS = ['www_route_state', 'www_tab_refused_at']
+export const WWW_HARD_REFUSAL_MS = 6 * 3600 * 1000
+export const WWW_SOFT_REFUSAL_MS = 30 * 60 * 1000
 // Pause before trying another route, so a refusal isn't answered with a burst
 // (the captcha came in bursts during back-to-back requests, 2026-10-21).
 // Mutable for tests, like _legacyLookups.
 export const _wwwRouteTiming = { switchDelayMs: 500 }
-export interface WwwRouteState {
-    // The route that last served each kind of page
-    lead: Partial<Record<WwwPageKind, WwwRoute>>
-    // When every route was last refused for each kind of page
-    exhaustedAt: Partial<Record<WwwPageKind, number>>
-}
-const TAB_UNAVAILABLE = 'www tab fetch unavailable'
-const CAPTCHA_REFUSAL = 'www.reddit.com request refused: captcha'
-// The captcha interstitial is a 200, known by its title
-const CAPTCHA_TITLE_REGEX = /<title[^>]*>[^<]*Prove your humanity/i
 
-// Reddit's block page comes with a 403. Other statuses say nothing about the
-// route: a 429 is rate limiting (monitoring backs off), a 404 is about the page.
-const isRefusal = (err: any) => /request failed: 403\b|request refused\b/.test(String(err?.message))
-const isHttpFailure = (err: any) => /request failed: \d/.test(String(err?.message))
-const describeRefusal = (err: any): string => {
-    const message = String(err?.message || err)
-    const status = message.match(/request failed: (\d+)/)
-    return status ? status[1] : message.includes('captcha') ? 'captcha' : message.slice(0, 60)
+// A route's last outcome for a kind of page: t is when it happened, and until
+// (set only by a refusal) is when the route stops resting
+interface RouteRecord {
+    t: number
+    until?: number
 }
+interface KindState {
+    routes: Partial<Record<WwwRoute, RouteRecord>>
+    // The route that last served this kind of page
+    served?: { route: WwwRoute; t: number }
+}
+export type WwwRouteState = Partial<Record<WwwPageKind, KindState>>
+
+// Stored state, kept to well-formed entries. A clock that ran ahead and was
+// set back leaves times in the future; they're held to now, so a refusal
+// never rests longer than the longest memory.
+const readRouteState = (raw: any, now: number): WwwRouteState => {
+    const state: WwwRouteState = {}
+    for (const kind of WWW_PAGE_KINDS) {
+        const stored = raw?.[kind]
+        if (!stored || typeof stored !== 'object') {
+            continue
+        }
+        const routes: KindState['routes'] = {}
+        for (const [route, record] of Object.entries(stored.routes || {})) {
+            const t = Number((record as any)?.t)
+            if (!isWwwRoute(route) || !(t > 0)) {
+                continue
+            }
+            const until = Number((record as any)?.until)
+            routes[route] = {
+                t: Math.min(t, now),
+                ...(until > 0 && { until: Math.min(until, now + WWW_HARD_REFUSAL_MS) }),
+            }
+        }
+        const servedT = Number(stored.served?.t)
+        state[kind] = {
+            routes,
+            ...(isWwwRoute(stored.served?.route) &&
+                servedT > 0 && { served: { route: stored.served.route, t: Math.min(servedT, now) } }),
+        }
+    }
+    return state
+}
+
+// Another lookup's saved state merged into this one's, the newest record per
+// route winning, so lookups that overlap don't undo each other's refusals
+const mergeRouteState = (mine: WwwRouteState, theirs: WwwRouteState) => {
+    for (const kind of WWW_PAGE_KINDS) {
+        const other = theirs[kind]
+        if (!other) {
+            continue
+        }
+        const own = (mine[kind] ||= { routes: {} })
+        for (const [route, record] of Object.entries(other.routes) as [WwwRoute, RouteRecord][]) {
+            if (!own.routes[route] || own.routes[route]!.t < record.t) {
+                own.routes[route] = record
+            }
+        }
+        if (other.served && (!own.served || own.served.t < other.served.t)) {
+            own.served = other.served
+        }
+    }
+}
+
+type PageVerdict = 'served' | 'step' | 'captcha' | 're-challenged' | 'unrecognized'
+// What a 200 from a route means. A page the caller accepts is served, whatever
+// else it mentions: the wall tests come after. A challenge is a step toward
+// the page, not proof the route reads pages, so it changes nothing; the same
+// challenge in answer to an already-solved URL means the route rejected the
+// solve.
+const judgePage = (html: string, url: string, accept?: (html: string) => boolean): PageVerdict => {
+    if (accept?.(html)) {
+        return 'served'
+    }
+    if (isCaptchaPage(html)) {
+        return 'captcha'
+    }
+    if (solveChallenge(html, url) !== null) {
+        return isSolvedChallengeUrl(url) ? 're-challenged' : 'step'
+    }
+    return accept ? 'unrecognized' : 'served'
+}
+
+// What a route's refusal was, for the log: the HTTP status, else 'network'
+// (unavailable legs are skipped, not logged)
+const describeFailure = (err: RouteError): string => String(err.status || 'network')
 
 export interface WwwHtmlFetcher {
     fetchHtml: FetchHtml
-    // Whether a www.reddit.com tab can still run fetches. Post pages are
-    // checked only then (see verifyFeedPresentPosts).
-    readonly viaTab: boolean
-    // Lead route per kind of page, for the lookup's log line
-    leads: () => WwwRouteState['lead']
+    // The route that last served each kind of page, for the lookup's log line
+    servedRoutes: () => Partial<Record<WwwPageKind, WwwRoute>>
 }
 
 export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
@@ -333,182 +526,239 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
         /* no tabs API in this context */
     }
     // A discarded tab (Chrome's Memory Saver unloads idle ones) has no page to
-    // message or inject into, so both tab legs fail on it every time, likely
-    // the "Receiving end does not exist" and "Cannot access contents of the
-    // page" pair in issue #27's log.
-    const tab = tabs.find(t => t.id != null && !t.discarded)
+    // message or inject into, and a frozen one may never answer, so both tab
+    // legs fail on them, likely the "Receiving end does not exist" and "Cannot
+    // access contents of the page" pair in issue #27's log.
+    const tab = tabs.find(t => t.id != null && !t.discarded && !t.frozen)
     let contentScriptAlive = !!tab
     let injectionUsable = !!tab
     const tabUsable = () => contentScriptAlive || injectionUsable
 
-    const state: WwwRouteState = { lead: {}, exhaustedAt: {} }
+    let state: WwwRouteState = {}
     try {
-        const stored = ((await browser.storage.local.get({ [WWW_ROUTE_STATE_KEY]: null })) as any)[WWW_ROUTE_STATE_KEY]
-        for (const kind of WWW_PAGE_KINDS) {
-            const lead = stored?.lead?.[kind]
-            if (isWwwRoute(lead)) {
-                state.lead[kind] = lead
-            }
-            const exhaustedAt = Number(stored?.exhaustedAt?.[kind])
-            if (exhaustedAt > 0) {
-                state.exhaustedAt[kind] = exhaustedAt
-            }
+        const stored = (await browser.storage.local.get([WWW_ROUTE_STATE_KEY, ...OLD_ROUTE_STATE_KEYS])) as any
+        state = readRouteState(stored[WWW_ROUTE_STATE_KEY], Date.now())
+        if (OLD_ROUTE_STATE_KEYS.some(key => stored[key] !== undefined)) {
+            await browser.storage.local.remove(OLD_ROUTE_STATE_KEYS)
         }
     } catch {
         /* ignored */
     }
-    const remoteRoutes = await getRemoteWwwRoutes().catch(() => [] as WwwRoute[])
-    const order = remoteRoutes.length ? remoteRoutes : defaultWwwRoutes()
-    const saveState = () => browser.storage.local.set({ [WWW_ROUTE_STATE_KEY]: state }).catch(() => {})
+    const order = wwwRouteOrder(await getRemoteWwwRouteOrder().catch(() => ({})))
+    let dirty = false
+    const saveState = async () => {
+        if (!dirty) {
+            return
+        }
+        dirty = false
+        try {
+            const stored = ((await browser.storage.local.get({ [WWW_ROUTE_STATE_KEY]: null })) as any)[
+                WWW_ROUTE_STATE_KEY
+            ]
+            mergeRouteState(state, readRouteState(stored, Date.now()))
+            await browser.storage.local.set({ [WWW_ROUTE_STATE_KEY]: state })
+        } catch {
+            /* ignored */
+        }
+    }
+    const kindState = (kind: WwwPageKind): KindState => (state[kind] ||= { routes: {} })
 
-    // Rejects with Reddit's HTTP failure when the tab got one, and with
-    // TAB_UNAVAILABLE when neither tab leg can run.
+    // Rejects with Reddit's HTTP failure when the tab got one, and with an
+    // 'unavailable' RouteError when neither tab leg can run.
     const fetchViaTab = async (url: string, cache: WwwRouteCache): Promise<string> => {
         if (contentScriptAlive) {
+            let response: any
             try {
-                const response = (await browser.tabs.sendMessage(tab.id, {
-                    action: 'fetch-www-profile-public',
-                    url,
-                    cache,
-                })) as any
-                if (response && response.success && typeof response.html === 'string') {
-                    return response.html
-                }
-                throw new Error(response?.error || 'content-script www fetch failed')
+                response = await withTimeout(
+                    browser.tabs.sendMessage(tab.id, { action: 'fetch-www-profile-public', url, cache }),
+                    'content-script fetch',
+                )
             } catch (err: any) {
-                // Reddit answered the tab. The injected fetch would make the
-                // same same-origin request and get the same answer.
-                if (isHttpFailure(err)) {
-                    throw err
-                }
-                // The tab may predate the extension install/update (orphaned
-                // content script); stop retrying it this lookup. Logged because
-                // this transition decides which leg produced every page —
-                // without it, "tab open but still unknown" can't distinguish a
-                // dead tab leg from Reddit serving the tab's same-origin
-                // fetches unreadable pages (issue #14, 2nd paste).
-                contentScriptAlive = false
+                response = undefined
+                // No receiver (the tab predates the extension's install or
+                // update, so its content script is orphaned) or no answer in
+                // time. Logged because this transition decides which leg
+                // produced every page — without it, "tab open but still
+                // unknown" can't distinguish a dead tab leg from Reddit
+                // serving the tab's same-origin fetches unreadable pages
+                // (issue #14, 2nd paste).
                 dlog(
                     'feed',
                     '[reveddit] content-script www fetch failed, trying an injected fetch:',
                     String(err?.message || err),
                 )
             }
+            if (response === undefined) {
+                contentScriptAlive = false
+            } else {
+                // The content script answered, so Reddit answered the tab. The
+                // injected fetch would make the same request and get the same
+                // answer.
+                if (response?.success && typeof response.html === 'string') {
+                    return response.html
+                }
+                const status = Number(response?.status)
+                if (status) {
+                    throw httpFailure(status)
+                }
+                throw new RouteError(`www.reddit.com tab request error: ${response?.error || 'no answer'}`, 'network')
+            }
         }
         if (injectionUsable) {
             try {
                 return await _fetchViaExecuteScript(tab.id, url, publicViewInit(cache))
             } catch (err: any) {
-                if (isHttpFailure(err)) {
+                if (!(err instanceof RouteError) || err.failure !== 'unavailable') {
                     throw err
                 }
                 // Injection itself unavailable (tab closed/navigated mid-cycle,
                 // API missing): no tab route is tried again this lookup.
                 injectionUsable = false
-                dlog(
-                    'feed',
-                    '[reveddit] executeScript fetch unavailable, skipping tab routes:',
-                    String(err?.message || err),
-                )
+                dlog('feed', '[reveddit] executeScript fetch unavailable, skipping tab routes:', err.message)
             }
         }
-        throw new Error(TAB_UNAVAILABLE)
+        throw new RouteError('www tab fetch unavailable', 'unavailable')
     }
 
-    const fetchOnRoute = async (route: WwwRoute, url: string): Promise<string> => {
+    const fetchOnRoute = (route: WwwRoute, url: string): Promise<string> => {
         const { leg, cache } = parseWwwRoute(route)
-        const html = leg === 'tab' ? await fetchViaTab(url, cache) : await fetchWwwHtml_viaBackground(url, cache)
-        if (CAPTCHA_TITLE_REGEX.test(html)) {
-            throw new Error(CAPTCHA_REFUSAL)
-        }
-        return html
+        return leg === 'tab' ? fetchViaTab(url, cache) : fetchWwwHtml_viaBackground(url, cache)
     }
 
-    const fetchKind = async (kind: WwwPageKind, url: string): Promise<string> => {
-        const lead = state.lead[kind]
-        const routes = lead && order.includes(lead) ? [lead, ...order.filter(r => r !== lead)] : order
-        // Every route was refused lately: one try, on the first usable route
-        const exploring = Date.now() - (state.exhaustedAt[kind] || 0) >= WWW_ROUTE_RETRY_MS
-        const refusals: string[] = []
-        let firstFailure: any = null
-        for (const route of routes) {
-            if (!exploring && firstFailure) {
-                break
-            }
-            if (route.startsWith('tab:') && !tabUsable()) {
-                continue
-            }
-            if (firstFailure && _wwwRouteTiming.switchDelayMs > 0) {
-                await new Promise(r => setTimeout(r, _wwwRouteTiming.switchDelayMs))
-            }
-            let html: string
-            try {
-                html = await fetchOnRoute(route, url)
-            } catch (err: any) {
-                if (err?.message === TAB_UNAVAILABLE) {
-                    continue
-                }
-                if (isHttpFailure(err) && !isRefusal(err)) {
-                    throw err
-                }
-                // Refused, or no answer at all (a network error): next route
-                firstFailure = firstFailure || err
-                refusals.push(`${route} ${describeRefusal(err)}`)
-                continue
-            }
-            // A challenge is a step toward the page, not proof the route reads
-            // pages, so it leaves the lead and any wait alone. Otherwise every
-            // cycle's first request would end the wait of a client that is
-            // refused everywhere, and each cycle would walk all the routes.
-            if (solveChallenge(html, url) !== null) {
-                return html
-            }
-            if (route !== state.lead[kind] || state.exhaustedAt[kind]) {
-                const previous = state.lead[kind]
-                state.lead[kind] = route
-                delete state.exhaustedAt[kind]
-                saveState()
-                if (route !== previous) {
-                    dlog(
-                        'feed',
-                        `[reveddit] www route for ${kind} pages is now ${route}` +
-                            (refusals.length ? ` (refused: ${refusals.join(', ')})` : ''),
-                    )
-                }
-            }
-            return html
+    const noteRefusal = (kind: WwwPageKind, route: WwwRoute, err: RouteError) => {
+        const now = Date.now()
+        kindState(kind).routes[route] = {
+            t: now,
+            until: now + (err.status === 403 ? WWW_HARD_REFUSAL_MS : WWW_SOFT_REFUSAL_MS),
         }
-        if (!firstFailure) {
-            throw new Error('no www fetch route available')
+        dirty = true
+    }
+    const noteServed = (kind: WwwPageKind, route: WwwRoute, refused: string[]) => {
+        const own = kindState(kind)
+        const now = Date.now()
+        if (own.routes[route]?.until) {
+            own.routes[route] = { t: now }
+            dirty = true
         }
-        if (exploring) {
-            state.exhaustedAt[kind] = Date.now()
-            saveState()
+        if (own.served?.route !== route) {
+            own.served = { route, t: now }
+            dirty = true
             dlog(
                 'feed',
-                `[reveddit] every www route refused for ${kind} pages (${refusals.join(', ')}); ` +
-                    `next full try in ${WWW_ROUTE_RETRY_MS / 60000} min`,
+                `[reveddit] www route for ${kind} pages is now ${route}` +
+                    (refused.length ? ` (refused: ${refused.join(', ')})` : ''),
             )
         }
-        throw new Error(`${String(firstFailure?.message || firstFailure)} (refused: ${refusals.join(', ')})`)
+    }
+
+    const failureLogged = new Set<WwwPageKind>()
+    const fetchKind = async (kind: WwwPageKind, url: string, accept?: (html: string) => boolean) => {
+        const routes = kindState(kind).routes
+        const now = Date.now()
+        const restingUntil = (route: WwwRoute) => routes[route]?.until || 0
+        const usable = order.filter(route => !route.startsWith('tab:') || tabUsable())
+        // Resting routes follow the rest, soonest back first. All stay
+        // fallbacks, since one may turn out unable to run (a tab route with
+        // its tab gone), but only the first that sends a request is tried.
+        const resting = new Set(usable.filter(route => restingUntil(route) > now))
+        const candidates = [
+            ...usable.filter(route => !resting.has(route)),
+            ...[...resting].sort((a, b) => restingUntil(a) - restingUntil(b)),
+        ]
+        const refused: string[] = []
+        let failure: RouteError | null = null
+        let unreadable: string | null = null
+        let restingTried = false
+        try {
+            for (const route of candidates) {
+                if (route.startsWith('tab:') && !tabUsable()) {
+                    continue
+                }
+                if (resting.has(route)) {
+                    if (restingTried) {
+                        break
+                    }
+                }
+                if (refused.length && _wwwRouteTiming.switchDelayMs > 0) {
+                    await new Promise(r => setTimeout(r, _wwwRouteTiming.switchDelayMs))
+                }
+                let html: string
+                try {
+                    html = await fetchOnRoute(route, url)
+                } catch (err: any) {
+                    if (!(err instanceof RouteError)) {
+                        throw err
+                    }
+                    if (err.failure === 'unavailable') {
+                        continue
+                    }
+                    restingTried ||= resting.has(route)
+                    noteRefusal(kind, route, err)
+                    refused.push(`${route} ${describeFailure(err)}`)
+                    // A 403 decides what the whole fetch reports
+                    if (!failure || (err.status === 403 && failure.status !== 403)) {
+                        failure = err
+                    }
+                    continue
+                }
+                restingTried ||= resting.has(route)
+                const verdict = judgePage(html, url, accept)
+                if (verdict === 'step') {
+                    return html
+                }
+                if (verdict === 'served') {
+                    noteServed(kind, route, refused)
+                    return html
+                }
+                const err = new RouteError(`www.reddit.com request refused: ${verdict}`, 'refused')
+                noteRefusal(kind, route, err)
+                refused.push(`${route} ${verdict}`)
+                if (verdict === 'unrecognized') {
+                    unreadable = html
+                }
+                failure ||= err
+            }
+        } finally {
+            await saveState()
+        }
+        if (refused.length > 1 && !failureLogged.has(kind)) {
+            failureLogged.add(kind)
+            dlog(
+                'feed',
+                `[reveddit] every www route tried for ${kind} pages failed (${refused.join(', ')}); ` +
+                    `refused routes rest ${WWW_SOFT_REFUSAL_MS / 60000} min, or ${WWW_HARD_REFUSAL_MS / 3600000} h after a 403`,
+            )
+        }
+        // A page no route could read goes back to the caller, which says why
+        if (unreadable !== null) {
+            return unreadable
+        }
+        if (!failure) {
+            throw new RouteError('no www fetch route available', 'unavailable')
+        }
+        throw new RouteError(`${failure.message} (refused: ${refused.join(', ')})`, failure.failure, failure.status)
     }
 
     // One fetch at a time per kind of page, so the comments and posts feeds
-    // (fetched in parallel) don't both walk the routes, and each fetch starts
-    // from the lead the one before it found.
+    // (fetched in parallel) don't both try a refused route, and each fetch
+    // starts from what the one before it learned. The queue keeps only the
+    // settled outcome, not the page.
     const queues: Partial<Record<WwwPageKind, Promise<unknown>>> = {}
-    const fetchHtml: FetchHtml = (url: string) => {
+    const fetchHtml: FetchHtml = (url, accept) => {
         const kind = wwwPageKind(url)
-        const run = (queues[kind] || Promise.resolve()).catch(() => {}).then(() => fetchKind(kind, url))
-        queues[kind] = run
+        const run = (queues[kind] || Promise.resolve()).then(() => fetchKind(kind, url, accept))
+        queues[kind] = run.then(
+            () => undefined,
+            () => undefined,
+        )
         return run
     }
     return {
         fetchHtml,
-        get viaTab() {
-            return tabUsable()
-        },
-        leads: () => ({ ...state.lead }),
+        servedRoutes: () =>
+            Object.fromEntries(
+                WWW_PAGE_KINDS.filter(kind => state[kind]?.served).map(kind => [kind, state[kind]!.served!.route]),
+            ),
     }
 }
 
@@ -526,16 +776,37 @@ const WWW_DETECT_FAILURE_WARN_THRESHOLD = 5
 // approval") and spam-removed posts linger in the author's public feed for a
 // grace period (verified live — same anomaly as is_robot_indexable staying true
 // for the author for ~24h). Young feed-present posts are verified against their
-// own logged-out page, where the true status shows. Verdicts are cached so each
-// young post costs one page fetch per TTL, not per cycle.
+// own logged-out page, where the true status shows, through whichever route
+// reads pages. Verdicts are cached so each young post costs one page fetch per
+// TTL, not per cycle: an unreadable page ('unknown', e.g. the front page served
+// in place of the post) is paced like the feed-absent path's, and no cycle
+// fetches more than POST_VERIFY_MAX_PER_CYCLE pages.
 const POST_FEED_GRACE_SECONDS = 48 * 3600
 const POST_VERDICT_CACHE_KEY = 'www_post_page_verdicts'
 const POST_VERDICT_TTL_MS = 2 * 3600 * 1000
-const POST_VERDICT_CACHE_MAX = 50
+const POST_VERDICT_UNKNOWN_TTL_MS = 30 * 60 * 1000
+const POST_VERDICT_CACHE_MAX = 200
+const POST_VERIFY_MAX_PER_CYCLE = 10
 
 interface PostVerdictEntry {
     v: PostPageStatus
     t: number // epoch ms of verification
+    // Once held or removed: an 'unknown' since keeps the post re-verified at any age
+    adverse?: boolean
+}
+
+// A cache entry still within its time to live; a time in the future (a clock
+// set back) counts as expired
+const isFresh = (t: number, ttl: number, now: number): boolean => now - t >= 0 && now - t < ttl
+
+// A 429 enters the shared backoff and tells the caller to stop its loop. Only
+// a 429: a 403 is about one route, which the fetcher already moved off.
+const noteRateLimited = (err: any): boolean => {
+    if (!isRateLimitError(err)) {
+        return false
+    }
+    flagIfRateLimited(err instanceof Error ? err : new Error(String(err)))
+    return true
 }
 
 const verifyFeedPresentPosts = async (
@@ -543,16 +814,7 @@ const verifyFeedPresentPosts = async (
     presentIds: Set<string>,
     authItemsMeta: AuthItemsMeta,
     fetchHtml: FetchHtml,
-    viaTab: boolean,
 ): Promise<Record<string, PostPageStatus>> => {
-    // Only while a www.reddit.com tab can fetch. Post pages were long readable
-    // only through one; without it, skip per-post verification and lean on the
-    // authenticated removal signal + feed presence. Unknown verdicts aren't
-    // cached, so verifying with no route that reads post pages would cost a
-    // fetch per young post every cycle.
-    if (!viaTab) {
-        return {}
-    }
     const nowSec = Math.floor(Date.now() / 1000)
     const nowMs = Date.now()
     let cache: Record<string, PostVerdictEntry> = {}
@@ -582,47 +844,61 @@ const verifyFeedPresentPosts = async (
         // (which a fresh verdict cache knows nothing about) — forces
         // re-verification at any age so a post once seen as held/removed can't
         // silently flip back to approved.
-        if (isMature && (!cached || cached.v === 'live') && !m?.known_removed) {
+        if (
+            isMature &&
+            (!cached || cached.v === 'live' || (cached.v === 'unknown' && !cached.adverse)) &&
+            !m?.known_removed
+        ) {
             continue
         }
-        if (cached && nowMs - cached.t < POST_VERDICT_TTL_MS) {
-            verdicts[id] = cached.v
-            continue
+        if (cached) {
+            const ttl = cached.v === 'unknown' ? POST_VERDICT_UNKNOWN_TTL_MS : POST_VERDICT_TTL_MS
+            if (isFresh(cached.t, ttl, nowMs)) {
+                // A recent 'unknown' is paced, not returned: callers treat a
+                // missing verdict as unresolved
+                if (cached.v !== 'unknown') {
+                    verdicts[id] = cached.v
+                }
+                continue
+            }
         }
         toFetch.push(id)
     }
-    if (toFetch.length) {
-        await Promise.all(
-            toFetch.map(async id => {
-                try {
-                    // The permalink form when known: /comments/<id>/ 301s to
-                    // it, and a background fetch loses its solved challenge on
-                    // the redirect (see fetchAndClassifyAbsentItem). Whichever
-                    // route serves post pages, a challenge gets one solve.
-                    const permalink = authItemsMeta[id]?.permalink
-                    const url = permalink?.startsWith('/r/') ? newReddit + permalink : buildPostPageUrl(id)
-                    let html = await fetchHtml(url)
-                    let page = classifyPostPage(html, id)
-                    if (page.status === 'unknown') {
-                        const solutionUrl = solveChallenge(html, url)
-                        if (solutionUrl) {
-                            html = await fetchHtml(solutionUrl)
-                            page = classifyPostPage(html, id)
-                        }
-                    }
-                    verdicts[id] = page.status
-                    console.log(`[reveddit] post page verdict ${id}: ${page.status} (html ${html.length}b)`)
-                    if (page.status !== 'unknown') {
-                        cache[id] = { v: page.status, t: nowMs }
-                    }
-                } catch (err: any) {
-                    console.log(`[reveddit] post page fetch failed ${id}:`, String(err?.message || err))
-                    verdicts[id] = 'unknown'
-                }
-            }),
-        )
-        // Prune oldest entries and persist
-        const entries = Object.entries(cache).sort((a, b) => b[1].t - a[1].t)
+    // Paced like absent-item verification, and slower after a recent 429
+    const budget = computeAbsentVerifyBudget(await getMsSinceLastRateLimitHit())
+    const batch = toFetch.slice(0, Math.min(POST_VERIFY_MAX_PER_CYCLE, budget.maxPerCycle))
+    const wasAdverse = (id: string) => {
+        const c = cache[id]
+        return Boolean(c && (c.adverse || c.v === 'held' || c.v === 'removed'))
+    }
+    let fetched = 0
+    for (const id of batch) {
+        if (fetched > 0) {
+            await new Promise(r => setTimeout(r, budget.delayMs))
+        }
+        fetched++
+        try {
+            const verdict = await fetchAndClassifyItemPage(id, authItemsMeta[id] || {}, fetchHtml)
+            dlog('verify', `[reveddit] post page verdict ${id}: ${verdict}`)
+            cache[id] = { v: verdict, t: nowMs, ...(verdict === 'unknown' && wasAdverse(id) && { adverse: true }) }
+            if (verdict !== 'unknown') {
+                verdicts[id] = verdict
+            }
+        } catch (err: any) {
+            dlog('verify', `[reveddit] post page fetch failed ${id}:`, String(err?.message || err))
+            cache[id] = { v: 'unknown', t: nowMs, ...(wasAdverse(id) && { adverse: true }) }
+            if (noteRateLimited(err)) {
+                break
+            }
+        }
+    }
+    if (fetched) {
+        // Expired entries go first (an adverse one stays while there's room,
+        // since it decides whether a mature post is verified), then the oldest
+        const ttlOf = (e: PostVerdictEntry) => (e.v === 'unknown' ? POST_VERDICT_UNKNOWN_TTL_MS : POST_VERDICT_TTL_MS)
+        const entries = Object.entries(cache)
+            .filter(([, e]) => e.adverse || e.v === 'held' || e.v === 'removed' || isFresh(e.t, ttlOf(e), nowMs))
+            .sort((a, b) => b[1].t - a[1].t)
         cache = Object.fromEntries(entries.slice(0, POST_VERDICT_CACHE_MAX))
         try {
             await browser.storage.local.set({ [POST_VERDICT_CACHE_KEY]: cache })
@@ -692,10 +968,25 @@ export const ABSENT_VERIFY_UNAVAILABLE = 'absent_verify_unavailable'
 const ABSENT_VERIFY_FAILURES_KEY = 'absent_verify_consecutive_failures'
 const ABSENT_VERIFY_FAILURE_WARN_THRESHOLD = 5
 
+// Whether verification has resolved nothing for enough cycles to warn. A
+// processed monitoring pass clears error_status, and must keep this warning:
+// only a cycle that resolves a verdict clears it (recordAbsentVerifyOutcome).
+export const isAbsentVerifyUnavailable = async (): Promise<boolean> => {
+    try {
+        const stored = (await browser.storage.local.get({ [ABSENT_VERIFY_FAILURES_KEY]: 0 })) as any
+        return Number(stored[ABSENT_VERIFY_FAILURES_KEY] || 0) >= ABSENT_VERIFY_FAILURE_WARN_THRESHOLD
+    } catch {
+        return false
+    }
+}
+
 const recordAbsentVerifyOutcome = async (ok: boolean) => {
     try {
         if (ok) {
-            await browser.storage.local.remove(ABSENT_VERIFY_FAILURES_KEY)
+            const stored = (await browser.storage.local.get({ [ABSENT_VERIFY_FAILURES_KEY]: 0 })) as any
+            if (Number(stored[ABSENT_VERIFY_FAILURES_KEY] || 0) > 0) {
+                await browser.storage.local.remove(ABSENT_VERIFY_FAILURES_KEY)
+            }
             return
         }
         const stored = (await browser.storage.local.get({ [ABSENT_VERIFY_FAILURES_KEY]: 0 })) as any
@@ -729,7 +1020,9 @@ const isAbsentVerificationDisabled = (): Promise<boolean> =>
         })
         .catch(() => false)
 
-const fetchAndClassifyAbsentItem = async (
+// An item's own logged-out page, classified: for feed-absent items of either
+// kind, and for young feed-present posts (verifyFeedPresentPosts)
+const fetchAndClassifyItemPage = async (
     id: string,
     meta: AuthItemMeta,
     fetchHtml: FetchHtml,
@@ -754,6 +1047,13 @@ const fetchAndClassifyAbsentItem = async (
     }
     const classify = (html: string): PostPageStatus =>
         id.startsWith('t3_') ? classifyPostPage(html, id).status : classifyCommentPage(html, id, scaffoldAbsenceVerdict)
+    // A page that doesn't decide this item is a route the fetcher should move
+    // off (see FetchHtml). Judged on the page itself: a thread served without
+    // the comment is a real answer, even while the remote valve
+    // (MECHANISM_ABSENT_UNVERIFIED_UNKNOWN) turns its verdict into 'unknown'.
+    const readable = (html: string) =>
+        (id.startsWith('t3_') ? classifyPostPage(html, id).status : classifyCommentPage(html, id, 'removed')) !==
+        'unknown'
     // Comments: try the site's own /svc comment-tree partial first — same
     // classifier signals, a fraction of the page weight, and the route most
     // likely to stay readable for clients whose full permalink pages are
@@ -763,7 +1063,7 @@ const fetchAndClassifyAbsentItem = async (
         const partialUrl = buildCommentPartialUrl(meta.permalink, id)
         if (partialUrl) {
             try {
-                const partial = await fetchHtml(partialUrl)
+                const partial = await fetchHtml(partialUrl, readable)
                 const verdict = classifyCommentPage(partial, id, scaffoldAbsenceVerdict)
                 if (verdict !== 'unknown') {
                     return verdict
@@ -775,8 +1075,9 @@ const fetchAndClassifyAbsentItem = async (
                 )
             } catch (err: any) {
                 // A 429 on the partial is a real client-level signal even if
-                // the full-page fallback below happens to be served.
-                flagIfRateLimited(err)
+                // the full-page fallback below happens to be served. Only a
+                // 429: a 403 is about the route, which the fetcher moved off.
+                noteRateLimited(err)
                 dlog(
                     'verify',
                     `[reveddit] ${id} svc partial fetch failed, trying full page:`,
@@ -785,13 +1086,13 @@ const fetchAndClassifyAbsentItem = async (
             }
         }
     }
-    let html = await fetchHtml(url)
+    let html = await fetchHtml(url, readable)
     let verdict = classify(html)
     if (verdict === 'unknown') {
         const firstPage = describePageForDiag(html)
         const solutionUrl = solveChallenge(html, url)
         if (solutionUrl) {
-            html = await fetchHtml(solutionUrl)
+            html = await fetchHtml(solutionUrl, readable)
             verdict = classify(html)
             if (verdict === 'unknown') {
                 dlog(
@@ -833,7 +1134,7 @@ const legacyTiebreakAbsent = async (
     authItemsMeta: AuthItemsMeta = {},
 ): Promise<void> => {
     const unresolved = ids.filter(id => !(id in verdicts))
-    if (!unresolved.length || (await isLegacyDisabled())) {
+    if (!unresolved.length || (await isLegacyOff())) {
         return
     }
     const commentIds = unresolved.filter(id => id.startsWith('t1_'))
@@ -874,6 +1175,7 @@ const legacyTiebreakAbsent = async (
             }
         } catch (err: any) {
             dlog('legacy', '[reveddit] legacy comment tiebreak failed:', String(err?.message || err))
+            noteLegacyRefusal(err)
         }
     }
     let postFetches = 0
@@ -895,6 +1197,11 @@ const legacyTiebreakAbsent = async (
                 record(id, page.is_removed ? 'removed' : 'live')
             } else {
                 dlog('legacy', `[reveddit] legacy post tiebreak ${id}: no page${page?.error ? ` (${page.error})` : ''}`)
+                if (page?.status === 403) {
+                    // Refused: every legacy path rests, starting with the rest of this loop
+                    noteLegacyRefusal(new Error(`legacy reddit HTML request failed: 403`))
+                    break
+                }
             }
         } catch (err: any) {
             dlog('legacy', `[reveddit] legacy post tiebreak failed ${id}:`, String(err?.message || err))
@@ -929,7 +1236,7 @@ export const verifyFeedAbsentItems = async (
                     : cached.v === 'removed'
                       ? ABSENT_VERDICT_ADVERSE_TTL_MS
                       : ABSENT_VERDICT_UNKNOWN_TTL_MS
-            if (nowMs - cached.t < ttl) {
+            if (isFresh(cached.t, ttl, nowMs)) {
                 if (cached.v === 'unknown') {
                     // Recently confirmed unreadable — pace instead of retrying
                     // every cycle. Stays out of `verdicts` (callers treat it as
@@ -959,7 +1266,7 @@ export const verifyFeedAbsentItems = async (
         }
         fetched++
         try {
-            const verdict = await fetchAndClassifyAbsentItem(id, authItemsMeta[id] || {}, fetchHtml)
+            const verdict = await fetchAndClassifyItemPage(id, authItemsMeta[id] || {}, fetchHtml)
             dlog('verify', `[reveddit] absent item verdict ${id}: ${verdict}`)
             cache[id] = { v: verdict, t: nowMs }
             if (verdict !== 'unknown') {
@@ -968,10 +1275,16 @@ export const verifyFeedAbsentItems = async (
             }
         } catch (err: any) {
             dlog('verify', `[reveddit] absent item verification failed ${id}:`, String(err?.message || err))
-            // A 429 here must enter the shared backoff: without this, a
-            // rate-limited client burns the whole verification budget every
-            // cycle producing silent unknowns (no alert, no Paused banner).
-            flagIfRateLimited(err)
+            // Paced like an unreadable page. A wall on every route (the
+            // captcha, the block page) must not be retried every cycle.
+            cache[id] = { v: 'unknown', t: nowMs }
+            // A 429 enters the shared backoff and ends this cycle's checks:
+            // without this, a rate-limited client burns the whole verification
+            // budget every cycle producing silent unknowns (no alert, no
+            // Paused banner).
+            if (noteRateLimited(err)) {
+                break
+            }
         }
     }
     let cacheMutated = fetched > 0
@@ -1063,6 +1376,124 @@ const recordWwwDetectOutcome = async (ok: boolean, reason = '') => {
     }
 }
 
+// The logged-in user's profile is publicly empty or missing (the shadowban
+// signature), as the last lookup found it. The bridge reads it so reveddit.com
+// shows that user's own profile as logged-out visitors see it, not as their
+// login does.
+export const PUBLIC_PROFILE_UNAVAILABLE_KEY = 'public_profile_unavailable'
+const PUBLIC_PROFILE_UNAVAILABLE_MAX_AGE_MS = 24 * 3600 * 1000
+const notePublicProfileUnavailable = async (username: string | null) => {
+    try {
+        if (username) {
+            await browser.storage.local.set({ [PUBLIC_PROFILE_UNAVAILABLE_KEY]: { user: username, t: Date.now() } })
+            // None of the user's items shows logged out while the profile doesn't
+            await browser.storage.local.remove(getPublicLiveKey(username))
+        } else {
+            await browser.storage.local.remove(PUBLIC_PROFILE_UNAVAILABLE_KEY)
+        }
+    } catch {
+        /* ignored */
+    }
+}
+export const isPublicProfileUnavailable = async (username: string): Promise<boolean> => {
+    try {
+        const stored = ((await browser.storage.local.get({ [PUBLIC_PROFILE_UNAVAILABLE_KEY]: null })) as any)[
+            PUBLIC_PROFILE_UNAVAILABLE_KEY
+        ]
+        const age = Date.now() - Number(stored?.t)
+        return (
+            String(stored?.user || '').toLowerCase() === username.toLowerCase() &&
+            age >= 0 &&
+            age < PUBLIC_PROFILE_UNAVAILABLE_MAX_AGE_MS
+        )
+    } catch {
+        return false
+    }
+}
+
+// The shadowban signature, as one warning instead of N removal alerts. Thrown
+// (not returned) so the fallback chain doesn't run the legacy paths, and so
+// monitoring skips this cycle without clearing the warning. missing: the
+// profile is a 404 logged out, which the bridge then answers for it too; an
+// empty profile still exists, so the bridge keeps serving it.
+const reportPublicProfileShadowban = async (username: string, what: string, missing: boolean): Promise<never> => {
+    dlog('feed', `[reveddit] public profile for ${username} is ${what} - possible shadowban`)
+    await notePublicProfileUnavailable(missing ? username : null)
+    setWarningBadge(PROFILE_PUBLICLY_EMPTY)
+    throw new Error(PROFILE_PUBLICLY_EMPTY)
+}
+
+// A missing profile reads as a shadowban only while reddit serves a profile
+// known to exist: a 404 for every profile (a route or markup change, an
+// outage) would otherwise put every user behind the banner. A good answer is
+// remembered for 6 hours.
+const PROFILE_CONTROL_USER = 'reddit'
+const PROFILE_CONTROL_KEY = 'public_profile_control'
+const PROFILE_CONTROL_TTL_MS = 6 * 3600 * 1000
+const controlProfileLoads = async (fetchHtml: FetchHtml): Promise<boolean> => {
+    const now = Date.now()
+    try {
+        const stored = ((await browser.storage.local.get({ [PROFILE_CONTROL_KEY]: null })) as any)[PROFILE_CONTROL_KEY]
+        const age = now - Number(stored?.t || 0)
+        if (stored?.ok === true && age >= 0 && age < PROFILE_CONTROL_TTL_MS) {
+            return true
+        }
+    } catch {
+        /* ignored */
+    }
+    const control: PublicProfileData = await getPublicProfileItems(PROFILE_CONTROL_USER, fetchHtml, [], 0)
+    if (!control.valid) {
+        dlog(
+            'feed',
+            `[reveddit] control profile u/${PROFILE_CONTROL_USER} did not load: ${control.error || 'unrecognized'}`,
+        )
+        return false
+    }
+    try {
+        await browser.storage.local.set({ [PROFILE_CONTROL_KEY]: { ok: true, t: now } })
+    } catch {
+        /* ignored */
+    }
+    return true
+}
+
+// Consecutive lookups whose profile pagination stopped short of the items
+// monitoring needed (every route refused a partial page, a network error).
+// Items below where it stopped are omitted as unknown, so their removals go
+// unseen; a streak gets its own warning, kept at the end of a pass like
+// absent_verify_unavailable.
+export const PROFILE_PAGINATION_UNAVAILABLE = 'profile_pagination_unavailable'
+const PAGINATION_SHORTFALL_KEY = 'profile_pagination_consecutive_shortfalls'
+const PAGINATION_SHORTFALL_WARN_THRESHOLD = 5
+export const isProfilePaginationShort = async (): Promise<boolean> => {
+    try {
+        const stored = (await browser.storage.local.get({ [PAGINATION_SHORTFALL_KEY]: 0 })) as any
+        return Number(stored[PAGINATION_SHORTFALL_KEY] || 0) >= PAGINATION_SHORTFALL_WARN_THRESHOLD
+    } catch {
+        return false
+    }
+}
+const recordPaginationOutcome = async (stopped: string | undefined) => {
+    try {
+        const stored = (await browser.storage.local.get({ [PAGINATION_SHORTFALL_KEY]: 0 })) as any
+        const before = Number(stored[PAGINATION_SHORTFALL_KEY] || 0)
+        if (!stopped) {
+            if (before > 0) {
+                await browser.storage.local.remove(PAGINATION_SHORTFALL_KEY)
+            }
+            return
+        }
+        const shortfalls = before + 1
+        await browser.storage.local.set({ [PAGINATION_SHORTFALL_KEY]: shortfalls })
+        dlogSummary('feed', `[reveddit] profile pagination stopped short — consecutive lookups: ${shortfalls}`)
+        if (shortfalls >= PAGINATION_SHORTFALL_WARN_THRESHOLD) {
+            setWarningBadge(PROFILE_PAGINATION_UNAVAILABLE)
+        }
+    } catch {
+        /* ignored */
+    }
+}
+
 // Primary detection path: compare the requested (authenticated) ids against the
 // logged-out www.reddit.com profile. Present → not removed. Missing within the
 // paginated coverage window → removed. Missing below the window → status unknown,
@@ -1077,7 +1508,23 @@ export const lookupItemsByID_fromPublicProfile = async (
     const profile = await getPublicProfileItems(username, fetchHtml, ids)
     if (!profile.valid) {
         const reason = profile.error || 'unrecognized response'
+        // Both profile tabs are a 404 while the logged-in view lists items:
+        // logged out, the account doesn't exist, which is how a site-wide
+        // shadowban (or a suspension) looks. Same warning as an empty profile,
+        // once a profile known to exist still loads.
+        if (ids.length && /request failed: 404\b/.test(reason)) {
+            if (await controlProfileLoads(fetchHtml)) {
+                await recordWwwDetectOutcome(true)
+                return reportPublicProfileShadowban(username, 'missing (404)', true)
+            }
+            dlog('feed', `[reveddit] public profile for ${username} is a 404, but so is the control; not a shadowban`)
+        }
         await recordWwwDetectOutcome(false, reason)
+        // A 429 enters the shared backoff. Refusals don't touch the status:
+        // recordWwwDetectOutcome reports a persistent failure itself.
+        if (/request failed: 429/.test(reason)) {
+            flagIfRateLimited(new Error(reason))
+        }
         throw new Error(`www profile lookup invalid: ${reason}`)
     }
     await recordWwwDetectOutcome(true)
@@ -1098,22 +1545,13 @@ export const lookupItemsByID_fromPublicProfile = async (
             )
         } else {
             // The whole profile is publicly empty while the authenticated view has
-            // items — the shadowban signature. One dedicated warning instead of N
-            // removal alerts. Thrown (not returned) so the fallback chain doesn't
-            // run the legacy paths, and so monitoring skips this cycle without
-            // clearing the warning.
-            dlog('feed', `[reveddit] public profile for ${username} is empty - possible shadowban`)
-            setWarningBadge(PROFILE_PUBLICLY_EMPTY)
-            throw new Error(PROFILE_PUBLICLY_EMPTY)
+            // items — the shadowban signature
+            await reportPublicProfileShadowban(username, 'empty', false)
         }
     }
-    const postVerdicts = await verifyFeedPresentPosts(
-        ids,
-        new Set(profile.items.keys()),
-        authItemsMeta,
-        fetchHtml,
-        fetcher.viaTab,
-    )
+    await notePublicProfileUnavailable(null)
+    await recordPaginationOutcome(profile.paginationStopped)
+    const postVerdicts = await verifyFeedPresentPosts(ids, new Set(profile.items.keys()), authItemsMeta, fetchHtml)
     // Feed-absent items within coverage can be profile-hidden rather than
     // removed — verify against their own pages before concluding anything.
     // Skipped: auth-confirmed removals, and publicly-invisible classes whose
@@ -1143,6 +1581,11 @@ export const lookupItemsByID_fromPublicProfile = async (
     const absentVerdicts = absentToVerify.length
         ? await verifyFeedAbsentItems(absentToVerify, authItemsMeta, fetchHtml, canaryCommentIds)
         : {}
+    if (!absentToVerify.length) {
+        // Nothing absent needs a page verdict (or verification is off), so the
+        // "can't confirm removals" warning has nothing left to warn about
+        await recordAbsentVerifyOutcome(true)
+    }
     const results: { data: Record<string, any> }[] = []
     for (const id of ids) {
         const meta = authItemsMeta[id] || {}
@@ -1184,7 +1627,19 @@ export const lookupItemsByID_fromPublicProfile = async (
                     // No removal signal from any source → live. (verdict 'live',
                     // 'unknown', or unfetched: the auth view says not-removed and
                     // it's publicly visible, so treat as live and cache the body.)
-                    results.push({ data: { ...publicItem, is_robot_indexable: true, ...carried } })
+                    // A young post without a 'live' verdict may still be held or
+                    // spam-filtered, so the bridge isn't told it's publicly live.
+                    const young =
+                        meta.created_utc === undefined ||
+                        Math.floor(Date.now() / 1000) - meta.created_utc <= POST_FEED_GRACE_SECONDS
+                    results.push({
+                        data: {
+                            ...publicItem,
+                            is_robot_indexable: true,
+                            ...carried,
+                            ...(young && verdict !== 'live' && { _public_view_unverified: true }),
+                        },
+                    })
                 }
             }
         } else {
@@ -1247,9 +1702,10 @@ export const lookupItemsByID_fromPublicProfile = async (
         `[reveddit] www lookup ${username}: ${ids.length} requested, ${results.length} returned ` +
             `(${removedCount} removed, ${ids.length - results.length} omitted/uncovered), ` +
             `coverage t1=${profile.coverage.t1} t3=${profile.coverage.t3}, verdicts=${JSON.stringify(postVerdicts)}, ` +
-            // routes= names each kind of page's lead route when the lookup
-            // finished; "www route for ... is now" lines record any change.
-            `absentVerdicts=${JSON.stringify(absentVerdicts)}, routes=${JSON.stringify(fetcher.leads())}`,
+            // routes= names the route that last served each kind of page;
+            // "www route for ... is now" lines record any change.
+            `absentVerdicts=${JSON.stringify(absentVerdicts)}, routes=${JSON.stringify(fetcher.servedRoutes())}` +
+            (profile.paginationStopped ? `, ${profile.paginationStopped}` : ''),
     )
     return results
 }
@@ -1265,7 +1721,7 @@ const lookupItemsByID_legacy = (
     monitor_quarantined_remote: boolean,
     ids: string | string[],
 ) => {
-    return throwIfLegacyDisabled('legacy reddit HTML')
+    return throwIfLegacyOff('legacy reddit HTML')
         .then(() => getItemsById_fromOldHTML(ids, addToPendingPostQueue))
         .then(result => {
             clearRateLimitBackoff()
@@ -1273,12 +1729,13 @@ const lookupItemsByID_legacy = (
         })
         .catch(htmlError => {
             console.log('old.reddit.com HTML fallback failed:', htmlError.message)
+            noteLegacyRefusal(htmlError)
 
             // Second: try www.reddit.com JSON (sometimes works after rate-limit clears)
             const wwwUrl = www_reddit + path + '.json' + search
             const wwwOptions = { credentials: 'omit' as const }
 
-            return throwIfLegacyDisabled('www.reddit.com JSON')
+            return throwIfLegacyOff('www.reddit.com JSON')
                 .then(() => fetch(wwwUrl, wwwOptions))
                 .then(response => {
                     if (response.ok) {
@@ -1305,7 +1762,12 @@ const lookupItemsByID_legacy = (
                             monitor_quarantined,
                         )
                     } else {
-                        flagIfRateLimited(wwwError)
+                        // Only a 429 enters the backoff here. This chain runs
+                        // when the public view already failed, and its refusal
+                        // must not replace the status that failure reports.
+                        if (/request failed: 429/.test(String(wwwError?.message))) {
+                            flagIfRateLimited(wwwError)
+                        }
                         throw htmlError
                     }
                 })
@@ -1392,6 +1854,10 @@ export const lookupItemsByID_withFallback = (
             })
             .catch((authedError: Error) => {
                 console.log('authenticated api/info lookup failed:', authedError.message)
+                // A 429 on monitoring's own lookup enters the shared backoff
+                if (/request failed: 429/.test(String(authedError?.message))) {
+                    flagIfRateLimited(authedError)
+                }
                 return legacy()
             })
     }
@@ -1414,6 +1880,22 @@ export const lookupItemsByID_withFallback = (
                 )
             })
         })
+}
+
+// Whether the browser holds a reddit login, by the login cookie names
+// (getRemoteLoginCookies: the news feed's, in case reddit renames its session
+// cookie). Grace mode and the bridge ask.
+export const hasRedditLoginCookie = async (): Promise<boolean> => {
+    try {
+        for (const name of await getRemoteLoginCookies()) {
+            if (await browser.cookies.get({ url: 'https://www.reddit.com/', name })) {
+                return true
+            }
+        }
+    } catch {
+        // unreadable: no login known
+    }
+    return false
 }
 
 const cookieDetails_redditSession = { name: 'reddit_session', url: 'https://reddit.com' }

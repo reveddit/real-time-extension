@@ -1,7 +1,15 @@
 import { spawn, spawnSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getManifest, readPublishStatus, writePublishStatus, headCommit, extensionChangedSince } from './common.js';
+import {
+    getManifest,
+    readPublishStatus,
+    writePublishStatus,
+    headCommit,
+    extensionChangedSince,
+    assertCleanBuildInputs,
+    assertSameCodeForVersion,
+} from './common.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,15 +82,10 @@ async function main() {
     const { version } = getManifest();
     console.log(`\x1b[36m🚀 Starting Publish All for version ${version}...\x1b[0m\n`);
 
+    // Before the preflight, so a refusal comes at once (each store's build checks again)
+    assertCleanBuildInputs();
+    assertSameCodeForVersion();
     const status = readPublishStatus();
-    const already = stores.filter(s => status.published[s.name]).map(s => s.name);
-    if (already.length && status.commit && extensionChangedSince(status.commit)) {
-        console.error(
-            `\x1b[31m${already.join(', ')} already got ${version} from ${status.commit.slice(0, 7)}, and the extension's files have changed since.\x1b[0m\n` +
-            'Bump the version and add its VERSION HISTORY line, so every store gets the same code for one version.'
-        );
-        process.exit(1);
-    }
 
     runPreflight(status);
     // No upfront build: each publish script rebuilds its own production

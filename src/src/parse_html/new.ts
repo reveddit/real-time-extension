@@ -22,8 +22,9 @@
 //     /svc/shreddit/profiles/profile_posts-more-posts/new/?sort=new&after=...
 // - empty profiles show "u/<name> doesn't have any posts/comments yet"
 
-import { newReddit } from './common'
+import { newReddit, isRateLimitError } from './common'
 import { getChallengeConfig } from '../challenge-config'
+import { getMarkupConfig } from '../markup-config'
 
 export interface PublicItem {
     name: string
@@ -47,13 +48,20 @@ export interface PublicProfileData {
     // unknown and they must be omitted from results, not marked removed/approved.
     coverage: { t1: number; t3: number }
     error?: string
+    // Why pagination ended early, when a page past the first failed. The
+    // lookup stays valid with the coverage reached.
+    paginationStopped?: string
 }
 
 // Fetching is delegated so requests.ts can route through a www.reddit.com tab's
 // content script (same-origin, no challenge) or the background worker
 // (host_permissions CORS bypass; may hit the challenge). Must resolve to the
-// response body text; must reject or throw on network/HTTP failure.
-export type FetchHtml = (url: string) => Promise<string>
+// response body text; must reject or throw on network/HTTP failure. accept
+// says whether a page is one the caller can read: the fetcher counts any other
+// page (the front page served in place of a permalink, a shell, a challenge
+// shape the solver doesn't know) as its route being refused, and tries the
+// next route.
+export type FetchHtml = (url: string, accept?: (html: string) => boolean) => Promise<string>
 
 const THING_ID_REGEX = /\bthing-id="(t[13]_[a-z0-9]+)"/g
 const ACTION_ROW_REGEX = /<shreddit-comment-action-row\b([^>]*)>/g
@@ -62,8 +70,25 @@ const ATTR_REGEX = /([\w-]+)="([^"]*)"/g
 // Apostrophe in "doesn't" may be ', ’, or an HTML entity depending on encoding
 const EMPTY_STATE_REGEX = /have any (posts|comments) yet/i
 const CHALLENGE_REGEX = /js_challenge/
+// The captcha interstitial is a 200 titled "Reddit - Prove your humanity".
+// The page's first <title> must be exactly that, so neither a post titled
+// with the phrase nor a <title> further down (an SVG's) counts.
+const FIRST_TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
+const CAPTCHA_TITLE_REGEX = /^\s*(?:Reddit\s*-\s*)?Prove your humanity\s*$/i
+
+export const isCaptchaPage = (html: string): boolean => {
+    const title = html.match(FIRST_TITLE_REGEX)
+    return Boolean(title && CAPTCHA_TITLE_REGEX.test(title[1]))
+}
 
 export const fullnameValue = (fullname: string): number => parseInt(fullname.split('_')[1], 36)
+
+// Whether an element carries this id under any of the attribute names the
+// markup config lists. Any name, not the first one present: a feed-added name
+// can hold some other value on the same element. Own properties only, since a
+// configured name like 'constructor' would otherwise read Object's.
+const hasId = (attrs: Record<string, string>, names: string[], id: string): boolean =>
+    names.some(name => Object.prototype.hasOwnProperty.call(attrs, name) && attrs[name] === id)
 
 const parseAttrs = (tagAttrs: string): Record<string, string> => {
     const attrs: Record<string, string> = {}
@@ -173,7 +198,8 @@ const POST_TAG_REGEX = /<shreddit-post(?![\w-])([^>]*)>/g
 
 // postId is the fullname (t3_…), the form the element's id attribute carries
 export const classifyPostPage = (html: string, postId: string): PostPageResult => {
-    const postTag = [...html.matchAll(POST_TAG_REGEX)].find(m => parseAttrs(m[1])['id'] === postId)
+    const { postIdAttributes } = getMarkupConfig()
+    const postTag = [...html.matchAll(POST_TAG_REGEX)].find(m => hasId(parseAttrs(m[1]), postIdAttributes, postId))
     if (!postTag) {
         return { status: 'unknown' }
     }
@@ -277,11 +303,12 @@ export const classifyCommentPage = (
     commentId: string,
     scaffoldAbsence: 'removed' | 'unknown' = 'removed',
 ): CommentPageStatus => {
+    // Comment pages use thingId=, profile feeds thing-id=; the news feed can
+    // add names (markup-config.ts)
+    const { commentIdAttributes } = getMarkupConfig()
     for (const m of html.matchAll(COMMENT_TAG_REGEX)) {
         const attrs = parseAttrs(m[1])
-        // Comment pages use thingId=; profile feeds use thing-id=. Accept both
-        // in case the SSR attribute style changes.
-        if ((attrs['thingId'] || attrs['thing-id']) === commentId) {
+        if (hasId(attrs, commentIdAttributes, commentId)) {
             const author = attrs['author']
             if (!author) {
                 // Element matched but no author attribute: SSR structure changed.
@@ -293,10 +320,9 @@ export const classifyCommentPage = (
             return author.startsWith('[') ? 'removed' : 'live'
         }
     }
-    const servedForComment = [...html.matchAll(COMMENT_TREE_TAG_REGEX)].some(m => {
-        const attrs = parseAttrs(m[1])
-        return (attrs['thingId'] || attrs['thing-id']) === commentId
-    })
+    const servedForComment = [...html.matchAll(COMMENT_TREE_TAG_REGEX)].some(m =>
+        hasId(parseAttrs(m[1]), commentIdAttributes, commentId),
+    )
     return servedForComment ? scaffoldAbsence : 'unknown'
 }
 
@@ -313,6 +339,11 @@ export const classifyCommentPage = (
 // returns the real profile page (thing-ids + cursors) from a challenged IP.
 // Field names and the puzzle regex come from challenge-config.ts (defaults
 // there; overridable from the news feed).
+// A URL solveChallenge produced: the same challenge in answer to one means the
+// route rejected the solve
+const SOLVED_CHALLENGE_PARAM = /[?&]js_challenge=1(&|$)/
+export const isSolvedChallengeUrl = (url: string): boolean => SOLVED_CHALLENGE_PARAM.test(url)
+
 export const solveChallenge = (html: string, originalUrl: string): string | null => {
     if (!CHALLENGE_REGEX.test(html)) {
         return null
@@ -373,7 +404,7 @@ export const describePageForDiag = (html: string): string => {
     // keeps either way. (challenge= is a plain substring test: full pages
     // embed "js_challenge" incidentally, so only the solver's puzzle regexes
     // prove a real one.)
-    const wall = /Prove your humanity/i.test(title) ? ' wall=captcha' : ''
+    const wall = isCaptchaPage(html) ? ' wall=captcha' : ''
     // A page whose only job is a script redirect, as the API's comment
     // permalinks came back on 2026-10-17 (see buildCommentThreadUrl). Tagged
     // rather than logging the target, whose path names the thread.
@@ -403,6 +434,17 @@ interface TabResult {
     floor: number
     // Why the tab is invalid, for the diagnostic log
     error?: string
+    // Why pagination stopped before reaching what was needed
+    stopped?: string
+}
+
+// A pagination fragment the fetcher should accept: one with items, or the
+// small empty fragment that can end a profile (no items, no cursor, not a
+// whole page). Anything else counts against the route.
+const EMPTY_FRAGMENT_MAX_BYTES = 4096
+const isPartialPageFor = (typePrefix: string) => (h: string) => {
+    const p = parseProfileHtml(h, typePrefix)
+    return p.hasItems || (p.cursor === null && !/<html\b/i.test(h) && h.length < EMPTY_FRAGMENT_MAX_BYTES)
 }
 
 const fetchTab = async (
@@ -416,8 +458,13 @@ const fetchTab = async (
     const items = new Map<string, PublicItem>()
     const invalid = (error: string): TabResult => ({ items, valid: false, emptyState: false, floor: Infinity, error })
 
+    const isProfilePage = (h: string) => {
+        const p = parseProfileHtml(h, typePrefix)
+        return p.hasItems || p.emptyState
+    }
+    const isPartialPage = isPartialPageFor(typePrefix)
     const url = buildTabUrl(username, tab)
-    let html = await fetchHtml(url)
+    let html = await fetchHtml(url, isProfilePage)
     let page = parseProfileHtml(html, typePrefix)
     if (!page.hasItems && !page.emptyState) {
         // Not recognizable — try the challenge solver once, then give up
@@ -425,7 +472,7 @@ const fetchTab = async (
         if (!solutionUrl) {
             return invalid(`${tab} page unrecognized: ${describePageForDiag(html)}`)
         }
-        html = await fetchHtml(solutionUrl)
+        html = await fetchHtml(solutionUrl, isProfilePage)
         page = parseProfileHtml(html, typePrefix)
         if (!page.hasItems && !page.emptyState) {
             return invalid(`${tab} page unrecognized after challenge solve: ${describePageForDiag(html)}`)
@@ -454,8 +501,21 @@ const fetchTab = async (
         floor = decodeCursorValue(cursor) ?? Infinity
     }
     let partialPages = 0
+    let stopped: string | undefined
     while (cursor !== null && partialPages < maxPartialPages && neededValues.some(v => v < floor)) {
-        const partialHtml = await fetchHtml(buildPartialUrl(username, tab, cursor))
+        let partialHtml: string
+        try {
+            partialHtml = await fetchHtml(buildPartialUrl(username, tab, cursor), isPartialPage)
+        } catch (err: any) {
+            // A 429 means the client is rate limited, and the caller must back
+            // off. Anything else (every route refused, a network failure) only
+            // ends the pagination: what the first pages showed still stands.
+            if (isRateLimitError(err)) {
+                throw err
+            }
+            stopped = `${tab} pagination stopped: ${String(err?.message || err).slice(0, 160)}`
+            break
+        }
         const partialPage = parseProfileHtml(partialHtml, typePrefix)
         if (!partialPage.hasItems) {
             // Partial pages have no empty-state message; a page with no items
@@ -471,7 +531,7 @@ const fetchTab = async (
         // Enumerated to the end of the profile — everything is covered
         floor = 0
     }
-    return { items, valid: true, emptyState: page.emptyState, floor }
+    return { items, valid: true, emptyState: page.emptyState, floor, ...(stopped && { stopped }) }
 }
 
 // Fetch the public (logged-out) view of a user's profile: the comments and
@@ -489,27 +549,47 @@ export const getPublicProfileItems = async (
             .filter(id => id.startsWith(prefix))
             .map(fullnameValue)
             .filter(Number.isFinite)
+    const failed = (error: string): PublicProfileData => ({
+        items: new Map(),
+        valid: false,
+        emptyProfile: false,
+        coverage: { t1: Infinity, t3: Infinity },
+        error,
+    })
     try {
-        const [comments, posts] = await Promise.all([
+        const [commentsResult, postsResult] = await Promise.allSettled([
             fetchTab(username, 'comments', fetchHtml, neededValues('t1_'), maxPartialPages),
             fetchTab(username, 'posts', fetchHtml, neededValues('t3_'), maxPartialPages),
         ])
+        if (commentsResult.status === 'rejected' || postsResult.status === 'rejected') {
+            const why = (r: PromiseSettledResult<TabResult>) =>
+                r.status === 'rejected' ? String(r.reason?.message || r.reason) : ''
+            const is404 = (r: PromiseSettledResult<TabResult>) => /request failed: 404\b/.test(why(r))
+            // The first failing tab's message, as callers and the diagnostic
+            // log read it. A missing profile 404s on both tabs; one tab's 404
+            // says something about that tab, so its message loses the shape
+            // callers read as the shadowban signature. A 429 keeps its shape
+            // for the backoff.
+            const error = why(commentsResult.status === 'rejected' ? commentsResult : postsResult)
+            if (is404(commentsResult) && is404(postsResult)) {
+                return failed(error)
+            }
+            return failed(error.replace(/request failed: 404\b/g, 'answered 404 (the other tab did not)'))
+        }
+        const comments = commentsResult.value
+        const posts = postsResult.value
         const items = new Map([...comments.items, ...posts.items])
         const error = comments.error || posts.error
+        const paginationStopped = [comments.stopped, posts.stopped].filter(Boolean).join('; ')
         return {
             items,
             valid: comments.valid && posts.valid,
             emptyProfile: comments.emptyState && posts.emptyState && items.size === 0,
             coverage: { t1: comments.floor, t3: posts.floor },
             ...(error && { error }),
+            ...(paginationStopped && { paginationStopped }),
         }
     } catch (error: any) {
-        return {
-            items: new Map(),
-            valid: false,
-            emptyProfile: false,
-            coverage: { t1: Infinity, t3: Infinity },
-            error: String(error?.message || error),
-        }
+        return failed(String(error?.message || error))
     }
 }

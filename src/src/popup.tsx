@@ -456,7 +456,7 @@ function Popup() {
       setPendingProgress(prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null)
     })
 
-    // News feed: opportunistically refresh (6h throttled) then read top unread.
+    // News feed: opportunistically refresh (at most hourly, MIN_FETCH_INTERVAL_MS) then read top unread.
     fetchNews().finally(() => {
       getUnreadMessages().then(unread => {
         setNewsMessage(unread[0] || null)
@@ -745,6 +745,17 @@ function Popup() {
                   ⚠ Reddit isn&apos;t letting the extension confirm whether missing content was removed, so
                   some removals can&apos;t be detected. Keeping a www.reddit.com tab open usually restores
                   this. If it keeps up, copy the diagnostic log from options and report it.
+                </MessageBanner>
+                <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
+                  Open www.reddit.com
+                </ActionBtn>
+              </>
+            ) : errorStatus === 'profile_pagination_unavailable' ? (
+              <>
+                <MessageBanner variant="warning">
+                  ⚠ Reddit stopped loading the older pages of your public profile, so removals of your older
+                  posts and comments can&apos;t be checked right now. Keeping a www.reddit.com tab open usually
+                  restores this.
                 </MessageBanner>
                 <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
                   Open www.reddit.com

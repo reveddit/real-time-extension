@@ -100,8 +100,9 @@ ws.onopen = async () => {
         }
         console.log(lines.map(l => l.slice(11, 23) + ' ' + l.slice(24).replace('[log] [reveddit] ', '')).join('\n'))
         const { local = {} } = await dev({ action: 'dev-get-storage' }, page)
-        if (local.www_tab_refused_at) {
-            console.log(`tab refused at ${new Date(local.www_tab_refused_at).toISOString()} (the background leads for 6h)`)
+        // Per page kind: refused routes and when each rests until, and the route that last served
+        if (local.www_routes_v2) {
+            console.log('route state:', JSON.stringify(local.www_routes_v2))
         }
     } catch (e) {
         console.error('ERROR', e.message)

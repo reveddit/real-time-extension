@@ -90,14 +90,17 @@ import browser from 'webextension-polyfill'
             return pageContextFetch(url, publicViewInit(isWwwRouteCache(message.cache) ? message.cache : 'default'))
                 .then(response => {
                     if (!response.ok) {
-                        throw new Error(`www.reddit.com request failed: ${response.status}`)
+                        throw Object.assign(new Error(`www.reddit.com request failed: ${response.status}`), {
+                            status: response.status,
+                        })
                     }
                     return response.text()
                 })
                 .then(html => ({ success: true, html }))
                 .catch(error => {
                     console.log('Content script fetch-www-profile-public error:', error)
-                    return { success: false, error: error.message }
+                    // status 0: no HTTP answer (network error)
+                    return { success: false, error: error.message, status: Number(error?.status) || 0 }
                 })
         }
     }
@@ -113,9 +116,23 @@ import browser from 'webextension-polyfill'
         // Version for the website (e.g. /update-help): Firefox has no
         // externally_connectable, so the page can read this instead.
         window.localStorage.setItem('notifierExtensionVersion', browser.runtime.getManifest().version)
-        window.addEventListener('message', (e: MessageEvent) => {
+        // A content script left behind by an extension update or reload can't
+        // reach the background any more. It stops answering, so the page gets
+        // the new script's answer instead of a refusal from the old one.
+        const extensionAlive = () => {
+            try {
+                return Boolean(chrome.runtime?.id)
+            } catch {
+                return false
+            }
+        }
+        const onBridgeRequest = (e: MessageEvent) => {
             const d: any = e.data
             if (e.source !== window || !d || d.type !== 'reveddit-bridge-request' || typeof d.id !== 'number') {
+                return
+            }
+            if (!extensionAlive()) {
+                window.removeEventListener('message', onBridgeRequest)
                 return
             }
             Promise.resolve(browser.runtime.sendMessage({ action: 'bridge-fetch', url: d.url }))
@@ -132,13 +149,18 @@ import browser from 'webextension-polyfill'
                         window.location.origin,
                     )
                 })
-        })
-        // Dev builds: test scripts on the localhost site reach the background's
-        // dev actions through here, as Chrome pages do directly.
-        if (__DEV__ && window.location.hostname === 'localhost') {
-            window.addEventListener('message', (e: MessageEvent) => {
+        }
+        window.addEventListener('message', onBridgeRequest)
+        // Dev builds: test scripts on the local website (localhost:8080) reach
+        // the background's dev actions through here, as Chrome pages do directly.
+        if (__DEV__ && window.location.origin === 'http://localhost:8080') {
+            const onDevRequest = (e: MessageEvent) => {
                 const d: any = e.data
                 if (e.source !== window || !d || d.type !== 'reveddit-dev-request' || typeof d.id !== 'number') {
+                    return
+                }
+                if (!extensionAlive()) {
+                    window.removeEventListener('message', onDevRequest)
                     return
                 }
                 Promise.resolve(browser.runtime.sendMessage({ action: 'dev-relay', message: d.message }))
@@ -149,7 +171,8 @@ import browser from 'webextension-polyfill'
                             window.location.origin,
                         )
                     })
-            })
+            }
+            window.addEventListener('message', onDevRequest)
         }
     }
     browser.runtime.onMessage.addListener(queryUser as any)
