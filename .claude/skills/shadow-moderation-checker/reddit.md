@@ -6,6 +6,7 @@ Measurements, not facts. Each line ends with the date it was verified or, where 
 
 - Authors see their own removed comments as live everywhere they look: profile, thread and API. That covers moderator, AutoModerator and spam-filter removals. Sitewide shadowbans still happen too; don't repeat the claim that Reddit ended them in 2015. (2026-10-17)
 - Other logged-in users see a removed item as `[removed]`. Reddit hides only your own removals from you, so a logged-in read of `/api/info` is a fair check for items the user didn't write, unless the user moderates that subreddit (see the moderators line below). (2026-07-13)
+- From one home IP, Reddit answered `/api/info` from the extension's background with the 190 KB block page in every form tried: `api/info.json` with the user's login and without, and the legacy `/api/info?id=` HTML, in every fetch cache mode. Profile, about, thread, subreddit and item pages still loaded the same way. Not yet checked from another network. (2026-10-24)
 - Posts: the author's view sometimes shows the removal, as `is_robot_indexable: false` or a `removed_by_category` value. Trust it when present. For held and spam-filtered posts, `is_robot_indexable` stays `true` for about 24 hours. (2026-07-13)
 - Moderators see removed items in their subreddits with the text intact and `removed: true` or `banned_by` set (verified on r/pushshift, 2026-10-17). The code also reads `spam: true` as a spam-filter removal; that one wasn't checked that day.
 - Send `Accept-Language: en`, and treat a comment as removed when its author starts with "[", which works in any language. (2026-07-13)
@@ -30,7 +31,7 @@ Measurements, not facts. Each line ends with the date it was verified or, where 
 
 ## Fetch paths
 
-The extension reads logged-out pages either from a www.reddit.com tab, through its content script, or from its background. `getWwwHtmlFetcher` in requests.ts picks the leading path and falls back.
+The extension reads logged-out pages either from a www.reddit.com tab, through its content script, or from its background. `getWwwHtmlFetcher` in requests.ts tries routes, a path plus a fetch cache mode, in order and remembers which ones Reddit refused.
 
 - **The JS challenge.** A request that doesn't look like the page's own gets a challenge page instead: a string-doubling puzzle and a token in a hidden form, which any browser passes by running the page's script. On 2026-08-31 the token field was renamed from `token` to `jsc_token`, with a new `jsc_orig_r` field, and the solved request must echo each field under its own name or Reddit serves the challenge again. The rename silently stopped every public-profile check until a release. The field names and the puzzle's pattern now live in [challenge-config.ts](../../../src/src/challenge-config.ts) and can be overridden from the news feed. (2026-09-03)
 - **What each path got** (2026-10-17):
@@ -44,29 +45,32 @@ The extension reads logged-out pages either from a www.reddit.com tab, through i
   | Logged-out HTML from a www.reddit.com tab | 403 since about 2026-09-14, from the content script and from a script in the page's main world | the page's own fetch (`content.fetch`): 200, no challenge. The content script's `fetch()`: challenge, then 403 |
   | The same with `cache: 'reload'` | not tested | "Prove your humanity" captcha, in both cycles tried |
 
+- **2026-10-21, Chrome: reversed in the background.** `cache: 'reload'` got the 403 on every solved page, `/svc` partial and legacy request, while `no-store`, `default` and `no-cache` read real pages. In the tab, `default` got the 403 or the captcha, and `no-cache` and `reload` read real pages. On the wire, Chrome's `default` and `no-store` send no cache headers, `no-cache` sends `Cache-Control: max-age=0`, and `reload` sends `Pragma` and `Cache-Control: no-cache`. Firefox follows the Fetch spec, under which `no-store` sends the same headers as `reload`. (2026-10-21)
 - **The block page** is Reddit's "network security" page, about 190 KB, sent with a 403. Each challenge was fresh, so the no-cache effect isn't a stale cache; `cache: 'reload'` adds `Pragma: no-cache` and `Cache-Control: no-cache`. Only the background sends no-cache, since on a tab it brought the captcha. (2026-10-17)
 - **Why Firefox's tab differs:** a Firefox content script's default `fetch` is privileged, so Reddit sees an extension request, with no tab and no Referer. `content.fetch` is the page's own fetch: same-origin, with a Referer. (2026-10-17)
 - **Headless Chromium** got the captcha wall and no `loid` cookie, so it can't stand in for a real browser. (2026-10-17)
 - old.reddit.com and sh.reddit.com tabs can't help: their content scripts' fetches to www.reddit.com are cross-origin and blocked. (2026-07-13)
 - Each extension update or reinstall orphans the content scripts in open tabs ("Receiving end does not exist"). Inject the fetch with `scripting.executeScript` instead (2026-08-14). In Firefox, call it as `browser.scripting`, because `chrome.*` there takes callbacks and returns undefined (2026-10-17).
 
-Together: the leading path gets one retry through the other on a 403, and a refused tab hands the lead to the background for 6 hours. With that, Chrome read 100 of 100 items and found 7 removals, and Firefox read 27 of 27 and found 3, through both paths. (version 0.0.5.24, 2026-10-17)
+In 0.0.5.24 the leading path got one retry through the other on a 403, and a refused tab handed the lead to the background for 6 hours. With that, Chrome read 100 of 100 items and found 7 removals, and Firefox read 27 of 27 and found 3, through both paths. (version 0.0.5.24, 2026-10-17) After the 2026-10-21 reversal, 0.0.5.25 kept sending `reload` from the background and failed every lookup (reveddit/reveddit#27).
 
-Young posts still in the feed are checked on their own pages only while the tab path leads. In Chrome, where the tab is refused, a held post therefore shows only through the author's-view fields. That rule predates the no-cache background fetch and may be worth revisiting. (2026-10-17)
+So no route is fixed any more. Each fetch tries the routes in order, and a refused route rests, per kind of page: 6 hours after a 403, 30 minutes after a captcha, a network error or a page the caller can't read. The news feed can reorder and skip the routes for each browser (`www_route_order`; 0.0.5.26 read a single list as `www_routes`) without a release, though never drop the last background route. A page counts as served only when the caller can read it, so a renamed challenge field or an unrecognized page moves the fetch on instead of passing for a success. (0.0.5.27, 2026-10-22)
+
+Young posts still in the feed are checked on their own pages, at most 10 per cycle, with unreadable answers cached for 30 minutes. Before 0.0.5.27 they were checked only while the tab path led, so in Chrome a held post showed only through the author's-view fields. (2026-10-22)
 
 ## Monitoring in brief (0.0.5.24)
 
 - **Cycle:** every minute by default, one at a time, with up to 10 seconds of jitter.
 - **Items missing from the feed:** checked on their own pages, the lighter route first. Up to 20 per cycle, 500 ms apart, halved and spaced twice as far for an hour after a 429. Verdicts are cached for 6 hours if live, 2 hours if removed, and 30 minutes if held or unknown.
-- **When the public profile fails:** a legacy chain takes over. Comments are checked every cycle, and posts go to a pending queue that checks each one at most 3 times.
+- **When the public profile fails:** a legacy chain takes over. Comments are checked every cycle, and posts go to a pending queue that checks each one at most 3 times. After a real 403 from it, every legacy path rests for 6 hours (0.0.5.27).
 - **Alerts:** a removal alerts after 3 to 5 consecutive removed verdicts (the count is drawn again each time the background starts), and a reinstatement after 2 live ones by default.
 - **Warnings** after 5 consecutive failed cycles: `public_view_unavailable`, `absent_verify_unavailable`, `logged_in_view_unavailable`. `profile_publicly_empty` is the account-wide shadowban signature.
 
 ## The website bridge
 
-reveddit.com pages can fetch Reddit JSON through the extension ([bridge.ts](../../../src/src/bridge.ts)). By October every logged-out fetch of that kind got the 403, so since 0.0.5.24 the bridge sends the user's own Reddit login, and refuses with `not_logged_in` when there isn't one. `toPublicView` then rewrites the answer to what logged-out visitors see. Items the extension's monitoring has confirmed removed are marked removed, and so are items carrying moderator-view flags (`removed`, `spam`, `banned_by`). The gap: the user's own removed items that monitoring hasn't seen, beyond its newest ~130 per subscribed user, still look live through the bridge. (2026-10-17)
+reveddit.com pages can fetch Reddit JSON through the extension ([bridge.ts](../../../src/src/bridge.ts)). By October every logged-out fetch of that kind got the 403, so since 0.0.5.24 the bridge sends the user's own Reddit login, and refuses with `not_logged_in` when there isn't one. `toPublicView` then rewrites the answer to what logged-out visitors see. Items the extension's monitoring has confirmed removed are marked removed, and so are items carrying moderator-view flags (`removed`, `spam`, `banned_by`). The gap: the user's own removed items that monitoring hasn't seen, beyond its newest ~130 per subscribed user, still look live through the bridge. (2026-10-17) Since 0.0.5.27 the user's other own items carry `reveddit_unverified` unless monitoring's last pass saw them in the logged-out view, items by authors who blocked the user (`[unavailable]`) carry `reveddit_viewer_blocked`, fields only a logged-in viewer gets are set to their logged-out values, and the user's own profile answers 404 while monitoring sees the shadowban signature. The website still has to show those flags. (2026-10-22)
 
-Also worth copying: a closed list of allowed paths, not a URL proxy; requests wait up to 6 seconds for a running monitoring cycle and share its 429 backoff; and at most 100 requests per 10 minutes, halved for an hour after a 429. (2026-10-17)
+Also worth copying: a closed list of allowed paths, not a URL proxy; requests wait up to 6 seconds for a running monitoring cycle and share its 429 backoff; and at most 100 requests per 10 minutes, halved for an hour after a 429. (2026-10-17) Every answer arrives within 9 seconds, inside the page's 10-second timeout. A bridge that sends the user's login must check who is asking: in Firefox any extension can message another one, and a content-script relay must refuse private windows and containers, whose cookies aren't the ones the background sends. Paths whose answer depends on the viewer (`/user/me`, `r/mod`, `r/friends`, a mod log without the publicmodlogs feed) are refused. (0.0.5.27, 2026-10-22)
 
 ## Rate limits
 
