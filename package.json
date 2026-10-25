@@ -65,6 +65,7 @@
     "publish:firefox:text": "node scripts/publishing/publish-firefox.js --text-only",
     "publish:edge": "yarn preflight && node scripts/publishing/publish-edge.js",
     "publish:all": "node scripts/publishing/publish-all.js",
+    "publish:log": "node scripts/publishing/publish-log.js",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write 'src/**/*.{js,ts,html,css}'",

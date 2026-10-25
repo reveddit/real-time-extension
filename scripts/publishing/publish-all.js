@@ -9,6 +9,7 @@ import {
     extensionChangedSince,
     assertCleanBuildInputs,
     assertSameCodeForVersion,
+    logPublishEvent,
 } from './common.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -113,6 +114,12 @@ async function main() {
         }
     }
     if (aborted) return;
+    logPublishEvent({
+        event: 'publish:all finished',
+        published: stores.map(s => s.name).filter(name => readPublishStatus().published[name]),
+        ...(failed.length && { failed }),
+        ...(unconfirmed.length && { unconfirmed }),
+    });
 
     if (!failed.length && !unconfirmed.length) {
         console.log(`\n\x1b[32m✔ All browsers have ${version}!\x1b[0m`);

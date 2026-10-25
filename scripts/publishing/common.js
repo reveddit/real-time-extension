@@ -41,6 +41,9 @@ export function getManifest() {
  * @param {string} buildScript - The yarn script to run (e.g. "build-chrome")
  */
 export function buildFresh(buildScript) {
+    // Every store script builds here right before it uploads, so this is
+    // where its run starts counting in the publish log
+    trackRun(buildScript.replace(/^build-/, ''));
     assertCleanBuildInputs();
     // Here too, so a standalone `yarn publish:<store>` can't give a store
     // other code under a version another store already has
@@ -165,6 +168,7 @@ export function assertCleanBuildInputs() {
         console.warn('\x1b[33mWarning: publishing uncommitted changes (PUBLISH_ALLOW_DIRTY)\x1b[0m');
         return;
     }
+    failureReason = 'uncommitted changes';
     console.error(
         '\x1b[31mThe extension has uncommitted or untracked changes:\x1b[0m\n' +
         git('status', '--short', '--', ...BUILD_INPUTS).out + '\n' +
@@ -182,6 +186,7 @@ export function assertSameCodeForVersion() {
     const already = Object.keys(status.published);
     if (!already.length) return;
     if (status.dirty) {
+        failureReason = 'another store has this version from uncommitted files';
         console.error(
             `\x1b[31m${already.join(', ')} got ${status.version} from uncommitted files (PUBLISH_ALLOW_DIRTY), so the other stores can't be given the same code.\x1b[0m\n` +
             'Bump the version and add its VERSION HISTORY line.'
@@ -189,6 +194,7 @@ export function assertSameCodeForVersion() {
         process.exit(1);
     }
     if (status.commit && extensionChangedSince(status.commit)) {
+        failureReason = 'another store has this version from other code';
         console.error(
             `\x1b[31m${already.join(', ')} already got ${status.version} from ${status.commit.slice(0, 7)}, and the extension's files have changed since.\x1b[0m\n` +
             'Bump the version and add its VERSION HISTORY line, so every store gets the same code for one version.'
@@ -217,7 +223,42 @@ export function writePublishStatus(status) {
  * this once its store has it, whether or not publish-all started it.
  * @param {string} store - "chrome", "edge" or "firefox"
  */
+/**
+ * Every publish action, appended and never rewritten, in .publish-log.jsonl
+ * (gitignored). .publish-status.json resets with each version; this is the
+ * history of what went to which store and when. `yarn publish:log` prints it.
+ */
+const LOG_FILE = path.join(process.cwd(), '.publish-log.jsonl');
+let publishedThisRun = false;
+let failureReason = '';
+
+export function logPublishEvent(event) {
+    try {
+        const { version } = getManifest();
+        const entry = { at: new Date().toISOString(), version, commit: headCommit().slice(0, 7), ...event };
+        fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + '\n');
+    } catch (e) {
+        // A publish never stops for its log
+    }
+}
+
+/**
+ * Log a store's run: its start now, and on exit whether it published, failed,
+ * was aborted, or exited without the store confirming.
+ * @param {string} store - "chrome", "edge" or "firefox"
+ */
+export function trackRun(store) {
+    logPublishEvent({ store, event: 'started' });
+    process.on('exit', code => {
+        if (publishedThisRun) return;
+        const event = code === 0 ? 'unconfirmed' : code === 130 ? 'aborted' : 'failed';
+        logPublishEvent({ store, event, exitCode: code, ...(failureReason && { reason: failureReason }) });
+    });
+}
+
 export function markPublished(store) {
+    publishedThisRun = true;
+    logPublishEvent({ store, event: 'published' });
     const status = readPublishStatus();
     status.commit = status.commit || status.built?.commit || headCommit();
     if (status.built?.dirty || buildInputsDirty()) status.dirty = true;
