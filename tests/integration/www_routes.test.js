@@ -20,7 +20,7 @@ import {
     getRemoteWwwRouteOrder,
     getRemoteLoginCookies,
     NEWS_CACHE_KEY,
-    LEGACY_REFUSED_UNTIL_KEY,
+    CAPABILITY_REST_KEY,
     applyRemoteConfig,
 } from '../../src/src/news'
 import { getPublicModlogsFeed, setPublicModlogsFeed, DEFAULT_PUBLICMODLOGS_FEED } from '../../src/src/bridge-config'
@@ -204,15 +204,20 @@ describe('0.0.5.27 review fixes: the news feed', () => {
             {},
             {
                 [NEWS_CACHE_KEY]: { feed: { messages: [], options: { mechanisms: {} } }, lastFetched: 1 },
-                [LEGACY_REFUSED_UNTIL_KEY]: until,
+                [CAPABILITY_REST_KEY]: {
+                    legacy: { refusals: 2, until, since: 1 },
+                    api_info: { refusals: 1, until, since: 1 },
+                },
             },
         )
         serveFeed({ options: { mechanisms: {} } })
         await fetchNews({ force: true })
-        expect(__getLocalStorage()[LEGACY_REFUSED_UNTIL_KEY]).toBe(until)
+        expect(__getLocalStorage()[CAPABILITY_REST_KEY].legacy.until).toBe(until)
         serveFeed({ options: { mechanisms: {}, legacy_host: 'old.reddit.com' } })
         await fetchNews({ force: true })
-        expect(__getLocalStorage()[LEGACY_REFUSED_UNTIL_KEY]).toBeUndefined()
+        expect(__getLocalStorage()[CAPABILITY_REST_KEY].legacy).toBeUndefined()
+        // other methods' rests stay
+        expect(__getLocalStorage()[CAPABILITY_REST_KEY].api_info.until).toBe(until)
     })
 
     it('a well-formed publicmodlogs_feed replaces the token, also after a worker restart', async () => {

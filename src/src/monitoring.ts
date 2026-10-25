@@ -7,6 +7,9 @@ import {
     LoginDetectResult,
     storeRedditCookies,
     isLegacyOff,
+    noteLegacyRefusal,
+    noteCapabilityWorked,
+    FOLLOWED_POST_IDS_KEY,
     flagIfRateLimited,
     isAbsentVerifyUnavailable,
     ABSENT_VERIFY_UNAVAILABLE,
@@ -56,6 +59,7 @@ import {
     LocalStorageItem,
     ChangeForStorage,
     setWarningBadge,
+    getFullIDsFromURL,
 } from './common'
 import browser from 'webextension-polyfill'
 import { getPost_fromOld } from './parse_html/old'
@@ -109,11 +113,20 @@ const getOldestDateThreshold = (thing: string, isUser: boolean) => {
     return browser.storage.local.get({ [key]: null }).then(result => result[key])
 }
 
+// A post's data from its thread's JSON (api/info.json is refused, 2026-10-24)
 const fetchItemFromApiInfo = async (id: string) => {
     try {
-        const response = await fetch(`https://www.reddit.com/api/info.json?id=${id}`)
+        const response = await fetch(
+            `https://www.reddit.com/comments/${id.replace(/^t3_/, '')}.json?limit=1&raw_json=1`,
+            {
+                credentials: 'include',
+                cache: 'no-cache',
+                headers: { 'Accept-Language': 'en' },
+            },
+        )
         const json = await response.json()
-        return json.data.children[0].data
+        const data = json?.[0]?.data?.children?.[0]?.data
+        return data?.name === id ? data : null
     } catch {
         return null
     }
@@ -164,7 +177,15 @@ const processPendingPosts = async (storage: Record<string, any>) => {
 
         try {
             const postPath = '/comments/' + postId.substring(3) + '/'
-            const result = await getPost_fromOld(postPath)
+            const result: any = await getPost_fromOld(postPath)
+            if (result?.status === 403) {
+                // Refused: every legacy path rests, and this queue waits for it
+                await noteLegacyRefusal(new Error('legacy reddit HTML request failed: 403'))
+                break
+            }
+            if (result && 'is_removed' in result) {
+                await noteCapabilityWorked('legacy')
+            }
 
             if (result && 'is_removed' in result && result.is_removed) {
                 const itemData = await fetchItemFromApiInfo(postId)
@@ -223,6 +244,19 @@ const processPendingPosts = async (storage: Record<string, any>) => {
 }
 
 export const setCurrentStateForId = (id: string, subscribedFromURL: string) => {
+    // A followed comment's post, from the URL it was followed on: while
+    // api/info rests, the comment is read through its thread, which needs it
+    const [urlPostId, urlCommentId] = getFullIDsFromURL(subscribedFromURL || '')
+    if (id.startsWith('t1_') && urlPostId && (!urlCommentId || urlCommentId === id)) {
+        browser.storage.local
+            .get({ [FOLLOWED_POST_IDS_KEY]: {} })
+            .then((res: any) =>
+                browser.storage.local.set({
+                    [FOLLOWED_POST_IDS_KEY]: { ...res[FOLLOWED_POST_IDS_KEY], [id]: urlPostId.replace(/^t3_/, '') },
+                }),
+            )
+            .catch(() => {})
+    }
     let subscribedFrom = SUBSCRIBED_FROM_REDDIT
     if (subscribedFromURL.match(/^https:\/\/www.reveddit.com/)) {
         subscribedFrom = SUBSCRIBED_FROM_REVEDDIT

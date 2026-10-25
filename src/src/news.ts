@@ -363,10 +363,11 @@ export const getRemoteWwwRouteOrder = async (): Promise<WwwRouteOrderOption> => 
 const COOKIE_NAME = /^[A-Za-z0-9_.-]{1,64}$/
 export const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList(raw, COOKIE_NAME, 4)
 
-// When a legacy path was refused, every legacy request rests for a while
-// (requests.ts isLegacyResting). Kept here so a feed change to the legacy host
-// or switch can end the rest at once: the new setting deserves a try.
-export const LEGACY_REFUSED_UNTIL_KEY = 'legacy_refused_until'
+// Methods reddit refused outright rest for a while, longer with each refusal
+// in a row (requests.ts noteCapabilityRefused), keyed by name ('legacy',
+// 'api_info'). Kept here so a feed change to the legacy host or switch can end
+// the legacy rest at once: the new setting deserves a try.
+export const CAPABILITY_REST_KEY = 'capability_rest'
 
 // The login cookie names (requests.ts hasRedditLoginCookie): the feed's, else reddit_session
 export const getRemoteLoginCookies = async (): Promise<string[]> => {
@@ -494,7 +495,13 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
             (before?.legacy_host !== sanitized.options?.legacy_host ||
                 before?.mechanisms?.[MECHANISM_LEGACY] !== mechanisms[MECHANISM_LEGACY])
         ) {
-            chrome.storage.local.remove(LEGACY_REFUSED_UNTIL_KEY)
+            chrome.storage.local.get([CAPABILITY_REST_KEY], res => {
+                const rests = { ...(res?.[CAPABILITY_REST_KEY] || {}) }
+                if (rests.legacy) {
+                    delete rests.legacy
+                    chrome.storage.local.set({ [CAPABILITY_REST_KEY]: rests })
+                }
+            })
         }
         dlog(
             'news',

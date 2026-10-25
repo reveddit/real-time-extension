@@ -3,6 +3,7 @@ import {
     addToPendingPostQueue,
     removeMultipleFromPendingPostQueue,
     getPublicLiveKey,
+    getLocalStorageItems,
     recordRateLimitHit,
     clearRateLimitBackoff,
     getMsSinceLastRateLimitHit,
@@ -38,7 +39,7 @@ import {
     MECHANISM_ME_CHALLENGE,
     getRemoteWwwRouteOrder,
     getRemoteLoginCookies,
-    LEGACY_REFUSED_UNTIL_KEY,
+    CAPABILITY_REST_KEY,
 } from './news'
 import { isWwwRoute, parseWwwRoute, wwwRouteOrder, WwwRoute, WwwRouteCache } from './www-routes'
 
@@ -78,24 +79,81 @@ export const throwIfLegacyDisabled = async (label: string) => {
     }
 }
 
-// A real 403 from the legacy endpoints (not the simulated one above) means
-// reddit refused them, as it did in every cache mode on 2026-10-21. Every
-// legacy path then rests for LEGACY_REFUSAL_MEMORY_MS instead of spending
-// guaranteed-refused requests each cycle; the remote option legacyOldReddit
-// 'off' stops them for good.
-export { LEGACY_REFUSED_UNTIL_KEY }
-export const LEGACY_REFUSAL_MEMORY_MS = 6 * 3600 * 1000
-export const isLegacyResting = async (): Promise<boolean> => {
+// Methods reddit can refuse outright with its block page: the legacy HTML
+// paths (refused in every cache mode on 2026-10-21) and api/info.json (refused
+// everywhere tried on 2026-10-24). A refused method rests, and each refusal in
+// a row doubles the rest, up to a week. A blocked method then costs almost
+// nothing, yet is tried again at least weekly, in case reddit restores it; one
+// success ends the rest. Nothing gives up for good. (The remote option
+// legacyOldReddit 'off' is the switch that stops the legacy paths outright.)
+export { CAPABILITY_REST_KEY }
+export type RestingCapability = 'legacy' | 'api_info'
+export const CAPABILITY_FIRST_REST_MS = 6 * 3600 * 1000
+export const CAPABILITY_MAX_REST_MS = 7 * 24 * 3600 * 1000
+interface CapabilityRest {
+    // refusals in a row
+    refusals: number
+    until: number
+    // when the first of them came
+    since: number
+}
+export const capabilityRestMs = (refusals: number): number =>
+    Math.min(CAPABILITY_FIRST_REST_MS * 2 ** Math.max(0, refusals - 1), CAPABILITY_MAX_REST_MS)
+const readCapabilityRests = async (): Promise<Partial<Record<RestingCapability, CapabilityRest>>> => {
     try {
-        const until = Number(
-            ((await browser.storage.local.get({ [LEGACY_REFUSED_UNTIL_KEY]: 0 })) as any)[LEGACY_REFUSED_UNTIL_KEY],
-        )
-        // Held to the memory's length, in case the clock was set back
-        return until > Date.now() && until - Date.now() <= LEGACY_REFUSAL_MEMORY_MS
+        return ((await browser.storage.local.get({ [CAPABILITY_REST_KEY]: {} })) as any)[CAPABILITY_REST_KEY] || {}
     } catch {
-        return false
+        return {}
     }
 }
+export const isCapabilityResting = async (capability: RestingCapability): Promise<boolean> => {
+    const left = Number((await readCapabilityRests())[capability]?.until) - Date.now()
+    // Held to the longest rest, in case the clock was set back
+    return left > 0 && left <= CAPABILITY_MAX_REST_MS
+}
+const hoursText = (ms: number) => `${Math.round(ms / 3600000)} h`
+export const noteCapabilityRefused = async (capability: RestingCapability, why: string) => {
+    try {
+        const rests = await readCapabilityRests()
+        const now = Date.now()
+        const before = rests[capability]
+        // Already resting: a path that doesn't honor the rest (a restore the
+        // user started) adds no refusal; only the tries the rest allows count
+        if (before && before.until > now) {
+            return
+        }
+        const refusals = (before?.refusals || 0) + 1
+        const restMs = capabilityRestMs(refusals)
+        rests[capability] = { refusals, until: now + restMs, since: before?.since || now }
+        await browser.storage.local.set({ [CAPABILITY_REST_KEY]: rests })
+        dlogSummary(
+            'cycle',
+            `[reveddit] ${capability} refused (${why}): resting ${hoursText(restMs)}, ` +
+                `refusal ${refusals} in a row since ${new Date(rests[capability]!.since).toISOString()}`,
+        )
+    } catch {
+        /* ignored */
+    }
+}
+export const noteCapabilityWorked = async (capability: RestingCapability) => {
+    try {
+        const rests = await readCapabilityRests()
+        const before = rests[capability]
+        if (!before) {
+            return
+        }
+        delete rests[capability]
+        await browser.storage.local.set({ [CAPABILITY_REST_KEY]: rests })
+        dlogSummary(
+            'cycle',
+            `[reveddit] ${capability} works again, after ${before.refusals} refusals since ${new Date(before.since).toISOString()}`,
+        )
+    } catch {
+        /* ignored */
+    }
+}
+
+export const isLegacyResting = (): Promise<boolean> => isCapabilityResting('legacy')
 // Off for now: disabled (dev switch, remote option, build), or resting after a
 // refusal. Monitoring and page views honor both; a restore or profile scan the
 // user started honors only the switch.
@@ -103,15 +161,17 @@ export const isLegacyOff = async (): Promise<boolean> => (await isLegacyDisabled
 export const throwIfLegacyOff = async (label: string) => {
     await throwIfLegacyDisabled(label)
     if (await isLegacyResting()) {
-        throw new Error(`${label} skipped: refused within the last ${LEGACY_REFUSAL_MEMORY_MS / 3600000} h`)
+        throw new Error(`${label} skipped: resting after reddit refused it`)
     }
 }
 
-export const noteLegacyRefusal = (err: any) => {
+// A real 403 (not the simulated one above) rests every legacy path
+export const noteLegacyRefusal = (err: any): Promise<void> => {
     const message = String(err?.message || err)
     if (/request failed: 403\b/.test(message) && !message.includes('legacy endpoints disabled')) {
-        browser.storage.local.set({ [LEGACY_REFUSED_UNTIL_KEY]: Date.now() + LEGACY_REFUSAL_MEMORY_MS }).catch(() => {})
+        return noteCapabilityRefused('legacy', 'HTTP 403')
     }
+    return Promise.resolve()
 }
 
 // Only a 429 is rate limiting. A 403 is a block (challenge page, structural
@@ -1155,6 +1215,9 @@ const legacyTiebreakAbsent = async (
                 }
             }
             const canaryRendered = canaryCommentIds.some(id => byName[id])
+            if (canaryRendered) {
+                await noteCapabilityWorked('legacy')
+            }
             // The "healthy call, zero items" case was invisible in issue #14's
             // log — it must be distinguishable from "tiebreak resolved things".
             dlogSummary(
@@ -1195,11 +1258,12 @@ const legacyTiebreakAbsent = async (
             const page = (await _legacyLookups.postByPath(path)) as any
             if (page && !page.error) {
                 record(id, page.is_removed ? 'removed' : 'live')
+                await noteCapabilityWorked('legacy')
             } else {
                 dlog('legacy', `[reveddit] legacy post tiebreak ${id}: no page${page?.error ? ` (${page.error})` : ''}`)
                 if (page?.status === 403) {
                     // Refused: every legacy path rests, starting with the rest of this loop
-                    noteLegacyRefusal(new Error(`legacy reddit HTML request failed: 403`))
+                    await noteLegacyRefusal(new Error(`legacy reddit HTML request failed: 403`))
                     break
                 }
             }
@@ -1725,6 +1789,7 @@ const lookupItemsByID_legacy = (
         .then(() => getItemsById_fromOldHTML(ids, addToPendingPostQueue))
         .then(result => {
             clearRateLimitBackoff()
+            noteCapabilityWorked('legacy')
             return result
         })
         .catch(htmlError => {
@@ -1785,12 +1850,128 @@ const lookupItemsByID_legacy = (
 const OTHER_APIINFO_CHUNK = 100
 const OTHER_APIINFO_CHUNK_DELAY_MS = 1000
 
+// A JSON read with the user's login from the background, the way the bridge
+// reads: no-cache first (only Cache-Control: max-age=0 goes out), and one more
+// try in the default mode when reddit's edge answers with its block page, the
+// HTML 403 (a resource's own 403 is JSON).
+const LOGGED_IN_JSON_CACHE_MODES: RequestCache[] = ['no-cache', 'default']
+interface LoggedInJson {
+    ok: boolean
+    status: number
+    blocked: boolean
+    json?: any
+}
+const fetchJsonLoggedIn = async (url: string): Promise<LoggedInJson> => {
+    let blocked: LoggedInJson = { ok: false, status: 0, blocked: false }
+    for (const cache of LOGGED_IN_JSON_CACHE_MODES) {
+        let response: Response
+        try {
+            response = await fetch(url, { credentials: 'include', cache, headers: { 'Accept-Language': 'en' } })
+        } catch {
+            return { ok: false, status: 0, blocked: false }
+        }
+        if (response.status === 403 && !/json/i.test(response.headers.get('content-type') || '')) {
+            blocked = { ok: false, status: 403, blocked: true }
+            continue
+        }
+        if (!response.ok) {
+            return { ok: false, status: response.status, blocked: false }
+        }
+        try {
+            return { ok: true, status: response.status, blocked: false, json: await response.json() }
+        } catch {
+            return { ok: false, status: response.status, blocked: false }
+        }
+    }
+    return blocked
+}
+
+// While api/info rests, each followed item is read through its thread's JSON,
+// which carries the fields api/info had (body [removed] or [deleted],
+// removed_by_category, is_robot_indexable, locked): a comment through its
+// permalink, where it comes first, a post through its thread. One request per
+// item, so a few per cycle, oldest-checked first: 100 followed items take
+// about 20 cycles to go round. An item not read this cycle is left out of the
+// result, which monitoring reads as no news. A comment's post id comes from
+// the URL it was followed from (setCurrentStateForId) or from the item cache.
+export const FOLLOWED_CHECKED_AT_KEY = 'followed_checked_at'
+export const FOLLOWED_POST_IDS_KEY = 'followed_post_ids'
+const FOLLOWED_THREAD_CHECKS_PER_CYCLE = 5
+const FOLLOWED_THREAD_DELAY_MS = 700
+export const _followedTiming = { delayMs: FOLLOWED_THREAD_DELAY_MS }
+
+const lookupFollowedItemsByThread = async (ids: string[]): Promise<any[]> => {
+    let checkedAt: Record<string, number> = {}
+    let postIds: Record<string, string> = {}
+    let cached: Record<string, any> = {}
+    try {
+        const stored = (await browser.storage.local.get({
+            [FOLLOWED_CHECKED_AT_KEY]: {},
+            [FOLLOWED_POST_IDS_KEY]: {},
+        })) as any
+        checkedAt = stored[FOLLOWED_CHECKED_AT_KEY] || {}
+        postIds = stored[FOLLOWED_POST_IDS_KEY] || {}
+        cached = ((await getLocalStorageItems('other', false)) as any) || {}
+    } catch {
+        /* ignored */
+    }
+    const postOf = (id: string): string | undefined =>
+        id.startsWith('t3_') ? id.slice(3) : postIds[id] || cached[id]?.p || undefined
+    const readable = ids.filter(id => postOf(id))
+    const noPost = ids.length - readable.length
+    readable.sort((a, b) => (checkedAt[a] || 0) - (checkedAt[b] || 0))
+    const batch = readable.slice(0, FOLLOWED_THREAD_CHECKS_PER_CYCLE)
+    const results: { data: any }[] = []
+    let note = ''
+    for (const [i, id] of batch.entries()) {
+        if (i > 0 && _followedTiming.delayMs > 0) {
+            await new Promise(r => setTimeout(r, _followedTiming.delayMs))
+        }
+        const post = postOf(id)!
+        const isPost = id.startsWith('t3_')
+        const url = isPost
+            ? `${www_reddit}comments/${post}.json?limit=1&raw_json=1`
+            : `${www_reddit}comments/${post}/_/${id.slice(3)}.json?limit=1&depth=1&raw_json=1`
+        const r = await fetchJsonLoggedIn(url)
+        if (r.status === 429) {
+            flagIfRateLimited(new Error('www.reddit.com request failed: 429'))
+            note = ', stopped on a 429'
+            break
+        }
+        checkedAt[id] = Date.now()
+        const data = isPost ? r.json?.[0]?.data?.children?.[0]?.data : r.json?.[1]?.data?.children?.[0]?.data
+        if (r.ok && data?.name === id) {
+            results.push({ data })
+        }
+    }
+    // Only followed items keep a slot
+    const keep = new Set(ids)
+    for (const id of Object.keys(checkedAt)) {
+        if (!keep.has(id)) delete checkedAt[id]
+    }
+    try {
+        await browser.storage.local.set({ [FOLLOWED_CHECKED_AT_KEY]: checkedAt })
+    } catch {
+        /* ignored */
+    }
+    dlogSummary(
+        'cycle',
+        `[reveddit] followed items through their threads (api/info resting): ${results.length} of ${batch.length} read` +
+            note +
+            (noPost ? `, ${noPost} comments with no known post skipped` : ''),
+    )
+    return results
+}
+
 const lookupOtherItemsByID_authed = async (ids: string[], auth: any, monitor_quarantined: boolean) => {
     const useOAuth = auth && auth !== NO_AUTH
     if (!useOAuth) {
         // Put the user's harvested session back in the cookie jar so credentials
         // 'include' yields the authenticated view (mirrors lookupItemsByLoggedInUserWithAuth).
         await rehydrateStoredRedditCookies()
+        if (await isCapabilityResting('api_info')) {
+            return lookupFollowedItemsByThread(ids)
+        }
     }
     const children: any[] = []
     for (let i = 0; i < ids.length; i += OTHER_APIINFO_CHUNK) {
@@ -1801,16 +1982,15 @@ const lookupOtherItemsByID_authed = async (ids: string[], auth: any, monitor_qua
             // getFetchParams returns [url, auth] here, so the spread is well-formed.
             batch = await fetch_forReddit(...getFetchParams('api/info', search, auth, false), monitor_quarantined)
         } else {
-            const response = await fetch(`${www_reddit}api/info.json${search}`, {
-                credentials: 'include',
-                cache: 'reload',
-                headers: { 'Accept-Language': 'en' },
-            })
-            if (!response.ok) {
-                throw new Error(`authenticated api/info request failed: ${response.status}`)
+            const r = await fetchJsonLoggedIn(`${www_reddit}api/info.json${search}`)
+            if (r.blocked) {
+                await noteCapabilityRefused('api_info', 'block page')
+                return lookupFollowedItemsByThread(ids)
             }
-            const json = await response.json()
-            batch = json?.data?.children
+            if (!r.ok) {
+                throw new Error(`authenticated api/info request failed: ${r.status}`)
+            }
+            batch = r.json?.data?.children
         }
         if (!Array.isArray(batch)) {
             // fetch_forReddit swallows its own errors (returns undefined); treat any
@@ -1821,6 +2001,9 @@ const lookupOtherItemsByID_authed = async (ids: string[], auth: any, monitor_qua
         if (i + OTHER_APIINFO_CHUNK < ids.length) {
             await new Promise(r => setTimeout(r, OTHER_APIINFO_CHUNK_DELAY_MS))
         }
+    }
+    if (!useOAuth) {
+        await noteCapabilityWorked('api_info')
     }
     return children
 }

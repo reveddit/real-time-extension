@@ -17,8 +17,14 @@ import {
     isPublicProfileUnavailable,
     isLegacyResting,
     noteLegacyRefusal,
-    LEGACY_REFUSED_UNTIL_KEY,
-    LEGACY_REFUSAL_MEMORY_MS,
+    CAPABILITY_REST_KEY,
+    CAPABILITY_MAX_REST_MS,
+    CAPABILITY_FIRST_REST_MS,
+    capabilityRestMs,
+    isCapabilityResting,
+    noteCapabilityRefused,
+    noteCapabilityWorked,
+    _followedTiming,
     isProfilePaginationShort,
 } from '../../src/src/requests'
 import { getDiagEntries } from '../../src/src/diaglog'
@@ -574,7 +580,7 @@ describe('legacy refusal memory', () => {
         // the HTML request; the JSON one behind it rests already
         expect(legacyCalls()).toBe(1)
         await expect(lookup()).rejects.toThrow(
-            /legacy fallback: legacy reddit HTML skipped: refused within the last 6 h$/,
+            /legacy fallback: legacy reddit HTML skipped: resting after reddit refused it$/,
         )
         expect(legacyCalls()).toBe(1)
         // neither is reported as rate limiting or a block: the public view's failure is what reports
@@ -587,8 +593,10 @@ describe('legacy refusal memory', () => {
         expect(await isLegacyResting()).toBe(false)
     })
 
-    it('a rest recorded further ahead than the memory lasts (a clock set back) is ignored', async () => {
-        __getLocalStorage()[LEGACY_REFUSED_UNTIL_KEY] = Date.now() + 4 * LEGACY_REFUSAL_MEMORY_MS
+    it('a rest recorded further ahead than the longest rest (a clock set back) is ignored', async () => {
+        __getLocalStorage()[CAPABILITY_REST_KEY] = {
+            legacy: { refusals: 1, until: Date.now() + 4 * CAPABILITY_MAX_REST_MS, since: Date.now() },
+        }
         expect(await isLegacyResting()).toBe(false)
     })
 })
@@ -787,5 +795,133 @@ describe('0.0.5.27 review fixes: feed-present post verification', () => {
         const entry = __getLocalStorage().www_post_page_verdicts.t3_young1
         expect(entry.v).toBe('unknown')
         expect(entry.adverse).toBe(true)
+    })
+})
+
+// Methods reddit refuses outright rest longer with each refusal in a row, up to
+// a week, and are tried again after every rest: none is given up for good.
+describe('the escalating rest after a refusal', () => {
+    beforeEach(() => __resetStorage())
+
+    it('doubles from 6 hours to a weekly cap', () => {
+        const hours = [1, 2, 3, 4, 5, 6, 7, 20].map(n => capabilityRestMs(n) / 3600000)
+        expect(hours).toEqual([6, 12, 24, 48, 96, 168, 168, 168])
+        expect(capabilityRestMs(1)).toBe(CAPABILITY_FIRST_REST_MS)
+    })
+
+    it('escalates only on tries the rest allowed, and one success ends it', async () => {
+        await noteCapabilityRefused('api_info', 'block page')
+        expect(await isCapabilityResting('api_info')).toBe(true)
+        // a refusal while resting (a path that ignores the rest) adds nothing
+        await noteCapabilityRefused('api_info', 'block page')
+        expect(__getLocalStorage()[CAPABILITY_REST_KEY].api_info.refusals).toBe(1)
+        // the rest runs out, the next try is refused: twice as long
+        __getLocalStorage()[CAPABILITY_REST_KEY].api_info.until = Date.now() - 1000
+        expect(await isCapabilityResting('api_info')).toBe(false)
+        await noteCapabilityRefused('api_info', 'block page')
+        const rest = __getLocalStorage()[CAPABILITY_REST_KEY].api_info
+        expect(rest.refusals).toBe(2)
+        expect(rest.until - Date.now()).toBeGreaterThan(2 * CAPABILITY_FIRST_REST_MS - 5000)
+        await noteCapabilityWorked('api_info')
+        expect(__getLocalStorage()[CAPABILITY_REST_KEY].api_info).toBeUndefined()
+        expect(await isCapabilityResting('api_info')).toBe(false)
+    })
+})
+
+// Followed items (other people's posts and comments the user tracks) were
+// read 100 at a time through api/info.json, which reddit refuses since
+// 2026-10-24. While it rests, each is read through its thread's JSON.
+describe('followed items while api/info is refused', () => {
+    const COMMENT = 't1_folc1'
+    const COMMENT2 = 't1_folc2'
+    const NOPOST = 't1_folc3'
+    const POSTF = 't3_folp1'
+    const json = (status, data, type = 'application/json; charset=UTF-8') => ({
+        ok: status >= 200 && status < 300,
+        status,
+        headers: { get: name => (name.toLowerCase() === 'content-type' ? type : null) },
+        json: async () => data,
+        text: async () => JSON.stringify(data),
+    })
+    const blockPage = () => json(403, null, 'text/html; charset=utf-8')
+    const thread = (post, comment) => [
+        { kind: 'Listing', data: { children: [{ kind: 't3', data: post }] } },
+        { kind: 'Listing', data: { children: comment ? [{ kind: 't1', data: comment }] : [] } },
+    ]
+    let calls
+    const serve = ({ apiInfo }) => {
+        calls = []
+        globalThis.fetch = async url => {
+            const u = String(url)
+            calls.push(u)
+            if (u.includes('/api/info.json')) return apiInfo()
+            if (u.includes(`/comments/p1/_/folc1.json`))
+                return json(200, thread({ name: 't3_p1' }, { name: COMMENT, author: '[deleted]', body: '[removed]' }))
+            if (u.includes(`/comments/p2/_/folc2.json`))
+                return json(200, thread({ name: 't3_p2' }, { name: COMMENT2, author: 'someone', body: 'still here' }))
+            if (u.includes(`/comments/folp1.json`))
+                return json(
+                    200,
+                    thread({ name: POSTF, author: 'someone', is_robot_indexable: false, selftext: '[removed]' }),
+                )
+            throw new Error(`unexpected url: ${u}`)
+        }
+    }
+    const lookupFollowed = ids => lookupItemsByID(ids, 'none', false, false, [], '', {})
+    beforeEach(() => {
+        __resetStorage({}, { followed_post_ids: { [COMMENT]: 'p1', [COMMENT2]: 'p2' } })
+        stubLegacy()
+        _followedTiming.delayMs = 0
+    })
+    afterEach(() => {
+        Object.assign(_legacyLookups, originalLegacyLookups)
+        _followedTiming.delayMs = 700
+    })
+
+    it('a block page rests api/info and reads each followed item through its thread instead', async () => {
+        serve({ apiInfo: blockPage })
+        const results = await lookupFollowed([COMMENT, COMMENT2, POSTF, NOPOST])
+        const byId = Object.fromEntries(results.map(r => [r.data.name, r.data]))
+        expect(byId[COMMENT].body).toBe('[removed]')
+        expect(byId[COMMENT2].body).toBe('still here')
+        expect(byId[POSTF].is_robot_indexable).toBe(false)
+        // a comment with no known post can't be read this way: no news, no false removal
+        expect(byId[NOPOST]).toBeUndefined()
+        expect(await isCapabilityResting('api_info')).toBe(true)
+
+        // the next cycle doesn't ask api/info while it rests
+        calls.length = 0
+        await lookupFollowed([COMMENT, COMMENT2, POSTF])
+        expect(calls.some(u => u.includes('/api/info.json'))).toBe(false)
+    })
+
+    it('reads a few per cycle, the ones read longest ago first', async () => {
+        serve({ apiInfo: blockPage })
+        const ids = [COMMENT, COMMENT2, POSTF]
+        const many = Array.from({ length: 8 }, (_, i) => `t3_x${i}`)
+        globalThis.fetch = (orig => async url => {
+            const m = String(url).match(/comments\/(x\d)\.json/)
+            if (m) return json(200, thread({ name: `t3_${m[1]}`, author: 'someone' }))
+            return orig(url)
+        })(globalThis.fetch)
+        const first = await lookupFollowed([...ids, ...many])
+        expect(first).toHaveLength(5)
+        const second = await lookupFollowed([...ids, ...many])
+        const firstIds = new Set(first.map(r => r.data.name))
+        expect(second.some(r => firstIds.has(r.data.name))).toBe(false)
+    })
+
+    it('once the rest runs out and api/info answers again, the rest ends', async () => {
+        serve({ apiInfo: blockPage })
+        await lookupFollowed([COMMENT])
+        __getLocalStorage()[CAPABILITY_REST_KEY].api_info.until = Date.now() - 1000
+        serve({
+            apiInfo: () =>
+                json(200, { data: { children: [{ kind: 't1', data: { name: COMMENT, body: 'x', author: 'a' } }] } }),
+        })
+        const results = await lookupFollowed([COMMENT])
+        expect(results.map(r => r.data.name)).toEqual([COMMENT])
+        expect(await isCapabilityResting('api_info')).toBe(false)
+        expect(__getLocalStorage()[CAPABILITY_REST_KEY].api_info).toBeUndefined()
     })
 })
