@@ -567,7 +567,7 @@ describe('legacy refusal memory', () => {
         Object.assign(_legacyLookups, originalLegacyLookups)
     })
 
-    it('after a real 403, every legacy request rests instead of being refused again each cycle', async () => {
+    it('after a real 403, the legacy listing rests instead of being refused again each cycle', async () => {
         const calls = []
         globalThis.fetch = async url => {
             calls.push(String(url))
@@ -575,7 +575,9 @@ describe('legacy refusal memory', () => {
         }
         const lookup = () => lookupItemsByID([GONE], 'none', false, false, [], USER, { [GONE]: meta(GONE) })
         await expect(lookup()).rejects.toThrow(/legacy fallback: legacy reddit HTML request failed: 403$/)
-        expect(await isLegacyResting()).toBe(true)
+        expect(await isLegacyResting('legacy_info')).toBe(true)
+        // the legacy pages answer separately and keep going
+        expect(await isLegacyResting()).toBe(false)
         const legacyCalls = () => calls.filter(u => u.includes('api/info')).length
         // the HTML request; the JSON one behind it rests already
         expect(legacyCalls()).toBe(1)

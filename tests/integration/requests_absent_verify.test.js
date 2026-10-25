@@ -822,7 +822,7 @@ describe('0.0.5.27 review fixes: fetcher and verification loops', () => {
 })
 
 describe('0.0.5.27 review fixes: legacy paths', () => {
-    it('a 403 on a legacy post page ends the tiebreak and rests every legacy path', async () => {
+    it('a 403 on a legacy post page ends the tiebreak and rests the legacy pages', async () => {
         _legacyLookups.postByPath = vi.fn(async () => ({
             error: 'legacy reddit HTML request failed: 403',
             status: 403,
@@ -843,5 +843,36 @@ describe('0.0.5.27 review fixes: legacy paths', () => {
         expect(isLegacyPageUrl('https://www.reddit.com/comments/a/?sort=new&rv_legacy=1&x=2')).toBe(true)
         expect(isLegacyPageUrl('https://www.reddit.com/user/x/?rv_legacy=10')).toBe(false)
         expect(isLegacyPageUrl('https://www.reddit.com/user/x/?xrv_legacy=1')).toBe(false)
+    })
+})
+
+describe('legacy listing and legacy pages rest apart', () => {
+    // seen in Firefox on 2026-10-25: reddit refused the /api/info listing while
+    // the post pages answered, and one shared rest made each undo the other
+    it('a refused listing keeps resting when a post page answers in the same cycle', async () => {
+        _legacyLookups.commentsById = vi.fn(async () => {
+            throw new Error('legacy reddit HTML request failed: 403')
+        })
+        _legacyLookups.postByPath = vi.fn(async () => ({ is_removed: false }))
+        await verifyFeedAbsentItems(
+            ['t1_a', 't3_b'],
+            {},
+            vi.fn(async () => SHELL_HTML),
+            ['t1_canary'],
+        )
+        expect(await isLegacyResting('legacy_info')).toBe(true)
+        expect(await isLegacyResting()).toBe(false)
+        // the next cycle skips the listing but still reads post pages
+        _legacyLookups.commentsById.mockClear()
+        _legacyLookups.postByPath.mockClear()
+        __getLocalStorage().www_absent_item_verdicts = {}
+        await verifyFeedAbsentItems(
+            ['t1_a', 't3_b'],
+            {},
+            vi.fn(async () => SHELL_HTML),
+            ['t1_canary'],
+        )
+        expect(_legacyLookups.commentsById).not.toHaveBeenCalled()
+        expect(_legacyLookups.postByPath).toHaveBeenCalled()
     })
 })

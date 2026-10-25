@@ -79,15 +79,19 @@ export const throwIfLegacyDisabled = async (label: string) => {
     }
 }
 
-// Methods reddit can refuse outright with its block page: the legacy HTML
-// paths (refused in every cache mode on 2026-10-21) and api/info.json (refused
-// everywhere tried on 2026-10-24). A refused method rests, and each refusal in
+// Methods reddit can refuse outright with its block page, each resting on its
+// own: 'api_info' (api/info.json with the user's login, refused everywhere
+// tried on 2026-10-24), 'legacy_info' (the legacy /api/info HTML listing,
+// refused with it) and 'legacy' (the legacy user and post pages, which still
+// answered then). One kind's refusal says nothing about another's, so they
+// don't share a rest. A refused method rests, and each refusal in
 // a row doubles the rest, up to a week. A blocked method then costs almost
 // nothing, yet is tried again at least weekly, in case reddit restores it; one
 // success ends the rest. Nothing gives up for good. (The remote option
 // legacyOldReddit 'off' is the switch that stops the legacy paths outright.)
 export { CAPABILITY_REST_KEY }
-export type RestingCapability = 'legacy' | 'api_info'
+export type RestingCapability = 'legacy' | 'legacy_info' | 'api_info'
+export type LegacyKind = 'legacy' | 'legacy_info'
 export const CAPABILITY_FIRST_REST_MS = 6 * 3600 * 1000
 export const CAPABILITY_MAX_REST_MS = 7 * 24 * 3600 * 1000
 interface CapabilityRest {
@@ -153,23 +157,24 @@ export const noteCapabilityWorked = async (capability: RestingCapability) => {
     }
 }
 
-export const isLegacyResting = (): Promise<boolean> => isCapabilityResting('legacy')
+export const isLegacyResting = (kind: LegacyKind = 'legacy'): Promise<boolean> => isCapabilityResting(kind)
 // Off for now: disabled (dev switch, remote option, build), or resting after a
 // refusal. Monitoring and page views honor both; a restore or profile scan the
 // user started honors only the switch.
-export const isLegacyOff = async (): Promise<boolean> => (await isLegacyDisabled()) || (await isLegacyResting())
-export const throwIfLegacyOff = async (label: string) => {
+export const isLegacyOff = async (kind: LegacyKind = 'legacy'): Promise<boolean> =>
+    (await isLegacyDisabled()) || (await isLegacyResting(kind))
+export const throwIfLegacyOff = async (label: string, kind: LegacyKind = 'legacy') => {
     await throwIfLegacyDisabled(label)
-    if (await isLegacyResting()) {
+    if (await isLegacyResting(kind)) {
         throw new Error(`${label} skipped: resting after reddit refused it`)
     }
 }
 
-// A real 403 (not the simulated one above) rests every legacy path
-export const noteLegacyRefusal = (err: any): Promise<void> => {
+// A real 403 (not the simulated one above) rests that kind of legacy request
+export const noteLegacyRefusal = (err: any, kind: LegacyKind = 'legacy'): Promise<void> => {
     const message = String(err?.message || err)
     if (/request failed: 403\b/.test(message) && !message.includes('legacy endpoints disabled')) {
-        return noteCapabilityRefused('legacy', 'HTTP 403')
+        return noteCapabilityRefused(kind, 'HTTP 403')
     }
     return Promise.resolve()
 }
@@ -1194,11 +1199,12 @@ const legacyTiebreakAbsent = async (
     authItemsMeta: AuthItemsMeta = {},
 ): Promise<void> => {
     const unresolved = ids.filter(id => !(id in verdicts))
-    if (!unresolved.length || (await isLegacyOff())) {
+    if (!unresolved.length) {
         return
     }
-    const commentIds = unresolved.filter(id => id.startsWith('t1_'))
-    const postIds = unresolved.filter(id => id.startsWith('t3_'))
+    // Comments read the legacy /api/info listing, posts their own legacy pages
+    const commentIds = (await isLegacyOff('legacy_info')) ? [] : unresolved.filter(id => id.startsWith('t1_'))
+    const postIds = (await isLegacyOff('legacy')) ? [] : unresolved.filter(id => id.startsWith('t3_'))
     if (commentIds.length) {
         try {
             // old.reddit /api/info HTML DROPS removed comments instead of
@@ -1216,7 +1222,7 @@ const legacyTiebreakAbsent = async (
             }
             const canaryRendered = canaryCommentIds.some(id => byName[id])
             if (canaryRendered) {
-                await noteCapabilityWorked('legacy')
+                await noteCapabilityWorked('legacy_info')
             }
             // The "healthy call, zero items" case was invisible in issue #14's
             // log — it must be distinguishable from "tiebreak resolved things".
@@ -1238,7 +1244,7 @@ const legacyTiebreakAbsent = async (
             }
         } catch (err: any) {
             dlog('legacy', '[reveddit] legacy comment tiebreak failed:', String(err?.message || err))
-            noteLegacyRefusal(err)
+            await noteLegacyRefusal(err, 'legacy_info')
         }
     }
     let postFetches = 0
@@ -1785,22 +1791,22 @@ const lookupItemsByID_legacy = (
     monitor_quarantined_remote: boolean,
     ids: string | string[],
 ) => {
-    return throwIfLegacyOff('legacy reddit HTML')
+    return throwIfLegacyOff('legacy reddit HTML', 'legacy_info')
         .then(() => getItemsById_fromOldHTML(ids, addToPendingPostQueue))
         .then(result => {
             clearRateLimitBackoff()
-            noteCapabilityWorked('legacy')
+            noteCapabilityWorked('legacy_info')
             return result
         })
         .catch(htmlError => {
             console.log('old.reddit.com HTML fallback failed:', htmlError.message)
-            noteLegacyRefusal(htmlError)
+            noteLegacyRefusal(htmlError, 'legacy_info')
 
             // Second: try www.reddit.com JSON (sometimes works after rate-limit clears)
             const wwwUrl = www_reddit + path + '.json' + search
             const wwwOptions = { credentials: 'omit' as const }
 
-            return throwIfLegacyOff('www.reddit.com JSON')
+            return throwIfLegacyOff('www.reddit.com JSON', 'legacy_info')
                 .then(() => fetch(wwwUrl, wwwOptions))
                 .then(response => {
                     if (response.ok) {

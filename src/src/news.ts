@@ -365,7 +365,7 @@ export const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList
 
 // Methods reddit refused outright rest for a while, longer with each refusal
 // in a row (requests.ts noteCapabilityRefused), keyed by name ('legacy',
-// 'api_info'). Kept here so a feed change to the legacy host or switch can end
+// 'legacy_info', 'api_info'). Kept here so a feed change to the legacy host or switch can end
 // the legacy rest at once: the new setting deserves a try.
 export const CAPABILITY_REST_KEY = 'capability_rest'
 
@@ -497,8 +497,9 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
         ) {
             chrome.storage.local.get([CAPABILITY_REST_KEY], res => {
                 const rests = { ...(res?.[CAPABILITY_REST_KEY] || {}) }
-                if (rests.legacy) {
+                if (rests.legacy || rests.legacy_info) {
                     delete rests.legacy
+                    delete rests.legacy_info
                     chrome.storage.local.set({ [CAPABILITY_REST_KEY]: rests })
                 }
             })
