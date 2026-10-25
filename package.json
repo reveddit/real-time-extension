@@ -59,7 +59,7 @@
     "run-webpack": "node clean.js && webpack && yarn wasm-safe",
     "wasm-safe": "node wasm_compatibility_replace.js",
     "refresh:chrome": "node scripts/publishing/refresh-chrome-token.js",
-    "preflight": "yarn typecheck && yarn test && yarn build-chrome-dev && yarn test:e2e",
+    "preflight": "yarn typecheck && yarn test && yarn test:firefox && yarn build-chrome-dev && yarn test:e2e",
     "publish:chrome": "yarn preflight && node scripts/publishing/publish-chrome.js",
     "publish:firefox": "yarn preflight && node scripts/publishing/publish-firefox.js",
     "publish:firefox:text": "node scripts/publishing/publish-firefox.js --text-only",
@@ -74,6 +74,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:firefox": "yarn build-firefox && node scripts/firefox-load-smoke.mjs && web-ext lint --source-dir dist-firefox",
     "test:all": "vitest run && playwright test",
     "prepare": "husky"
   },
