@@ -187,9 +187,12 @@ export interface PostPageResult {
     subreddit?: string
 }
 
+// Read only from the post's banner (classifyPostPage), never the author's
+// words, so any removal wording counts: a reworded banner mustn't read live.
+// Logged out, a post moderators removed and one held for review both say
+// "Post is awaiting moderator approval." (verified 2026-10-26).
 const POST_HELD_REGEX = /awaiting moderator approval/i
-const POST_REMOVED_REGEX =
-    /(removed by (the )?moderators?|removed by reddit|reddit'?s? spam filters?|deleted by (the )?(author|user)|banned from this community|community is private)/i
+const POST_REMOVED_REGEX = /\b(removed|deleted)\b|spam filters?|banned from this community|community is private/i
 
 export const buildPostPageUrl = (postId: string): string => `${newReddit}/comments/${postId.replace(/^t3_/, '')}/`
 

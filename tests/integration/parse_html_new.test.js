@@ -214,6 +214,17 @@ describe('classifyPostPage', () => {
         expect(classifyPostPage(page, POST).status).toBe('held')
     })
 
+    it('reads any removal wording in the banner, so a reworded one still reads removed', () => {
+        for (const banner of [
+            'Sorry, this post has been removed by the moderators of r/x.',
+            'This post was removed for violating the rules.',
+            "Removed by Reddit's filters",
+            'Sorry, this post was deleted by the person who originally posted it.',
+        ]) {
+            expect(classifyPostPage(postPage(`<span>${banner}</span>`), POST).status).toBe('removed')
+        }
+    })
+
     it('reads a banner nested several elements deep in its slot', () => {
         const banner =
             '<span class="flex"><svg><path d="M0"></path></svg>' +
