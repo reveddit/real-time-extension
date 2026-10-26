@@ -16,6 +16,7 @@ import {
     clearDiagLog,
     formatDiagLog,
     formatTieredDiagLog,
+    browserOfUserAgent,
     initDiagPersistence,
     DIAG_MAX_ENTRIES,
     DIAG_SUMMARY_MAX_ENTRIES,
@@ -140,6 +141,17 @@ describe('formatDiagLog', () => {
 })
 
 describe('formatTieredDiagLog', () => {
+    it('names the version and browser in each section heading, for a paste without the header', () => {
+        const text = formatTieredDiagLog({ summary: [], details: [] }, ['version: 0.0.5.28'], [], '0.0.5.28, Chrome 145')
+        expect(text).toContain('==== summary (0.0.5.28, Chrome 145): cycles')
+        expect(text).toContain('==== detail (0.0.5.28, Chrome 145): per-item')
+        expect(browserOfUserAgent('Mozilla/5.0 (Macintosh; rv:153.0) Gecko/20100101 Firefox/153.0')).toBe('Firefox 153')
+        expect(
+            browserOfUserAgent('Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0'),
+        ).toBe('Edge 145')
+        expect(browserOfUserAgent('Mozilla/5.0 AppleWebKit/537.36 Chrome/145.0.0.0 Safari/537.36')).toBe('Chrome 145')
+    })
+
     it('prints coverage per tier and both sections, redacting names once', () => {
         const t0 = Date.UTC(2026, 8, 2, 1, 0, 0)
         const t1 = Date.UTC(2026, 8, 3, 2, 0, 0)

@@ -321,23 +321,43 @@ const coverageLine = (label: string, list: DiagEntry[], keeps: string): string =
     return `${label}: ${list.length} entries (keeps ${keeps}), ${first} → ${last}`
 }
 
+// The browser and its major version, from a user agent string (Edge's also
+// names Chrome, so it's asked first)
+export const browserOfUserAgent = (ua: string): string => {
+    for (const [token, name] of [
+        ['Firefox', 'Firefox'],
+        ['Edg', 'Edge'],
+        ['Chrome', 'Chrome'],
+    ]) {
+        const m = ua.match(new RegExp(`\\b${token}/(\\d+)`))
+        if (m) {
+            return `${name} ${m[1]}`
+        }
+    }
+    return ''
+}
+
 // Pure, unit-tested. Summary first (the history), then the recent per-item
 // detail, each section oldest first; a coverage line per tier says how much
 // time the paste actually spans, which a reader otherwise had to guess.
+// Each section's heading names the version and browser too: people paste a
+// section without the header lines above it.
 export const formatTieredDiagLog = (
     tiers: { summary: DiagEntry[]; details: DiagEntry[] },
     headerLines: string[],
     redactNames: string[] = [],
+    runningOn = '',
 ): string => {
+    const on = runningOn ? ` (${runningOn})` : ''
     const lines: string[] = [
         ...headerLines,
         coverageLine('summary tier', tiers.summary, `last ${SUMMARY_RETENTION_HOURS} hours`),
         coverageLine('detail tier', tiers.details, `last ${DIAG_MAX_ENTRIES} entries`),
         '',
-        '==== summary: cycles, login detection, rate limits, news, actions (oldest first) ====',
+        `==== summary${on}: cycles, login detection, rate limits, news, actions (oldest first) ====`,
         ...tiers.summary.map(renderEntry),
         '',
-        '==== detail: per-item verification, tiebreaks, bridge (oldest first) ====',
+        `==== detail${on}: per-item verification, tiebreaks, bridge (oldest first) ====`,
         ...tiers.details.map(renderEntry),
     ]
     return redact(lines.join('\n'), redactNames)
@@ -385,5 +405,5 @@ export const buildDiagReport = async (opts: {
         `generated: ${new Date().toISOString()}`,
         ...(opts.extraHeaderLines || []),
     ]
-    return formatTieredDiagLog(tiers, header, redactNames)
+    return formatTieredDiagLog(tiers, header, redactNames, [version, browserOfUserAgent(ua)].filter(Boolean).join(', '))
 }

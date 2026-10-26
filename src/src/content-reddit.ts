@@ -389,8 +389,9 @@ const addSubscribeLinks_oldReddit = (
 ) => {
     elements.forEach(element => {
         let id: string | null = element.getAttribute('data-fullname')
+        // The comment's own post, for following it from a profile or the inbox
+        const [postID, commentID] = getFullIDsFromPath(element.getAttribute('data-permalink') || '')
         if (!id) {
-            const [postID, commentID] = getFullIDsFromPath(element.getAttribute('data-permalink') || '')
             if (commentID) {
                 id = commentID
             } else if (postID) {
@@ -412,11 +413,11 @@ const addSubscribeLinks_oldReddit = (
         let newButton: HTMLElement
         if (id in subscriptions) {
             // Already tracked (e.g. from before) — keep unsubscribe available.
-            newButton = setTextAndFunction_unsubscribe(id, a, commentBody)
+            newButton = setTextAndFunction_unsubscribe(id, a, commentBody, postID)
         } else if (own) {
             newButton = setTextAndFunction_disabledOwn(a)
         } else {
-            newButton = setTextAndFunction_subscribe(id, a, commentBody)
+            newButton = setTextAndFunction_subscribe(id, a, commentBody, postID)
         }
         const li = document.createElement('li')
         li.appendChild(newButton)

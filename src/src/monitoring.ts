@@ -7,8 +7,12 @@ import {
     LoginDetectResult,
     storeRedditCookies,
     isLegacyOff,
-    noteLegacyRefusal,
+    isCapabilityResting,
+    noteCapabilityRefused,
     noteCapabilityWorked,
+    noteRateLimited,
+    isRateLimitedNow,
+    readThreadItemLoggedIn,
     FOLLOWED_POST_IDS_KEY,
     flagIfRateLimited,
     isAbsentVerifyUnavailable,
@@ -40,6 +44,7 @@ import {
     removeFromPendingPostQueue,
     recordPendingPostAttempt,
     clearPendingPostAttempt,
+    MAX_PENDING_POST_ATTEMPTS,
     getRateLimitBackoffRemainingMs,
     getBacklogSummaryState,
     markBacklogInitialNotified,
@@ -113,47 +118,40 @@ const getOldestDateThreshold = (thing: string, isUser: boolean) => {
     return browser.storage.local.get({ [key]: null }).then(result => result[key])
 }
 
-// A post's data from its thread's JSON (api/info.json is refused, 2026-10-24)
-const fetchItemFromApiInfo = async (id: string) => {
-    try {
-        const response = await fetch(
-            `https://www.reddit.com/comments/${id.replace(/^t3_/, '')}.json?limit=1&raw_json=1`,
-            {
-                credentials: 'include',
-                cache: 'no-cache',
-                headers: { 'Accept-Language': 'en' },
-            },
-        )
-        const json = await response.json()
-        const data = json?.[0]?.data?.children?.[0]?.data
-        return data?.name === id ? data : null
-    } catch {
-        return null
-    }
-}
-
 const PENDING_POST_BATCH_SIZE = 3
 const PENDING_POST_DELAY_MS = 2000
 
-const processPendingPosts = async (storage: Record<string, any>) => {
-    // This whole flow reads unauthenticated old.reddit.com thread pages and
-    // www .json — both dying endpoints. It's only fed by the legacy lookup
-    // chain; the www public-profile path detects post removals directly.
-    if (await isLegacyOff()) {
-        // Nothing is being scanned, so no "Scanning N posts" banner either
+// No "Scanning N posts" banner. Removed only when set: most cycles get here.
+const clearPendingPostProgress = async () => {
+    if (((await browser.storage.local.get({ pending_post_progress: null })) as any).pending_post_progress) {
         await browser.storage.local.remove('pending_post_progress')
+    }
+}
+
+const processPendingPosts = async (storage: Record<string, any>) => {
+    // Fed only by the legacy lookup chain (getItemsById_fromOldHTML): a queued
+    // post's legacy page says whether it was removed, and its thread's JSON,
+    // read with the user's login, gives its data (api/info.json is refused,
+    // 2026-10-24). Either can rest after reddit refuses it.
+    if ((await isLegacyOff()) || (await isCapabilityResting('thread_json'))) {
+        // Nothing is being scanned, so no "Scanning N posts" banner either
+        await clearPendingPostProgress()
+        return
+    }
+    // After a 429 earlier in this cycle: the queue waits
+    if (await isRateLimitedNow()) {
         return
     }
     const { posts, totalRemaining } = await getNextPendingPosts(PENDING_POST_BATCH_SIZE)
     if (posts.length === 0) {
-        await browser.storage.local.remove('pending_post_progress')
+        await clearPendingPostProgress()
         return
     }
 
     const totalAtStart = totalRemaining
     let processed = 0
 
-    for (const postId of posts) {
+    for (const [index, postId] of posts.entries()) {
         const isAlreadyKnownRemoved = (() => {
             const users = storage.user_subscriptions ? Object.keys(storage.user_subscriptions) : []
             const things = [...users.map(u => ({ thing: u, isUser: true })), { thing: 'other', isUser: false }]
@@ -171,68 +169,92 @@ const processPendingPosts = async (storage: Record<string, any>) => {
             continue
         }
 
-        // Count this attempt so a post that never resolves stops being re-enqueued
-        // by the lookup fallback (prevents a permanently "stuck" scan banner).
-        await recordPendingPostAttempt(postId)
-
+        // keep: the post stays queued for a later cycle; stop: and this
+        // cycle's batch ends (reddit refused or rate limited a request)
+        let keep = false
+        let stop = false
         try {
             const postPath = '/comments/' + postId.substring(3) + '/'
             const result: any = await getPost_fromOld(postPath)
             if (result?.status === 403) {
-                // Refused: every legacy path rests, and this queue waits for it
-                await noteLegacyRefusal(new Error('legacy reddit HTML request failed: 403'))
-                break
-            }
-            if (result && 'is_removed' in result) {
-                await noteCapabilityWorked('legacy')
-            }
-
-            if (result && 'is_removed' in result && result.is_removed) {
-                const itemData = await fetchItemFromApiInfo(postId)
-                if (itemData) {
-                    itemData.is_robot_indexable = false
-
-                    const author = itemData.author
-                    const isUser = storage.user_subscriptions && author in storage.user_subscriptions
-                    const thing = isUser ? author : 'other'
-
-                    console.log(`Detected removed post ${postId} (author: ${author}), updating status...`)
-
-                    const itemLookup = { [postId]: itemData }
-
-                    await checkForChanges_thing_byId(
-                        [postId],
-                        thing,
-                        isUser,
-                        null,
-                        storage,
-                        SUBSCRIBED_FROM_NA,
-                        itemLookup,
-                        [],
-                        [{ data: itemData }],
-                        true,
-                    )
-                    await clearPendingPostAttempt(postId)
-                }
+                // The legacy pages rest (the listing rests on its own), and
+                // this queue waits for them
+                await noteCapabilityRefused('legacy', 'HTTP 403')
+                keep = stop = true
+            } else if (result?.status === 429) {
+                noteRateLimited(new Error(String(result.error)))
+                keep = stop = true
             } else {
-                console.log(`Pending post lookup: ${postId} is not removed.`)
+                // Count this attempt so a post that never resolves stops being
+                // re-enqueued by the lookup fallback (prevents a permanently
+                // "stuck" scan banner). A refusal or a 429 isn't an attempt.
+                const attempts = await recordPendingPostAttempt(postId)
+                if (result && 'is_removed' in result) {
+                    await noteCapabilityWorked('legacy')
+                }
+                if (result && 'is_removed' in result && result.is_removed) {
+                    const read = await readThreadItemLoggedIn(postId, postId)
+                    if (read.status === 429) {
+                        noteRateLimited(new Error('www.reddit.com request failed: 429'))
+                        keep = stop = true
+                    } else if (read.blocked) {
+                        if (read.refused) {
+                            await noteCapabilityRefused('thread_json', 'block page')
+                        }
+                        keep = stop = true
+                    } else if (read.data) {
+                        const itemData = read.data
+                        itemData.is_robot_indexable = false
+
+                        const author = itemData.author
+                        const isUser = storage.user_subscriptions && author in storage.user_subscriptions
+                        const thing = isUser ? author : 'other'
+
+                        console.log(`Detected removed post ${postId} (author: ${author}), updating status...`)
+
+                        const itemLookup = { [postId]: itemData }
+
+                        await checkForChanges_thing_byId(
+                            [postId],
+                            thing,
+                            isUser,
+                            null,
+                            storage,
+                            SUBSCRIBED_FROM_NA,
+                            itemLookup,
+                            [],
+                            [{ data: itemData }],
+                            true,
+                        )
+                        await clearPendingPostAttempt(postId)
+                    } else if (attempts < MAX_PENDING_POST_ATTEMPTS) {
+                        // A removal whose data didn't come back: read again next cycle
+                        keep = true
+                    }
+                } else {
+                    console.log(`Pending post lookup: ${postId} is not removed.`)
+                }
             }
         } catch {
             /* ignored */
         }
+        if (stop) {
+            break
+        }
+        if (!keep) {
+            await removeFromPendingPostQueue(postId)
+            processed++
 
-        await removeFromPendingPostQueue(postId)
-        processed++
+            await browser.storage.local.set({
+                pending_post_progress: {
+                    processed: totalAtStart - totalRemaining + processed,
+                    total: totalAtStart,
+                    lastUpdated: Date.now(),
+                },
+            })
+        }
 
-        await browser.storage.local.set({
-            pending_post_progress: {
-                processed: totalAtStart - totalRemaining + processed,
-                total: totalAtStart,
-                lastUpdated: Date.now(),
-            },
-        })
-
-        if (processed < posts.length) {
+        if (index < posts.length - 1) {
             await new Promise(r => setTimeout(r, PENDING_POST_DELAY_MS))
         }
     }
@@ -243,16 +265,21 @@ const processPendingPosts = async (storage: Record<string, any>) => {
     }
 }
 
-export const setCurrentStateForId = (id: string, subscribedFromURL: string) => {
-    // A followed comment's post, from the URL it was followed on: while
-    // api/info rests, the comment is read through its thread, which needs it
-    const [urlPostId, urlCommentId] = getFullIDsFromURL(subscribedFromURL || '')
-    if (id.startsWith('t1_') && urlPostId && (!urlCommentId || urlCommentId === id)) {
+// postId: the comment's post, when the page knows it (an old reddit comment's
+// permalink); else the post the URL names. Every follow is of the item its URL
+// names (popup, context menu) or of an item on the page (its buttons), and a
+// thread page shows only its own comments, so that post is the comment's even
+// when the URL focuses on another comment.
+export const setCurrentStateForId = (id: string, subscribedFromURL: string, postId?: string) => {
+    // A followed comment's post: while api/info rests, the comment is read
+    // through its thread, which needs it
+    const post = postId || getFullIDsFromURL(subscribedFromURL || '')[0]
+    if (id.startsWith('t1_') && post) {
         browser.storage.local
             .get({ [FOLLOWED_POST_IDS_KEY]: {} })
             .then((res: any) =>
                 browser.storage.local.set({
-                    [FOLLOWED_POST_IDS_KEY]: { ...res[FOLLOWED_POST_IDS_KEY], [id]: urlPostId.replace(/^t3_/, '') },
+                    [FOLLOWED_POST_IDS_KEY]: { ...res[FOLLOWED_POST_IDS_KEY], [id]: post.replace(/^t3_/, '') },
                 }),
             )
             .catch(() => {})

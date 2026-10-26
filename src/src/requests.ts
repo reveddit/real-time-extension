@@ -7,6 +7,7 @@ import {
     recordRateLimitHit,
     clearRateLimitBackoff,
     getMsSinceLastRateLimitHit,
+    getRateLimitBackoffRemainingMs,
 } from './storage'
 import browser from 'webextension-polyfill'
 import { dlog, dlogSummary } from './diaglog'
@@ -29,7 +30,8 @@ import {
     isCaptchaPage,
 } from './parse_html/new'
 import { newReddit, isRateLimitError } from './parse_html/common'
-import { setWarningBadge, isRemovedComment } from './common'
+import { setWarningBadge, isRemovedComment, isViewerBlockedItem } from './common'
+import { fetchLoggedIn } from './logged-in-fetch'
 import {
     getRemoteMechanism,
     resolveMechanismDisabled,
@@ -82,15 +84,17 @@ export const throwIfLegacyDisabled = async (label: string) => {
 // Methods reddit can refuse outright with its block page, each resting on its
 // own: 'api_info' (api/info.json with the user's login, refused everywhere
 // tried on 2026-10-24), 'legacy_info' (the legacy /api/info HTML listing,
-// refused with it) and 'legacy' (the legacy user and post pages, which still
-// answered then). One kind's refusal says nothing about another's, so they
-// don't share a rest. A refused method rests, and each refusal in
-// a row doubles the rest, up to a week. A blocked method then costs almost
-// nothing, yet is tried again at least weekly, in case reddit restores it; one
-// success ends the rest. Nothing gives up for good. (The remote option
-// legacyOldReddit 'off' is the switch that stops the legacy paths outright.)
+// refused with it), 'legacy' (the legacy user and post pages, which still
+// answered then) and 'thread_json' (a thread's JSON with the user's login,
+// which followed items and pending posts read while api/info rests). One
+// kind's refusal says nothing about another's, so they don't share a rest. A
+// refused method rests, and each refusal in a row doubles the rest, up to a
+// week. A blocked method then costs almost nothing, yet is tried again at
+// least weekly, in case reddit restores it; one success ends the rest. Nothing
+// gives up for good. (The remote option legacyOldReddit 'off' is the switch
+// that stops the legacy paths outright.)
 export { CAPABILITY_REST_KEY }
-export type RestingCapability = 'legacy' | 'legacy_info' | 'api_info'
+export type RestingCapability = 'legacy' | 'legacy_info' | 'api_info' | 'thread_json'
 export type LegacyKind = 'legacy' | 'legacy_info'
 export const CAPABILITY_FIRST_REST_MS = 6 * 3600 * 1000
 export const CAPABILITY_MAX_REST_MS = 7 * 24 * 3600 * 1000
@@ -110,11 +114,15 @@ const readCapabilityRests = async (): Promise<Partial<Record<RestingCapability, 
         return {}
     }
 }
-export const isCapabilityResting = async (capability: RestingCapability): Promise<boolean> => {
-    const left = Number((await readCapabilityRests())[capability]?.until) - Date.now()
-    // Held to the longest rest, in case the clock was set back
+// A rest further ahead than the longest one (the clock was set back) is
+// ignored, so the next refusal starts a new rest rather than finding the old
+// one still running
+const isRestActive = (rest: CapabilityRest | undefined, now: number): boolean => {
+    const left = Number(rest?.until) - now
     return left > 0 && left <= CAPABILITY_MAX_REST_MS
 }
+export const isCapabilityResting = async (capability: RestingCapability): Promise<boolean> =>
+    isRestActive((await readCapabilityRests())[capability], Date.now())
 const hoursText = (ms: number) => `${Math.round(ms / 3600000)} h`
 export const noteCapabilityRefused = async (capability: RestingCapability, why: string) => {
     try {
@@ -123,7 +131,7 @@ export const noteCapabilityRefused = async (capability: RestingCapability, why: 
         const before = rests[capability]
         // Already resting: a path that doesn't honor the rest (a restore the
         // user started) adds no refusal; only the tries the rest allows count
-        if (before && before.until > now) {
+        if (isRestActive(before, now)) {
             return
         }
         const refusals = (before?.refusals || 0) + 1
@@ -298,8 +306,10 @@ export const pageContextFetch = (url: string, init: RequestInit): Promise<Respon
     return page ? page.fetch!(url, init) : fetch(url, init)
 }
 
-// How a route failed. Routing decisions read this, not the error's text; the
-// text keeps the 'request failed: N' shape flagIfRateLimited reads.
+// How a route failed. Routing reads 'unavailable' (a leg that can't run isn't
+// rested); how long a refused route rests comes from the status (6 h after a
+// 403 block page, else 30 min). 'refused' and 'network' only label the log.
+// The text keeps the 'request failed: N' shape flagIfRateLimited reads.
 // - refused: reddit turned the route away (its 403 block page, the captcha, a
 //   page the caller can't read, a challenge answered with another challenge)
 // - network: no answer at all (a network error, or a stall the timeout ended)
@@ -864,15 +874,27 @@ interface PostVerdictEntry {
 // set back) counts as expired
 const isFresh = (t: number, ttl: number, now: number): boolean => now - t >= 0 && now - t < ttl
 
+// Reddit is rate limiting: a 429 started a backoff that hasn't run out. A 429
+// stops the loop that saw it (noteRateLimited); the later steps of the cycle
+// ask this before sending anything.
+export const isRateLimitedNow = async (): Promise<boolean> => (await getRateLimitBackoffRemainingMs()) > 0
+
 // A 429 enters the shared backoff and tells the caller to stop its loop. Only
 // a 429: a 403 is about one route, which the fetcher already moved off.
-const noteRateLimited = (err: any): boolean => {
+export const noteRateLimited = (err: any): boolean => {
     if (!isRateLimitError(err)) {
         return false
     }
     flagIfRateLimited(err instanceof Error ? err : new Error(String(err)))
     return true
 }
+
+// A post once seen held or removed, or read 'unknown' since then (adverse):
+// such a post is re-verified at any age, and its entry kept while there's room
+const isAdverseVerdict = (e: PostVerdictEntry | undefined): boolean =>
+    Boolean(e && (e.adverse || e.v === 'held' || e.v === 'removed'))
+const postVerdictTtl = (e: PostVerdictEntry): number =>
+    e.v === 'unknown' ? POST_VERDICT_UNKNOWN_TTL_MS : POST_VERDICT_TTL_MS
 
 const verifyFeedPresentPosts = async (
     ids: string[],
@@ -909,16 +931,11 @@ const verifyFeedPresentPosts = async (
         // (which a fresh verdict cache knows nothing about) — forces
         // re-verification at any age so a post once seen as held/removed can't
         // silently flip back to approved.
-        if (
-            isMature &&
-            (!cached || cached.v === 'live' || (cached.v === 'unknown' && !cached.adverse)) &&
-            !m?.known_removed
-        ) {
+        if (isMature && !isAdverseVerdict(cached) && !m?.known_removed) {
             continue
         }
         if (cached) {
-            const ttl = cached.v === 'unknown' ? POST_VERDICT_UNKNOWN_TTL_MS : POST_VERDICT_TTL_MS
-            if (isFresh(cached.t, ttl, nowMs)) {
+            if (isFresh(cached.t, postVerdictTtl(cached), nowMs)) {
                 // A recent 'unknown' is paced, not returned: callers treat a
                 // missing verdict as unresolved
                 if (cached.v !== 'unknown') {
@@ -932,10 +949,7 @@ const verifyFeedPresentPosts = async (
     // Paced like absent-item verification, and slower after a recent 429
     const budget = computeAbsentVerifyBudget(await getMsSinceLastRateLimitHit())
     const batch = toFetch.slice(0, Math.min(POST_VERIFY_MAX_PER_CYCLE, budget.maxPerCycle))
-    const wasAdverse = (id: string) => {
-        const c = cache[id]
-        return Boolean(c && (c.adverse || c.v === 'held' || c.v === 'removed'))
-    }
+    const wasAdverse = (id: string) => isAdverseVerdict(cache[id])
     let fetched = 0
     for (const id of batch) {
         if (fetched > 0) {
@@ -960,9 +974,8 @@ const verifyFeedPresentPosts = async (
     if (fetched) {
         // Expired entries go first (an adverse one stays while there's room,
         // since it decides whether a mature post is verified), then the oldest
-        const ttlOf = (e: PostVerdictEntry) => (e.v === 'unknown' ? POST_VERDICT_UNKNOWN_TTL_MS : POST_VERDICT_TTL_MS)
         const entries = Object.entries(cache)
-            .filter(([, e]) => e.adverse || e.v === 'held' || e.v === 'removed' || isFresh(e.t, ttlOf(e), nowMs))
+            .filter(([, e]) => isAdverseVerdict(e) || isFresh(e.t, postVerdictTtl(e), nowMs))
             .sort((a, b) => b[1].t - a[1].t)
         cache = Object.fromEntries(entries.slice(0, POST_VERDICT_CACHE_MAX))
         try {
@@ -1199,7 +1212,8 @@ const legacyTiebreakAbsent = async (
     authItemsMeta: AuthItemsMeta = {},
 ): Promise<void> => {
     const unresolved = ids.filter(id => !(id in verdicts))
-    if (!unresolved.length) {
+    // Not after a 429 (the verification loop above stops on one)
+    if (!unresolved.length || (await isRateLimitedNow())) {
         return
     }
     // Comments read the legacy /api/info listing, posts their own legacy pages
@@ -1213,7 +1227,7 @@ const legacyTiebreakAbsent = async (
             // Feed-present comments are live by definition; batching a few in as
             // canaries proves the endpoint returned real things this cycle.
             const batch = [...commentIds, ...canaryCommentIds]
-            const results = (await _legacyLookups.commentsById(batch, null)) as any[]
+            const results = (await _legacyLookups.commentsById(batch)) as any[]
             const byName: Record<string, any> = {}
             for (const wrap of results || []) {
                 if (wrap?.data?.name) {
@@ -1244,6 +1258,9 @@ const legacyTiebreakAbsent = async (
             }
         } catch (err: any) {
             dlog('legacy', '[reveddit] legacy comment tiebreak failed:', String(err?.message || err))
+            if (noteRateLimited(err)) {
+                return
+            }
             await noteLegacyRefusal(err, 'legacy_info')
         }
     }
@@ -1268,8 +1285,13 @@ const legacyTiebreakAbsent = async (
             } else {
                 dlog('legacy', `[reveddit] legacy post tiebreak ${id}: no page${page?.error ? ` (${page.error})` : ''}`)
                 if (page?.status === 403) {
-                    // Refused: every legacy path rests, starting with the rest of this loop
-                    await noteLegacyRefusal(new Error(`legacy reddit HTML request failed: 403`))
+                    // Refused: the legacy pages rest (the listing rests on its
+                    // own), starting with the rest of this loop
+                    await noteCapabilityRefused('legacy', 'HTTP 403')
+                    break
+                }
+                if (page?.status === 429) {
+                    noteRateLimited(new Error(String(page.error)))
                     break
                 }
             }
@@ -1456,9 +1478,12 @@ const notePublicProfileUnavailable = async (username: string | null) => {
     try {
         if (username) {
             await browser.storage.local.set({ [PUBLIC_PROFILE_UNAVAILABLE_KEY]: { user: username, t: Date.now() } })
-            // None of the user's items shows logged out while the profile doesn't
-            await browser.storage.local.remove(getPublicLiveKey(username))
-        } else {
+        } else if (
+            ((await browser.storage.local.get({ [PUBLIC_PROFILE_UNAVAILABLE_KEY]: null })) as any)[
+                PUBLIC_PROFILE_UNAVAILABLE_KEY
+            ]
+        ) {
+            // Removed only when set: this runs on every good lookup
             await browser.storage.local.remove(PUBLIC_PROFILE_UNAVAILABLE_KEY)
         }
     } catch {
@@ -1489,6 +1514,13 @@ export const isPublicProfileUnavailable = async (username: string): Promise<bool
 const reportPublicProfileShadowban = async (username: string, what: string, missing: boolean): Promise<never> => {
     dlog('feed', `[reveddit] public profile for ${username} is ${what} - possible shadowban`)
     await notePublicProfileUnavailable(missing ? username : null)
+    // Missing or empty, none of the user's items shows logged out: the bridge
+    // must not keep presenting the last pass's as seen publicly
+    try {
+        await browser.storage.local.remove(getPublicLiveKey(username))
+    } catch {
+        /* ignored */
+    }
     setWarningBadge(PROFILE_PUBLICLY_EMPTY)
     throw new Error(PROFILE_PUBLICLY_EMPTY)
 }
@@ -1496,17 +1528,22 @@ const reportPublicProfileShadowban = async (username: string, what: string, miss
 // A missing profile reads as a shadowban only while reddit serves a profile
 // known to exist: a 404 for every profile (a route or markup change, an
 // outage) would otherwise put every user behind the banner. A good answer is
-// remembered for 6 hours.
+// remembered for 6 hours, a bad one for half an hour, so a reddit-wide 404
+// doesn't fetch the control's two tabs on every cycle.
 const PROFILE_CONTROL_USER = 'reddit'
 const PROFILE_CONTROL_KEY = 'public_profile_control'
 const PROFILE_CONTROL_TTL_MS = 6 * 3600 * 1000
+const PROFILE_CONTROL_FAILED_TTL_MS = 30 * 60 * 1000
 const controlProfileLoads = async (fetchHtml: FetchHtml): Promise<boolean> => {
     const now = Date.now()
     try {
         const stored = ((await browser.storage.local.get({ [PROFILE_CONTROL_KEY]: null })) as any)[PROFILE_CONTROL_KEY]
-        const age = now - Number(stored?.t || 0)
-        if (stored?.ok === true && age >= 0 && age < PROFILE_CONTROL_TTL_MS) {
+        const t = Number(stored?.t || 0)
+        if (stored?.ok === true && isFresh(t, PROFILE_CONTROL_TTL_MS, now)) {
             return true
+        }
+        if (stored?.ok === false && isFresh(t, PROFILE_CONTROL_FAILED_TTL_MS, now)) {
+            return false
         }
     } catch {
         /* ignored */
@@ -1517,14 +1554,13 @@ const controlProfileLoads = async (fetchHtml: FetchHtml): Promise<boolean> => {
             'feed',
             `[reveddit] control profile u/${PROFILE_CONTROL_USER} did not load: ${control.error || 'unrecognized'}`,
         )
-        return false
     }
     try {
-        await browser.storage.local.set({ [PROFILE_CONTROL_KEY]: { ok: true, t: now } })
+        await browser.storage.local.set({ [PROFILE_CONTROL_KEY]: { ok: control.valid, t: now } })
     } catch {
         /* ignored */
     }
-    return true
+    return control.valid
 }
 
 // Consecutive lookups whose profile pagination stopped short of the items
@@ -1582,7 +1618,7 @@ export const lookupItemsByID_fromPublicProfile = async (
         // logged out, the account doesn't exist, which is how a site-wide
         // shadowban (or a suspension) looks. Same warning as an empty profile,
         // once a profile known to exist still loads.
-        if (ids.length && /request failed: 404\b/.test(reason)) {
+        if (ids.length && profile.missing) {
             if (await controlProfileLoads(fetchHtml)) {
                 await recordWwwDetectOutcome(true)
                 return reportPublicProfileShadowban(username, 'missing (404)', true)
@@ -1592,9 +1628,7 @@ export const lookupItemsByID_fromPublicProfile = async (
         await recordWwwDetectOutcome(false, reason)
         // A 429 enters the shared backoff. Refusals don't touch the status:
         // recordWwwDetectOutcome reports a persistent failure itself.
-        if (/request failed: 429/.test(reason)) {
-            flagIfRateLimited(new Error(reason))
-        }
+        noteRateLimited(new Error(reason))
         throw new Error(`www profile lookup invalid: ${reason}`)
     }
     await recordWwwDetectOutcome(true)
@@ -1648,9 +1682,16 @@ export const lookupItemsByID_fromPublicProfile = async (
         return Number.isFinite(value) && value >= floor
     })
     const canaryCommentIds = [...profile.items.keys()].filter(id => id.startsWith('t1_')).slice(0, 3)
-    const absentVerdicts = absentToVerify.length
-        ? await verifyFeedAbsentItems(absentToVerify, authItemsMeta, fetchHtml, canaryCommentIds)
-        : {}
+    // A post page's 429 (verifyFeedPresentPosts) ends this cycle's page
+    // checks: the absent items get no verdict, which is no news
+    const rateLimited = absentToVerify.length > 0 && (await isRateLimitedNow())
+    if (rateLimited) {
+        dlog('feed', `[reveddit] ${absentToVerify.length} feed-absent items not verified: rate limited`)
+    }
+    const absentVerdicts =
+        absentToVerify.length && !rateLimited
+            ? await verifyFeedAbsentItems(absentToVerify, authItemsMeta, fetchHtml, canaryCommentIds)
+            : {}
     if (!absentToVerify.length) {
         // Nothing absent needs a page verdict (or verification is off), so the
         // "can't confirm removals" warning has nothing left to warn about
@@ -1783,6 +1824,16 @@ export const lookupItemsByID_fromPublicProfile = async (
 // Legacy paths, kept as fallback until Reddit's deprecation lands:
 // old.reddit HTML -> www JSON -> OAuth. All unauthenticated-legacy fetches are
 // gated by the dev deprecation switch so post-deprecation behavior is testable.
+// Posts go to the pending-post queue, which reads each one's own legacy page
+// ('legacy'), whatever becomes of the listing: the listing ('legacy_info')
+// rests on its own, and reddit refuses it while the pages still answer
+const queueLegacyPosts = async (ids: string | string[]) => {
+    const postIds = (Array.isArray(ids) ? ids : String(ids).split(',')).filter(id => id.startsWith('t3_'))
+    if (postIds.length && !(await isLegacyOff('legacy'))) {
+        await addToPendingPostQueue(postIds)
+    }
+}
+
 const lookupItemsByID_legacy = (
     path: string,
     search: string,
@@ -1791,8 +1842,10 @@ const lookupItemsByID_legacy = (
     monitor_quarantined_remote: boolean,
     ids: string | string[],
 ) => {
-    return throwIfLegacyOff('legacy reddit HTML', 'legacy_info')
-        .then(() => getItemsById_fromOldHTML(ids, addToPendingPostQueue))
+    return queueLegacyPosts(ids)
+        .catch(() => {})
+        .then(() => throwIfLegacyOff('legacy reddit HTML', 'legacy_info'))
+        .then(() => getItemsById_fromOldHTML(ids))
         .then(result => {
             clearRateLimitBackoff()
             noteCapabilityWorked('legacy_info')
@@ -1836,9 +1889,7 @@ const lookupItemsByID_legacy = (
                         // Only a 429 enters the backoff here. This chain runs
                         // when the public view already failed, and its refusal
                         // must not replace the status that failure reports.
-                        if (/request failed: 429/.test(String(wwwError?.message))) {
-                            flagIfRateLimited(wwwError)
-                        }
+                        noteRateLimited(wwwError)
                         throw htmlError
                     }
                 })
@@ -1856,120 +1907,220 @@ const lookupItemsByID_legacy = (
 const OTHER_APIINFO_CHUNK = 100
 const OTHER_APIINFO_CHUNK_DELAY_MS = 1000
 
-// A JSON read with the user's login from the background, the way the bridge
-// reads: no-cache first (only Cache-Control: max-age=0 goes out), and one more
-// try in the default mode when reddit's edge answers with its block page, the
-// HTML 403 (a resource's own 403 is JSON).
-const LOGGED_IN_JSON_CACHE_MODES: RequestCache[] = ['no-cache', 'default']
+// A JSON read with the user's login from the background, through the bridge's
+// fetch (logged-in-fetch.ts: the cache mode that gets past reddit's edge, one
+// retry in the other mode on its block page). Timed out like the public-view
+// fetches, since the monitoring cycle waits for it.
 interface LoggedInJson {
     ok: boolean
     status: number
+    // the answer was the edge's block page; refused: in both cache modes
     blocked: boolean
+    refused: boolean
     json?: any
 }
 const fetchJsonLoggedIn = async (url: string): Promise<LoggedInJson> => {
-    let blocked: LoggedInJson = { ok: false, status: 0, blocked: false }
-    for (const cache of LOGGED_IN_JSON_CACHE_MODES) {
-        let response: Response
-        try {
-            response = await fetch(url, { credentials: 'include', cache, headers: { 'Accept-Language': 'en' } })
-        } catch {
-            return { ok: false, status: 0, blocked: false }
-        }
-        if (response.status === 403 && !/json/i.test(response.headers.get('content-type') || '')) {
-            blocked = { ok: false, status: 403, blocked: true }
-            continue
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
+    try {
+        const { response, blockPage, retried } = await fetchLoggedIn(url, { signal: controller.signal })
+        if (blockPage) {
+            return { ok: false, status: 403, blocked: true, refused: retried }
         }
         if (!response.ok) {
-            return { ok: false, status: response.status, blocked: false }
+            return { ok: false, status: response.status, blocked: false, refused: false }
         }
-        try {
-            return { ok: true, status: response.status, blocked: false, json: await response.json() }
-        } catch {
-            return { ok: false, status: response.status, blocked: false }
-        }
+        return { ok: true, status: response.status, blocked: false, refused: false, json: await response.json() }
+    } catch {
+        return { ok: false, status: 0, blocked: false, refused: false }
+    } finally {
+        clearTimeout(timer)
     }
-    return blocked
 }
 
-// While api/info rests, each followed item is read through its thread's JSON,
-// which carries the fields api/info had (body [removed] or [deleted],
-// removed_by_category, is_robot_indexable, locked): a comment through its
-// permalink, where it comes first, a post through its thread. One request per
-// item, so a few per cycle, oldest-checked first: 100 followed items take
-// about 20 cycles to go round. An item not read this cycle is left out of the
-// result, which monitoring reads as no news. A comment's post id comes from
-// the URL it was followed from (setCurrentStateForId) or from the item cache.
+// One item through its thread's JSON with the user's login, which carries the
+// fields api/info had (body [removed] or [deleted], removed_by_category,
+// is_robot_indexable, locked): a comment through its permalink, where it comes
+// first, a post through its thread. data is the item when reddit answered
+// with it.
+export interface ThreadItemRead {
+    data?: any
+    status: number
+    blocked: boolean
+    refused: boolean
+}
+export const readThreadItemLoggedIn = async (id: string, postId: string): Promise<ThreadItemRead> => {
+    const post = postId.replace(/^t3_/, '')
+    const isPost = id.startsWith('t3_')
+    const r = await fetchJsonLoggedIn(
+        isPost
+            ? `${www_reddit}comments/${post}.json?limit=1&raw_json=1`
+            : `${www_reddit}comments/${post}/_/${id.slice(3)}.json?limit=1&depth=1&raw_json=1`,
+    )
+    const data = isPost ? r.json?.[0]?.data?.children?.[0]?.data : r.json?.[1]?.data?.children?.[0]?.data
+    return {
+        data: r.ok && data?.name === id ? data : undefined,
+        status: r.status,
+        blocked: r.blocked,
+        refused: r.refused,
+    }
+}
+
+// While api/info rests, each followed item is read through its thread's JSON
+// (readThreadItemLoggedIn). One request per item, so a few per cycle,
+// oldest-checked first: 100 followed items take about 20 cycles to go round.
+// An item not read this cycle is left out of the result, which monitoring
+// reads as no news. A comment's post id comes from the URL it was followed
+// from (setCurrentStateForId) or from the item cache, whose p is the post's
+// fullname; one found in the cache is copied over, so the cache isn't read
+// every cycle. Both maps keep only followed items.
 export const FOLLOWED_CHECKED_AT_KEY = 'followed_checked_at'
 export const FOLLOWED_POST_IDS_KEY = 'followed_post_ids'
 const FOLLOWED_THREAD_CHECKS_PER_CYCLE = 5
 const FOLLOWED_THREAD_DELAY_MS = 700
 export const _followedTiming = { delayMs: FOLLOWED_THREAD_DELAY_MS }
 
-const lookupFollowedItemsByThread = async (ids: string[]): Promise<any[]> => {
-    let checkedAt: Record<string, number> = {}
-    let postIds: Record<string, string> = {}
-    let cached: Record<string, any> = {}
+const readFollowedMaps = async (): Promise<{ checkedAt: Record<string, number>; postIds: Record<string, string> }> => {
     try {
         const stored = (await browser.storage.local.get({
             [FOLLOWED_CHECKED_AT_KEY]: {},
             [FOLLOWED_POST_IDS_KEY]: {},
         })) as any
-        checkedAt = stored[FOLLOWED_CHECKED_AT_KEY] || {}
-        postIds = stored[FOLLOWED_POST_IDS_KEY] || {}
-        cached = ((await getLocalStorageItems('other', false)) as any) || {}
+        return { checkedAt: stored[FOLLOWED_CHECKED_AT_KEY] || {}, postIds: stored[FOLLOWED_POST_IDS_KEY] || {} }
+    } catch {
+        return { checkedAt: {}, postIds: {} }
+    }
+}
+
+// Merged into what's stored now (a follow's lookup can run beside a cycle's)
+// and pruned to the followed list, not to this call's ids: a follow looks up
+// one id, and the rotation must not restart then
+const saveFollowedMaps = async (checked: Record<string, number>, foundPostIds: Record<string, string>) => {
+    try {
+        const { checkedAt, postIds } = await readFollowedMaps()
+        const followed = new Set(
+            Object.keys(
+                (((await browser.storage.sync.get({ other_subscriptions: {} })) as any).other_subscriptions ||
+                    {}) as object,
+            ),
+        )
+        const keep = (map: Record<string, unknown>) => {
+            let dropped = false
+            for (const id of Object.keys(map)) {
+                if (!followed.has(id)) {
+                    delete map[id]
+                    dropped = true
+                }
+            }
+            return dropped
+        }
+        Object.assign(checkedAt, checked)
+        const postIdsChanged = Object.entries(foundPostIds).some(([id, post]) => postIds[id] !== post)
+        Object.assign(postIds, foundPostIds)
+        keep(checkedAt)
+        const write: Record<string, unknown> = { [FOLLOWED_CHECKED_AT_KEY]: checkedAt }
+        if (keep(postIds) || postIdsChanged) {
+            write[FOLLOWED_POST_IDS_KEY] = postIds
+        }
+        await browser.storage.local.set(write)
     } catch {
         /* ignored */
     }
+}
+
+const lookupFollowedItemsByThread = async (ids: string[]): Promise<any[]> => {
+    const skip = (why: string) => {
+        dlogSummary('cycle', `[reveddit] followed items through their threads (api/info resting): ${why}`)
+        return []
+    }
+    if (await isCapabilityResting('thread_json')) {
+        return skip(`not read, the thread reads rest after reddit refused them`)
+    }
+    // Logged out, reddit answers every .json from the extension with its
+    // block page (bridge.ts), so there's nothing to read
+    if (!(await hasRedditLoginCookie())) {
+        return skip('not read, no reddit login')
+    }
+    const { checkedAt, postIds } = await readFollowedMaps()
+    const found: Record<string, string> = {}
+    if (ids.some(id => !id.startsWith('t3_') && !postIds[id])) {
+        try {
+            const cached: Record<string, any> = ((await getLocalStorageItems('other', false)) as any) || {}
+            for (const id of ids) {
+                const p = cached[id]?.p
+                if (!id.startsWith('t3_') && !postIds[id] && typeof p === 'string' && p) {
+                    found[id] = p.replace(/^t3_/, '')
+                }
+            }
+        } catch {
+            /* ignored */
+        }
+    }
     const postOf = (id: string): string | undefined =>
-        id.startsWith('t3_') ? id.slice(3) : postIds[id] || cached[id]?.p || undefined
+        id.startsWith('t3_') ? id : postIds[id] || found[id] || undefined
     const readable = ids.filter(id => postOf(id))
     const noPost = ids.length - readable.length
     readable.sort((a, b) => (checkedAt[a] || 0) - (checkedAt[b] || 0))
     const batch = readable.slice(0, FOLLOWED_THREAD_CHECKS_PER_CYCLE)
     const results: { data: any }[] = []
+    const checked: Record<string, number> = {}
+    let answered = false
+    let viewerBlocked = 0
     let note = ''
     for (const [i, id] of batch.entries()) {
         if (i > 0 && _followedTiming.delayMs > 0) {
             await new Promise(r => setTimeout(r, _followedTiming.delayMs))
         }
-        const post = postOf(id)!
-        const isPost = id.startsWith('t3_')
-        const url = isPost
-            ? `${www_reddit}comments/${post}.json?limit=1&raw_json=1`
-            : `${www_reddit}comments/${post}/_/${id.slice(3)}.json?limit=1&depth=1&raw_json=1`
-        const r = await fetchJsonLoggedIn(url)
+        const r = await readThreadItemLoggedIn(id, postOf(id)!)
         if (r.status === 429) {
-            flagIfRateLimited(new Error('www.reddit.com request failed: 429'))
+            noteRateLimited(new Error('www.reddit.com request failed: 429'))
             note = ', stopped on a 429'
             break
         }
-        checkedAt[id] = Date.now()
-        const data = isPost ? r.json?.[0]?.data?.children?.[0]?.data : r.json?.[1]?.data?.children?.[0]?.data
-        if (r.ok && data?.name === id) {
-            results.push({ data })
+        if (r.blocked) {
+            // Refused in both cache modes: the thread reads rest like api/info.
+            // One mode only (the other was skipped after a recent double
+            // block): just this cycle's reads stop.
+            if (r.refused) {
+                await noteCapabilityRefused('thread_json', 'block page')
+            }
+            note = ', stopped on a block page'
+            break
+        }
+        checked[id] = Date.now()
+        if (r.status === 200) {
+            answered = true
+        }
+        if (r.data) {
+            // The author blocked the user: the logged-in view reads
+            // [unavailable], which would look like a removal
+            if (isViewerBlockedItem(r.data)) {
+                viewerBlocked++
+            } else {
+                results.push({ data: r.data })
+            }
         }
     }
-    // Only followed items keep a slot
-    const keep = new Set(ids)
-    for (const id of Object.keys(checkedAt)) {
-        if (!keep.has(id)) delete checkedAt[id]
+    if (answered) {
+        await noteCapabilityWorked('thread_json')
     }
-    try {
-        await browser.storage.local.set({ [FOLLOWED_CHECKED_AT_KEY]: checkedAt })
-    } catch {
-        /* ignored */
-    }
+    await saveFollowedMaps(checked, found)
     dlogSummary(
         'cycle',
         `[reveddit] followed items through their threads (api/info resting): ${results.length} of ${batch.length} read` +
             note +
+            (viewerBlocked ? `, ${viewerBlocked} hidden by their authors' block` : '') +
             (noPost ? `, ${noPost} comments with no known post skipped` : ''),
     )
     return results
 }
 
 const lookupOtherItemsByID_authed = async (ids: string[], auth: any, monitor_quarantined: boolean) => {
+    // After a 429 earlier in the cycle (the user's own lookup): no news this time
+    if (await isRateLimitedNow()) {
+        dlog('cycle', `[reveddit] followed items not read: rate limited`)
+        return []
+    }
     const useOAuth = auth && auth !== NO_AUTH
     if (!useOAuth) {
         // Put the user's harvested session back in the cookie jar so credentials
@@ -2011,7 +2162,13 @@ const lookupOtherItemsByID_authed = async (ids: string[], auth: any, monitor_qua
     if (!useOAuth) {
         await noteCapabilityWorked('api_info')
     }
-    return children
+    // Items whose authors blocked the user read [unavailable] logged in, which
+    // would look like removals: no news about them
+    const visible = children.filter(child => !isViewerBlockedItem(child?.data))
+    if (visible.length < children.length) {
+        dlog('cycle', `[reveddit] followed items: ${children.length - visible.length} hidden by their authors' block`)
+    }
+    return visible
 }
 
 // Primary: compare against the logged-out www.reddit.com profile (survives the
@@ -2043,9 +2200,10 @@ export const lookupItemsByID_withFallback = (
             })
             .catch((authedError: Error) => {
                 console.log('authenticated api/info lookup failed:', authedError.message)
-                // A 429 on monitoring's own lookup enters the shared backoff
-                if (/request failed: 429/.test(String(authedError?.message))) {
-                    flagIfRateLimited(authedError)
+                // A 429 on monitoring's own lookup enters the shared backoff,
+                // and the legacy chain would only send more
+                if (noteRateLimited(authedError)) {
+                    throw authedError
                 }
                 return legacy()
             })
@@ -2056,7 +2214,9 @@ export const lookupItemsByID_withFallback = (
             return result
         })
         .catch((publicError: Error) => {
-            if (publicError.message === PROFILE_PUBLICLY_EMPTY) {
+            // A 429 (already in the backoff) ends the lookup: the legacy chain
+            // would only send more
+            if (publicError.message === PROFILE_PUBLICLY_EMPTY || isRateLimitError(publicError)) {
                 throw publicError
             }
             console.log('www.reddit.com public profile lookup failed:', publicError.message)

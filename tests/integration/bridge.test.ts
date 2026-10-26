@@ -19,8 +19,8 @@ import {
     toPublicView,
     waitUntilIdle,
     handleBridgeFetch,
-    _bridgeState,
 } from '../../src/src/bridge.ts'
+import { _loggedInFetchState } from '../../src/src/logged-in-fetch.ts'
 import { RECENT_RATE_LIMIT_WINDOW_MS, PUBLIC_PROFILE_UNAVAILABLE_KEY } from '../../src/src/requests.ts'
 
 describe('validateBridgeUrl', () => {
@@ -286,8 +286,8 @@ describe('handleBridgeFetch', () => {
             { last_logged_in_user: 'alice' },
         )
         cycleBusy = false
-        _bridgeState.preferredCacheMode = 0
-        _bridgeState.doubleBlockUntil = 0
+        _loggedInFetchState.preferredCacheMode = 0
+        _loggedInFetchState.doubleBlockUntil = 0
         loggedIn()
         globalThis.fetch = vi.fn(async () => json(200, listingOf(['t1_a', 'alice'], ['t1_b', 'bob'])))
     })
@@ -427,8 +427,8 @@ describe('0.0.5.27 review fixes: the bridge', () => {
     beforeEach(() => {
         __resetStorage({}, { last_logged_in_user: 'alice' })
         cycleBusy = false
-        _bridgeState.preferredCacheMode = 0
-        _bridgeState.doubleBlockUntil = 0
+        _loggedInFetchState.preferredCacheMode = 0
+        _loggedInFetchState.doubleBlockUntil = 0
         ;(browserMock as any).cookies = { get: vi.fn(async () => ({ name: 'reddit_session', value: 'x' })) }
     })
     afterEach(() => {
@@ -494,20 +494,20 @@ describe('0.0.5.27 review fixes: the bridge', () => {
         globalThis.fetch = vi.fn(async () => json(403, null, 'text/html'))
         expect(await handleBridgeFetch({ url: URL })).toMatchObject({ ok: false, status: 403 })
         expect(globalThis.fetch).toHaveBeenCalledTimes(2)
-        expect(_bridgeState.doubleBlockUntil).toBeGreaterThan(Date.now())
+        expect(_loggedInFetchState.doubleBlockUntil).toBeGreaterThan(Date.now())
         ;(globalThis.fetch as any).mockClear()
         await new Promise(r => setTimeout(r, 350))
         await handleBridgeFetch({ url: URL })
         expect(globalThis.fetch).toHaveBeenCalledTimes(1)
 
         // the other mode gets the resource's own JSON 403: past the edge, so that mode stays
-        _bridgeState.doubleBlockUntil = 0
+        _loggedInFetchState.doubleBlockUntil = 0
         globalThis.fetch = vi.fn(async (_u: string, init: any) =>
             init.cache === 'default' ? json(403, null, 'text/html') : json(403, { reason: 'private' }),
         )
         await new Promise(r => setTimeout(r, 350))
         expect(await handleBridgeFetch({ url: URL })).toMatchObject({ ok: false, status: 403 })
-        expect(_bridgeState.preferredCacheMode).toBe(1)
+        expect(_loggedInFetchState.preferredCacheMode).toBe(1)
     })
 
     it('says the answer is the logged-in view rewritten', async () => {
@@ -516,5 +516,161 @@ describe('0.0.5.27 review fixes: the bridge', () => {
             ok: true,
             view: 'logged_in',
         })
+    })
+})
+
+// Fixes from the 0.0.5.27 release review (2026-10-25)
+describe('0.0.5.27 release review fixes: the public view', () => {
+    const context = { knownRemoved: new Set<string>(), me: 'alice', verifiedLive: new Set<string>() }
+
+    it("rewrites a crosspost's parents like any post", () => {
+        const view = toPublicView(
+            {
+                kind: 'Listing',
+                data: {
+                    children: [
+                        {
+                            kind: 't3',
+                            data: {
+                                name: 't3_cross',
+                                author: 'bob',
+                                crosspost_parent_list: [
+                                    {
+                                        name: 't3_parent',
+                                        author: 'carol',
+                                        is_self: true,
+                                        selftext: 'the original text',
+                                        removed: true,
+                                        banned_by: 'a_mod',
+                                        mod_reports: [['spam', 'a_mod']],
+                                        mod_note: 'note',
+                                        likes: true,
+                                        saved: true,
+                                    },
+                                ],
+                            },
+                        },
+                    ],
+                },
+            },
+            context,
+        )
+        const parent = view.data.children[0].data.crosspost_parent_list[0]
+        expect(parent).toMatchObject({
+            selftext: '[removed]',
+            is_robot_indexable: false,
+            banned_by: null,
+            mod_reports: [],
+            mod_note: null,
+            likes: null,
+            saved: false,
+        })
+        expect('removed' in parent).toBe(false)
+    })
+
+    it("resets the viewer's standing nested in an account's about", () => {
+        const view = toPublicView(
+            {
+                kind: 't2',
+                data: {
+                    name: 'dave',
+                    is_blocked: true,
+                    subreddit: {
+                        display_name: 'u_dave',
+                        user_is_subscriber: true,
+                        user_is_banned: false,
+                        user_is_muted: false,
+                        user_is_moderator: false,
+                    },
+                },
+            },
+            context,
+        )
+        expect(view.data.is_blocked).toBe(false)
+        expect(view.data.subreddit).toEqual({
+            display_name: 'u_dave',
+            user_is_subscriber: null,
+            user_is_banned: null,
+            user_is_muted: null,
+            user_is_moderator: null,
+        })
+    })
+
+    it("hides a removed comment's author the way logged-out JSON does", () => {
+        const view = toPublicView(
+            {
+                kind: 'Listing',
+                data: {
+                    children: [
+                        {
+                            kind: 't1',
+                            data: {
+                                name: 't1_x',
+                                author: 'troll123',
+                                author_fullname: 't2_9xyz',
+                                author_flair_text: 'flair',
+                                author_flair_richtext: [{ t: 'flair' }],
+                                author_premium: true,
+                                is_submitter: true,
+                                body: 'the text',
+                                removed: true,
+                            },
+                        },
+                    ],
+                },
+            },
+            context,
+        )
+        const comment = view.data.children[0].data
+        expect(comment).toMatchObject({ author: '[deleted]', body: '[removed]', is_submitter: false })
+        expect(Object.keys(comment).filter(k => k.startsWith('author_'))).toEqual([])
+    })
+
+    it("leaves private communities' items out, and answers their abouts and threads 403", async () => {
+        const view = toPublicView(
+            {
+                kind: 'Listing',
+                data: {
+                    children: [
+                        { kind: 't3', data: { name: 't3_pub', author: 'bob', subreddit_type: 'public' } },
+                        { kind: 't3', data: { name: 't3_priv', author: 'bob', subreddit_type: 'private' } },
+                        { kind: 't1', data: { name: 't1_priv', author: 'bob', body: 'x', subreddit_type: 'private' } },
+                    ],
+                },
+            },
+            context,
+        )
+        expect(view.data.children.map((c: any) => c.data.name)).toEqual(['t3_pub'])
+
+        const savedCookies = (browserMock as any).cookies
+        ;(browserMock as any).cookies = { get: vi.fn(async () => ({ name: 'reddit_session', value: 'x' })) }
+        cycleBusy = false
+        const ok = (data: any) => ({
+            ok: true,
+            status: 200,
+            headers: { get: () => 'application/json; charset=UTF-8' },
+            json: async () => data,
+        })
+        try {
+            globalThis.fetch = vi.fn(async () => ok({ kind: 't5', data: { display_name: 'secret', subreddit_type: 'private' } }))
+            expect(await handleBridgeFetch({ url: 'https://www.reddit.com/r/secret/about.json' })).toMatchObject({
+                ok: false,
+                status: 403,
+                data: { reason: 'private' },
+            })
+            await new Promise(r => setTimeout(r, 350))
+            globalThis.fetch = vi.fn(async () =>
+                ok([
+                    { kind: 'Listing', data: { children: [{ kind: 't3', data: { name: 't3_s', subreddit_type: 'private' } }] } },
+                    { kind: 'Listing', data: { children: [] } },
+                ]),
+            )
+            expect(await handleBridgeFetch({ url: 'https://www.reddit.com/r/secret/comments/s.json' })).toMatchObject({
+                ok: false,
+                status: 403,
+            })
+        } finally {
+            ;(browserMock as any).cookies = savedCookies
+        }
     })
 })

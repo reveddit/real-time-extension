@@ -625,24 +625,12 @@ export const getInfoById_fromLegacyHTML = async (ids: string | string[]): Promis
 
 // Exported function for lookupItemsByID fallback - parses HTML from the legacy
 // /api/info listing. Returns array of {data: item} to match JSON API format.
-export const getItemsById_fromOldHTML = async (
-    ids: string | string[],
-    addToPendingPostQueue: ((postIds: string[]) => void) | null = null,
-) => {
+export const getItemsById_fromOldHTML = async (ids: string | string[]) => {
     const idsArray = Array.isArray(ids) ? ids : ids.split(',')
-
-    // Separate posts (t3_) from comments (t1_)
-    const postIds = idsArray.filter(id => id.startsWith('t3_'))
-
     const { items } = await getInfoById_fromLegacyHTML(idsArray)
-    // For posts, we need to fetch individual pages because /api/info HTML
-    // doesn't contain removal status. Queued only once the listing came back:
-    // a refused one means the post pages would be refused too.
-    if (postIds.length > 0 && addToPendingPostQueue) {
-        addToPendingPostQueue(postIds)
-    }
     // Return only comments — posts are excluded because /api/info HTML cannot
-    // determine post removal status. Posts are handled via the pending post queue.
+    // determine post removal status. Posts are handled via the pending post
+    // queue, which reads their own pages (requests.ts lookupItemsByID_legacy).
     return items.filter(item => !item.name || !item.name.startsWith('t3_')).map(item => ({ data: item }))
 }
 

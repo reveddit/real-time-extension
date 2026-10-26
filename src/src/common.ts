@@ -149,6 +149,14 @@ export const isComment = (name: string): boolean => {
 export const isRemovedComment = (item: RedditItem): boolean => {
     return item.author.replace(/\\/g, '')[0] === '[' && (item.body || '').replace(/\\/g, '')[0] === '['
 }
+// What a logged-in read shows for an item whose author blocked the viewer:
+// author, body or selftext '[unavailable]'. The item is live, but it reads
+// like a removal (isRemovedComment), so the extension's logged-in reads leave
+// it out and the bridge tags it.
+export const VIEWER_BLOCKED = '[unavailable]'
+export const isViewerBlockedItem = (item: any): boolean =>
+    Boolean(item) &&
+    (item.author === VIEWER_BLOCKED || item.body === VIEWER_BLOCKED || item.selftext === VIEWER_BLOCKED)
 export const isUserDeletedComment = (item: RedditItem): boolean => {
     return (item.body || '').replace(/\\/g, '') === '[deleted]' && item.author.replace(/\\/g, '') === '[deleted]'
 }

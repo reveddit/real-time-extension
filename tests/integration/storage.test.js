@@ -376,13 +376,25 @@ describe('rate-limit backoff', () => {
         expect(wait).toBe(30 * 60 * 1000)
     })
 
-    it('clears backoff and resets the level', async () => {
+    it('a success after the backoff ran out clears it and resets the level', async () => {
         await recordRateLimitHit()
         await recordRateLimitHit()
+        __getLocalStorage().rate_limit_until = Date.now() - 1000
         await clearRateLimitBackoff()
         expect(await getRateLimitBackoffRemainingMs()).toBe(0)
         // next hit starts again from the base delay
         expect(await recordRateLimitHit()).toBe(2 * 60 * 1000)
+    })
+
+    it("a success doesn't end a backoff that hasn't run out, even one whose write is still pending", async () => {
+        // after an earlier backoff ran out
+        __getLocalStorage().rate_limit_level = 1
+        __getLocalStorage().rate_limit_until = Date.now() - 1000
+        // the way flagIfRateLimited calls it: not awaited
+        recordRateLimitHit()
+        await clearRateLimitBackoff()
+        expect(await getRateLimitBackoffRemainingMs()).toBeGreaterThan(0)
+        expect(__getLocalStorage().rate_limit_level).toBe(2)
     })
 })
 

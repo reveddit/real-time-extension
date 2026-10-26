@@ -19,13 +19,20 @@ const styleRevButton = (element: HTMLElement) => {
     if (!ON_REVEDDIT) element.classList.add('rev-comment-action')
 }
 
-export const setTextAndFunction_subscribe = (id: string, element: HTMLElement, commentBody?: string): HTMLElement => {
+// postId: the item's post when the page knows it and its URL may not (a
+// profile page lists comments from many threads)
+export const setTextAndFunction_subscribe = (
+    id: string,
+    element: HTMLElement,
+    commentBody?: string,
+    postId?: string,
+): HTMLElement => {
     element.textContent = SUBSCRIBE_TEXT
     styleRevButton(element)
     element.onclick = e => {
         e.preventDefault()
         e.stopPropagation()
-        subscribeId_changeText(id, element, commentBody)
+        subscribeId_changeText(id, element, commentBody, postId)
     }
     return element
 }
@@ -51,21 +58,26 @@ export const setTextAndFunction_disabledOwn = (element: HTMLElement): HTMLElemen
     return element
 }
 
-export const setTextAndFunction_unsubscribe = (id: string, element: HTMLElement, commentBody?: string): HTMLElement => {
+export const setTextAndFunction_unsubscribe = (
+    id: string,
+    element: HTMLElement,
+    commentBody?: string,
+    postId?: string,
+): HTMLElement => {
     element.textContent = UNSUBSCRIBE_TEXT
     styleRevButton(element)
     element.onclick = e => {
         e.preventDefault()
         e.stopPropagation()
-        unsubscribeId_changeText(id, element, commentBody)
+        unsubscribeId_changeText(id, element, commentBody, postId)
     }
     return element
 }
 
-const subscribeId_changeText = (id: string, element: HTMLElement, commentBody = '') => {
+const subscribeId_changeText = (id: string, element: HTMLElement, commentBody = '', postId?: string) => {
     subscribeId(id, async () => {
-        setTextAndFunction_unsubscribe(id, element, commentBody)
-        await setCurrentStateForId(id, window.location.href)
+        setTextAndFunction_unsubscribe(id, element, commentBody, postId)
+        await setCurrentStateForId(id, window.location.href, postId)
         if (commentBody) {
             getLocalStorageItems('other', false).then((storedItems: any) => {
                 const item = storedItems[id]
@@ -80,8 +92,8 @@ const subscribeId_changeText = (id: string, element: HTMLElement, commentBody = 
     })
 }
 
-const unsubscribeId_changeText = (id: string, element: HTMLElement, commentBody?: string) => {
+const unsubscribeId_changeText = (id: string, element: HTMLElement, commentBody?: string, postId?: string) => {
     unsubscribeId(id, () => {
-        setTextAndFunction_subscribe(id, element, commentBody)
+        setTextAndFunction_subscribe(id, element, commentBody, postId)
     })
 }

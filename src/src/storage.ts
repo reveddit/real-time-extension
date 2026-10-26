@@ -645,17 +645,28 @@ const RATE_LIMIT_LAST_HIT_KEY = 'rate_limit_last_hit'
 const RATE_LIMIT_BASE_MS = 2 * 60 * 1000 // 2 minutes
 const RATE_LIMIT_MAX_MS = 30 * 60 * 1000 // 30 minutes
 
-export const recordRateLimitHit = async (): Promise<number> => {
-    const result = await browser.storage.local.get({ [RATE_LIMIT_LEVEL_KEY]: 0 })
-    const level = (result[RATE_LIMIT_LEVEL_KEY] as number) || 0
-    const waitMs = Math.min(RATE_LIMIT_BASE_MS * Math.pow(2, level), RATE_LIMIT_MAX_MS)
-    await browser.storage.local.set({
-        [RATE_LIMIT_UNTIL_KEY]: Date.now() + waitMs,
-        [RATE_LIMIT_LEVEL_KEY]: level + 1,
-        [RATE_LIMIT_LAST_HIT_KEY]: Date.now(),
-    })
-    return waitMs
+// Hits and clears run one at a time, in the order they're called: callers
+// don't await a hit (flagIfRateLimited), and a clear that started before the
+// hit was written would otherwise erase it
+let backoffWrites: Promise<unknown> = Promise.resolve()
+const oneAtATime = <T>(task: () => Promise<T>): Promise<T> => {
+    const run = backoffWrites.then(task, task)
+    backoffWrites = run.catch(() => undefined)
+    return run
 }
+
+export const recordRateLimitHit = (): Promise<number> =>
+    oneAtATime(async () => {
+        const result = await browser.storage.local.get({ [RATE_LIMIT_LEVEL_KEY]: 0 })
+        const level = (result[RATE_LIMIT_LEVEL_KEY] as number) || 0
+        const waitMs = Math.min(RATE_LIMIT_BASE_MS * Math.pow(2, level), RATE_LIMIT_MAX_MS)
+        await browser.storage.local.set({
+            [RATE_LIMIT_UNTIL_KEY]: Date.now() + waitMs,
+            [RATE_LIMIT_LEVEL_KEY]: level + 1,
+            [RATE_LIMIT_LAST_HIT_KEY]: Date.now(),
+        })
+        return waitMs
+    })
 
 export const getMsSinceLastRateLimitHit = async (): Promise<number | null> => {
     const result = await browser.storage.local.get({ [RATE_LIMIT_LAST_HIT_KEY]: 0 })
@@ -663,14 +674,26 @@ export const getMsSinceLastRateLimitHit = async (): Promise<number | null> => {
     return last > 0 ? Math.max(0, Date.now() - last) : null
 }
 
-export const clearRateLimitBackoff = async () => {
-    const result = await browser.storage.local.get({ [RATE_LIMIT_LEVEL_KEY]: 0, [RATE_LIMIT_UNTIL_KEY]: 0 })
-    if (result[RATE_LIMIT_LEVEL_KEY] || result[RATE_LIMIT_UNTIL_KEY]) {
-        await browser.storage.local.set({ [RATE_LIMIT_UNTIL_KEY]: 0, [RATE_LIMIT_LEVEL_KEY]: 0 })
-    }
-}
+// A lookup that answered ends the backoff, but only once it has run out. A
+// lookup that hit a 429 stops its own loop and still answers with what it
+// read, and a later lookup in the same cycle answers too; neither may erase
+// the backoff that 429 started, or the next cycle runs straight back into the
+// limiter and the level never climbs.
+export const clearRateLimitBackoff = (): Promise<void> =>
+    oneAtATime(async () => {
+        const result = await browser.storage.local.get({ [RATE_LIMIT_LEVEL_KEY]: 0, [RATE_LIMIT_UNTIL_KEY]: 0 })
+        const until = Number(result[RATE_LIMIT_UNTIL_KEY]) || 0
+        if (until > Date.now()) {
+            return
+        }
+        if (result[RATE_LIMIT_LEVEL_KEY] || until) {
+            await browser.storage.local.set({ [RATE_LIMIT_UNTIL_KEY]: 0, [RATE_LIMIT_LEVEL_KEY]: 0 })
+        }
+    })
 
+// After any hit still being written, so a loop that just saw a 429 reads it
 export const getRateLimitBackoffRemainingMs = async (): Promise<number> => {
+    await backoffWrites
     const result = await browser.storage.local.get({ [RATE_LIMIT_UNTIL_KEY]: 0 })
     const until = (result[RATE_LIMIT_UNTIL_KEY] as number) || 0
     return Math.max(0, until - Date.now())

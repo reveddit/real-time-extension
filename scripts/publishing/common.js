@@ -183,6 +183,18 @@ export function assertCleanBuildInputs() {
  */
 export function assertSameCodeForVersion() {
     const status = readPublishStatus();
+    // AMO may hold a Firefox submission whose run stopped before recording it
+    // (publish-firefox.js), so other code under this version can't go out
+    const otherFirefoxCode = !status.published.firefox &&
+        (status.firefoxSubmissions || []).find(s => s.dirty || !s.commit || extensionChangedSince(s.commit));
+    if (otherFirefoxCode) {
+        failureReason = 'AMO may have this version from other code';
+        console.error(
+            `\x1b[31mA Firefox submission of ${status.version} from ${otherFirefoxCode.commit ? otherFirefoxCode.commit.slice(0, 7) : 'uncommitted files'} (${otherFirefoxCode.at}) didn't finish, so AMO may have that code, and the extension's files differ from it.\x1b[0m\n` +
+            'Bump the version and add its VERSION HISTORY line. If you know AMO never got it, delete firefoxSubmissions from .publish-status.json.'
+        );
+        process.exit(1);
+    }
     const already = Object.keys(status.published);
     if (!already.length) return;
     if (status.dirty) {
@@ -261,7 +273,9 @@ export function markPublished(store) {
     logPublishEvent({ store, event: 'published' });
     const status = readPublishStatus();
     status.commit = status.commit || status.built?.commit || headCommit();
-    if (status.built?.dirty || buildInputsDirty()) status.dirty = true;
+    // What was built, not the tree now: an edit made while a store's prompt
+    // waited didn't go to that store
+    if (status.built ? status.built.dirty : buildInputsDirty()) status.dirty = true;
     status.published[store] = new Date().toISOString();
     writePublishStatus(status);
 }

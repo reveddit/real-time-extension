@@ -51,6 +51,8 @@ export interface PublicProfileData {
     // Why pagination ended early, when a page past the first failed. The
     // lookup stays valid with the coverage reached.
     paginationStopped?: string
+    // Both tabs answered 404: logged out, the account doesn't exist
+    missing?: boolean
 }
 
 // Fetching is delegated so requests.ts can route through a www.reddit.com tab's
@@ -211,18 +213,50 @@ export const classifyPostPage = (html: string, postId: string): PostPageResult =
         ...(Number.isFinite(createdMs) && { created_utc: Math.floor(createdMs / 1000) }),
         ...(attrs['subreddit-name'] && { subreddit: attrs['subreddit-name'] }),
     }
-    // Search banners only within the post element — comment text further down
-    // the page could legitimately contain these phrases.
+    // Search only the post's own banner. Comment text further down the page,
+    // and the post's own title (its post-title attribute, its slot="title"
+    // heading and that heading's aria-label) and body, are people's words: a
+    // live post titled "Why was my post removed by moderators?" must not read
+    // as removed. The banner renders in <div slot="post-removed-banner">
+    // (verified 2026-10-26 on a held post's logged-out page).
     const start = postTag.index || 0
     const end = html.indexOf('</shreddit-post>', start)
     const postRegion = html.slice(start, end === -1 ? Math.min(html.length, start + 100000) : end)
-    if (POST_HELD_REGEX.test(postRegion)) {
+    const banner = slotText(postRegion, getMarkupConfig().postBannerSlots)
+    if (POST_HELD_REGEX.test(banner)) {
         return { status: 'held', ...meta }
     }
-    if (POST_REMOVED_REGEX.test(postRegion)) {
+    if (POST_REMOVED_REGEX.test(banner)) {
         return { status: 'removed', ...meta }
     }
     return { status: 'live', ...meta }
+}
+
+// The text of every element in html whose slot attribute is one of slots
+const SLOT_TAG_REGEX = /<([a-z][\w-]*)\b[^>]*\sslot="([^"]+)"[^>]*>/gi
+const slotText = (html: string, slots: string[]): string => {
+    const parts: string[] = []
+    for (const m of html.matchAll(SLOT_TAG_REGEX)) {
+        if (slots.includes(m[2])) {
+            parts.push(elementInner(html, (m.index || 0) + m[0].length, m[1]).replace(/<[^>]*>/g, ' '))
+        }
+    }
+    return parts.join(' ')
+}
+
+// The markup from `from` (just past an element's start tag) to its matching
+// end tag, counting nested elements of the same name
+const elementInner = (html: string, from: number, tag: string): string => {
+    const tagRegex = new RegExp(`<(/?)${tag}\\b[^>]*>`, 'gi')
+    tagRegex.lastIndex = from
+    let depth = 1
+    for (let m = tagRegex.exec(html); m; m = tagRegex.exec(html)) {
+        depth += m[1] ? -1 : 1
+        if (depth === 0) {
+            return html.slice(from, m.index)
+        }
+    }
+    return html.slice(from)
 }
 
 // ---------------------------------------------------------------------------
@@ -518,9 +552,14 @@ const fetchTab = async (
         }
         const partialPage = parseProfileHtml(partialHtml, typePrefix)
         if (!partialPage.hasItems) {
-            // Partial pages have no empty-state message; a page with no items
-            // means the format changed or we were blocked. Keep what we have —
-            // the floor already reflects how deep we actually got.
+            // Partial pages have no empty-state message. A page with no items is
+            // the small fragment that can end a profile, or a page no route
+            // could read (the fetcher hands back the last one, or a challenge
+            // to solve), which ends the pagination like a refusal. Keep what we
+            // have: the floor already reflects how deep we actually got.
+            if (!isPartialPage(partialHtml)) {
+                stopped = `${tab} pagination stopped: unreadable page: ${describePageForDiag(partialHtml)}`
+            }
             break
         }
         collect(partialPage)
@@ -565,15 +604,15 @@ export const getPublicProfileItems = async (
             const why = (r: PromiseSettledResult<TabResult>) =>
                 r.status === 'rejected' ? String(r.reason?.message || r.reason) : ''
             const is404 = (r: PromiseSettledResult<TabResult>) => /request failed: 404\b/.test(why(r))
-            // The first failing tab's message, as callers and the diagnostic
-            // log read it. A missing profile 404s on both tabs; one tab's 404
-            // says something about that tab, so its message loses the shape
-            // callers read as the shadowban signature. A 429 keeps its shape
-            // for the backoff.
-            const error = why(commentsResult.status === 'rejected' ? commentsResult : postsResult)
+            // A missing profile 404s on both tabs, the shadowban signature
             if (is404(commentsResult) && is404(postsResult)) {
-                return failed(error)
+                return { ...failed(why(commentsResult)), missing: true }
             }
+            // Else one tab's message, as callers and the diagnostic log read
+            // it: a 429 from either tab, so it reaches the backoff, or the
+            // first failing tab's. One tab's 404 says something about that tab.
+            const rejected = [commentsResult, postsResult].filter(r => r.status === 'rejected')
+            const error = why(rejected.find(r => isRateLimitError(why(r))) || rejected[0])
             return failed(error.replace(/request failed: 404\b/g, 'answered 404 (the other tab did not)'))
         }
         const comments = commentsResult.value

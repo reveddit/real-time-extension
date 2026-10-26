@@ -61,9 +61,10 @@ export interface RemoteOptions {
     // The publicmodlogs feed token the bridge reads mod logs through
     // (bridge-config.ts), if reddit ever replaces it
     publicmodlogs_feed?: string
-    // Extra id attribute names for the page classifiers (markup-config.ts):
-    // { comment_id_attributes: string[], post_id_attributes: string[] }.
-    // Added to the built-in names; stored in camelCase.
+    // Extra names for the page classifiers (markup-config.ts):
+    // { comment_id_attributes: string[], post_id_attributes: string[],
+    // post_banner_slots: string[] }. Added to the built-in names; stored in
+    // camelCase.
     markup?: Partial<MarkupConfig>
     // Names of reddit's login cookie, for the bridge's and grace mode's
     // logged-in check (requests.ts hasRedditLoginCookie), in case reddit

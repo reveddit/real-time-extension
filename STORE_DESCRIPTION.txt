@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/10/25 - 0.0.5.28
+- fix false removal alerts for posts whose title or text mentions removal
+
 2026/10/24 - 0.0.5.27
 - removal checks recover on their own when reddit refuses some requests; safer reveddit.com connection
 

@@ -17,6 +17,9 @@ import {
     storeRedditCookies,
     throwIfLegacyDisabled,
     throwIfLegacyOff,
+    noteCapabilityRefused,
+    noteCapabilityWorked,
+    noteRateLimited,
     lookupItemsByID_fromPublicProfile,
 } from './src/requests'
 import {
@@ -89,8 +92,10 @@ if (__DEV__) {
 
 // The challenge solver's remote inputs live in the cached news feed, which
 // outlives the worker while the module's config does not: re-apply them on
-// every start, not only in the onInstalled update branch below.
-applyRemoteConfig().catch(() => {})
+// every start, not only in the onInstalled update branch below. The bridge
+// waits for them: a request that wakes the worker must be checked against
+// the feed's publicmodlogs token, not the compiled one.
+const remoteConfigApplied = applyRemoteConfig().catch(() => {})
 setupContextualMenu()
 
 // BEGIN webRequest API code
@@ -423,7 +428,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             sendResponse({ ok: false, status: 0, error: 'unsupported_context' })
             return true
         }
-        handleBridgeFetch(request).then(sendResponse)
+        remoteConfigApplied.then(() => handleBridgeFetch(request)).then(sendResponse)
         return true
     } else if (request.action === 'store-reddit-cookies') {
         // Trigger cookie capture in background context
@@ -438,7 +443,16 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         // resting after a refusal (a reddit page view sends this, not the user)
         throwIfLegacyOff('legacy reddit post page')
             .then(() => getPost_fromOld(request.path))
-            .then(data => {
+            .then(async (data: any) => {
+                // A page view's refusal rests the legacy pages as monitoring's
+                // would, so the next page views don't ask again
+                if (data?.status === 403) {
+                    await noteCapabilityRefused('legacy', 'HTTP 403')
+                } else if (data?.status === 429) {
+                    noteRateLimited(new Error(String(data.error)))
+                } else if (data && 'is_removed' in data) {
+                    await noteCapabilityWorked('legacy')
+                }
                 sendResponse(data)
             })
             .catch(err => {
@@ -732,7 +746,7 @@ chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResp
             break
         case 'bridge-fetch':
             // reveddit.com pages fetch public reddit JSON through the extension
-            handleBridgeFetch(message).then(sendResponse)
+            remoteConfigApplied.then(() => handleBridgeFetch(message)).then(sendResponse)
             break
         default:
             // Dev actions answer only the local dev site of a dev build. Any

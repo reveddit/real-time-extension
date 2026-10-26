@@ -130,11 +130,15 @@ async function main() {
 
     const sourceZipPath = await createSourceZip();
 
-    // Recorded before AMO sees it: when a run stops after AMO has the version,
-    // the next run's "already exists" can then be checked against this code
+    // Every submission of this version is recorded before AMO sees it, as
+    // the build recorded its code: when a run stops after AMO has the
+    // version, the next run's "already exists" is checked against the code
+    // of each submission AMO may have kept
     const status = readPublishStatus();
-    const earlierSubmission = status.firefoxSubmitted;
-    status.firefoxSubmitted = { commit: headCommit(), dirty: buildInputsDirty(), at: new Date().toISOString() };
+    const built = status.built || { commit: headCommit(), dirty: buildInputsDirty() };
+    const earlierSubmissions = status.firefoxSubmissions || [];
+    const submission = { commit: built.commit, dirty: built.dirty, at: new Date().toISOString() };
+    status.firefoxSubmissions = [...earlierSubmissions, submission];
     writePublishStatus(status);
 
     console.log('\n\x1b[33m[2/3] Signing and Submitting to AMO...\x1b[0m');
@@ -161,14 +165,18 @@ async function main() {
         markPublished('firefox');
     } catch (error) {
         // An earlier run submitted this version and stopped before recording
-        // it. That counts as published only if that run submitted these files.
+        // it. That counts as published only if every earlier submission, any
+        // of which AMO may have kept, was these files.
         if (/already exists/i.test(String(error?.message || error))) {
+            // AMO refused this one, so it holds none of its files
+            const recorded = readPublishStatus();
+            recorded.firefoxSubmissions = (recorded.firefoxSubmissions || []).filter(s => s.at !== submission.at);
+            writePublishStatus(recorded);
             const sameCode =
-                earlierSubmission?.commit &&
-                !earlierSubmission.dirty &&
-                !extensionChangedSince(earlierSubmission.commit);
+                earlierSubmissions.length > 0 &&
+                earlierSubmissions.every(s => s.commit && !s.dirty && !extensionChangedSince(s.commit));
             if (sameCode) {
-                console.warn(`\x1b[33mAMO already has ${manifest.version} from this code (submitted ${earlierSubmission.at}); recording it as published.\x1b[0m`);
+                console.warn(`\x1b[33mAMO already has ${manifest.version} from this code (submitted ${earlierSubmissions[earlierSubmissions.length - 1].at}); recording it as published.\x1b[0m`);
                 markPublished('firefox');
             } else if (process.env.PUBLISH_FIREFOX_ACCEPT_EXISTING) {
                 console.warn(`\x1b[33mAMO already has ${manifest.version}; recording it as published (PUBLISH_FIREFOX_ACCEPT_EXISTING).\x1b[0m`);

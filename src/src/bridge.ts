@@ -48,6 +48,8 @@
 //   viewer's standing in a subreddit) are set to their logged-out values.
 // - Items by authors who blocked the user read [unavailable]; they carry
 //   reveddit_viewer_blocked, so they aren't taken for removals.
+// - Private communities' items are left out, and a private community's about
+//   or thread is answered 403, as reddit does logged out.
 // - While monitoring finds the user's own profile missing from the logged-out
 //   view (the shadowban signature, requests.ts), the bridge answers 404 for
 //   it, as reddit does logged out.
@@ -67,9 +69,10 @@ import {
     isPublicProfileUnavailable,
 } from './requests'
 import { isCycleInFlight } from './monitoring'
-import { isRemovedInModView } from './common'
+import { isRemovedInModView, isViewerBlockedItem } from './common'
 import { dlog } from './diaglog'
 import { getPublicModlogsFeed } from './bridge-config'
+import { fetchLoggedIn } from './logged-in-fetch'
 
 const www_reddit = 'https://www.reddit.com'
 
@@ -197,7 +200,10 @@ const getPublicViewContext = async (me: string): Promise<PublicViewContext> => {
 const PLACEHOLDER = /^\[(removed|deleted)\]$/
 const REMOVED_BODY_HTML = '&lt;div class="md"&gt;&lt;p&gt;[removed]&lt;/p&gt;\n&lt;/div&gt;'
 const REMOVED_SELFTEXT_HTML = '&lt;!-- SC_OFF --&gt;' + REMOVED_BODY_HTML + '&lt;!-- SC_ON --&gt;'
-const VIEWER_BLOCKED = '[unavailable]'
+
+// A removed comment's author as logged-out JSON hides it: [deleted], with no
+// account id, flair or badges (a moderator's view keeps them all)
+const REMOVED_COMMENT_AUTHOR_FIELDS = /^author_(?:fullname|flair_\w+|premium|patreon_flair|cakeday)$/
 
 // One item rewritten to what logged-out visitors see, in the shape the
 // website reads (its utils.tsx commentIsRemoved and itemIsRemovedOrDeleted).
@@ -210,6 +216,14 @@ const markPubliclyRemoved = (kind: string, item: any) => {
             item.author = '[deleted]'
             if ('body_html' in item) {
                 item.body_html = REMOVED_BODY_HTML
+            }
+            for (const key of Object.keys(item)) {
+                if (REMOVED_COMMENT_AUTHOR_FIELDS.test(key)) {
+                    delete item[key]
+                }
+            }
+            if ('is_submitter' in item) {
+                item.is_submitter = false
             }
         }
     } else if (item.author !== '[deleted]') {
@@ -235,6 +249,7 @@ const LOGGED_OUT_VALUES: Record<string, any> = {
     visited: false,
     removed_by: null,
     is_friend: false,
+    is_blocked: false,
     author_is_blocked: false,
     can_mod_post: false,
     mod_reports: [],
@@ -322,10 +337,25 @@ const resetViewerFields = (data: any) => {
     }
 }
 
+// Communities only their members can read: logged out, reddit answers 403
+// for them and leaves their items out of listings. (Quarantined ones are
+// readable logged out with the opt-in, which reveddit gets.)
+const MEMBERS_ONLY_SUBREDDIT_TYPES = new Set(['private', 'employees_only'])
+const isMembersOnly = (data: any): boolean => MEMBERS_ONLY_SUBREDDIT_TYPES.has(data?.subreddit_type)
+
+// An answer that is wholly a members-only community's: its about, or a
+// thread whose post is in one. The bridge answers those as reddit does
+// logged out.
+export const isMembersOnlyAnswer = (json: any): boolean =>
+    (json?.kind === 't5' && isMembersOnly(json.data)) ||
+    (Array.isArray(json) && json[0]?.kind === 'Listing' && isMembersOnly(json[0].data?.children?.[0]?.data))
+export const MEMBERS_ONLY_ANSWER = { reason: 'private', message: 'Forbidden', error: 403 }
+
 // The logged-in view rewritten to the public one (see the top). Walks the
 // shapes the allowlisted endpoints return: listings, a thread's [post,
-// comments] pair, nested replies, morechildren's json.data.things, subreddit
-// and account abouts, and moderated_subreddits' plain array.
+// comments] pair, nested replies, crossposts' parents, morechildren's
+// json.data.things, subreddit and account abouts, and moderated_subreddits'
+// plain array.
 export const toPublicView = (json: any, context: PublicViewContext): any => {
     const visit = (node: any): void => {
         if (!node || typeof node !== 'object') {
@@ -346,13 +376,23 @@ export const toPublicView = (json: any, context: PublicViewContext): any => {
             ) {
                 data.reveddit_unverified = true
             }
-            if (data.author === VIEWER_BLOCKED || data.body === VIEWER_BLOCKED || data.selftext === VIEWER_BLOCKED) {
+            if (isViewerBlockedItem(data)) {
                 data.reveddit_viewer_blocked = true
             }
             resetViewerFields(data)
             visit(data.replies)
+            // A crosspost carries its parent posts whole, without a kind
+            if (Array.isArray(data.crosspost_parent_list)) {
+                data.crosspost_parent_list = data.crosspost_parent_list.filter((parent: any) => !isMembersOnly(parent))
+                data.crosspost_parent_list.forEach((parent: any) => visit({ kind: 't3', data: parent }))
+            }
         } else if (node.kind === 't2' && data && typeof data === 'object') {
             resetViewerFields(data)
+            // The account's profile subreddit: whether the viewer follows,
+            // moderates or is banned from it
+            if (data.subreddit && typeof data.subreddit === 'object') {
+                resetViewerFields(data.subreddit)
+            }
             for (const key of Object.keys(data)) {
                 if (OWN_ACCOUNT_ONLY.includes(key) || OWN_ACCOUNT_PREFIX.test(key)) {
                     delete data[key]
@@ -363,6 +403,9 @@ export const toPublicView = (json: any, context: PublicViewContext): any => {
         } else if (node.kind === 'Listing') {
             if (data && typeof data === 'object' && 'modhash' in data) {
                 data.modhash = ''
+            }
+            if (Array.isArray(data?.children)) {
+                data.children = data.children.filter((child: any) => !isMembersOnly(child?.data))
             }
             visit(data?.children)
         } else if (node.kind === 'ModeratedList' && Array.isArray(data)) {
@@ -410,17 +453,6 @@ export const waitUntilIdle = async (isBusy: () => boolean, maxMs: number, pollMs
 let recentTimes: number[] = []
 // single-lane serialization with spacing between fetches
 let lane: Promise<void> = Promise.resolve()
-
-// Reddit's edge refuses some request-header combinations with its HTML block
-// page and accepts others, and it reversed which on 2026-10-21 (www-routes.ts).
-// A block page, unlike a resource's own JSON 403, gets one retry in the other
-// cache mode, and the mode that answers is kept for this worker's life.
-// Mutable for tests, like _wwwRouteTiming.
-const CACHE_MODES: RequestCache[] = ['default', 'no-cache']
-// After both modes got the block page, the retry is skipped for this long, so
-// a blocked client doesn't send every request twice
-const DOUBLE_BLOCK_MEMORY_MS = 5 * 60 * 1000
-export const _bridgeState = { preferredCacheMode: 0, doubleBlockUntil: 0 }
 
 export interface BridgeResponse {
     ok: boolean
@@ -488,37 +520,17 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), deadline - Date.now())
         try {
-            const fetchIn = (mode: number) =>
-                fetch(url, {
-                    credentials: 'include',
-                    cache: CACHE_MODES[mode],
-                    headers: { 'Accept-Language': 'en' },
-                    signal: controller.signal,
-                })
-            // A resource's own 403 (private subreddit) is JSON; the edge's block page isn't
-            const isBlockPage = (res: Response) =>
-                res.status === 403 && !/json/i.test(res.headers.get('content-type') || '')
-            let mode = _bridgeState.preferredCacheMode
-            let r = await fetchIn(mode)
-            let blockPage = isBlockPage(r)
-            if (blockPage && Date.now() >= _bridgeState.doubleBlockUntil && deadline - Date.now() >= MIN_FETCH_MS) {
-                const blockedMode = mode
-                mode = (mode + 1) % CACHE_MODES.length
+            const { response: r, blockPage } = await fetchLoggedIn(url, {
+                signal: controller.signal,
+                canRetry: () => deadline - Date.now() >= MIN_FETCH_MS,
                 // the retry is a request too
-                recentTimes.push(Date.now())
-                r = await fetchIn(mode)
-                blockPage = isBlockPage(r)
-                if (blockPage) {
-                    _bridgeState.doubleBlockUntil = Date.now() + DOUBLE_BLOCK_MEMORY_MS
-                } else {
-                    // Past the edge, whatever the resource said: keep this mode
+                onRetry: () => recentTimes.push(Date.now()),
+                onSwitched: (blocked, answered, status) =>
                     dlog(
                         'bridge',
-                        `[reveddit] bridge: block page in cache mode ${CACHE_MODES[blockedMode]}, ${CACHE_MODES[mode]} got through (${r.status})`,
-                    )
-                    _bridgeState.preferredCacheMode = mode
-                }
-            }
+                        `[reveddit] bridge: block page in cache mode ${blocked}, ${answered} got through (${status})`,
+                    ),
+            })
             if (!r.ok) {
                 dlog(
                     'bridge',
@@ -534,6 +546,10 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
                 return { ok: false, status: r.status, data: null }
             }
             const json = await r.json()
+            if (isMembersOnlyAnswer(json)) {
+                dlog('bridge', `[reveddit] bridge: ${url.split('?')[0]} -> members-only community, answered 403`)
+                return { ok: false, status: 403, data: MEMBERS_ONLY_ANSWER }
+            }
             return {
                 ok: true,
                 status: r.status,

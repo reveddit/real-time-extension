@@ -150,14 +150,19 @@ describe('url builders', () => {
 })
 
 describe('classifyPostPage', () => {
-    // Modeled on the live held post page (verified 2026-07-01): the banner is
-    // publicly visible inside the <shreddit-post> element.
-    const postPage = (bannerHtml, title = 'testtest') =>
+    // Modeled on the live held post page (verified 2026-07-01, and again
+    // 2026-10-26): the banner is publicly visible inside the <shreddit-post>
+    // element, in its own slot, after the title heading and the flair.
+    const postPage = (bannerHtml, title = 'testtest', body = 'some body') =>
         `<html><body><shreddit-post class="block" permalink="/r/CantSayAnything/comments/1ukv6vb/testtest/" ` +
         `created-timestamp="2026-07-01T19:18:40.732000+0000" id="t3_1ukv6vb" post-title="${title}" ` +
         `score="1" subreddit-prefixed-name="r/CantSayAnything" author="GiveUsNetNeutrality" ` +
         `subreddit-name="CantSayAnything" moderation-verdict="">` +
-        `<div slot="post-body">some body</div>${bannerHtml}</shreddit-post>` +
+        `<h1 id="post-title-t3_1ukv6vb" slot="title" aria-label="Post Title: ${title}"> ${title} </h1>` +
+        `<shreddit-post-flair slot="post-flair" post-id="t3_1ukv6vb"></shreddit-post-flair>` +
+        (bannerHtml ? `<div slot="post-removed-banner">${bannerHtml}</div>` : '') +
+        `<shreddit-post-text-body slot="text-body" post-id="t3_1ukv6vb"><div class="text-neutral-content" slot="text-body">` +
+        `<div class="md"><p>${body}</p></div></div></shreddit-post-text-body></shreddit-post>` +
         `<shreddit-comment-tree><p>unrelated comment text</p></shreddit-comment-tree></body></html>`
 
     const POST = 't3_1ukv6vb'
@@ -186,6 +191,34 @@ describe('classifyPostPage', () => {
         const html = postPage('') // live post
         const withComment = html.replace('unrelated comment text', 'my comment was removed by the moderators once')
         expect(classifyPostPage(withComment, POST).status).toBe('live')
+    })
+
+    it("reads a live post as live although its own title or body uses a banner's words", () => {
+        // Reveddit users write exactly these posts. 0.0.5.27 read the title
+        // attribute and the body and sent a false removal alert.
+        for (const title of [
+            'Why was my post removed by moderators?',
+            'Removed by Reddit with no reason given',
+            'Is my post awaiting moderator approval forever?',
+            'Deleted by user, or removed by the moderators?',
+        ]) {
+            expect(classifyPostPage(postPage('', title), POST).status).toBe('live')
+        }
+        for (const body of ['I got banned from this community', 'this community is private now', "reddit's spam filters ate it"]) {
+            expect(classifyPostPage(postPage('', 'a question', body), POST).status).toBe('live')
+        }
+    })
+
+    it('still reads the banner when the title uses its words too', () => {
+        const page = postPage('<span> Post is awaiting moderator approval. </span>', 'Why was my post removed by moderators?')
+        expect(classifyPostPage(page, POST).status).toBe('held')
+    })
+
+    it('reads a banner nested several elements deep in its slot', () => {
+        const banner =
+            '<span class="flex"><svg><path d="M0"></path></svg>' +
+            '<span class="flex"><div><div>Sorry, this post was removed by the moderators of r/x.</div></div></span></span>'
+        expect(classifyPostPage(postPage(banner), POST).status).toBe('removed')
     })
 
     it('returns unknown for pages without a shreddit-post element', () => {
@@ -373,6 +406,48 @@ describe('getPublicProfileItems', () => {
         // coverage ends where pagination stopped
         expect(result.coverage.t1).toBe(fullnameValue(newestComment))
         expect(result.paginationStopped).toMatch(/^comments pagination stopped: .*captcha/)
+    })
+
+    it('a partial no route could read (the page the fetcher hands back) stops pagination and says so', async () => {
+        const page1 = thingIdEl(newestComment) + loadMoreObserver(newestComment)
+        const fetchHtml = async url => {
+            if (url.includes('/svc/')) return frontPage
+            if (url.includes('/comments/?sort=new')) return page1
+            return emptyStatePage('posts')
+        }
+        const result = await getPublicProfileItems('user1', fetchHtml, [newestComment, olderComment])
+        expect(result.valid).toBe(true)
+        expect(result.coverage.t1).toBe(fullnameValue(newestComment))
+        expect(result.paginationStopped).toMatch(/^comments pagination stopped: unreadable page: /)
+    })
+
+    it("the small fragment that ends a profile isn't a stop", async () => {
+        const page1 = thingIdEl(newestComment) + loadMoreObserver(newestComment)
+        const fetchHtml = async url => {
+            if (url.includes('/svc/')) return '<div></div>'
+            if (url.includes('/comments/?sort=new')) return page1
+            return emptyStatePage('posts')
+        }
+        const result = await getPublicProfileItems('user1', fetchHtml, [newestComment, olderComment])
+        expect(result.paginationStopped).toBeUndefined()
+    })
+
+    it("a 429 on either tab reaches the caller when the other tab failed another way", async () => {
+        const fetchHtml = async url => {
+            if (url.includes('/comments/?sort=new')) throw new Error('www.reddit.com request failed: 404')
+            throw new Error('www.reddit.com request failed: 429')
+        }
+        const result = await getPublicProfileItems('user1', fetchHtml, [newestComment])
+        expect(result.valid).toBe(false)
+        expect(result.error).toMatch(/request failed: 429/)
+        expect(result.missing).toBeUndefined()
+    })
+
+    it('both tabs a 404: the profile is missing', async () => {
+        const fetchHtml = async () => {
+            throw new Error('www.reddit.com request failed: 404')
+        }
+        expect((await getPublicProfileItems('user1', fetchHtml, [newestComment])).missing).toBe(true)
     })
 
     it('a 429 on a pagination partial still fails the lookup, so monitoring backs off', async () => {
@@ -626,9 +701,18 @@ describe('markup config', () => {
     it('reads a post by a renamed id attribute too', () => {
         const page =
             `<html><body><shreddit-post post-id="t3_abc123" author="someone" subreddit-name="s">` +
-            `<div>Post is awaiting moderator approval.</div></shreddit-post></body></html>`
+            `<div slot="post-removed-banner">Post is awaiting moderator approval.</div></shreddit-post></body></html>`
         expect(classifyPostPage(page, 't3_abc123').status).toBe('unknown')
         setMarkupConfig({ postIdAttributes: ['post-id'] })
+        expect(classifyPostPage(page, 't3_abc123').status).toBe('held')
+    })
+
+    it('reads a banner from a renamed slot too', () => {
+        const page =
+            `<html><body><shreddit-post id="t3_abc123" author="someone" subreddit-name="s">` +
+            `<div slot="post-status-banner">Post is awaiting moderator approval.</div></shreddit-post></body></html>`
+        expect(classifyPostPage(page, 't3_abc123').status).toBe('live')
+        setMarkupConfig(sanitizeMarkupConfig({ post_banner_slots: ['post-status-banner'] }))
         expect(classifyPostPage(page, 't3_abc123').status).toBe('held')
     })
 })
