@@ -1077,9 +1077,40 @@ describe('0.0.5.27 release review fixes: rate limits, the legacy queue, the publ
             legacy_info: { refusals: 1, until: Date.now() + 3600 * 1000, since: Date.now() },
         }
         await expect(
-            lookupItemsByID(['t3_queued1', GONE], 'none', false, false, [], USER, { [GONE]: meta(GONE) }),
+            lookupItemsByID(['t3_queued1', 't3_private1', 't3_quar1', GONE], 'none', false, false, [], USER, {
+                [GONE]: meta(GONE),
+                // their legacy pages answer 403 logged out, which reads like reddit refusing every page
+                t3_private1: { locked: false, subreddit_type: 'private' },
+                t3_quar1: { locked: false, quarantine: true },
+            }),
         ).rejects.toThrow()
         expect(__getLocalStorage().pending_post_lookups).toEqual(['t3_queued1'])
+    })
+
+    it("a post verdict 0.0.5.27's classifier cached as removed is read again, not reused", async () => {
+        const YOUNG = 't3_young1'
+        __resetStorage({}, { www_post_page_verdicts: { [YOUNG]: { v: 'removed', t: Date.now() - 60 * 1000 } } })
+        const pageCalls = []
+        globalThis.fetch = async url => {
+            const u = String(url)
+            if (u.includes(`/user/${USER}/comments/`))
+                return { ok: true, status: 200, text: async () => emptyStatePage('comments') }
+            if (u.includes(`/user/${USER}/submitted/`)) return { ok: true, status: 200, text: async () => thingIdEl(YOUNG) }
+            pageCalls.push(u)
+            return {
+                ok: true,
+                status: 200,
+                text: async () =>
+                    `<html><body><shreddit-post id="${YOUNG}" author="${USER}" subreddit-name="s" ` +
+                    `post-title="Why was my post removed by moderators?"></shreddit-post></body></html>`,
+            }
+        }
+        const results = await lookupItemsByID_fromPublicProfile([YOUNG], USER, {
+            [YOUNG]: { locked: false, created_utc: now() - 3600 },
+        })
+        expect(pageCalls).toHaveLength(1)
+        expect(results.find(r => r.data.name === YOUNG).data.is_robot_indexable).toBe(true)
+        expect(__getLocalStorage().www_post_page_verdicts[YOUNG]).toMatchObject({ v: 'live', k: 2 })
     })
 
     it('an empty profile forgets which items were seen publicly, so the bridge stops vouching for them', async () => {

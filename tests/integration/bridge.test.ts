@@ -642,6 +642,32 @@ describe('0.0.5.27 release review fixes: the public view', () => {
         )
         expect(view.data.children.map((c: any) => c.data.name)).toEqual(['t3_pub'])
 
+        const more = toPublicView(
+            {
+                json: {
+                    data: {
+                        things: [
+                            { kind: 't1', data: { name: 't1_pub', author: 'bob', body: 'x', subreddit_type: 'public' } },
+                            { kind: 't1', data: { name: 't1_priv', author: 'bob', body: 'x', subreddit_type: 'private' } },
+                        ],
+                    },
+                },
+            },
+            context,
+        )
+        expect(more.json.data.things.map((t: any) => t.data.name)).toEqual(['t1_pub'])
+        const moderated = toPublicView(
+            {
+                kind: 'ModeratedList',
+                data: [
+                    { sr: 'pics', subreddit_type: 'public' },
+                    { sr: 'secret', subreddit_type: 'private' },
+                ],
+            },
+            context,
+        )
+        expect(moderated.data.map((e: any) => e.sr)).toEqual(['pics'])
+
         const savedCookies = (browserMock as any).cookies
         ;(browserMock as any).cookies = { get: vi.fn(async () => ({ name: 'reddit_session', value: 'x' })) }
         cycleBusy = false

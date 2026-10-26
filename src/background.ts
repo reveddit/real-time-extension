@@ -17,7 +17,6 @@ import {
     storeRedditCookies,
     throwIfLegacyDisabled,
     throwIfLegacyOff,
-    noteCapabilityRefused,
     noteCapabilityWorked,
     noteRateLimited,
     lookupItemsByID_fromPublicProfile,
@@ -444,11 +443,11 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         throwIfLegacyOff('legacy reddit post page')
             .then(() => getPost_fromOld(request.path))
             .then(async (data: any) => {
-                // A page view's refusal rests the legacy pages as monitoring's
-                // would, so the next page views don't ask again
-                if (data?.status === 403) {
-                    await noteCapabilityRefused('legacy', 'HTTP 403')
-                } else if (data?.status === 429) {
+                // A page that answers ends the legacy pages' rest. A 403 rests
+                // nothing: a private or quarantined community's thread answers
+                // 403 too, and one page view can't tell that from reddit
+                // refusing every page (monitoring's queue can, by asking two).
+                if (data?.status === 429) {
                     noteRateLimited(new Error(String(data.error)))
                 } else if (data && 'is_removed' in data) {
                     await noteCapabilityWorked('legacy')

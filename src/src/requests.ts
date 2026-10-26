@@ -868,7 +868,18 @@ interface PostVerdictEntry {
     t: number // epoch ms of verification
     // Once held or removed: an 'unknown' since keeps the post re-verified at any age
     adverse?: boolean
+    // POST_CLASSIFIER, when it was a post page's
+    k?: number
 }
+
+// Which post-page classifier a cached post verdict came from. 2 (0.0.5.28)
+// reads only the banner's slot; the one before read the post's own title and
+// body too, so its 'removed' or 'held' may have been the author's words. Such
+// a verdict is read again rather than reused.
+const POST_CLASSIFIER = 2
+const isStalePostVerdict = (id: string, entry: { v: PostPageStatus; k?: number }): boolean =>
+    id.startsWith('t3_') && (entry.v === 'removed' || entry.v === 'held') && entry.k !== POST_CLASSIFIER
+const classifierMark = (id: string) => (id.startsWith('t3_') ? { k: POST_CLASSIFIER } : {})
 
 // A cache entry still within its time to live; a time in the future (a clock
 // set back) counts as expired
@@ -934,7 +945,7 @@ const verifyFeedPresentPosts = async (
         if (isMature && !isAdverseVerdict(cached) && !m?.known_removed) {
             continue
         }
-        if (cached) {
+        if (cached && !isStalePostVerdict(id, cached)) {
             if (isFresh(cached.t, postVerdictTtl(cached), nowMs)) {
                 // A recent 'unknown' is paced, not returned: callers treat a
                 // missing verdict as unresolved
@@ -959,13 +970,18 @@ const verifyFeedPresentPosts = async (
         try {
             const verdict = await fetchAndClassifyItemPage(id, authItemsMeta[id] || {}, fetchHtml)
             dlog('verify', `[reveddit] post page verdict ${id}: ${verdict}`)
-            cache[id] = { v: verdict, t: nowMs, ...(verdict === 'unknown' && wasAdverse(id) && { adverse: true }) }
+            cache[id] = {
+                v: verdict,
+                t: nowMs,
+                k: POST_CLASSIFIER,
+                ...(verdict === 'unknown' && wasAdverse(id) && { adverse: true }),
+            }
             if (verdict !== 'unknown') {
                 verdicts[id] = verdict
             }
         } catch (err: any) {
             dlog('verify', `[reveddit] post page fetch failed ${id}:`, String(err?.message || err))
-            cache[id] = { v: 'unknown', t: nowMs, ...(wasAdverse(id) && { adverse: true }) }
+            cache[id] = { v: 'unknown', t: nowMs, k: POST_CLASSIFIER, ...(wasAdverse(id) && { adverse: true }) }
             if (noteRateLimited(err)) {
                 break
             }
@@ -1034,6 +1050,8 @@ export const computeAbsentVerifyBudget = (
 interface AbsentVerdictEntry {
     v: PostPageStatus
     t: number // epoch ms of verification
+    // POST_CLASSIFIER, for a post
+    k?: number
 }
 
 // F4 (issue #14): consecutive cycles where absent-item verification fetched
@@ -1321,7 +1339,7 @@ export const verifyFeedAbsentItems = async (
     let recentUnknownSkipped = 0
     for (const id of ids) {
         const cached = cache[id]
-        if (cached) {
+        if (cached && !isStalePostVerdict(id, cached)) {
             const ttl =
                 cached.v === 'live'
                     ? ABSENT_VERDICT_LIVE_TTL_MS
@@ -1360,7 +1378,7 @@ export const verifyFeedAbsentItems = async (
         try {
             const verdict = await fetchAndClassifyItemPage(id, authItemsMeta[id] || {}, fetchHtml)
             dlog('verify', `[reveddit] absent item verdict ${id}: ${verdict}`)
-            cache[id] = { v: verdict, t: nowMs }
+            cache[id] = { v: verdict, t: nowMs, ...classifierMark(id) }
             if (verdict !== 'unknown') {
                 verdicts[id] = verdict
                 freshDefinitive++
@@ -1369,7 +1387,7 @@ export const verifyFeedAbsentItems = async (
             dlog('verify', `[reveddit] absent item verification failed ${id}:`, String(err?.message || err))
             // Paced like an unreadable page. A wall on every route (the
             // captcha, the block page) must not be retried every cycle.
-            cache[id] = { v: 'unknown', t: nowMs }
+            cache[id] = { v: 'unknown', t: nowMs, ...classifierMark(id) }
             // A 429 enters the shared backoff and ends this cycle's checks:
             // without this, a rate-limited client burns the whole verification
             // budget every cycle producing silent unknowns (no alert, no
@@ -1386,7 +1404,7 @@ export const verifyFeedAbsentItems = async (
         verdicts,
         (id, v) => {
             verdicts[id] = v
-            cache[id] = { v, t: nowMs }
+            cache[id] = { v, t: nowMs, ...classifierMark(id) }
             cacheMutated = true
             freshDefinitive++
         },
@@ -1826,9 +1844,14 @@ export const lookupItemsByID_fromPublicProfile = async (
 // gated by the dev deprecation switch so post-deprecation behavior is testable.
 // Posts go to the pending-post queue, which reads each one's own legacy page
 // ('legacy'), whatever becomes of the listing: the listing ('legacy_info')
-// rests on its own, and reddit refuses it while the pages still answer
-const queueLegacyPosts = async (ids: string | string[]) => {
-    const postIds = (Array.isArray(ids) ? ids : String(ids).split(',')).filter(id => id.startsWith('t3_'))
+// rests on its own, and reddit refuses it while the pages still answer. Not
+// posts the logged-in view shows in a private or quarantined community: their
+// pages answer 403 logged out, which reads like reddit refusing every page.
+const queueLegacyPosts = async (ids: string | string[], authItemsMeta: AuthItemsMeta) => {
+    const postIds = (Array.isArray(ids) ? ids : String(ids).split(',')).filter(id => {
+        const meta = authItemsMeta[id]
+        return id.startsWith('t3_') && !(meta?.quarantine || meta?.subreddit_type === 'private')
+    })
     if (postIds.length && !(await isLegacyOff('legacy'))) {
         await addToPendingPostQueue(postIds)
     }
@@ -1841,8 +1864,9 @@ const lookupItemsByID_legacy = (
     monitor_quarantined: boolean,
     monitor_quarantined_remote: boolean,
     ids: string | string[],
+    authItemsMeta: AuthItemsMeta = {},
 ) => {
-    return queueLegacyPosts(ids)
+    return queueLegacyPosts(ids, authItemsMeta)
         .catch(() => {})
         .then(() => throwIfLegacyOff('legacy reddit HTML', 'legacy_info'))
         .then(() => getItemsById_fromOldHTML(ids))
@@ -2185,7 +2209,7 @@ export const lookupItemsByID_withFallback = (
 ) => {
     const idsArray = (Array.isArray(ids) ? ids : String(ids).split(',')).filter(x => x)
     const legacy = () =>
-        lookupItemsByID_legacy(path, search, auth, monitor_quarantined, monitor_quarantined_remote, ids)
+        lookupItemsByID_legacy(path, search, auth, monitor_quarantined, monitor_quarantined_remote, ids, authItemsMeta)
     if (!idsArray.length) {
         return legacy()
     }

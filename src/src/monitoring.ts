@@ -41,6 +41,7 @@ import {
     getUserInit,
     getOldestDateKey,
     getNextPendingPosts,
+    addToPendingPostQueue,
     removeFromPendingPostQueue,
     recordPendingPostAttempt,
     clearPendingPostAttempt,
@@ -150,6 +151,8 @@ const processPendingPosts = async (storage: Record<string, any>) => {
 
     const totalAtStart = totalRemaining
     let processed = 0
+    // The previous post's legacy page answered 403
+    let refusedBefore = false
 
     for (const [index, postId] of posts.entries()) {
         const isAlreadyKnownRemoved = (() => {
@@ -169,39 +172,54 @@ const processPendingPosts = async (storage: Record<string, any>) => {
             continue
         }
 
-        // keep: the post stays queued for a later cycle; stop: and this
-        // cycle's batch ends (reddit refused or rate limited a request)
-        let keep = false
-        let stop = false
+        // done: the post leaves the queue; retry: it stays where it is;
+        // rotate: it goes to the back; wait: it stays, and this cycle's batch
+        // ends (reddit refused or rate limited a request, or no login).
+        // Attempts count only outcomes about the post itself, so a post that
+        // never resolves stops being re-enqueued by the lookup fallback
+        // (prevents a permanently "stuck" scan banner).
+        let outcome: 'done' | 'retry' | 'rotate' | 'wait' = 'done'
         try {
             const postPath = '/comments/' + postId.substring(3) + '/'
             const result: any = await getPost_fromOld(postPath)
             if (result?.status === 403) {
-                // The legacy pages rest (the listing rests on its own), and
-                // this queue waits for them
-                await noteCapabilityRefused('legacy', 'HTTP 403')
-                keep = stop = true
+                if (refusedBefore) {
+                    // Two posts in a row: reddit refuses the legacy pages,
+                    // which rest (the listing rests on its own), and this
+                    // queue waits for them
+                    await noteCapabilityRefused('legacy', 'HTTP 403')
+                    outcome = 'wait'
+                } else {
+                    // One post's 403 can be its own (a community only members
+                    // can read): it moves to the back, and the next post says
+                    // whether reddit refuses them all
+                    refusedBefore = true
+                    await recordPendingPostAttempt(postId)
+                    outcome = 'rotate'
+                }
             } else if (result?.status === 429) {
                 noteRateLimited(new Error(String(result.error)))
-                keep = stop = true
+                outcome = 'wait'
             } else {
-                // Count this attempt so a post that never resolves stops being
-                // re-enqueued by the lookup fallback (prevents a permanently
-                // "stuck" scan banner). A refusal or a 429 isn't an attempt.
-                const attempts = await recordPendingPostAttempt(postId)
+                refusedBefore = false
                 if (result && 'is_removed' in result) {
                     await noteCapabilityWorked('legacy')
                 }
                 if (result && 'is_removed' in result && result.is_removed) {
-                    const read = await readThreadItemLoggedIn(postId, postId)
-                    if (read.status === 429) {
+                    // Its data comes from its thread's JSON with the user's
+                    // login. Logged out, reddit answers with its block page,
+                    // which would rest the reads followed items need.
+                    const read = (await hasRedditLoginCookie()) ? await readThreadItemLoggedIn(postId, postId) : null
+                    if (!read) {
+                        outcome = 'wait'
+                    } else if (read.status === 429) {
                         noteRateLimited(new Error('www.reddit.com request failed: 429'))
-                        keep = stop = true
+                        outcome = 'wait'
                     } else if (read.blocked) {
                         if (read.refused) {
                             await noteCapabilityRefused('thread_json', 'block page')
                         }
-                        keep = stop = true
+                        outcome = 'wait'
                     } else if (read.data) {
                         const itemData = read.data
                         itemData.is_robot_indexable = false
@@ -227,21 +245,26 @@ const processPendingPosts = async (storage: Record<string, any>) => {
                             true,
                         )
                         await clearPendingPostAttempt(postId)
-                    } else if (attempts < MAX_PENDING_POST_ATTEMPTS) {
+                    } else if ((await recordPendingPostAttempt(postId)) < MAX_PENDING_POST_ATTEMPTS) {
                         // A removal whose data didn't come back: read again next cycle
-                        keep = true
+                        outcome = 'retry'
                     }
                 } else {
+                    await recordPendingPostAttempt(postId)
                     console.log(`Pending post lookup: ${postId} is not removed.`)
                 }
             }
         } catch {
-            /* ignored */
+            await recordPendingPostAttempt(postId).catch(() => 0)
         }
-        if (stop) {
+        if (outcome === 'wait') {
             break
         }
-        if (!keep) {
+        if (outcome === 'rotate') {
+            // Re-added at the back unless it has used up its attempts
+            await removeFromPendingPostQueue(postId)
+            await addToPendingPostQueue([postId])
+        } else if (outcome === 'done') {
             await removeFromPendingPostQueue(postId)
             processed++
 
@@ -254,8 +277,8 @@ const processPendingPosts = async (storage: Record<string, any>) => {
             })
         }
 
-        if (index < posts.length - 1) {
-            await new Promise(r => setTimeout(r, PENDING_POST_DELAY_MS))
+        if (index < posts.length - 1 && _pendingPostTiming.delayMs > 0) {
+            await new Promise(r => setTimeout(r, _pendingPostTiming.delayMs))
         }
     }
 
@@ -264,6 +287,9 @@ const processPendingPosts = async (storage: Record<string, any>) => {
         await browser.storage.local.remove('pending_post_progress')
     }
 }
+// For tests
+export const _processPendingPosts = processPendingPosts
+export const _pendingPostTiming = { delayMs: PENDING_POST_DELAY_MS }
 
 // postId: the comment's post, when the page knows it (an old reddit comment's
 // permalink); else the post the URL names. Every follow is of the item its URL

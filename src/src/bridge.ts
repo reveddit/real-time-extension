@@ -409,8 +409,10 @@ export const toPublicView = (json: any, context: PublicViewContext): any => {
             }
             visit(data?.children)
         } else if (node.kind === 'ModeratedList' && Array.isArray(data)) {
-            data.forEach(entry => entry && typeof entry === 'object' && resetViewerFields(entry))
-        } else if (node.json?.data?.things) {
+            node.data = data.filter(entry => !isMembersOnly(entry))
+            node.data.forEach((entry: any) => entry && typeof entry === 'object' && resetViewerFields(entry))
+        } else if (Array.isArray(node.json?.data?.things)) {
+            node.json.data.things = node.json.data.things.filter((thing: any) => !isMembersOnly(thing?.data))
             visit(node.json.data.things)
         }
     }
