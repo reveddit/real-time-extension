@@ -102,6 +102,16 @@ describe('parseProfileHtml', () => {
         expect(parseProfileHtml(html, 't3_').ids).toEqual(['t3_post11'])
     })
 
+    it("pages with the load-after partial's cursor when there's no observer (a posts tab, 2026-10-26)", () => {
+        const html =
+            thingIdEl('t3_1iytoq4') +
+            thingIdEl('t3_1ivpcy4') +
+            `<faceplate-partial slot="load-after" id="partial-more-posts-dDNfMWl2cGN5NA" loading="programmatic" ` +
+            `src="/svc/shreddit/profiles/profile_posts-more-posts/new/?sort=new&amp;after=dDNfMWl2cGN5NA%3D%3D` +
+            `&amp;name=someuser&amp;feedLength=3" method="GET"></faceplate-partial>`
+        expect(parseProfileHtml(html, 't3_').cursor).toBe(b64('t3_1ivpcy4'))
+    })
+
     it('takes the last cursor on the page', () => {
         const html = thingIdEl('t1_aaa111') + loadMoreObserver('t1_zzz') + loadMoreObserver('t1_aaa111')
         expect(parseProfileHtml(html, 't1_').cursor).toBe(b64('t1_aaa111'))
@@ -504,7 +514,7 @@ describe('getPublicProfileItems', () => {
             ['/submitted/?sort=new', emptyStatePage('posts')],
         ])
         const result = await getPublicProfileItems('user1', fetchHtml, [newestComment, olderComment])
-        expect(result).toMatchObject({ valid: true, emptyProfile: false, hiddenTabs: 'comments' })
+        expect(result).toMatchObject({ valid: true, emptyProfile: false, hidden: { t1: true, t3: false } })
         expect(result.items.size).toBe(0)
         // every comment is covered, so each is checked on its own page
         expect(result.coverage.t1).toBe(0)

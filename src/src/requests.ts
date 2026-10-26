@@ -1015,6 +1015,18 @@ const verifyFeedPresentPosts = async (
 // 2026-07-20), so this runs in both tab and background modes.
 const ABSENT_VERDICT_CACHE_KEY = 'www_absent_item_verdicts'
 const ABSENT_VERDICT_LIVE_TTL_MS = 6 * 3600 * 1000
+// A young item's 'live' is read again sooner, since that's when removals
+// happen: after an eighth of its age, at least 10 minutes, at most the 6 h
+// above. A tab the owner hides lists nothing, so every item of it is checked
+// this way, and a removal minutes after posting mustn't wait out 6 h.
+const ABSENT_VERDICT_LIVE_MIN_TTL_MS = 10 * 60 * 1000
+const absentLiveTtl = (createdUtc: number | undefined, nowMs: number): number =>
+    createdUtc === undefined
+        ? ABSENT_VERDICT_LIVE_TTL_MS
+        : Math.min(
+              ABSENT_VERDICT_LIVE_TTL_MS,
+              Math.max(ABSENT_VERDICT_LIVE_MIN_TTL_MS, (nowMs - createdUtc * 1000) / 8),
+          )
 const ABSENT_VERDICT_ADVERSE_TTL_MS = 2 * 3600 * 1000
 // 'unknown' is cached too, briefly: when the channel is dead (unreadable pages,
 // issue #14) an uncached unknown means the same newest-N items are re-fetched
@@ -1342,7 +1354,7 @@ export const verifyFeedAbsentItems = async (
         if (cached && !isStalePostVerdict(id, cached)) {
             const ttl =
                 cached.v === 'live'
-                    ? ABSENT_VERDICT_LIVE_TTL_MS
+                    ? absentLiveTtl(authItemsMeta[id]?.created_utc, nowMs)
                     : cached.v === 'removed'
                       ? ABSENT_VERDICT_ADVERSE_TTL_MS
                       : ABSENT_VERDICT_UNKNOWN_TTL_MS
@@ -1398,9 +1410,24 @@ export const verifyFeedAbsentItems = async (
         }
     }
     let cacheMutated = fetched > 0
+    // The tiebreak's canaries are comments known live. None is in the feed when
+    // the owner hides their comments: then comments their own pages showed
+    // live, recently. Without canaries the listing can only say 'live'.
+    const canaries = canaryCommentIds.length
+        ? canaryCommentIds
+        : Object.entries(cache)
+              .filter(
+                  ([id, e]) =>
+                      id.startsWith('t1_') &&
+                      !ids.includes(id) &&
+                      e.v === 'live' &&
+                      isFresh(e.t, ABSENT_VERDICT_LIVE_TTL_MS, nowMs),
+              )
+              .slice(0, 3)
+              .map(([id]) => id)
     await legacyTiebreakAbsent(
         ids,
-        canaryCommentIds,
+        canaries,
         verdicts,
         (id, v) => {
             verdicts[id] = v
@@ -1650,10 +1677,11 @@ export const lookupItemsByID_fromPublicProfile = async (
         throw new Error(`www profile lookup invalid: ${reason}`)
     }
     await recordWwwDetectOutcome(true)
-    if (profile.hiddenTabs) {
+    if (profile.hidden) {
+        const tabs = [profile.hidden.t1 && 'comments', profile.hidden.t3 && 'posts'].filter(Boolean).join(' and ')
         dlog(
             'feed',
-            `[reveddit] u/${username} hides their ${profile.hiddenTabs} from logged-out visitors; each is checked on its own page`,
+            `[reveddit] u/${username} hides their ${tabs} from logged-out visitors; each is checked on its own page`,
         )
     }
     if (profile.emptyProfile && ids.length) {
@@ -1805,8 +1833,10 @@ export const lookupItemsByID_fromPublicProfile = async (
                 if (absentVerificationDisabled) {
                     // Remote fallback: pre-verification behavior — absence
                     // within coverage counts as removed, unless the
-                    // unverified-is-unknown valve says omit.
-                    if (!absentUnverifiedIsUnknown) results.push(syntheticRemoved)
+                    // unverified-is-unknown valve says omit. Not for a kind the
+                    // owner hides: nothing of it is listed, so absence says nothing.
+                    const hiddenKind = isPost ? profile.hidden?.t3 : profile.hidden?.t1
+                    if (!absentUnverifiedIsUnknown && !hiddenKind) results.push(syntheticRemoved)
                 } else {
                     const verdict = absentVerdicts[id]
                     if (verdict === 'live') {

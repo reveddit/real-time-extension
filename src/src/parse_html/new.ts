@@ -53,9 +53,10 @@ export interface PublicProfileData {
     paginationStopped?: string
     // Both tabs answered 404: logged out, the account doesn't exist
     missing?: boolean
-    // Tabs the owner hides from logged-out visitors ('comments', 'posts'),
-    // whose items are all checked on their own pages
-    hiddenTabs?: string
+    // The kinds whose tab the owner hides from logged-out visitors: none of
+    // their items is listed, so absence says nothing, and each item is
+    // checked on its own page
+    hidden?: { t1: boolean; t3: boolean }
 }
 
 // Fetching is delegated so requests.ts can route through a www.reddit.com tab's
@@ -71,6 +72,9 @@ export type FetchHtml = (url: string, accept?: (html: string) => boolean) => Pro
 const THING_ID_REGEX = /\bthing-id="(t[13]_[a-z0-9]+)"/g
 const ACTION_ROW_REGEX = /<shreddit-comment-action-row\b([^>]*)>/g
 const CURSOR_REGEX = /<shreddit-feed-load-more-observer\b[^>]*\bcursor="([^"]+)"/g
+// A tab can page with only its load-after partial, no observer (a posts tab,
+// 2026-10-26); its after= is the same cursor
+const LOAD_AFTER_REGEX = /<faceplate-partial\b[^>]*\bslot="load-after"[^>]*\bsrc="[^"]*?[?&;]after=([^&"]+)/g
 const ATTR_REGEX = /([\w-]+)="([^"]*)"/g
 // Apostrophe in "doesn't" may be ', ’, or an HTML entity depending on encoding
 const EMPTY_STATE_REGEX = /have any (posts|comments) yet/i
@@ -160,7 +164,16 @@ export const parseProfileHtml = (html: string, typePrefix: string): ParsedPage =
             })
         }
     }
-    const cursors = [...html.matchAll(CURSOR_REGEX)].map(m => m[1])
+    let cursors = [...html.matchAll(CURSOR_REGEX)].map(m => m[1])
+    if (!cursors.length) {
+        cursors = [...html.matchAll(LOAD_AFTER_REGEX)].flatMap(m => {
+            try {
+                return [decodeURIComponent(m[1])]
+            } catch {
+                return []
+            }
+        })
+    }
     return {
         ids,
         rows,
@@ -638,7 +651,6 @@ export const getPublicProfileItems = async (
         const items = new Map([...comments.items, ...posts.items])
         const error = comments.error || posts.error
         const paginationStopped = [comments.stopped, posts.stopped].filter(Boolean).join('; ')
-        const hiddenTabs = [comments.hidden && 'comments', posts.hidden && 'posts'].filter(Boolean).join(', ')
         return {
             items,
             valid: comments.valid && posts.valid,
@@ -647,7 +659,7 @@ export const getPublicProfileItems = async (
             coverage: { t1: comments.floor, t3: posts.floor },
             ...(error && { error }),
             ...(paginationStopped && { paginationStopped }),
-            ...(hiddenTabs && { hiddenTabs }),
+            ...((comments.hidden || posts.hidden) && { hidden: { t1: !!comments.hidden, t3: !!posts.hidden } }),
         }
     } catch (error: any) {
         return failed(String(error?.message || error))

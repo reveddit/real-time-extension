@@ -1047,6 +1047,70 @@ describe('a profile that hides its comments from logged-out visitors', () => {
         expect(calls.some(u => u.includes(THREAD_PAGES[GONE]))).toBe(true)
         expect(__getLocalStorage().error_status).toBeUndefined()
     })
+
+    it('with page verification switched off, a hidden kind is omitted, never reported removed', async () => {
+        __resetStorage(
+            {},
+            { news_cache: { feed: { messages: [], options: { mechanisms: { absentPageVerification: 'off' } } }, lastFetched: 1 } },
+        )
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, hiddenStatePage('comments')],
+            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+        ])
+        const results = await lookupItemsByID_fromPublicProfile([HIDDEN, GONE], USER, {
+            [HIDDEN]: meta(HIDDEN),
+            [GONE]: meta(GONE),
+        })
+        expect(results).toEqual([])
+    })
+
+    it("re-reads a young comment's 'live' soon, an old one's only after hours", async () => {
+        const nowSec = Math.floor(Date.now() / 1000)
+        const twentyMinutesAgo = Date.now() - 20 * 60 * 1000
+        __resetStorage(
+            {},
+            {
+                www_absent_item_verdicts: {
+                    [HIDDEN]: { v: 'live', t: twentyMinutesAgo },
+                    [GONE]: { v: 'live', t: twentyMinutesAgo },
+                },
+            },
+        )
+        const calls = installFetch([
+            [`/user/${USER}/comments/?sort=new`, hiddenStatePage('comments')],
+            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+            [THREAD_PAGES[HIDDEN], commentsPage(commentEl(HIDDEN, USER), HIDDEN)],
+            [THREAD_PAGES[GONE], commentsPage(commentEl('t1_other11', 'SomeoneElse'), GONE)],
+        ])
+        const results = await lookupItemsByID_fromPublicProfile([HIDDEN, GONE], USER, {
+            // a day old: its 'live' lasts 3 h
+            [HIDDEN]: meta(HIDDEN, { created_utc: nowSec - 24 * 3600 }),
+            // an hour old: its 'live' lasts 10 minutes, so it's read again, and is gone
+            [GONE]: meta(GONE, { created_utc: nowSec - 3600 }),
+        })
+        expect(calls.some(u => u.includes(THREAD_PAGES[HIDDEN]))).toBe(false)
+        expect(calls.some(u => u.includes(THREAD_PAGES[GONE]))).toBe(true)
+        const byId = Object.fromEntries(results.map(r => [r.data.name, r.data]))
+        expect(byId[HIDDEN].author).toBe(USER)
+        expect(byId[GONE].author).toBe('[deleted]')
+    })
+
+    it("gives the legacy tiebreak canaries from comments recently read live, when none is in the feed", async () => {
+        const asked = []
+        stubLegacy(async ids => {
+            asked.push(...ids)
+            return []
+        })
+        __resetStorage({}, { www_absent_item_verdicts: { t1_known1: { v: 'live', t: Date.now() - 60 * 1000 } } })
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, hiddenStatePage('comments')],
+            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+            // the comment's own page can't be read: the tiebreak decides
+            [THREAD_PAGES[GONE], FRONT_PAGE],
+        ])
+        await lookupItemsByID_fromPublicProfile([GONE], USER, { [GONE]: meta(GONE) })
+        expect(asked).toEqual([GONE, 't1_known1'])
+    })
 })
 
 // Fixes from the 0.0.5.27 release review (2026-10-25)
