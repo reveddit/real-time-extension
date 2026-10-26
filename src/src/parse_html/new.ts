@@ -53,6 +53,9 @@ export interface PublicProfileData {
     paginationStopped?: string
     // Both tabs answered 404: logged out, the account doesn't exist
     missing?: boolean
+    // Tabs the owner hides from logged-out visitors ('comments', 'posts'),
+    // whose items are all checked on their own pages
+    hiddenTabs?: string
 }
 
 // Fetching is delegated so requests.ts can route through a www.reddit.com tab's
@@ -71,6 +74,11 @@ const CURSOR_REGEX = /<shreddit-feed-load-more-observer\b[^>]*\bcursor="([^"]+)"
 const ATTR_REGEX = /([\w-]+)="([^"]*)"/g
 // Apostrophe in "doesn't" may be ', ’, or an HTML entity depending on encoding
 const EMPTY_STATE_REGEX = /have any (posts|comments) yet/i
+// A tab its owner hid from logged-out visitors, in the feed where the empty
+// state goes: "u/x likes to keep their comments hidden, but check out their
+// stats to learn more about them." (verified 2026-10-26; the owner and
+// logged-in visitors still see the items)
+const HIDDEN_STATE_REGEX = /likes to keep their (posts|comments) hidden/i
 const CHALLENGE_REGEX = /js_challenge/
 // The captcha interstitial is a 200 titled "Reddit - Prove your humanity".
 // The page's first <title> must be exactly that, so neither a post titled
@@ -118,6 +126,8 @@ export interface ParsedPage {
     rows: Map<string, { score?: number; permalink?: string }>
     cursor: string | null
     emptyState: boolean
+    // The tab is hidden from logged-out visitors (HIDDEN_STATE_REGEX)
+    hidden: boolean
     hasItems: boolean
 }
 
@@ -156,6 +166,7 @@ export const parseProfileHtml = (html: string, typePrefix: string): ParsedPage =
         rows,
         cursor: cursors.length ? cursors[cursors.length - 1] : null,
         emptyState: EMPTY_STATE_REGEX.test(html),
+        hidden: HIDDEN_STATE_REGEX.test(html),
         hasItems: ids.length > 0,
     }
 }
@@ -468,6 +479,9 @@ interface TabResult {
     items: Map<string, PublicItem>
     valid: boolean
     emptyState: boolean
+    // Hidden from logged-out visitors: none of its items is listed, so every
+    // one is covered (floor 0) and checked on its own page
+    hidden?: boolean
     floor: number
     // Why the tab is invalid, for the diagnostic log
     error?: string
@@ -495,15 +509,13 @@ const fetchTab = async (
     const items = new Map<string, PublicItem>()
     const invalid = (error: string): TabResult => ({ items, valid: false, emptyState: false, floor: Infinity, error })
 
-    const isProfilePage = (h: string) => {
-        const p = parseProfileHtml(h, typePrefix)
-        return p.hasItems || p.emptyState
-    }
+    const recognized = (p: ParsedPage) => p.hasItems || p.emptyState || p.hidden
+    const isProfilePage = (h: string) => recognized(parseProfileHtml(h, typePrefix))
     const isPartialPage = isPartialPageFor(typePrefix)
     const url = buildTabUrl(username, tab)
     let html = await fetchHtml(url, isProfilePage)
     let page = parseProfileHtml(html, typePrefix)
-    if (!page.hasItems && !page.emptyState) {
+    if (!recognized(page)) {
         // Not recognizable — try the challenge solver once, then give up
         const solutionUrl = solveChallenge(html, url)
         if (!solutionUrl) {
@@ -511,9 +523,12 @@ const fetchTab = async (
         }
         html = await fetchHtml(solutionUrl, isProfilePage)
         page = parseProfileHtml(html, typePrefix)
-        if (!page.hasItems && !page.emptyState) {
+        if (!recognized(page)) {
             return invalid(`${tab} page unrecognized after challenge solve: ${describePageForDiag(html)}`)
         }
+    }
+    if (page.hidden && !page.hasItems) {
+        return { items, valid: true, emptyState: false, hidden: true, floor: 0 }
     }
 
     // Track the smallest id value actually seen: everything at or above it was
@@ -623,13 +638,16 @@ export const getPublicProfileItems = async (
         const items = new Map([...comments.items, ...posts.items])
         const error = comments.error || posts.error
         const paginationStopped = [comments.stopped, posts.stopped].filter(Boolean).join('; ')
+        const hiddenTabs = [comments.hidden && 'comments', posts.hidden && 'posts'].filter(Boolean).join(', ')
         return {
             items,
             valid: comments.valid && posts.valid,
+            // A hidden tab isn't an empty one: it's no shadowban signature
             emptyProfile: comments.emptyState && posts.emptyState && items.size === 0,
             coverage: { t1: comments.floor, t3: posts.floor },
             ...(error && { error }),
             ...(paginationStopped && { paginationStopped }),
+            ...(hiddenTabs && { hiddenTabs }),
         }
     } catch (error: any) {
         return failed(String(error?.message || error))

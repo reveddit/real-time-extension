@@ -1650,6 +1650,12 @@ export const lookupItemsByID_fromPublicProfile = async (
         throw new Error(`www profile lookup invalid: ${reason}`)
     }
     await recordWwwDetectOutcome(true)
+    if (profile.hiddenTabs) {
+        dlog(
+            'feed',
+            `[reveddit] u/${username} hides their ${profile.hiddenTabs} from logged-out visitors; each is checked on its own page`,
+        )
+    }
     if (profile.emptyProfile && ids.length) {
         // An account whose every item is NSFW, quarantined or in a private
         // subreddit is publicly empty by design, not shadowbanned: fall through

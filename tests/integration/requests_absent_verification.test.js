@@ -1016,6 +1016,39 @@ describe('followed items while api/info is refused', () => {
     })
 })
 
+// A profile whose comments tab is hidden from logged-out visitors (reported
+// 2026-10-25: every check stopped at "comments page unrecognized")
+describe('a profile that hides its comments from logged-out visitors', () => {
+    const hiddenStatePage = type =>
+        `<shreddit-feed navigation-session-id="x"><div class="text-body-1">u/${USER} likes to keep their ${type} ` +
+        `hidden, but check out their stats to learn more about them.</div></shreddit-feed>`
+    beforeEach(() => {
+        __resetStorage()
+        stubLegacy()
+    })
+    afterEach(() => {
+        Object.assign(_legacyLookups, originalLegacyLookups)
+    })
+
+    it("checks each comment on its own page, and doesn't take the hidden tab for a shadowban", async () => {
+        const calls = installFetch([
+            [`/user/${USER}/comments/?sort=new`, hiddenStatePage('comments')],
+            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+            [THREAD_PAGES[HIDDEN], commentsPage(commentEl(HIDDEN, USER), HIDDEN)],
+            [THREAD_PAGES[GONE], commentsPage(commentEl('t1_other11', 'SomeoneElse'), GONE)],
+        ])
+        const results = await lookupItemsByID_fromPublicProfile([HIDDEN, GONE], USER, {
+            [HIDDEN]: meta(HIDDEN),
+            [GONE]: meta(GONE),
+        })
+        const byId = Object.fromEntries(results.map(r => [r.data.name, r.data]))
+        expect(byId[HIDDEN].author).toBe(USER)
+        expect(byId[GONE].author).toBe('[deleted]')
+        expect(calls.some(u => u.includes(THREAD_PAGES[GONE]))).toBe(true)
+        expect(__getLocalStorage().error_status).toBeUndefined()
+    })
+})
+
 // Fixes from the 0.0.5.27 release review (2026-10-25)
 describe('0.0.5.27 release review fixes: rate limits, the legacy queue, the public-live set', () => {
     const POSTS = ['t3_young1', 't3_young2']

@@ -38,6 +38,15 @@ const emptyStatePage = type =>
     `<shreddit-feed navigation-session-id="x"><div>Welcome! u/someuser doesn&#x27;t have any ${type} yet, ` +
     `but check out their stats to learn more about them.</div></shreddit-feed>`
 
+// A tab the owner hides from logged-out visitors (trimmed from u/BlueGoliath's
+// comments tab, 2026-10-26)
+const hiddenStatePage = type =>
+    `<shreddit-feed navigation-session-id="x"><div class="flex flex-col w-full items-center">` +
+    `<div class="max-w-[480px] flex flex-col items-center text-center">` +
+    `<div class="text-title-2 text-neutral-content-strong" role="heading" aria-level="2"> Welcome! </div> ` +
+    `<div class="text-body-1 text-neutral-content-weak">u/someuser likes to keep their ${type} hidden, ` +
+    `but check out their stats to learn more about them.</div></div></div></shreddit-feed>`
+
 const challengePage =
     `<body class=theme-beta><form action="" method="get">` +
     `<input type="hidden" name="token" value="abc123token"/>` +
@@ -486,6 +495,19 @@ describe('getPublicProfileItems', () => {
         // oldestComment value < floor → not covered
         expect(fullnameValue(oldestComment)).toBeLessThan(result.coverage.t1)
         expect(result.items.has(oldestComment)).toBe(false)
+    })
+
+    it("reads a tab hidden from logged-out visitors as covered, with nothing listed, and not as an empty profile", async () => {
+        expect(parseProfileHtml(hiddenStatePage('comments'), 't1_')).toMatchObject({ hidden: true, emptyState: false })
+        const fetchHtml = makeFetcher([
+            ['/comments/?sort=new', hiddenStatePage('comments')],
+            ['/submitted/?sort=new', emptyStatePage('posts')],
+        ])
+        const result = await getPublicProfileItems('user1', fetchHtml, [newestComment, olderComment])
+        expect(result).toMatchObject({ valid: true, emptyProfile: false, hiddenTabs: 'comments' })
+        expect(result.items.size).toBe(0)
+        // every comment is covered, so each is checked on its own page
+        expect(result.coverage.t1).toBe(0)
     })
 
     it('flags a fully empty profile (shadowban signature)', async () => {
