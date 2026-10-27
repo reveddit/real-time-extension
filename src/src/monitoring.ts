@@ -20,6 +20,7 @@ import {
     isProfilePaginationShort,
     PROFILE_PAGINATION_UNAVAILABLE,
     hasRedditLoginCookie,
+    publicViewUncheckedReason,
 } from './requests'
 import { dlog } from './diaglog'
 import {
@@ -710,6 +711,25 @@ const notePubliclyLive = async (user: string, ids: string[]) => {
     await browser.storage.local.set({ [key]: { ids: sorted, t: Date.now() } })
 }
 
+// What one lookup result says about removal. Quarantined, NSFW and
+// private-community items never show logged out, so a result from the
+// public-view comparison (_public_view) can't judge them
+// (publicViewUncheckedReason). Those count as approved ('unchecked': bodies
+// still get cached, no false removal alerts), except a removal already
+// recorded, which stays as recorded until they can be checked again ('skip')
+// rather than reading as approved. The legacy paths can see this content, so
+// their results are read as they are.
+export const readLookupResult = (
+    item: any,
+    authItem: any,
+    knownRemoved: boolean,
+): 'removed' | 'approved' | 'unchecked' | 'skip' => {
+    if (item._public_view && authItem && publicViewUncheckedReason(item.name, authItem)) {
+        return knownRemoved ? 'skip' : 'unchecked'
+    }
+    return isRemovedItem(item) ? 'removed' : 'approved'
+}
+
 // Returns the lookup, so the cycle (and the bridge's wait on it) lasts until it
 // ends. Its failure is logged here: reaching the cycle's catch would skip the
 // pending posts and last_check, and reset the badge a warning had set.
@@ -817,24 +837,13 @@ const checkForChanges_thing_byId = async (
             if (!isUser) {
                 itemLookup[item.name] = item
             }
-            // Quarantined/NSFW/private-sub items never appear in the logged-out
-            // www.reddit.com view, so "missing from the public profile" is
-            // meaningless for them. Classify them as approved: bodies still get
-            // cached, and no false removal alerts fire. Only applies to results
-            // whose status came from the public-view comparison — the legacy
-            // paths can genuinely see this content.
-            // 'restricted' subs are deliberately NOT excluded: only posting is
-            // restricted there — their content is publicly viewable.
             const authItem = isUser ? itemLookup[item.name] : null
-            const invisibleToPublicView =
-                item._public_view &&
-                authItem &&
-                (authItem.quarantine || authItem.over_18 || authItem.subreddit_type === 'private')
-            if (invisibleToPublicView) {
-                approved.push(item.name)
-            } else if (isRemovedItem(item)) {
+            const reading = readLookupResult(item, authItem, item.name in known_removed)
+            if (reading === 'removed') {
                 removed.push(item.name)
-            } else {
+            } else if (reading === 'unchecked') {
+                approved.push(item.name)
+            } else if (reading === 'approved') {
                 approved.push(item.name)
                 // A young post without a 'live' page verdict may be held or
                 // spam-filtered while it still shows in the feed

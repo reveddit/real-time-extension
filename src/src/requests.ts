@@ -237,7 +237,7 @@ export interface AuthItemMeta {
     link_id?: string
     // Publicly-invisible classes: their own pages are gated logged-out, so feed
     // absence can't be verified — and monitoring.ts already exempts them from
-    // feed-absence removal (invisibleToPublicView). Used to skip verification.
+    // feed-absence removal (readLookupResult). Used to skip verification.
     quarantine?: boolean
     over_18?: boolean
     subreddit_type?: string
@@ -248,6 +248,24 @@ export interface AuthItemMeta {
     known_removed?: boolean
 }
 export type AuthItemsMeta = Record<string, AuthItemMeta>
+
+// Why nobody logged out can see an item, '' when they can: quarantined, NSFW
+// (on a comment, its post or community is marked 18+) or in a private
+// community. 'restricted' communities only limit posting; their content is
+// publicly viewable.
+export const publiclyInvisibleReason = (meta: AuthItemMeta | undefined): string => {
+    if (meta?.quarantine) return 'quarantined'
+    if (meta?.over_18) return 'NSFW'
+    if (meta?.subreddit_type === 'private') return 'private'
+    return ''
+}
+
+// Why the public view can't judge an item, '' when it can. A post whose
+// author's own view says it was removed (removed_by_category) needs no public
+// view. is_robot_indexable === false alone doesn't count here: it hasn't been
+// checked on NSFW posts that weren't removed.
+export const publicViewUncheckedReason = (id: string, meta: AuthItemMeta | undefined): string =>
+    id.startsWith('t3_') && meta?.removed_by_category ? '' : publiclyInvisibleReason(meta)
 
 export const lookupItemsByID = (
     ids: string | string[],
@@ -1645,6 +1663,49 @@ const recordPaginationOutcome = async (stopped: string | undefined) => {
     }
 }
 
+// The items the last lookup couldn't judge because nobody logged out can see
+// them (publicViewUncheckedReason), for the copied log's header. Written when
+// the set changes, else every half hour, so the header's time says how
+// current it is.
+export const PUBLIC_VIEW_UNCHECKED_KEY = 'public_view_unchecked'
+const PUBLIC_VIEW_UNCHECKED_REFRESH_MS = 30 * 60 * 1000
+const notePublicViewUnchecked = async (unchecked: Record<string, string>) => {
+    try {
+        const stored = ((await browser.storage.local.get({ [PUBLIC_VIEW_UNCHECKED_KEY]: null })) as any)[
+            PUBLIC_VIEW_UNCHECKED_KEY
+        ]
+        const storedIds: Record<string, string> = stored?.ids || {}
+        const same =
+            Object.keys(storedIds).length === Object.keys(unchecked).length &&
+            Object.entries(unchecked).every(([id, reason]) => storedIds[id] === reason)
+        if (stored && same && isFresh(Number(stored.t), PUBLIC_VIEW_UNCHECKED_REFRESH_MS, Date.now())) {
+            return
+        }
+        await browser.storage.local.set({ [PUBLIC_VIEW_UNCHECKED_KEY]: { ids: unchecked, t: Date.now() } })
+    } catch {
+        /* ignored */
+    }
+}
+
+// The copied log's header line for them
+export const formatPublicViewUnchecked = (stored: any): string => {
+    const label = "can't be checked logged out"
+    if (!stored?.ids || typeof stored.ids !== 'object') {
+        return `${label}: no lookup recorded`
+    }
+    const entries = Object.entries(stored.ids as Record<string, string>)
+    const list = entries.length ? entries.map(([id, reason]) => `${id} (${reason})`).join(', ') : 'none'
+    return `${label}: ${list}; as of ${new Date(Number(stored.t) || 0).toISOString()}`
+}
+export const getPublicViewUncheckedLine = async (): Promise<string> => {
+    try {
+        const r = (await browser.storage.local.get({ [PUBLIC_VIEW_UNCHECKED_KEY]: null })) as any
+        return formatPublicViewUnchecked(r[PUBLIC_VIEW_UNCHECKED_KEY])
+    } catch {
+        return formatPublicViewUnchecked(null)
+    }
+}
+
 // Primary detection path: compare the requested (authenticated) ids against the
 // logged-out www.reddit.com profile. Present → not removed. Missing within the
 // paginated coverage window → removed. Missing below the window → status unknown,
@@ -1687,13 +1748,10 @@ export const lookupItemsByID_fromPublicProfile = async (
     if (profile.emptyProfile && ids.length) {
         // An account whose every item is NSFW, quarantined or in a private
         // subreddit is publicly empty by design, not shadowbanned: fall through
-        // so the classification loop marks those approved (invisibleToPublicView)
+        // so the classification loop marks those approved (readLookupResult)
         // instead of parking the account behind a permanent banner. An id with
         // no meta could be visible, so it keeps the shadowban reading.
-        const anyPubliclyVisibleClass = ids.some(id => {
-            const meta = authItemsMeta[id]
-            return !meta || !(meta.quarantine || meta.over_18 || meta.subreddit_type === 'private')
-        })
+        const anyPubliclyVisibleClass = ids.some(id => !publiclyInvisibleReason(authItemsMeta[id]))
         if (!anyPubliclyVisibleClass) {
             dlog(
                 'feed',
@@ -1726,7 +1784,7 @@ export const lookupItemsByID_fromPublicProfile = async (
         if (id.startsWith('t3_') && (meta.is_robot_indexable === false || meta.removed_by_category)) {
             return false
         }
-        if (meta.quarantine || meta.over_18 || meta.subreddit_type === 'private') {
+        if (publiclyInvisibleReason(meta)) {
             return false
         }
         const floor = id.startsWith('t3_') ? profile.coverage.t3 : profile.coverage.t1
@@ -1809,7 +1867,7 @@ export const lookupItemsByID_fromPublicProfile = async (
             const floor = isPost ? profile.coverage.t3 : profile.coverage.t1
             const value = fullnameValue(id)
             const covered = Number.isFinite(value) && value >= floor
-            const publiclyInvisible = meta.quarantine || meta.over_18 || meta.subreddit_type === 'private'
+            const publiclyInvisible = !!publiclyInvisibleReason(meta)
             // The synthetic removed shape passes isRemovedComment (author+body
             // start with '[') and isRemovedPost (is_robot_indexable === false).
             const syntheticRemoved = {
@@ -1822,12 +1880,15 @@ export const lookupItemsByID_fromPublicProfile = async (
                 },
             }
             if (authSaysRemoved) {
-                // The auth view already flags it removed — authoritative.
+                // The auth view already flags it removed — authoritative. For a
+                // post nobody logged out can see, only by removed_by_category
+                // (publicViewUncheckedReason).
                 results.push(syntheticRemoved)
             } else if (covered && publiclyInvisible) {
-                // Never publicly visible; same synthetic shape as before — the
-                // classification loop reclassifies these as approved
-                // (invisibleToPublicView), which also refreshes the body cache.
+                // Never publicly visible, so nothing here can judge it; same
+                // synthetic shape as before. Monitoring counts it approved, which
+                // also refreshes the body cache, except a removal it already
+                // recorded, which stays as recorded (readLookupResult).
                 results.push(syntheticRemoved)
             } else if (covered) {
                 if (absentVerificationDisabled) {
@@ -1859,17 +1920,35 @@ export const lookupItemsByID_fromPublicProfile = async (
     if (t3Requested.length) {
         removeMultipleFromPendingPostQueue(t3Requested).catch(() => {})
     }
-    const removedCount = results.filter(
-        r => r.data.author === '[deleted]' || r.data.is_robot_indexable === false,
-    ).length
+    // Counted the way monitoring reads them (readLookupResult): what nobody
+    // logged out can see is neither removed nor live, and is named once, in the
+    // copied log's header, instead of on every cycle's line
+    const unchecked: Record<string, string> = {}
+    let removedCount = 0
+    for (const { data } of results) {
+        const reason = publicViewUncheckedReason(data.name, authItemsMeta[data.name])
+        if (reason) {
+            unchecked[data.name] = reason
+        } else if (data.author === '[deleted]' || data.is_robot_indexable === false) {
+            removedCount++
+        }
+    }
+    await notePublicViewUnchecked(unchecked)
+    // Only the page verdicts that aren't 'live' are named. Every item of a
+    // profile that hides them is checked on its own page, so the whole map was
+    // about 100 ids, 3 KB, on every cycle's line.
+    const notLive = Object.fromEntries(Object.entries(absentVerdicts).filter(([, v]) => v !== 'live'))
+    const liveCount = Object.keys(absentVerdicts).length - Object.keys(notLive).length
     dlog(
         'feed',
         `[reveddit] www lookup ${username}: ${ids.length} requested, ${results.length} returned ` +
-            `(${removedCount} removed, ${ids.length - results.length} omitted/uncovered), ` +
+            `(${removedCount} removed, ${Object.keys(unchecked).length} can't be checked logged out, ` +
+            `${ids.length - results.length} omitted/uncovered), ` +
             `coverage t1=${profile.coverage.t1} t3=${profile.coverage.t3}, verdicts=${JSON.stringify(postVerdicts)}, ` +
+            `absentVerdicts=${JSON.stringify(notLive)}${liveCount ? ` +${liveCount} live` : ''}, ` +
             // routes= names the route that last served each kind of page;
             // "www route for ... is now" lines record any change.
-            `absentVerdicts=${JSON.stringify(absentVerdicts)}, routes=${JSON.stringify(fetcher.servedRoutes())}` +
+            `routes=${JSON.stringify(fetcher.servedRoutes())}` +
             (profile.paginationStopped ? `, ${profile.paginationStopped}` : ''),
     )
     return results

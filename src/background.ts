@@ -20,6 +20,7 @@ import {
     noteCapabilityWorked,
     noteRateLimited,
     lookupItemsByID_fromPublicProfile,
+    getPublicViewUncheckedLine,
 } from './src/requests'
 import {
     initStorage,
@@ -514,8 +515,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         sendResponse({ response: 'done' })
         return true
     } else if (request.action === 'get-diag-log') {
-        Promise.all([getRateLimitBackoffRemainingMs(), getCachedNews()])
-            .then(([backoffMs, newsCache]) =>
+        Promise.all([getRateLimitBackoffRemainingMs(), getCachedNews(), getPublicViewUncheckedLine()])
+            .then(([backoffMs, newsCache, uncheckedLine]) =>
                 buildDiagReport({
                     includeUsername: !!request.includeUsername,
                     extraHeaderLines: [
@@ -527,6 +528,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                                   } messages, latest_version=${newsCache.feed?.latest_version || 'unset'}`
                                 : 'never fetched'
                         }`,
+                        uncheckedLine,
                     ],
                 }),
             )

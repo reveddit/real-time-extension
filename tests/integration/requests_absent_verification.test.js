@@ -26,6 +26,9 @@ import {
     noteCapabilityWorked,
     _followedTiming,
     isProfilePaginationShort,
+    PUBLIC_VIEW_UNCHECKED_KEY,
+    formatPublicViewUnchecked,
+    getPublicViewUncheckedLine,
 } from '../../src/src/requests'
 import { getDiagEntries } from '../../src/src/diaglog'
 import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
@@ -373,10 +376,87 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         // no page fetch attempted for the NSFW item
         expect(calls.filter(u => u.includes('/r/hiddensub/')).length).toBe(0)
         // synthetic removed shape with _public_view so the classification loop
-        // reclassifies it as approved (invisibleToPublicView)
+        // reads it as unchecked (readLookupResult)
         expect(results.length).toBe(1)
         expect(results[0].data.author).toBe('[deleted]')
         expect(results[0].data._public_view).toBe(true)
+    })
+
+    // Issue #27: four comments were in a "100 requested, 100 returned (5
+    // removed ...)" line without page verdicts, and the log named none of them
+    const NSFW_COMMENT = 't1_nsfw1111'
+    const NSFW_POST_REMOVED = 't3_nsfwrm11'
+    const NSFW_POST_NOINDEX = 't3_nsfwni11'
+    const mixedLookup = () => {
+        const ids = [FEED_OK, HIDDEN, GONE, NSFW_COMMENT, NSFW_POST_REMOVED, NSFW_POST_NOINDEX]
+        const authItemsMeta = {
+            ...Object.fromEntries([FEED_OK, HIDDEN, GONE].map(id => [id, meta(id)])),
+            [NSFW_COMMENT]: meta(NSFW_COMMENT, { over_18: true }),
+            // the author's own view says it was removed
+            [NSFW_POST_REMOVED]: {
+                locked: false,
+                created_utc: 1700000000,
+                over_18: true,
+                removed_by_category: 'moderator',
+            },
+            [NSFW_POST_NOINDEX]: { locked: false, created_utc: 1700000000, over_18: true, is_robot_indexable: false },
+        }
+        return lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
+    }
+    // the latest: the diagnostic log outlives each test's storage reset
+    const lookupLine = async () =>
+        (await getDiagEntries())
+            .map(e => e.m)
+            .filter(l => l.startsWith(`[reveddit] www lookup ${USER}:`))
+            .at(-1)
+
+    it("the lookup line counts what can't be checked logged out apart from removals and names only verdicts that aren't live", async () => {
+        installFetch(defaultRoutes())
+        await mixedLookup()
+        const line = await lookupLine()
+        expect(line).toContain(
+            "6 requested, 6 returned (2 removed, 2 can't be checked logged out, 0 omitted/uncovered)",
+        )
+        expect(line).toContain(`absentVerdicts={"${GONE}":"removed"} +1 live, routes=`)
+        expect(line).not.toContain(HIDDEN)
+    })
+
+    it("names what can't be checked once, in the copied log's header", async () => {
+        installFetch(defaultRoutes())
+        await mixedLookup()
+        expect(__getLocalStorage()[PUBLIC_VIEW_UNCHECKED_KEY].ids).toEqual({
+            [NSFW_COMMENT]: 'NSFW',
+            [NSFW_POST_NOINDEX]: 'NSFW',
+        })
+        expect(await getPublicViewUncheckedLine()).toMatch(
+            new RegExp(
+                `^can't be checked logged out: ${NSFW_COMMENT} \\(NSFW\\), ${NSFW_POST_NOINDEX} \\(NSFW\\); as of \\d{4}-`,
+            ),
+        )
+    })
+
+    it("rewrites the header's set only when it changes, or after half an hour", async () => {
+        installFetch(defaultRoutes())
+        await mixedLookup()
+        const earlier = Date.now() - 60 * 1000
+        __getLocalStorage()[PUBLIC_VIEW_UNCHECKED_KEY].t = earlier
+        await mixedLookup()
+        expect(__getLocalStorage()[PUBLIC_VIEW_UNCHECKED_KEY].t).toBe(earlier)
+
+        __getLocalStorage()[PUBLIC_VIEW_UNCHECKED_KEY].t = Date.now() - 31 * 60 * 1000
+        await mixedLookup()
+        expect(__getLocalStorage()[PUBLIC_VIEW_UNCHECKED_KEY].t).toBeGreaterThan(earlier)
+
+        await lookupItemsByID_fromPublicProfile([HIDDEN], USER, { [HIDDEN]: meta(HIDDEN) })
+        expect(__getLocalStorage()[PUBLIC_VIEW_UNCHECKED_KEY].ids).toEqual({})
+        expect(await getPublicViewUncheckedLine()).toMatch(/^can't be checked logged out: none; as of /)
+    })
+
+    it('the header says when no lookup has recorded anything yet', () => {
+        expect(formatPublicViewUnchecked(null)).toBe("can't be checked logged out: no lookup recorded")
+        expect(formatPublicViewUnchecked({ ids: { t1_a: 'private' }, t: 0 })).toBe(
+            "can't be checked logged out: t1_a (private); as of 1970-01-01T00:00:00.000Z",
+        )
     })
 })
 
