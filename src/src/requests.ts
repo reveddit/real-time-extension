@@ -28,6 +28,7 @@ import {
     isSolvedChallengeUrl,
     describePageForDiag,
     isCaptchaPage,
+    sitePermalink,
 } from './parse_html/new'
 import { newReddit, isRateLimitError } from './parse_html/common'
 import { setWarningBadge, isRemovedComment, isViewerBlockedItem } from './common'
@@ -497,7 +498,9 @@ export const WWW_PAGE_KINDS = ['profile', 'profile-partial', 'partial', 'page'] 
 export type WwwPageKind = (typeof WWW_PAGE_KINDS)[number]
 export const wwwPageKind = (url: string): WwwPageKind => {
     const path = url.replace(/^https?:\/\/[^/]+/, '')
-    if (path.startsWith('/user/')) {
+    // A profile's tabs; a post in the profile (/user/<name>/comments/<post>/)
+    // is a page like any other
+    if (path.startsWith('/user/') && !/^\/user\/[^/]+\/comments\/[^/?#]+/.test(path)) {
         return 'profile'
     }
     if (path.startsWith('/svc/shreddit/profiles/')) {
@@ -1156,18 +1159,22 @@ const fetchAndClassifyItemPage = async (
     // URLs reddit answers without a redirect. A background fetch loses its
     // solved challenge on one and gets a new challenge (2026-10-17), so
     // /comments/<id>/ is the fallback for posts: it 301s to the permalink.
-    // Comments get the site's form, since the API's permalink form is a
-    // redirect shell (see buildCommentThreadUrl).
+    // A profile post's /r/u_<name>/ permalink 301s too, so it's read at
+    // /user/<name>/ (sitePermalink). Comments get the site's form, since the
+    // API's permalink form is a redirect shell (see buildCommentThreadUrl).
     const threadUrl = !id.startsWith('t3_') && meta.permalink ? buildCommentThreadUrl(meta.permalink, id) : null
     let url: string
     if (id.startsWith('t3_')) {
-        url = meta.permalink?.startsWith('/r/') ? newReddit + meta.permalink : buildPostPageUrl(id)
+        url =
+            meta.permalink && /^\/(r|user)\//.test(meta.permalink)
+                ? newReddit + sitePermalink(meta.permalink)
+                : buildPostPageUrl(id)
     } else if (threadUrl) {
         url = threadUrl
     } else if (meta.link_id) {
         url = buildCommentPageUrl(id, meta.link_id)
     } else if (meta.permalink) {
-        url = newReddit + meta.permalink
+        url = newReddit + sitePermalink(meta.permalink)
     } else {
         return 'unknown'
     }

@@ -306,6 +306,14 @@ export type CommentPageStatus = 'live' | 'removed' | 'unknown'
 export const buildCommentPageUrl = (commentId: string, linkId: string): string =>
     `${newReddit}/comments/${linkId.replace(/^t3_/, '')}/comment/${commentId.replace(/^t1_/, '')}/`
 
+// A permalink in the form the site answers. A post in a user's profile has
+// the API permalink /r/u_<name>/comments/<post>/<slug>/, which the site 301s
+// to /user/<name>/comments/<post>/<slug>/. A cookie-less background fetch
+// can't follow that: the redirect drops the solved challenge and lands on a
+// new one, while the /user/ form answers the solve with the page (verified
+// live 2026-10-28). Community names can't start with u_.
+export const sitePermalink = (permalink: string): string => permalink.replace(/^\/r\/u_([^/]+)\//, '/user/$1/')
+
 // Subreddit and post of a thread permalink, in the API's form
 // (/r/<sub>/comments/<post>/<slug>/<comment>/) and the site's
 // (/r/<sub>/comments/<post>/comment/<comment>/)
@@ -316,13 +324,14 @@ const THREAD_PERMALINK_REGEX = /^\/r\/([^/]+)\/comments\/([^/]+)\//
 // no comment tree and no post (3 of 3 samples, live and removed, 2026-10-17).
 // buildCommentPageUrl's form 301s here instead, and a cookie-less background
 // fetch can't follow that: the redirect drops the solved challenge and lands
-// on a new one (2026-10-17). This form gets neither.
+// on a new one (2026-10-17). This form gets neither. On a profile post it's
+// the /user/ form (sitePermalink).
 export const buildCommentThreadUrl = (permalink: string, commentId: string): string | null => {
     const m = permalink.match(THREAD_PERMALINK_REGEX)
     if (!m) {
         return null
     }
-    return `${newReddit}/r/${m[1]}/comments/${m[2]}/comment/${commentId.replace(/^t1_/, '')}/`
+    return newReddit + sitePermalink(`/r/${m[1]}/comments/${m[2]}/comment/${commentId.replace(/^t1_/, '')}/`)
 }
 
 // The /svc partial is the XHR route the site itself lazy-loads comment trees

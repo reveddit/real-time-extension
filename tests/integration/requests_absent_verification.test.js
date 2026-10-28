@@ -227,6 +227,30 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         expect(calls).not.toContain(`https://www.reddit.com/comments/${POST.slice(3)}/`)
     })
 
+    it("reads a post in the user's profile at /user/<name>/, not the API's /r/u_<name>/", async () => {
+        const POST = 't3_post44'
+        const API_PERMALINK = `/r/u_${USER}/comments/post44/a_title/`
+        const SITE_PERMALINK = `/user/${USER}/comments/post44/a_title/`
+        const calls = installFetch([
+            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
+            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+            [
+                SITE_PERMALINK,
+                `<html><body><shreddit-post id="${POST}" author="${USER}" permalink="${SITE_PERMALINK}">` +
+                    `<div slot="post-removed-banner">Sorry, this post was removed by the moderators.</div></shreddit-post></body></html>`,
+            ],
+        ])
+        const results = await lookupItemsByID_fromPublicProfile([FEED_OK, POST], USER, {
+            [FEED_OK]: meta(FEED_OK),
+            [POST]: { locked: false, created_utc: 1700000000, permalink: API_PERMALINK },
+        })
+        expect(results.find(r => r.data.name === POST).data.is_robot_indexable).toBe(false)
+        // The API's form 301s to the /user/ one, and the redirect costs a
+        // background fetch its solved challenge (verified live 2026-10-28)
+        expect(calls).toContain('https://www.reddit.com' + SITE_PERMALINK)
+        expect(calls.some(u => u.includes('/r/u_'))).toBe(false)
+    })
+
     it('omits an absent comment whose page is unrecognizable (no false alert)', async () => {
         installFetch([
             [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],

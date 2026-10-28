@@ -12,6 +12,7 @@ import {
     classifyPostPage,
     buildCommentPageUrl,
     buildCommentThreadUrl,
+    sitePermalink,
     buildCommentPartialUrl,
     classifyCommentPage,
     describePageForDiag,
@@ -653,6 +654,25 @@ describe('buildCommentThreadUrl', () => {
     it('returns null for permalinks that do not carry a subreddit thread path', () => {
         expect(buildCommentThreadUrl('/user/someone/comments/abc/title/', 't1_x')).toBe(null)
         expect(buildCommentThreadUrl('', 't1_x')).toBe(null)
+    })
+
+    it("uses the site's /user/ form for a comment on a post in someone's profile", () => {
+        expect(buildCommentThreadUrl('/r/u_someone/comments/abc/title/c1x/', 't1_c1x')).toBe(
+            'https://www.reddit.com/user/someone/comments/abc/comment/c1x/',
+        )
+    })
+})
+
+describe('sitePermalink', () => {
+    it("rewrites a profile post's /r/u_<name>/ permalink to the /user/<name>/ form the site answers", () => {
+        expect(sitePermalink('/r/u_GiveUsNetNeutrality/comments/1v7g45b/utility_over_status/')).toBe(
+            '/user/GiveUsNetNeutrality/comments/1v7g45b/utility_over_status/',
+        )
+    })
+
+    it('leaves community permalinks and the /user/ form alone', () => {
+        expect(sitePermalink('/r/delta/comments/1x8b2za/a_title/')).toBe('/r/delta/comments/1x8b2za/a_title/')
+        expect(sitePermalink('/user/someone/comments/abc/title/')).toBe('/user/someone/comments/abc/title/')
     })
 
     it("can't read a comment from the API permalink's redirect shell", () => {

@@ -673,6 +673,9 @@ describe('wwwPageKind', () => {
         )
         expect(wwwPageKind('https://www.reddit.com/r/s/comments/abc/comment/x1/')).toBe('page')
         expect(wwwPageKind('https://www.reddit.com/comments/abc/')).toBe('page')
+        // a post in a profile, and a comment on one, are pages, not the profile
+        expect(wwwPageKind('https://www.reddit.com/user/u/comments/abc/a_title/')).toBe('page')
+        expect(wwwPageKind('https://www.reddit.com/user/u/comments/abc/comment/x1/?solution=x')).toBe('page')
     })
 })
 
