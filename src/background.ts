@@ -39,7 +39,7 @@ import { getItems_fromOld, getPost_fromOld, getInfoById_fromLegacyHTML } from '.
 import { handleBridgeFetch } from './src/bridge'
 import { applyRemoteConfig, fetchNews, getCachedNews, requestStoreUpdateIfBehind } from './src/news'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
-import { getRateLimitBackoffRemainingMs } from './src/storage'
+import { getRateLimitBackoffRemainingMs, getSyncUsageLine } from './src/storage'
 import { getLegacyBase, legacyPageUrl, isLegacyPageUrl, LEGACY_PAGE_MARKER_PATTERN } from './src/parse_html/common'
 
 // The background context is the diagnostic log's single writer — see diaglog.ts.
@@ -515,8 +515,13 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         sendResponse({ response: 'done' })
         return true
     } else if (request.action === 'get-diag-log') {
-        Promise.all([getRateLimitBackoffRemainingMs(), getCachedNews(), getPublicViewUncheckedLine()])
-            .then(([backoffMs, newsCache, uncheckedLine]) =>
+        Promise.all([
+            getRateLimitBackoffRemainingMs(),
+            getCachedNews(),
+            getPublicViewUncheckedLine(),
+            getSyncUsageLine(),
+        ])
+            .then(([backoffMs, newsCache, uncheckedLine, syncUsageLine]) =>
                 buildDiagReport({
                     includeUsername: !!request.includeUsername,
                     extraHeaderLines: [
@@ -529,6 +534,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                                 : 'never fetched'
                         }`,
                         uncheckedLine,
+                        syncUsageLine,
                     ],
                 }),
             )

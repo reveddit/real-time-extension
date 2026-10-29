@@ -54,11 +54,13 @@ import {
     BACKLOG_SUMMARY_DELAY_MS,
     getNotifyFlags,
     getPublicLiveKey,
+    trimDict_toFitSyncItem,
+    trimArray_toFitSyncItem,
+    fitDicts_toSyncTotal,
 } from './storage'
 import {
     createNotification,
     updateBadgeUnseenCount,
-    trimDict_by_numberValuedAttribute,
     isUserDeletedItem,
     isRemovedItem,
     isComment,
@@ -1049,50 +1051,74 @@ const checkForChanges_thing_byId = async (
                         })
                         .catch(() => {})
                 }
-                return chrome.storage.sync.set(
+                // Approved and unlocked get only the room left under the total:
+                // losing their oldest entries announces nothing, while a known
+                // removal dropped from removed would be announced again
+                const toSave = fitDicts_toSyncTotal(
                     {
-                        [keys['removed']]: trimDict_by_numberValuedAttribute(
+                        [keys['removed']]: trimDict_toFitSyncItem(
                             known_removed,
                             MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
                             'c',
+                            keys['removed'],
                         ),
-                        [keys['approved']]: trimDict_by_numberValuedAttribute(
+                        [keys['approved']]: trimDict_toFitSyncItem(
                             known_approved,
                             MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
                             'c',
+                            keys['approved'],
                         ),
-                        [keys['locked']]: trimDict_by_numberValuedAttribute(
+                        [keys['locked']]: trimDict_toFitSyncItem(
                             known_locked,
                             MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
                             'c',
+                            keys['locked'],
                         ),
-                        [keys['unlocked']]: trimDict_by_numberValuedAttribute(
+                        [keys['unlocked']]: trimDict_toFitSyncItem(
                             known_unlocked,
                             MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
                             'c',
+                            keys['unlocked'],
                         ),
-                        [keys['changes']]: changes.slice(-MAX_SYNC_STORAGE_CHANGES),
+                        [keys['changes']]: trimArray_toFitSyncItem(changes, MAX_SYNC_STORAGE_CHANGES, keys['changes']),
                     },
-                    () => {
-                        updateBadgeUnseenCount()
-                        console.log('[debug] addLocalStorageItems', {
-                            thing,
-                            isUser,
-                            keys: Object.keys(newLocalStorageItems),
-                            sample: Object.keys(newLocalStorageItems)
-                                .slice(0, 2)
-                                .map(k => ({
-                                    id: k,
-                                    t: newLocalStorageItems[k]?.t?.slice(0, 60),
-                                })),
-                        })
-                        return addLocalStorageItems(newLocalStorageItems, thing, isUser)
-                    },
+                    storage,
+                    [keys['approved'], keys['unlocked']],
+                    'c',
                 )
+                return chrome.storage.sync.set(toSave, () => {
+                    // A refused save is otherwise silent, and the next check
+                    // announces its changes again (issue #15)
+                    const saveError = (chrome.runtime as any).lastError
+                    if (saveError) {
+                        const sizes = Object.entries(toSave)
+                            .map(([key, value]) => `${key} ${key.length + JSON.stringify(value).length}`)
+                            .join(', ')
+                        dlog(
+                            'cycle',
+                            `[reveddit] sync save refused (${String(saveError.message || saveError)}): ${sizes}`,
+                        )
+                    }
+                    updateBadgeUnseenCount()
+                    console.log('[debug] addLocalStorageItems', {
+                        thing,
+                        isUser,
+                        keys: Object.keys(newLocalStorageItems),
+                        sample: Object.keys(newLocalStorageItems)
+                            .slice(0, 2)
+                            .map(k => ({
+                                id: k,
+                                t: newLocalStorageItems[k]?.t?.slice(0, 60),
+                            })),
+                    })
+                    return addLocalStorageItems(newLocalStorageItems, thing, isUser)
+                })
             },
         )
     })
 }
+// For tests
+export const _checkForChanges_thing_byId = checkForChanges_thing_byId
 
 const changeIsPreviouslyRecorded = (name: string, change_type: number | string, changes: any[]) => {
     for (const change of changes) {

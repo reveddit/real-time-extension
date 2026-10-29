@@ -1,4 +1,9 @@
-import { ItemForStorage, LocalStorageItem, trimDict_by_numberValuedAttribute } from './common'
+import {
+    ItemForStorage,
+    LocalStorageItem,
+    sortDict_by_numberValuedAttribute,
+    trimDict_by_numberValuedAttribute,
+} from './common'
 import browser from 'webextension-polyfill'
 
 export const INTERVAL_DEFAULT = 1
@@ -11,6 +16,115 @@ const MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT = 1000
 export const MAX_SYNC_STORAGE_ITEMS_PER_OBJECT = 130
 export const MAX_SYNC_STORAGE_CHANGES = 100
 export const MAX_OTHER_SUBSCRIPTIONS = 100
+
+// Chrome and Firefox refuse a storage.sync item whose key and value JSON pass
+// 8,192 bytes, and refuse the whole set() call that carries it. 130 entries of
+// about 63 bytes reach that, so the writers that add entries also trim each
+// list to fit (issue #15). The margin leaves room for the writers that mark
+// everything seen without trimming: "u":false is a byte longer than "u":true.
+export const SYNC_QUOTA_BYTES_PER_ITEM = 8192
+const SYNC_ITEM_MARGIN_BYTES = 256
+// Both also refuse a set() that would take all of sync storage past 102,400
+// bytes, which five accounts with full lists pass. Firefox counts a few bytes
+// more per key than Chrome does; the margin covers that too.
+export const SYNC_QUOTA_BYTES = 102400
+const SYNC_TOTAL_MARGIN_BYTES = 1024
+
+const syncItemBytes = (key: string, value: any) => key.length + (JSON.stringify(value) ?? '').length
+
+const syncItemValueBudget = (storageKey: string) =>
+    SYNC_QUOTA_BYTES_PER_ITEM - SYNC_ITEM_MARGIN_BYTES - storageKey.length
+
+// The entries trimDict_by_numberValuedAttribute keeps (the maxNumItems highest
+// values), cut further where needed so the dict fits in one sync item, or in
+// maxItemBytes when that is given
+export const trimDict_toFitSyncItem = (
+    dict: Record<string, any>,
+    maxNumItems: number,
+    numberValuedAttribute: string,
+    storageKey: string,
+    maxItemBytes?: number,
+): Record<string, any> => {
+    const budget = maxItemBytes === undefined ? syncItemValueBudget(storageKey) : maxItemBytes - storageKey.length
+    const newDict: Record<string, any> = {}
+    let bytes = 2 // {}
+    let count = 0
+    for (const [key, value] of sortDict_by_numberValuedAttribute(dict, numberValuedAttribute)) {
+        if (count === maxNumItems) break
+        const entryBytes = (count ? 1 : 0) + JSON.stringify(key).length + 1 + JSON.stringify(value).length
+        if (bytes + entryBytes > budget) break
+        newDict[key] = value
+        bytes += entryBytes
+        count++
+    }
+    return newDict
+}
+
+// The last maxNumItems entries, in order, cut further where needed so the
+// array fits in one sync item
+export const trimArray_toFitSyncItem = (array: any[], maxNumItems: number, storageKey: string): any[] => {
+    const budget = syncItemValueBudget(storageKey)
+    const kept: any[] = []
+    let bytes = 2 // []
+    for (let i = array.length - 1; i >= 0 && kept.length < maxNumItems; i--) {
+        const entryBytes = (kept.length ? 1 : 0) + JSON.stringify(array[i]).length
+        if (bytes + entryBytes > budget) break
+        kept.push(array[i])
+        bytes += entryBytes
+    }
+    return kept.reverse()
+}
+
+// Gives the dicts at trimKeys only the room under the total that the rest of
+// toSave and the rest of storage leave, the smaller dict first. A set() that
+// fits already is unchanged.
+export const fitDicts_toSyncTotal = (
+    toSave: Record<string, any>,
+    storage: Record<string, any>,
+    trimKeys: string[],
+    numberValuedAttribute: string,
+): Record<string, any> => {
+    let room = SYNC_QUOTA_BYTES - SYNC_TOTAL_MARGIN_BYTES
+    for (const key of Object.keys(storage)) {
+        if (!(key in toSave)) room -= syncItemBytes(key, storage[key])
+    }
+    for (const key of Object.keys(toSave)) {
+        if (!trimKeys.includes(key)) room -= syncItemBytes(key, toSave[key])
+    }
+    const fitted = { ...toSave }
+    const bySize = trimKeys
+        .filter(key => key in toSave)
+        .sort((a, b) => syncItemBytes(a, toSave[a]) - syncItemBytes(b, toSave[b]))
+    bySize.forEach((key, i) => {
+        const share = Math.floor(room / (bySize.length - i))
+        if (syncItemBytes(key, fitted[key]) > share) {
+            fitted[key] = trimDict_toFitSyncItem(fitted[key], Infinity, numberValuedAttribute, key, share)
+        }
+        room -= syncItemBytes(key, fitted[key])
+    })
+    return fitted
+}
+
+// For the diagnostic log's header: how full sync storage is, and its largest
+// items, against the limits
+export const formatSyncUsage = (storage: Record<string, any>): string => {
+    const sizes = Object.keys(storage).map(key => ({ key, bytes: syncItemBytes(key, storage[key]) }))
+    const total = sizes.reduce((sum, { bytes }) => sum + bytes, 0)
+    const largest = sizes
+        .sort((a, b) => b.bytes - a.bytes)
+        .slice(0, 4)
+        .map(({ key, bytes }) => `${key} ${bytes}`)
+        .join(', ')
+    return `sync storage: ${total} bytes in ${sizes.length} items, largest ${largest || 'none'} (limits ${SYNC_QUOTA_BYTES_PER_ITEM} per item, ${SYNC_QUOTA_BYTES} in all)`
+}
+
+export const getSyncUsageLine = async (): Promise<string> => {
+    try {
+        return formatSyncUsage(((await browser.storage.sync.get(null)) as Record<string, any>) || {})
+    } catch (err: any) {
+        return `sync storage: unreadable (${String(err?.message || err)})`
+    }
+}
 
 export const REMOVED = 1
 export const APPROVED = 2
@@ -273,7 +387,16 @@ export const markIDsAsSeenIfSubscribed = (
         markSeenForStorageKey(storage, storage_keys, 'approved', approved_ids, is_user)
         markSeenForStorageKey(storage, storage_keys, 'locked', locked_ids, is_user)
         markSeenForStorageKey(storage, storage_keys, 'unlocked', unlocked_ids, is_user)
-        chrome.storage.sync.set(storage, callback)
+        // The entries added here have to fit like the monitoring save's
+        Object.values(storage_keys).forEach(key => {
+            if (storage[key]) {
+                storage[key] = trimDict_toFitSyncItem(storage[key], MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c', key)
+            }
+        })
+        chrome.storage.sync.set(
+            fitDicts_toSyncTotal(storage, {}, [storage_keys['approved'], storage_keys['unlocked']], 'c'),
+            callback,
+        )
     }
 }
 
