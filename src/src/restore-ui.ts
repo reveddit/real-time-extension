@@ -448,6 +448,7 @@ async function handleScanAll(isNewReddit: boolean) {
     // an ancestor turns up in a subsequent search.
     const inserter = new RecoveredCommentInserter(isNewReddit)
 
+    let finalStatus = ''
     const recovered = await scanThreadForRemovedComments(
         postID,
         subreddit,
@@ -455,6 +456,7 @@ async function handleScanAll(isNewReddit: boolean) {
         authorCache,
         progress => {
             progressText.textContent = progress.message
+            finalStatus = progress.status
         },
         rc => inserter.add(rc),
     )
@@ -467,17 +469,21 @@ async function handleScanAll(isNewReddit: boolean) {
     // Leave the final status message visible; just drop the spinner.
     spinner.remove()
 
-    // The thread-level scan searches all visible authors — so everything is now
-    // exhausted. Disable all per-comment scan buttons + the thread button itself.
-    const exhaustedTitle = 'All visible authors searched — no more removed comments to find'
-    document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(b => {
-        b.textContent = 'scan-rev'
-        ;(b as HTMLElement).classList.add('rev-scan-exhausted')
-        ;(b as HTMLElement).title = exhaustedTitle
-    })
-    btn.classList.add('rev-scan-exhausted')
-    btn.disabled = true
-    btn.title = exhaustedTitle
+    // A scan that finished searched all visible authors, so everything is now
+    // exhausted: disable all per-comment scan buttons + the thread button
+    // itself. One that stopped (refused pages, rate limit, no comment tree)
+    // leaves them for another try.
+    if (finalStatus === 'found' || finalStatus === 'not_found') {
+        const exhaustedTitle = 'All visible authors searched — no more removed comments to find'
+        document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(b => {
+            b.textContent = 'scan-rev'
+            ;(b as HTMLElement).classList.add('rev-scan-exhausted')
+            ;(b as HTMLElement).title = exhaustedTitle
+        })
+        btn.classList.add('rev-scan-exhausted')
+        btn.disabled = true
+        btn.title = exhaustedTitle
+    }
 
     // Show the filter bar and auto-switch to "removed" view if any were found.
     if (recovered.length > 0) {
@@ -1113,8 +1119,9 @@ async function handleProfileScan(username: string, container: HTMLElement) {
     btn.disabled = false
     btn.textContent = 'Rescan'
 
+    // The scan's last message stands: "No removed items found." when it read
+    // the profile, or why it couldn't
     if (results.length === 0) {
-        progressEl.textContent = 'No removed items found.'
         return
     }
 

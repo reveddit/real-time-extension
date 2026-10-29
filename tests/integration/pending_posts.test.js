@@ -100,13 +100,31 @@ describe('the pending-post queue', () => {
         expect(__getLocalStorage().pending_post_attempts?.t3_gone1).toBeUndefined()
     })
 
-    it('the challenge page reddit sends for every legacy page rests them at once, and the post keeps its place and attempts', async () => {
+    it('the challenge page reddit sends for every legacy page rests them at once and empties the queue', async () => {
         queue(['t3_a1', 't3_b2'])
+        __getLocalStorage().pending_post_attempts = { t3_b2: 2 }
         legacyPages[page('t3_a1')] = { error: 'challenge page: reddit refuses legacy pages', refused: true }
         await _processPendingPosts(storage())
         expect(await isCapabilityResting('legacy')).toBe(true)
-        expect(__getLocalStorage().pending_post_lookups).toEqual(['t3_a1', 't3_b2'])
-        expect(__getLocalStorage().pending_post_attempts?.t3_a1).toBeUndefined()
+        // nothing queued can be read, and the popup's "Scanning N posts" banner
+        // shows while anything is
+        expect(__getLocalStorage().pending_post_lookups).toBeUndefined()
+        // the attempts stay: they stop a post that never resolves from being
+        // queued again after every rest
+        expect(__getLocalStorage().pending_post_attempts).toEqual({ t3_b2: 2 })
+    })
+
+    it('while the legacy pages rest, the queue empties without asking for a page', async () => {
+        queue(['t3_a1'])
+        legacyPages[page('t3_a1')] = { error: 'challenge page: reddit refuses legacy pages', refused: true }
+        await _processPendingPosts(storage())
+        // queued again later, e.g. by an earlier cycle's fallback
+        __getLocalStorage().pending_post_lookups = ['t3_c3']
+        legacyPages[page('t3_c3')] = { is_removed: true }
+        await _processPendingPosts(storage())
+        expect(__getLocalStorage().pending_post_lookups).toBeUndefined()
+        // read, its removal would have asked for its thread
+        expect(fetches).toEqual([])
     })
 
     it('a 429 on a legacy page keeps the post, counts no attempt and starts the backoff', async () => {

@@ -261,12 +261,16 @@ export const publiclyInvisibleReason = (meta: AuthItemMeta | undefined): string 
     return ''
 }
 
-// Why the public view can't judge an item, '' when it can. A post whose
-// author's own view says it was removed (removed_by_category) needs no public
-// view. is_robot_indexable === false alone doesn't count here: it hasn't been
-// checked on NSFW posts that weren't removed.
+// A post whose author's own view says it was removed. It needs no public view
+// to judge, and monitoring marks such a recorded removal (a: 1) so that view
+// can end it. is_robot_indexable === false alone doesn't count here: it hasn't
+// been checked on NSFW posts that weren't removed.
+export const postRemovedByCategory = (id: string, meta: AuthItemMeta | undefined): boolean =>
+    id.startsWith('t3_') && !!meta?.removed_by_category
+
+// Why the public view can't judge an item, '' when it can
 export const publicViewUncheckedReason = (id: string, meta: AuthItemMeta | undefined): string =>
-    id.startsWith('t3_') && meta?.removed_by_category ? '' : publiclyInvisibleReason(meta)
+    postRemovedByCategory(id, meta) ? '' : publiclyInvisibleReason(meta)
 
 export const lookupItemsByID = (
     ids: string | string[],

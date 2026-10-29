@@ -21,6 +21,7 @@ import {
     PROFILE_PAGINATION_UNAVAILABLE,
     hasRedditLoginCookie,
     publicViewUncheckedReason,
+    postRemovedByCategory,
 } from './requests'
 import { dlog } from './diaglog'
 import {
@@ -46,6 +47,7 @@ import {
     removeFromPendingPostQueue,
     recordPendingPostAttempt,
     clearPendingPostAttempt,
+    emptyPendingPostQueue,
     MAX_PENDING_POST_ATTEMPTS,
     getRateLimitBackoffRemainingMs,
     getBacklogSummaryState,
@@ -136,8 +138,15 @@ const processPendingPosts = async (storage: Record<string, any>) => {
     // post's legacy page says whether it was removed, and its thread's JSON,
     // read with the user's login, gives its data (api/info.json is refused,
     // 2026-10-24). Either can rest after reddit refuses it.
-    if ((await isLegacyOff()) || (await isCapabilityResting('thread_json'))) {
-        // Nothing is being scanned, so no "Scanning N posts" banner either
+    // Nothing queued can be read while the legacy pages are off or resting
+    // (reddit has answered every one with its challenge since 2026-10-28), so
+    // the queue empties: its banner would say "Scanning N posts" all along
+    if (await isLegacyOff()) {
+        await emptyPendingPostQueue()
+        return
+    }
+    if (await isCapabilityResting('thread_json')) {
+        // Nothing is being scanned, so no "Scanning N posts" progress either
         await clearPendingPostProgress()
         return
     }
@@ -186,14 +195,15 @@ const processPendingPosts = async (storage: Record<string, any>) => {
             const result: any = await getPost_fromOld(postPath)
             if (result?.refused) {
                 // The challenge reddit sends for every legacy page: they rest,
-                // and this queue waits for them
+                // and the queue empties, as it does while they rest
                 await noteCapabilityRefused('legacy', 'challenge page')
-                outcome = 'wait'
+                await emptyPendingPostQueue()
+                return
             } else if (result?.status === 403) {
                 if (refusedBefore) {
                     // Two posts in a row: reddit refuses the legacy pages,
-                    // which rest (the listing rests on its own), and this
-                    // queue waits for them
+                    // which rest (the listing rests on its own), and the queue
+                    // empties while they do
                     await noteCapabilityRefused('legacy', 'HTTP 403')
                     outcome = 'wait'
                 } else {
@@ -1236,13 +1246,7 @@ function markChanges(
         // A removal the post's own author view shows is marked so: when that
         // view stops showing it, it ends, even where nothing else can see the
         // post (readLookupResult)
-        if (
-            alert_type === REMOVED &&
-            isUser &&
-            name in alert_known_hash &&
-            name.startsWith('t3_') &&
-            item.removed_by_category
-        ) {
+        if (alert_type === REMOVED && isUser && name in alert_known_hash && postRemovedByCategory(name, item)) {
             alert_known_hash[name].a = 1
         }
     })

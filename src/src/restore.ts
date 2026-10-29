@@ -416,6 +416,11 @@ async function fetchUserPageHTMLViaBackground(username: string, path: string): P
         `[reveddit scan] user-page background fetch -> status ${res?.status ?? 'none'} (${res?.ok ? 'ok' : res?.error || 'fail'})`,
     )
     if (res?.ok && res.text) return res.text
+    if (res?.refused) {
+        // Reddit answers every legacy page with its challenge: no other author's
+        // page can be read either, so the loops stop on this
+        throw Object.assign(new Error(`background user-page fetch refused: ${res.error}`), { legacyRefused: true })
+    }
     throw new Error(`background user-page fetch failed (status ${res?.status ?? 'none'})`)
 }
 
@@ -739,6 +744,17 @@ export async function restoreComment(
                     currentAuthor: '',
                     status: 'cancelled',
                     message: 'Search cancelled.',
+                })
+                return { found: false }
+            }
+            if (err.legacyRefused) {
+                // Not "searched all": nothing was read, and the buttons stay
+                onProgress({
+                    current: i + 1,
+                    total: candidates.length,
+                    currentAuthor: '',
+                    status: 'error',
+                    message: 'Reddit is refusing the pages restore reads. Try again later.',
                 })
                 return { found: false }
             }
@@ -1138,6 +1154,8 @@ export async function scanThreadForRemovedComments(
     const recovered: RecoveredComment[] = []
     const recoveredIds = new Set<string>()
     let searched = 0
+    // Reddit refused an author's page with its challenge, so none can be read
+    let refused = false
 
     const recordRecovery = (d: any, sourceAuthor: string) => {
         const rc: RecoveredComment = {
@@ -1179,6 +1197,10 @@ export async function scanThreadForRemovedComments(
             }
         } catch (err: any) {
             if (err.message === 'Cancelled') break
+            if (err.legacyRefused) {
+                refused = true
+                break
+            }
             if (err.message?.includes('429') || err.message?.includes('403')) {
                 if (err.message?.includes('429')) {
                     // Shared signal — see the twin catch in restoreComment.
@@ -1226,6 +1248,16 @@ export async function scanThreadForRemovedComments(
     }
 
     const unsearched = candidates.length - searched
+    if (refused) {
+        onProgress({
+            current: searched,
+            total: candidates.length,
+            currentAuthor: '',
+            status: 'error',
+            message: `Reddit is refusing the pages this scan reads. ${recovered.length} recovered; try again later.`,
+        })
+        return recovered
+    }
     onProgress({
         current: searched,
         total: candidates.length,

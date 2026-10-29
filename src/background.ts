@@ -492,14 +492,17 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                 const text = r.ok ? await r.text() : ''
                 if (isLegacyChallengeHtml(text)) {
                     // Not an empty profile: the scan says it couldn't read it
-                    sendResponse({ ok: false, status: r.status, error: LEGACY_REFUSED_ERROR })
+                    sendResponse({ ok: false, status: r.status, error: LEGACY_REFUSED_ERROR, refused: true })
                     return
                 }
                 sendResponse({ ok: r.ok, status: r.status, text })
             })
             .catch(err => {
-                console.log('[reveddit] bg fetch-userpage-html error:', err?.message || String(err))
-                sendResponse({ ok: false, status: 0, error: String(err?.message || err) })
+                const error = String(err?.message || err)
+                console.log('[reveddit] bg fetch-userpage-html error:', error)
+                // Turned off by the remote option, every page is refused too:
+                // restore and the scans stop rather than try every author
+                sendResponse({ ok: false, status: 0, error, refused: error.includes('legacy endpoints disabled') })
             })
         return true
     } else if (request.action === 'fetch-api-info') {

@@ -731,6 +731,12 @@ export const clearPendingPostQueue = async () => {
     await browser.storage.local.remove([PENDING_POSTS_KEY, 'pending_post_progress', PENDING_POST_ATTEMPTS_KEY])
 }
 
+// Empties the queue and its progress but keeps the attempts, which stop the
+// lookup fallback from queueing a post that never resolves again and again
+export const emptyPendingPostQueue = async () => {
+    await browser.storage.local.remove([PENDING_POSTS_KEY, 'pending_post_progress'])
+}
+
 export const getPendingPostAttempts = async (): Promise<Record<string, number>> => {
     const result = await browser.storage.local.get({ [PENDING_POST_ATTEMPTS_KEY]: {} })
     return result[PENDING_POST_ATTEMPTS_KEY] as Record<string, number>
