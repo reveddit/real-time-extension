@@ -19,6 +19,9 @@ Note, the extension is not able to track content from private subreddits.
 
 VERSION HISTORY:
 
+2026/10/29 - 0.0.5.29
+- fix repeated removal alerts when saved data fills up; NSFW and profile posts checked correctly
+
 2026/10/25 - 0.0.5.28
 - fix false removal alerts on posts mentioning removal; checks work for profiles with hidden comments
 
