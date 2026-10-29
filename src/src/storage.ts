@@ -336,8 +336,10 @@ export const markThingAsSeen = (storage: Record<string, any>, thing: string, isU
     Object.values(keys).forEach(fullKeyname => {
         fullKeynames.push(fullKeyname)
     })
+    // An account unsubscribed since its notification, or since the popup
+    // opened, no longer has lists
     fullKeynames.forEach(fullKeyname => {
-        Object.values(storage[fullKeyname]).forEach((item: any) => {
+        Object.values(storage[fullKeyname] || {}).forEach((item: any) => {
             item.u = false
         })
     })
@@ -360,6 +362,7 @@ const markSeenForStorageKey = (
     is_user: boolean,
 ) => {
     const storage_item = storage[storage_keys[key]]
+    if (!storage_item) return
     Object.keys(ids).forEach(id => {
         if (id in storage_item) {
             storage_item[id].u = false
@@ -369,8 +372,11 @@ const markSeenForStorageKey = (
     })
 }
 
+// A reveddit page's items load well after the page read sync storage, and a
+// check may save in between. So marking reads storage again and saves only the
+// lists it marks: the page's copy would undo that save, and announce again a
+// removal the save recorded.
 export const markIDsAsSeenIfSubscribed = (
-    storage: Record<string, any>,
     user: string,
     is_user: boolean,
     removed_ids: Record<string, any>,
@@ -381,23 +387,26 @@ export const markIDsAsSeenIfSubscribed = (
 ) => {
     const storage_keys = getObjectNamesForThing(user, is_user)
     delete storage_keys['changes']
-    const user_subscribed = storage.user_subscriptions[user]
-    if (user_subscribed || !is_user) {
-        markSeenForStorageKey(storage, storage_keys, 'removed', removed_ids, is_user)
-        markSeenForStorageKey(storage, storage_keys, 'approved', approved_ids, is_user)
-        markSeenForStorageKey(storage, storage_keys, 'locked', locked_ids, is_user)
-        markSeenForStorageKey(storage, storage_keys, 'unlocked', unlocked_ids, is_user)
-        // The entries added here have to fit like the monitoring save's
-        Object.values(storage_keys).forEach(key => {
-            if (storage[key]) {
-                storage[key] = trimDict_toFitSyncItem(storage[key], MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c', key)
-            }
-        })
-        chrome.storage.sync.set(
-            fitDicts_toSyncTotal(storage, {}, [storage_keys['approved'], storage_keys['unlocked']], 'c'),
-            callback,
-        )
-    }
+    chrome.storage.sync.get(undefined as any, storage => {
+        const user_subscribed = storage?.user_subscriptions?.[user]
+        if (storage && (user_subscribed || !is_user)) {
+            markSeenForStorageKey(storage, storage_keys, 'removed', removed_ids, is_user)
+            markSeenForStorageKey(storage, storage_keys, 'approved', approved_ids, is_user)
+            markSeenForStorageKey(storage, storage_keys, 'locked', locked_ids, is_user)
+            markSeenForStorageKey(storage, storage_keys, 'unlocked', unlocked_ids, is_user)
+            // The entries added here have to fit like the monitoring save's
+            const toSave: Record<string, any> = {}
+            Object.values(storage_keys).forEach(key => {
+                if (storage[key]) {
+                    toSave[key] = trimDict_toFitSyncItem(storage[key], MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c', key)
+                }
+            })
+            chrome.storage.sync.set(
+                fitDicts_toSyncTotal(toSave, storage, [storage_keys['approved'], storage_keys['unlocked']], 'c'),
+                callback,
+            )
+        }
+    })
 }
 
 export const subscribeId = (id: string, callback: () => void = () => {}) => {

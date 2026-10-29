@@ -15,7 +15,7 @@ export const revdditModifications = (
             'data-numitemsloaded',
             1,
             () => {
-                findIDsForUserAndMark(storage, user, isUserPage)
+                findIDsForUserAndMark(user, isUserPage)
             },
         )
     }
@@ -114,13 +114,12 @@ function waitForAddedNode_withMinAttValue(
     })
 }
 
-function findIDsForUserAndMark(storage: Record<string, any>, user: string, isUserPage: boolean) {
+function findIDsForUserAndMark(user: string, isUserPage: boolean) {
     const seen_removed_ids = getIDsHashFromSelector('.comment.removed, .post.removed, .comment.deleted, .post.deleted')
     const seen_approved_ids = getIDsHashFromSelector('.comment:not(.removed), .post:not(.removed)')
     const seen_locked_ids = getIDsHashFromSelector('.comment.locked, .post.locked')
     const seen_unlocked_ids = getIDsHashFromSelector('.comment:not(.locked), .post:not(.locked)')
     markIDsAsSeenIfSubscribed(
-        storage,
         user,
         isUserPage,
         seen_removed_ids,

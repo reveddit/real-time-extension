@@ -1005,11 +1005,17 @@ const notificationClicked = (rawThing: string) => {
             }
         }
         markThingAsSeen(storage, thing, isUser)
-        browser.storage.sync.set(storage).then(() => {
-            updateBadgeUnseenCount()
-            clearPendingNotification(thing).catch(() => {})
-            createTab(url)
-        })
+        // The page opens even when the save is refused
+        browser.storage.sync
+            .set(storage)
+            .catch((e: any) =>
+                dlog('ui', '[reveddit] marking seen on a notification click failed:', String(e?.message || e)),
+            )
+            .then(() => {
+                updateBadgeUnseenCount()
+                clearPendingNotification(thing).catch(() => {})
+                createTab(url)
+            })
     })
 }
 

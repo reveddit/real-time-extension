@@ -369,8 +369,7 @@ describe('marking items seen from a reveddit page', () => {
         for (const [id, c] of Object.entries(pageIds)) if (!(id in added)) added[id] = { c, u: false }
         expect(itemBytes(keys.approved, added)).toBeGreaterThan(LIMIT)
 
-        const storage = structuredClone(__getSyncStorage())
-        await new Promise(resolve => markIDsAsSeenIfSubscribed(storage, USER, true, {}, pageIds, {}, pageIds, resolve))
+        await new Promise(resolve => markIDsAsSeenIfSubscribed(USER, true, {}, pageIds, {}, pageIds, resolve))
 
         expect(refusals).toEqual([])
         const stored = __getSyncStorage()
@@ -378,6 +377,42 @@ describe('marking items seen from a reveddit page', () => {
             for (const id of newest) expect(stored[key][id].u).toBe(false)
             expect(itemBytes(key, stored[key])).toBeLessThanOrEqual(LIMIT - 256)
         }
+    })
+
+    it('keeps what a check saved after the page read storage', async () => {
+        // The page opens, then a check records the comment's removal before
+        // the page's items load. The comment isn't among them.
+        await check(authItem)
+        for (let i = 0; i < 5 && !recorded(REMOVED).length; i++) await check(removedView)
+        expect(recorded(REMOVED)).toHaveLength(1)
+        const checkSaved = structuredClone(__getSyncStorage())
+
+        await new Promise(resolve => markIDsAsSeenIfSubscribed(USER, true, {}, pageIds, {}, pageIds, resolve))
+
+        const stored = __getSyncStorage()
+        expect(stored[keys.removed]).toEqual(checkSaved[keys.removed])
+        expect(stored[keys.changes]).toEqual(checkSaved[keys.changes])
+        for (const id of newest) expect(stored[keys.approved][id].u).toBe(false)
+        // Still removed: not announced again
+        for (let i = 0; i < 6; i++) await check(removedView)
+        expect(announced()).toEqual(['1 new [mod removed] actions, click to view'])
+        expect(recorded(REMOVED)).toHaveLength(1)
+    })
+
+    it('saves only the lists it marks', async () => {
+        const otherKeys = getObjectNamesForThing('other', false)
+        __getSyncStorage()[otherKeys.removed] = { t1_otheritem: { c: OLD, u: true } }
+        __getSyncStorage().last_check = NOW
+        const saved = []
+        const set = chrome.storage.sync.set
+        chrome.storage.sync.set = (items, callback) => {
+            saved.push(Object.keys(items).sort())
+            return set(items, callback)
+        }
+
+        await new Promise(resolve => markIDsAsSeenIfSubscribed(USER, true, {}, pageIds, {}, pageIds, resolve))
+
+        expect(saved).toEqual([[keys.approved, keys.locked, keys.removed, keys.unlocked].sort()])
     })
 })
 

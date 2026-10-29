@@ -242,6 +242,12 @@ describe('markThingAsSeen', () => {
         expect(storage.removed_u_alice.t1_b.u).toBe(false)
         expect(storage.approved_u_alice.t1_c.u).toBe(false)
     })
+
+    it('passes over an account without lists, as one unsubscribed since its notification', () => {
+        const storage = makeStorageInit({})
+        expect(() => markThingAsSeen(storage, 'alice', true)).not.toThrow()
+        expect(storage.removed_u_alice).toBeUndefined()
+    })
 })
 
 describe('getIDs_thing / getUnseenIDs_thing', () => {
