@@ -60,21 +60,6 @@ export const trimDict_toFitSyncItem = (
     return newDict
 }
 
-// The last maxNumItems entries, in order, cut further where needed so the
-// array fits in one sync item
-export const trimArray_toFitSyncItem = (array: any[], maxNumItems: number, storageKey: string): any[] => {
-    const budget = syncItemValueBudget(storageKey)
-    const kept: any[] = []
-    let bytes = 2 // []
-    for (let i = array.length - 1; i >= 0 && kept.length < maxNumItems; i--) {
-        const entryBytes = (kept.length ? 1 : 0) + JSON.stringify(array[i]).length
-        if (bytes + entryBytes > budget) break
-        kept.push(array[i])
-        bytes += entryBytes
-    }
-    return kept.reverse()
-}
-
 // Gives the dicts at trimKeys only the room under the total that the rest of
 // toSave and the rest of storage leave, the smaller dict first. A set() that
 // fits already is unchanged.
@@ -449,12 +434,16 @@ export const subscribeUser = (
     callbackError: (msg: string) => void = () => {},
 ) => {
     const userInit = getUserInit(user)
-    chrome.storage.sync.get('user_subscriptions', result => {
+    chrome.storage.sync.get(['user_subscriptions', ...Object.keys(userInit)], result => {
         const user_subscriptions = result.user_subscriptions
         if (!(user in user_subscriptions)) {
             if (Object.keys(user_subscriptions).length < MAX_SUBSCRIPTIONS) {
                 user_subscriptions[user] = true
-                chrome.storage.sync.set({ user_subscriptions, ...userInit }, callbackSuccess)
+                // Monitoring keeps lists for whoever is logged in, subscribed
+                // or not. Empty ones in their place would forget the account's
+                // recorded removals, and announce them again.
+                const missingLists = Object.fromEntries(Object.entries(userInit).filter(([key]) => !(key in result)))
+                chrome.storage.sync.set({ user_subscriptions, ...missingLists }, callbackSuccess)
             } else {
                 callbackError('maximum number of subscriptions reached')
             }

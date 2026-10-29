@@ -390,13 +390,20 @@ export const buildDiagReport = async (opts: {
             if (local.last_logged_in_user) {
                 redactNames.push(String(local.last_logged_in_user))
             }
-            const sync = (await browser.storage.sync.get({ user_subscriptions: {} })) as any
-            for (const name of Object.keys(sync.user_subscriptions || {})) {
-                redactNames.push(name)
-            }
+            // Every account with anything stored: subscribed, unsubscribed, or
+            // neither, when monitoring kept its lists (removed_u_<name> and the
+            // like) while it was logged in
+            const sync = ((await browser.storage.sync.get(null)) as any) || {}
+            redactNames.push(
+                ...Object.keys(sync.user_subscriptions || {}),
+                ...Object.keys(sync.user_unsubscriptions || {}),
+                ...Object.keys(sync).flatMap(key => key.match(/^[a-z]+_u_(.+)$/)?.slice(1) ?? []),
+            )
         } catch {
             /* ignored */
         }
+        // Longest first, so an alt named after the main account goes whole
+        redactNames.sort((a, b) => b.length - a.length)
     }
     const header = [
         'reveddit real-time diagnostic log',

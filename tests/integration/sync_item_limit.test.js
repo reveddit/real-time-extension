@@ -19,7 +19,6 @@ import {
     REMOVED,
     APPROVED,
     trimDict_toFitSyncItem,
-    trimArray_toFitSyncItem,
     fitDicts_toSyncTotal,
     markIDsAsSeenIfSubscribed,
     formatSyncUsage,
@@ -295,17 +294,6 @@ describe('trimming a list to fit one sync item', () => {
         // the newest part of what the cap keeps
         const capped = Object.keys(trimDict_by_numberValuedAttribute(dict, 130, 'c'))
         expect(Object.keys(fitted)).toEqual(capped.slice(0, Object.keys(fitted).length))
-    })
-
-    it('keeps the newest changes that fit, in order', () => {
-        const changes = Array.from({ length: 100 }, (_, i) => ({ i: `t1_c${i}`, o: NOW + i, g: REMOVED, n: null }))
-        expect(trimArray_toFitSyncItem(changes, 100, keys.changes)).toEqual(changes)
-        expect(trimArray_toFitSyncItem(changes, 30, keys.changes)).toEqual(changes.slice(-30))
-        const long = changes.map(change => ({ ...change, i: change.i.padEnd(80, 'x') }))
-        const fitted = trimArray_toFitSyncItem(long, 100, keys.changes)
-        expect(fitted.length).toBeLessThan(100)
-        expect(fitted).toEqual(long.slice(-fitted.length))
-        expect(itemBytes(keys.changes, fitted)).toBeLessThanOrEqual(LIMIT - 256)
     })
 })
 

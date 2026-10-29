@@ -445,14 +445,16 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         expect(line).not.toContain(HIDDEN)
     })
 
-    it("names what can't be checked once, in the copied log's header", async () => {
+    it("names what can't be checked once, in the copied log's header, by id only with the username", async () => {
         installFetch(defaultRoutes())
         await mixedLookup()
         expect(__getLocalStorage()[PUBLIC_VIEW_UNCHECKED_KEY].ids).toEqual({
             [NSFW_COMMENT]: 'NSFW',
             [NSFW_POST_NOINDEX]: 'NSFW',
         })
-        expect(await getPublicViewUncheckedLine()).toMatch(
+        // The default copy leaves the username out, and an id would lead back to it
+        expect(await getPublicViewUncheckedLine()).toMatch(/^can't be checked logged out: 2 NSFW; as of \d{4}-/)
+        expect(await getPublicViewUncheckedLine(true)).toMatch(
             new RegExp(
                 `^can't be checked logged out: ${NSFW_COMMENT} \\(NSFW\\), ${NSFW_POST_NOINDEX} \\(NSFW\\); as of \\d{4}-`,
             ),
@@ -478,8 +480,12 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
 
     it('the header says when no lookup has recorded anything yet', () => {
         expect(formatPublicViewUnchecked(null)).toBe("can't be checked logged out: no lookup recorded")
-        expect(formatPublicViewUnchecked({ ids: { t1_a: 'private' }, t: 0 })).toBe(
-            "can't be checked logged out: t1_a (private); as of 1970-01-01T00:00:00.000Z",
+        const stored = { ids: { t1_a: 'private', t1_b: 'NSFW', t3_c: 'private' }, t: 0 }
+        expect(formatPublicViewUnchecked(stored)).toBe(
+            "can't be checked logged out: 2 private, 1 NSFW; as of 1970-01-01T00:00:00.000Z",
+        )
+        expect(formatPublicViewUnchecked(stored, true)).toBe(
+            "can't be checked logged out: t1_a (private), t1_b (NSFW), t3_c (private); as of 1970-01-01T00:00:00.000Z",
         )
     })
 })

@@ -17,6 +17,7 @@ import {
     formatDiagLog,
     formatTieredDiagLog,
     browserOfUserAgent,
+    buildDiagReport,
     initDiagPersistence,
     DIAG_MAX_ENTRIES,
     DIAG_SUMMARY_MAX_ENTRIES,
@@ -137,6 +138,30 @@ describe('formatDiagLog', () => {
         const entries = [{ t: Date.UTC(2026, 7, 7, 12, 0, 0), a: 'ratelimit', m: 'backing off' }]
         const text = formatDiagLog(entries, [])
         expect(text).toContain('2026-08-07T12:00:00.000Z [ratelimit] backing off')
+    })
+})
+
+describe('buildDiagReport', () => {
+    it('leaves out every account that has lists stored, not only the subscribed and logged-in ones', async () => {
+        // Monitoring keeps lists for whoever is logged in, subscribed or not
+        __resetStorage(
+            {
+                user_subscriptions: { MainAcct: true },
+                user_unsubscriptions: { OldAcct: 1 },
+                approved_u_MainAcct: {},
+                approved_u_MainAcct_alt: {},
+                unlocked_u_SixthAcct: {},
+            },
+            { last_logged_in_user: 'MainAcct' },
+        )
+        dlog('feed', '[reveddit] www lookup SixthAcct: 100 requested')
+        const header = ['sync storage: largest approved_u_MainAcct_alt 7900, unlocked_u_SixthAcct 7800 (OldAcct)']
+        const report = await buildDiagReport({ includeUsername: false, extraHeaderLines: header })
+        // the alt goes whole, not as "────_alt"
+        for (const name of ['MainAcct', 'SixthAcct', 'OldAcct', '_alt']) expect(report).not.toContain(name)
+        const withNames = await buildDiagReport({ includeUsername: true, extraHeaderLines: header })
+        expect(withNames).toContain('approved_u_MainAcct_alt 7900')
+        expect(withNames).toContain('www lookup SixthAcct')
     })
 })
 

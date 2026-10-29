@@ -55,7 +55,6 @@ import {
     getNotifyFlags,
     getPublicLiveKey,
     trimDict_toFitSyncItem,
-    trimArray_toFitSyncItem,
     fitDicts_toSyncTotal,
 } from './storage'
 import {
@@ -185,7 +184,12 @@ const processPendingPosts = async (storage: Record<string, any>) => {
         try {
             const postPath = '/comments/' + postId.substring(3) + '/'
             const result: any = await getPost_fromOld(postPath)
-            if (result?.status === 403) {
+            if (result?.refused) {
+                // The challenge reddit sends for every legacy page: they rest,
+                // and this queue waits for them
+                await noteCapabilityRefused('legacy', 'challenge page')
+                outcome = 'wait'
+            } else if (result?.status === 403) {
                 if (refusedBefore) {
                     // Two posts in a row: reddit refuses the legacy pages,
                     // which rest (the listing rests on its own), and this
@@ -254,7 +258,11 @@ const processPendingPosts = async (storage: Record<string, any>) => {
                     }
                 } else {
                     await recordPendingPostAttempt(postId)
-                    console.log(`Pending post lookup: ${postId} is not removed.`)
+                    console.log(
+                        result?.error
+                            ? `Pending post lookup: ${postId}: no page (${result.error})`
+                            : `Pending post lookup: ${postId} is not removed.`,
+                    )
                 }
             }
         } catch {
@@ -719,15 +727,17 @@ const notePubliclyLive = async (user: string, ids: string[]) => {
 // (publicViewUncheckedReason). Those count as approved ('unchecked': bodies
 // still get cached, no false removal alerts), except a removal already
 // recorded, which stays as recorded until they can be checked again ('skip')
-// rather than reading as approved. The legacy paths can see this content, so
-// their results are read as they are.
+// rather than reading as approved. A post's own author view is that check
+// when it showed the removal (removed_by_category, marked a: 1 in the entry):
+// once it stops showing it, the post counts as approved again. The legacy
+// paths can see this content, so their results are read as they are.
 export const readLookupResult = (
     item: any,
     authItem: any,
-    knownRemoved: boolean,
+    knownRemoved: { a?: number } | undefined,
 ): 'removed' | 'approved' | 'unchecked' | 'skip' => {
     if (item._public_view && authItem && publicViewUncheckedReason(item.name, authItem)) {
-        return knownRemoved ? 'skip' : 'unchecked'
+        return knownRemoved && !knownRemoved.a ? 'skip' : 'unchecked'
     }
     return isRemovedItem(item) ? 'removed' : 'approved'
 }
@@ -840,7 +850,7 @@ const checkForChanges_thing_byId = async (
                 itemLookup[item.name] = item
             }
             const authItem = isUser ? itemLookup[item.name] : null
-            const reading = readLookupResult(item, authItem, item.name in known_removed)
+            const reading = readLookupResult(item, authItem, known_removed[item.name])
             if (reading === 'removed') {
                 removed.push(item.name)
             } else if (reading === 'unchecked') {
@@ -1080,7 +1090,8 @@ const checkForChanges_thing_byId = async (
                             'c',
                             keys['unlocked'],
                         ),
-                        [keys['changes']]: trimArray_toFitSyncItem(changes, MAX_SYNC_STORAGE_CHANGES, keys['changes']),
+                        // 100 entries come to about 5 KB, well inside one item
+                        [keys['changes']]: changes.slice(-MAX_SYNC_STORAGE_CHANGES),
                     },
                     storage,
                     [keys['approved'], keys['unlocked']],
@@ -1222,6 +1233,18 @@ function markChanges(
                 newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
             }
         }
+        // A removal the post's own author view shows is marked so: when that
+        // view stops showing it, it ends, even where nothing else can see the
+        // post (readLookupResult)
+        if (
+            alert_type === REMOVED &&
+            isUser &&
+            name in alert_known_hash &&
+            name.startsWith('t3_') &&
+            item.removed_by_category
+        ) {
+            alert_known_hash[name].a = 1
+        }
     })
     normal_current_list.forEach(name => {
         const item = itemLookup[name]
@@ -1276,9 +1299,11 @@ function markChanges(
             const itemCreatedUtc = item.created_utc
             const isTooOld = oldestDateThreshold && itemCreatedUtc && itemCreatedUtc < oldestDateThreshold
             if (!isTooOld) {
+                // This runs on every check, so it keeps the unseen flag: an
+                // approval or unlock stays unseen until it's viewed
                 normal_known_hash[name] = new ItemForStorage(
                     item.created_utc,
-                    false,
+                    !!normal_known_hash[name]?.u,
                     isComment(item.name) && item.link_id ? item.link_id : undefined,
                 )
                 // Cache the body on first observation. The authenticated view (itemLookup) is the

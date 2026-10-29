@@ -31,7 +31,7 @@ import {
     sitePermalink,
 } from './parse_html/new'
 import { newReddit, isRateLimitError } from './parse_html/common'
-import { setWarningBadge, isRemovedComment, isViewerBlockedItem } from './common'
+import { setWarningBadge, isRemovedComment, isRemovedItem, isViewerBlockedItem, RedditItem } from './common'
 import { fetchLoggedIn } from './logged-in-fetch'
 import {
     getRemoteMechanism,
@@ -1330,7 +1330,7 @@ const legacyTiebreakAbsent = async (
         postFetches++
         try {
             // Canonical permalink when the auth view supplied one: /comments/<id>/
-            // 301s to it, and the redirect drops the legacy cookie marker.
+            // answers with a redirect to it
             const permalink = authItemsMeta[id]?.permalink
             const path = permalink && permalink.startsWith('/r/') ? permalink : '/comments/' + id.substring(3) + '/'
             const page = (await _legacyLookups.postByPath(path)) as any
@@ -1339,10 +1339,10 @@ const legacyTiebreakAbsent = async (
                 await noteCapabilityWorked('legacy')
             } else {
                 dlog('legacy', `[reveddit] legacy post tiebreak ${id}: no page${page?.error ? ` (${page.error})` : ''}`)
-                if (page?.status === 403) {
+                if (page?.status === 403 || page?.refused) {
                     // Refused: the legacy pages rest (the listing rests on its
                     // own), starting with the rest of this loop
-                    await noteCapabilityRefused('legacy', 'HTTP 403')
+                    await noteCapabilityRefused('legacy', page.refused ? 'challenge page' : 'HTTP 403')
                     break
                 }
                 if (page?.status === 429) {
@@ -1694,20 +1694,34 @@ const notePublicViewUnchecked = async (unchecked: Record<string, string>) => {
     }
 }
 
-// The copied log's header line for them
-export const formatPublicViewUnchecked = (stored: any): string => {
+// The copied log's header line for them. It names ids only in a copy that
+// includes the username: anyone can look an id up, and the list says which of
+// the reporter's items are NSFW or in a private community. The default copy
+// counts them by reason.
+export const formatPublicViewUnchecked = (stored: any, includeIds = false): string => {
     const label = "can't be checked logged out"
     if (!stored?.ids || typeof stored.ids !== 'object') {
         return `${label}: no lookup recorded`
     }
     const entries = Object.entries(stored.ids as Record<string, string>)
-    const list = entries.length ? entries.map(([id, reason]) => `${id} (${reason})`).join(', ') : 'none'
+    let list = 'none'
+    if (entries.length && includeIds) {
+        list = entries.map(([id, reason]) => `${id} (${reason})`).join(', ')
+    } else if (entries.length) {
+        const counts: Record<string, number> = {}
+        for (const [, reason] of entries) {
+            counts[reason] = (counts[reason] || 0) + 1
+        }
+        list = Object.entries(counts)
+            .map(([reason, n]) => `${n} ${reason}`)
+            .join(', ')
+    }
     return `${label}: ${list}; as of ${new Date(Number(stored.t) || 0).toISOString()}`
 }
-export const getPublicViewUncheckedLine = async (): Promise<string> => {
+export const getPublicViewUncheckedLine = async (includeIds = false): Promise<string> => {
     try {
         const r = (await browser.storage.local.get({ [PUBLIC_VIEW_UNCHECKED_KEY]: null })) as any
-        return formatPublicViewUnchecked(r[PUBLIC_VIEW_UNCHECKED_KEY])
+        return formatPublicViewUnchecked(r[PUBLIC_VIEW_UNCHECKED_KEY], includeIds)
     } catch {
         return formatPublicViewUnchecked(null)
     }
@@ -1755,8 +1769,8 @@ export const lookupItemsByID_fromPublicProfile = async (
     if (profile.emptyProfile && ids.length) {
         // An account whose every item is NSFW, quarantined or in a private
         // subreddit is publicly empty by design, not shadowbanned: fall through
-        // so the classification loop marks those approved (readLookupResult)
-        // instead of parking the account behind a permanent banner. An id with
+        // so the classification loop reads those (readLookupResult) instead
+        // of parking the account behind a permanent banner. An id with
         // no meta could be visible, so it keeps the shadowban reading.
         const anyPubliclyVisibleClass = ids.some(id => !publiclyInvisibleReason(authItemsMeta[id]))
         if (!anyPubliclyVisibleClass) {
@@ -1936,7 +1950,7 @@ export const lookupItemsByID_fromPublicProfile = async (
         const reason = publicViewUncheckedReason(data.name, authItemsMeta[data.name])
         if (reason) {
             unchecked[data.name] = reason
-        } else if (data.author === '[deleted]' || data.is_robot_indexable === false) {
+        } else if (isRemovedItem(data as RedditItem)) {
             removedCount++
         }
     }

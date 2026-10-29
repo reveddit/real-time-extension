@@ -163,6 +163,22 @@ describe('subscribeUser / unsubscribeUser', () => {
         expect(storage.removed_u_alice).toEqual({})
     })
 
+    it('keeps the lists monitoring already keeps for an account it subscribes', async () => {
+        // Monitoring checks whoever is logged in, subscribed or not
+        __resetStorage(
+            makeStorageInit({
+                removed_u_alice: { t1_a: { c: 1, u: false, p: 't3_p' } },
+                changes_u_alice: [{ i: 't1_a', o: 2, g: 1 }],
+            }),
+        )
+        await subscribeUserP('alice')
+        const storage = __getSyncStorage()
+        expect(storage.user_subscriptions.alice).toBe(true)
+        expect(storage.removed_u_alice).toEqual({ t1_a: { c: 1, u: false, p: 't3_p' } })
+        expect(storage.changes_u_alice).toEqual([{ i: 't1_a', o: 2, g: 1 }])
+        expect(storage.approved_u_alice).toEqual({})
+    })
+
     it('rejects when max subscriptions reached', async () => {
         __resetStorage(
             makeStorageInit({

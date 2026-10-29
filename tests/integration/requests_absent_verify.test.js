@@ -28,7 +28,7 @@ import {
     pageContextFetch,
     isLegacyResting,
 } from '../../src/src/requests'
-import { isLegacyPageUrl } from '../../src/src/parse_html/common'
+import { isLegacyPageUrl, isLegacyChallengeHtml } from '../../src/src/parse_html/common'
 
 const CACHE_KEY = 'www_absent_item_verdicts'
 const FAILURES_KEY = 'absent_verify_consecutive_failures'
@@ -839,6 +839,30 @@ describe('0.0.5.27 review fixes: legacy paths', () => {
         )
         expect(_legacyLookups.postByPath).toHaveBeenCalledTimes(1)
         expect(await isLegacyResting()).toBe(true)
+    })
+
+    it('the challenge page reddit sends for every legacy page ends the tiebreak and rests the legacy pages', async () => {
+        _legacyLookups.postByPath = vi.fn(async () => ({
+            error: 'challenge page: reddit refuses legacy pages',
+            refused: true,
+        }))
+        await verifyFeedAbsentItems(
+            ['t3_a', 't3_b', 't3_c'],
+            {},
+            vi.fn(async () => SHELL_HTML),
+        )
+        expect(_legacyLookups.postByPath).toHaveBeenCalledTimes(1)
+        expect(await isLegacyResting()).toBe(true)
+    })
+
+    it('tells the challenge page from a legacy page', () => {
+        const challenge =
+            '<html><body><form method="post" action="/x"><input type="hidden" name="jsc_token" value="t"/>' +
+            '<input type="hidden" name="js_challenge" value="1"/></form></body></html>'
+        expect(isLegacyChallengeHtml(challenge)).toBe(true)
+        expect(isLegacyChallengeHtml('<div id="siteTable"><div class=" thing id-t1_a comment">x</div></div>')).toBe(
+            false,
+        )
     })
 
     it('the legacy marker matches only as a whole query parameter', () => {

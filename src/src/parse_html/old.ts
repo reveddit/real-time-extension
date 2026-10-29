@@ -5,6 +5,8 @@ import {
     redditHTMLRequestOptions,
     fetchWithTimeout,
     ErrorCollector,
+    LEGACY_CHALLENGE_SELECTOR,
+    LEGACY_REFUSED_ERROR,
 } from './common'
 import { DOMParser } from 'linkedom/worker'
 import TurndownService from 'turndown'
@@ -515,7 +517,9 @@ export const getItems_fromOld = async (path: string) => {
         return { error: 'request failed' }
     }
     const itemsObj = new Items(url)
+    const challengeObj = new ThingCounter(url)
     const rewriter = new HTMLRewriter()
+        .on(LEGACY_CHALLENGE_SELECTOR, challengeObj)
         .on('#siteTable .thing', itemsObj)
         .on('#siteTable .thing .parent a.title', new LinkTitles(itemsObj))
         .on('#siteTable .thing .entry p.title a.title', new PostTitle(itemsObj))
@@ -540,6 +544,9 @@ export const getItems_fromOld = async (path: string) => {
         .on('#siteTable .thing .quarantine-stamp', new Quarantined(itemsObj))
         .on('#siteTable .thing .thumbnail img', new Thumbnail(itemsObj))
     await consume(rewriter.transform(response).body!)
+    if (challengeObj.count && !itemsObj.items.length) {
+        return { error: LEGACY_REFUSED_ERROR, refused: true }
+    }
     const info_promise = getCommentsInfo_fromOld(Array.from(itemsObj.ids_set))
     itemsObj.fillInDefaultValues()
     itemsObj.printErrors()
@@ -645,17 +652,21 @@ export const getPost_fromOld = async (path: string) => {
     const metaRobotsObj = new MetaRobots(url)
     const authorObj = new ThreadPageAuthor(url)
     const thingsObj = new ThingCounter(url)
+    const challengeObj = new ThingCounter(url)
     const rewriter = new HTMLRewriter()
         .on('meta[name="robots"][content="noindex,nofollow"]', metaRobotsObj)
         .on('#siteTable .thing .tagline span', authorObj)
         .on('#siteTable .thing', thingsObj)
+        .on(LEGACY_CHALLENGE_SELECTOR, challengeObj)
     await consume(rewriter.transform(response).body!)
     if (thingsObj.count === 0) {
-        // Not a legacy thread page: on www a post route without the
-        // redesign_optout cookie serves the Shreddit JS challenge, and a login
-        // wall serves a form. Neither carries the meta-robots removal signal, so
-        // "not removed" would be a false live verdict — report no page instead.
-        return { error: 'unrecognized page (no thread things)' }
+        // Not a legacy thread page: the JS challenge, now reddit's answer to
+        // every legacy page, or something else, such as a login wall's form.
+        // Neither carries the meta-robots removal signal, so "not removed"
+        // would be a false live verdict: report no page instead.
+        return challengeObj.count
+            ? { error: LEGACY_REFUSED_ERROR, refused: true }
+            : { error: 'unrecognized page (no thread things)' }
     }
     return {
         is_removed: metaRobotsObj.is_removed,

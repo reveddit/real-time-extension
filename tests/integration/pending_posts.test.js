@@ -100,6 +100,15 @@ describe('the pending-post queue', () => {
         expect(__getLocalStorage().pending_post_attempts?.t3_gone1).toBeUndefined()
     })
 
+    it('the challenge page reddit sends for every legacy page rests them at once, and the post keeps its place and attempts', async () => {
+        queue(['t3_a1', 't3_b2'])
+        legacyPages[page('t3_a1')] = { error: 'challenge page: reddit refuses legacy pages', refused: true }
+        await _processPendingPosts(storage())
+        expect(await isCapabilityResting('legacy')).toBe(true)
+        expect(__getLocalStorage().pending_post_lookups).toEqual(['t3_a1', 't3_b2'])
+        expect(__getLocalStorage().pending_post_attempts?.t3_a1).toBeUndefined()
+    })
+
     it('a 429 on a legacy page keeps the post, counts no attempt and starts the backoff', async () => {
         queue(['t3_a1', 't3_b2'])
         legacyPages[page('t3_a1')] = { error: 'legacy reddit HTML request failed: 429', status: 429 }

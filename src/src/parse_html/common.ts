@@ -37,6 +37,14 @@ export const legacyPageUrl = (base: string, path: string): string =>
 export const LEGACY_PAGE_MARKER_PATTERN = '[?&]' + LEGACY_PAGE_MARKER + '(&|$)'
 const LEGACY_PAGE_MARKER_REGEX = new RegExp(LEGACY_PAGE_MARKER_PATTERN)
 export const isLegacyPageUrl = (url: string): boolean => LEGACY_PAGE_MARKER_REGEX.test(url)
+// Since 2026-10-28 www answers every legacy page with that challenge, cookie or
+// not, and solving it brings the Shreddit page (checked 2026-10-29 on posts and
+// user pages, every cache mode). A legacy page that is the challenge means
+// reddit refuses the legacy pages, not that the page is empty: callers rest
+// them, as after a 403, and try again later.
+export const LEGACY_CHALLENGE_SELECTOR = 'input[name="js_challenge"]'
+export const isLegacyChallengeHtml = (html: string): boolean => /<input[^>]*\bname="js_challenge"/.test(html)
+export const LEGACY_REFUSED_ERROR = 'challenge page: reddit refuses legacy pages'
 
 export const getLegacyBase = async (): Promise<string> => {
     try {

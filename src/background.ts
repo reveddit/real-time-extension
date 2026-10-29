@@ -18,6 +18,7 @@ import {
     throwIfLegacyDisabled,
     throwIfLegacyOff,
     noteCapabilityWorked,
+    noteCapabilityRefused,
     noteRateLimited,
     lookupItemsByID_fromPublicProfile,
     getPublicViewUncheckedLine,
@@ -40,7 +41,14 @@ import { handleBridgeFetch } from './src/bridge'
 import { applyRemoteConfig, fetchNews, getCachedNews, requestStoreUpdateIfBehind } from './src/news'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs, getSyncUsageLine } from './src/storage'
-import { getLegacyBase, legacyPageUrl, isLegacyPageUrl, LEGACY_PAGE_MARKER_PATTERN } from './src/parse_html/common'
+import {
+    getLegacyBase,
+    legacyPageUrl,
+    isLegacyPageUrl,
+    LEGACY_PAGE_MARKER_PATTERN,
+    isLegacyChallengeHtml,
+    LEGACY_REFUSED_ERROR,
+} from './src/parse_html/common'
 
 // The background context is the diagnostic log's single writer — see diaglog.ts.
 initDiagPersistence()
@@ -444,12 +452,15 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         throwIfLegacyOff('legacy reddit post page')
             .then(() => getPost_fromOld(request.path))
             .then(async (data: any) => {
-                // A page that answers ends the legacy pages' rest. A 403 rests
-                // nothing: a private or quarantined community's thread answers
-                // 403 too, and one page view can't tell that from reddit
-                // refusing every page (monitoring's queue can, by asking two).
+                // A page that answers ends the legacy pages' rest, and the
+                // challenge, reddit's answer to every legacy page, starts one.
+                // A 403 rests nothing: a private or quarantined community's
+                // thread answers 403 too, and one page view can't tell that from
+                // reddit refusing every page (monitoring's queue can, by asking two).
                 if (data?.status === 429) {
                     noteRateLimited(new Error(String(data.error)))
+                } else if (data?.refused) {
+                    await noteCapabilityRefused('legacy', 'challenge page')
                 } else if (data && 'is_removed' in data) {
                     await noteCapabilityWorked('legacy')
                 }
@@ -479,6 +490,11 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             .then(async r => {
                 console.log(`[reveddit] bg fetch-userpage-html ${url} -> ${r.status}`)
                 const text = r.ok ? await r.text() : ''
+                if (isLegacyChallengeHtml(text)) {
+                    // Not an empty profile: the scan says it couldn't read it
+                    sendResponse({ ok: false, status: r.status, error: LEGACY_REFUSED_ERROR })
+                    return
+                }
                 sendResponse({ ok: r.ok, status: r.status, text })
             })
             .catch(err => {
@@ -518,7 +534,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         Promise.all([
             getRateLimitBackoffRemainingMs(),
             getCachedNews(),
-            getPublicViewUncheckedLine(),
+            getPublicViewUncheckedLine(!!request.includeUsername),
             getSyncUsageLine(),
         ])
             .then(([backoffMs, newsCache, uncheckedLine, syncUsageLine]) =>
@@ -741,7 +757,10 @@ chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResp
             // and resting after a refusal
             throwIfLegacyOff('legacy reddit HTML')
                 .then(() => getItems_fromOld(message.path))
-                .then(data => {
+                .then(async (data: any) => {
+                    if (data?.refused) {
+                        await noteCapabilityRefused('legacy', 'challenge page')
+                    }
                     sendResponse({ data })
                 })
                 .catch(err => {
