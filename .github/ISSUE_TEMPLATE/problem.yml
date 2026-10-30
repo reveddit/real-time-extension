@@ -1,0 +1,35 @@
+name: Report a problem
+description: Something isn't working right in Reveddit Real-Time.
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A sentence or two is enough. What did you expect instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Extension version and browser
+      description: Filled in for you when you report from the extension's popup.
+      placeholder: 0.0.5.30, Chrome 141
+  - type: input
+    id: country
+    attributes:
+      label: Country (optional)
+      description: Reddit tries some changes in a few countries first, so this can explain what you're seeing.
+  - type: textarea
+    id: log
+    attributes:
+      label: Diagnostic log (optional)
+      description: >-
+        If you came here from the extension's popup, the log is already on your clipboard, so just paste it.
+        Otherwise, in the extension's options, press "copy log" under Diagnostics.
+        The log leaves out your username but lists the ids of your recent posts and comments, which anyone can look up.
+      render: text
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else? (optional)
+      description: Screenshots, steps to reproduce, or links.
