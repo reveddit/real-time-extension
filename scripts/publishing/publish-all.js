@@ -58,23 +58,25 @@ async function runScript(scriptName) {
     });
 }
 
-// Skipped when it already passed for these exact extension files, so a run
-// that only needs to finish the stores a failure left behind starts at once.
-function runPreflight(status) {
-    if (status.preflight && !extensionChangedSince(status.preflight.commit)) {
-        console.log(`\x1b[32m✔ Preflight already passed for this code (${status.preflight.at}), skipping it\x1b[0m\n`);
+// A check every release must pass: the preflight, then a real second-account
+// sign-in in Chrome, which signs in with the password in .env. Each is skipped
+// when it already passed for these exact extension files, so a run that only
+// needs to finish the stores a failure left behind starts at once.
+function runCheck(status, key, label, script) {
+    if (status[key] && !extensionChangedSince(status[key].commit)) {
+        console.log(`\x1b[32m✔ ${label} already passed for this code (${status[key].at}), skipping it\x1b[0m\n`);
         return;
     }
-    console.log('\x1b[33mRunning yarn preflight...\x1b[0m');
-    const result = spawnSync('yarn', ['preflight'], { stdio: 'inherit', cwd: process.cwd() });
+    console.log(`\x1b[33mRunning yarn ${script}...\x1b[0m`);
+    const result = spawnSync('yarn', [script], { stdio: 'inherit', cwd: process.cwd() });
     if (result.status !== 0) {
-        console.error('\x1b[31mPreflight failed, so nothing was published.\x1b[0m');
+        console.error(`\x1b[31m${label} failed, so nothing was published.\x1b[0m`);
         process.exit(1);
     }
     // Only committed files pin the result; with local edits, the next run checks again.
     const head = headCommit();
     if (!extensionChangedSince(head)) {
-        status.preflight = { commit: head, at: new Date().toISOString() };
+        status[key] = { commit: head, at: new Date().toISOString() };
         writePublishStatus(status);
     }
 }
@@ -88,7 +90,8 @@ async function main() {
     assertSameCodeForVersion();
     const status = readPublishStatus();
 
-    runPreflight(status);
+    runCheck(status, 'preflight', 'Preflight', 'preflight');
+    runCheck(status, 'signin', 'The real sign-in test', 'test:signin:chrome');
     // No upfront build: each publish script rebuilds its own production
     // artifact (buildFresh in common.js) right before uploading.
 
@@ -134,7 +137,7 @@ async function main() {
     }
     console.log(
         `Fix that, then run \x1b[1myarn publish:all\x1b[0m again. It publishes only to the stores still missing ${version}, ` +
-        'and skips the preflight while the extension\'s files are unchanged.'
+        'and skips the preflight and the sign-in test while the extension\'s files are unchanged.'
     );
     process.exit(1);
 }
