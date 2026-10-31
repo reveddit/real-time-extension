@@ -1,13 +1,16 @@
+Reveddit real-time watches the posts and comments you make on reddit, plus any others you subscribe to, and tells you when one is removed, locked, reapproved or unlocked. It can't show other people's removed comments or posts, except ones you subscribed to before they were removed.
+
 Features:
 
 ★ Automatic notification of mod-removed, reapproved, locked or unlocked reddit content
-★ Monitor usernames or selected comments and posts
+★ Monitor your own account, plus any comments and posts you choose
 ★ Works with both new and old reddit layouts
+★ Highlight your removed or locked comments and posts on your profile and in threads
 ★ Show removal status of posts on their reddit.com comments pages, including for private subreddits, on both new and old reddit
-★ Show locked status of posts on reddit.com subreddit pages
+★ Show locked status of posts on old reddit subreddit pages
 ★ View the history of observed changes
 
-Reveddit real-time tracks the content you post and notifies you when something is removed, locked, reapproved or unlocked. Upon installing the extension, it will automatically subscribe to your username. To subscribe to additional usernames, create a separate browser profile, log into reddit as another username, and install the extension there.
+Upon installing the extension, it automatically watches the account you're logged in to reddit with. To monitor another account, create a separate browser profile, log into reddit as that account, and install the extension there.
 
 To monitor additional comments or posts, click the subscribe button beneath the item, or right-click on a link and choose `reveddit subscribe`. Note that subscribing to a post does not subscribe to its comments, only the post itself.
 
@@ -15,9 +18,12 @@ Reveddit real-time is developed independently and is not officially endorsed by 
 
 https://www.reveddit.com/about/donate
 
-Note, the extension is not able to track content from private subreddits.
+Note, the extension can't check comments in private, quarantined or 18+ (NSFW) communities, since reddit doesn't show those to everyone. Posts there are reported only when reddit marks them removed.
 
 VERSION HISTORY:
+
+2026/10/31 - 0.0.5.30
+- a way to keep checks working if reddit starts asking for a login; report a problem from the popup
 
 2026/10/29 - 0.0.5.29
 - fix repeated removal alerts when saved data fills up; NSFW and profile posts checked correctly
