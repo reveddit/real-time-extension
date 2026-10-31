@@ -76,6 +76,8 @@
     "test:e2e": "playwright test",
     "test:firefox": "yarn build-firefox && node scripts/firefox-load-smoke.mjs && web-ext lint --source-dir dist-firefox",
     "test:all": "vitest run && playwright test",
+    "test:signin:chrome": "yarn build-chrome-dev && node scripts/viewer-signin-test.cjs",
+    "test:signin:firefox": "yarn build-firefox-dev && node --experimental-websocket scripts/viewer-signin-test-firefox.cjs",
     "prepare": "husky"
   },
   "dependencies": {

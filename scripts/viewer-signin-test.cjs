@@ -113,30 +113,38 @@ const signIn = async (page, account, label) => {
         throw new Error("the extension's service worker never started")
     }
     try {
-        // Developer mode on, so the extension can reload itself from disk
+        // Run the build on disk: a kept profile can start the service worker of
+        // an earlier build, which may not even answer. With developer mode on,
+        // chrome://extensions reloads the extension from disk, as its Reload
+        // button does for a person.
         const extensions = await context.newPage()
         await extensions.goto('chrome://extensions/')
         await sleep(1500)
-        await extensions.evaluate(() => {
-            const manager = document.querySelector('extensions-manager')?.shadowRoot
-            const devMode = manager?.querySelector('extensions-toolbar')?.shadowRoot?.querySelector('#devMode')
+        const item = () =>
+            document
+                .querySelector('extensions-manager')
+                ?.shadowRoot?.querySelector('extensions-item-list')
+                ?.shadowRoot?.querySelector('extensions-item')?.shadowRoot
+        await extensions.evaluate(`(() => {
+            const devMode = document.querySelector('extensions-manager')?.shadowRoot?.querySelector('extensions-toolbar')?.shadowRoot?.querySelector('#devMode')
             if (devMode && !devMode.checked) devMode.click()
-            const item = manager?.querySelector('extensions-item-list')?.shadowRoot?.querySelector('extensions-item')
-            const toggle = item?.shadowRoot?.querySelector('#enableToggle')
+            const toggle = (${item})()?.querySelector('#enableToggle')
             if (toggle && !toggle.checked) toggle.click()
-        })
+        })()`)
+        await sleep(1000)
+        const reloaded = context.waitForEvent('serviceworker', { timeout: 30000 }).catch(() => null)
+        const clicked = await extensions.evaluate(`(() => {
+            const reload = (${item})()?.querySelector('#dev-reload-button')
+            reload?.click()
+            return !!reload
+        })()`)
+        if (!clicked) throw new Error("chrome://extensions has no Reload button for the extension")
+        await reloaded
+        await sleep(2000)
+        await extensions.close()
         // Chrome names an unpacked extension after its folder's path
         const extensionId = new URL((await worker()).url()).host
-        let options = await context.newPage()
-        await options.goto(`chrome-extension://${extensionId}/src/options.html`)
-        await sleep(3000)
-        // Run the build on disk, not the script the profile registered before
-        const next = context.waitForEvent('serviceworker', { timeout: 30000 }).catch(() => null)
-        await (await worker()).evaluate(() => new Promise(r => globalThis.__devAction({ action: 'dev-reload' }, r)))
-        await next
-        await sleep(3000)
-        for (const page of context.pages()) await page.close().catch(() => {})
-        options = await context.newPage()
+        const options = await context.newPage()
         await options.goto(`chrome-extension://${extensionId}/src/options.html#second-account`)
         await sleep(1500)
         const devAction = async message => (await worker()).evaluate(m => new Promise(r => globalThis.__devAction(m, r)), message)
