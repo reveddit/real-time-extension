@@ -284,6 +284,13 @@
         color: var(--text-muted);
         cursor: wait;
     }
+`),x=((0,d.Z)(h)`
+    background: var(--button-bg);
+    color: var(--button-text);
+    border: 1px solid var(--border);
+    &:hover {
+        background: var(--bg-surface-hover);
+    }
 `,d.Z.button`
     display: inline-flex;
     align-items: center;
@@ -326,7 +333,7 @@
         opacity: 0.6;
         cursor: not-allowed;
     }
-`),x=(d.Z.div`
+`),y=(d.Z.div`
     padding: 10px 12px;
     margin: 6px 0;
     border-radius: ${c.md};
@@ -373,7 +380,7 @@
     &:hover {
         border-color: var(--border-light);
     }
-`),y=(d.Z.div`
+`),k=(d.Z.div`
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -394,7 +401,7 @@
 `,d.Z.div`
     color: var(--text-primary);
     font-size: 0.95em;
-`),k=(d.Z.div`
+`),w=(d.Z.div`
     display: flex;
     gap: ${s.sm};
     margin-top: ${s.sm};
@@ -444,7 +451,7 @@
     margin: ${s.lg} 0 ${s.sm} 0;
     padding-bottom: ${s.xs};
     border-bottom: 1px solid var(--border);
-`),w=(d.Z.label`
+`),$=(d.Z.label`
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -484,19 +491,19 @@
   max-width: 720px;
   margin: 0 auto;
   padding: ${s.xl};
-`),$=d.Z.div`
+`),j=d.Z.div`
   text-align: center;
   padding: ${s.xl} 0;
   border-bottom: 1px solid var(--border);
   margin-bottom: ${s.xl};
-`,j=d.Z.h1`
+`,Z=d.Z.h1`
   font-size: 28px;
   margin: 0 0 ${s.sm} 0;
-`,Z=d.Z.p`
+`,O=d.Z.p`
   color: var(--text-secondary);
   margin: 0;
   font-size: 1.1em;
-`,O=d.Z.div`
+`,z=d.Z.div`
   margin-bottom: ${s.lg};
   & > h3 {
     display: flex;
@@ -508,11 +515,11 @@
     margin: 0;
     color: var(--text-secondary);
   }
-`,z=d.Z.div`
+`,_=d.Z.div`
   text-align: center;
   margin-top: ${s.xl};
   padding-top: ${s.lg};
   border-top: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 0.9em;
-`;(0,n.createRoot)(document.getElementById("root")).render((0,t.jsx)((function(){const e=(()=>{try{return chrome.runtime.getManifest().version}catch{return""}})();return(0,t.jsxs)(t.Fragment,{children:[(0,t.jsx)(u,{}),(0,t.jsxs)(w,{children:[(0,t.jsxs)($,{children:[(0,t.jsx)(j,{children:"What's new in reveddit real-time"}),(0,t.jsxs)(Z,{children:["A redesign to match reveddit.com ",e?`· v${e}`:""]})]}),(0,t.jsx)(k,{children:"Highlights"}),(0,t.jsx)(x,{children:(0,t.jsxs)(y,{children:[(0,t.jsxs)(O,{children:[(0,t.jsx)("h3",{children:"Fresh look, dark by default"}),(0,t.jsx)("p",{children:"The popup, options, and history pages have been rebuilt to match the revddit.com design. Dark is the default, with a light mode you can pick from the options page."})]}),(0,t.jsxs)(O,{children:[(0,t.jsx)("h3",{children:"History shows real comments and posts"}),(0,t.jsx)("p",{children:"Each removal, deletion, or lock now renders as a Reddit-style card with the full markdown body — no more truncated link labels. Filter and sort from the top of the page."})]}),(0,t.jsxs)(O,{children:[(0,t.jsx)("h3",{children:"Same settings, clearer layout"}),(0,t.jsx)("p",{children:"All of your existing options and subscriptions carry over unchanged. The options page is now grouped into sections so nothing gets lost."})]})]})}),(0,t.jsxs)(z,{children:[(0,t.jsx)(h,{variant:"primary",onClick:()=>{try{chrome.tabs.create({url:chrome.runtime.getURL("src/history.html")})}catch(e){console.log("openHistory failed:",e)}},children:"Open history"}),(0,t.jsxs)("div",{style:{marginTop:16},children:["Questions or feedback?"," ",(0,t.jsx)(f,{href:"https://github.com/reveddit/real-time-extension/issues",target:"_blank",rel:"noreferrer",children:"GitHub issues"})]})]})]})]})}),{}))}},a={};function n(e){var r=a[e];if(void 0!==r)return r.exports;var o=a[e]={exports:{}};return t[e].call(o.exports,o,o.exports,n),o.exports}n.m=t,e=[],n.O=(r,o,t,a)=>{if(!o){var d=1/0;for(l=0;l<e.length;l++){for(var[o,t,a]=e[l],i=!0,c=0;c<o.length;c++)(!1&a||d>=a)&&Object.keys(n.O).every((e=>n.O[e](o[c])))?o.splice(c--,1):(i=!1,a<d&&(d=a));if(i){e.splice(l--,1);var s=t();void 0!==s&&(r=s)}}return r}a=a||0;for(var l=e.length;l>0&&e[l-1][2]>a;l--)e[l]=e[l-1];e[l]=[o,t,a]},n.n=e=>{var r=e&&e.__esModule?()=>e.default:()=>e;return n.d(r,{a:r}),r},o=Object.getPrototypeOf?e=>Object.getPrototypeOf(e):e=>e.__proto__,n.t=function(e,t){if(1&t&&(e=this(e)),8&t)return e;if("object"==typeof e&&e){if(4&t&&e.__esModule)return e;if(16&t&&"function"==typeof e.then)return e}var a=Object.create(null);n.r(a);var d={};r=r||[null,o({}),o([]),o(o)];for(var i=2&t&&e;"object"==typeof i&&!~r.indexOf(i);i=o(i))Object.getOwnPropertyNames(i).forEach((r=>d[r]=()=>e[r]));return d.default=()=>e,n.d(a,d),a},n.d=(e,r)=>{for(var o in r)n.o(r,o)&&!n.o(e,o)&&Object.defineProperty(e,o,{enumerable:!0,get:r[o]})},n.o=(e,r)=>Object.prototype.hasOwnProperty.call(e,r),n.r=e=>{"undefined"!=typeof Symbol&&Symbol.toStringTag&&Object.defineProperty(e,Symbol.toStringTag,{value:"Module"}),Object.defineProperty(e,"__esModule",{value:!0})},n.j=47,n.p="",(()=>{n.b=document.baseURI||self.location.href;var e={47:0};n.O.j=r=>0===e[r];var r=(r,o)=>{var t,a,[d,i,c]=o,s=0;if(d.some((r=>0!==e[r]))){for(t in i)n.o(i,t)&&(n.m[t]=i[t]);if(c)var l=c(n)}for(r&&r(o);s<d.length;s++)a=d[s],n.o(e,a)&&e[a]&&e[a][0](),e[a]=0;return n.O(l)},o=self.webpackChunkreveddit_real_time=self.webpackChunkreveddit_real_time||[];o.forEach(r.bind(null,0)),o.push=r.bind(null,o.push.bind(o))})();var d=n.O(void 0,[736],(()=>n(3505)));d=n.O(d)})();
+`;(0,n.createRoot)(document.getElementById("root")).render((0,t.jsx)((function(){const e=(()=>{try{return chrome.runtime.getManifest().version}catch{return""}})();return(0,t.jsxs)(t.Fragment,{children:[(0,t.jsx)(u,{}),(0,t.jsxs)($,{children:[(0,t.jsxs)(j,{children:[(0,t.jsx)(Z,{children:"What's new in reveddit real-time"}),(0,t.jsxs)(O,{children:["A redesign to match reveddit.com ",e?`· v${e}`:""]})]}),(0,t.jsx)(w,{children:"Highlights"}),(0,t.jsx)(y,{children:(0,t.jsxs)(k,{children:[(0,t.jsxs)(z,{children:[(0,t.jsx)("h3",{children:"Fresh look, dark by default"}),(0,t.jsx)("p",{children:"The popup, options, and history pages have been rebuilt to match the revddit.com design. Dark is the default, with a light mode you can pick from the options page."})]}),(0,t.jsxs)(z,{children:[(0,t.jsx)("h3",{children:"History shows real comments and posts"}),(0,t.jsx)("p",{children:"Each removal, deletion, or lock now renders as a Reddit-style card with the full markdown body — no more truncated link labels. Filter and sort from the top of the page."})]}),(0,t.jsxs)(z,{children:[(0,t.jsx)("h3",{children:"Same settings, clearer layout"}),(0,t.jsx)("p",{children:"All of your existing options and subscriptions carry over unchanged. The options page is now grouped into sections so nothing gets lost."})]})]})}),(0,t.jsxs)(_,{children:[(0,t.jsx)(x,{variant:"primary",onClick:()=>{try{chrome.tabs.create({url:chrome.runtime.getURL("src/history.html")})}catch(e){console.log("openHistory failed:",e)}},children:"Open history"}),(0,t.jsxs)("div",{style:{marginTop:16},children:["Questions or feedback?"," ",(0,t.jsx)(f,{href:"https://github.com/reveddit/real-time-extension/issues",target:"_blank",rel:"noreferrer",children:"GitHub issues"})]})]})]})]})}),{}))}},a={};function n(e){var r=a[e];if(void 0!==r)return r.exports;var o=a[e]={exports:{}};return t[e].call(o.exports,o,o.exports,n),o.exports}n.m=t,e=[],n.O=(r,o,t,a)=>{if(!o){var d=1/0;for(l=0;l<e.length;l++){for(var[o,t,a]=e[l],i=!0,c=0;c<o.length;c++)(!1&a||d>=a)&&Object.keys(n.O).every((e=>n.O[e](o[c])))?o.splice(c--,1):(i=!1,a<d&&(d=a));if(i){e.splice(l--,1);var s=t();void 0!==s&&(r=s)}}return r}a=a||0;for(var l=e.length;l>0&&e[l-1][2]>a;l--)e[l]=e[l-1];e[l]=[o,t,a]},n.n=e=>{var r=e&&e.__esModule?()=>e.default:()=>e;return n.d(r,{a:r}),r},o=Object.getPrototypeOf?e=>Object.getPrototypeOf(e):e=>e.__proto__,n.t=function(e,t){if(1&t&&(e=this(e)),8&t)return e;if("object"==typeof e&&e){if(4&t&&e.__esModule)return e;if(16&t&&"function"==typeof e.then)return e}var a=Object.create(null);n.r(a);var d={};r=r||[null,o({}),o([]),o(o)];for(var i=2&t&&e;"object"==typeof i&&!~r.indexOf(i);i=o(i))Object.getOwnPropertyNames(i).forEach((r=>d[r]=()=>e[r]));return d.default=()=>e,n.d(a,d),a},n.d=(e,r)=>{for(var o in r)n.o(r,o)&&!n.o(e,o)&&Object.defineProperty(e,o,{enumerable:!0,get:r[o]})},n.o=(e,r)=>Object.prototype.hasOwnProperty.call(e,r),n.r=e=>{"undefined"!=typeof Symbol&&Symbol.toStringTag&&Object.defineProperty(e,Symbol.toStringTag,{value:"Module"}),Object.defineProperty(e,"__esModule",{value:!0})},n.j=47,n.p="",(()=>{n.b=document.baseURI||self.location.href;var e={47:0};n.O.j=r=>0===e[r];var r=(r,o)=>{var t,a,[d,i,c]=o,s=0;if(d.some((r=>0!==e[r]))){for(t in i)n.o(i,t)&&(n.m[t]=i[t]);if(c)var l=c(n)}for(r&&r(o);s<d.length;s++)a=d[s],n.o(e,a)&&e[a]&&e[a][0](),e[a]=0;return n.O(l)},o=self.webpackChunkreveddit_real_time=self.webpackChunkreveddit_real_time||[];o.forEach(r.bind(null,0)),o.push=r.bind(null,o.push.bind(o))})();var d=n.O(void 0,[736],(()=>n(3505)));d=n.O(d)})();
