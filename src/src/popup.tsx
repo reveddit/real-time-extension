@@ -4,7 +4,7 @@ import styled from '@emotion/styled'
 import { css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification, getTestNotificationMessage } from './common'
 import { AppGlobal, setThemeMode, THEME_STORAGE_KEY } from './ui/global'
-import { ActionBtn, MessageBanner, MiniSpinner, Card } from './ui/components'
+import { ActionBtn, SecondaryActionBtn, MessageBanner, MiniSpinner, Card } from './ui/components'
 import { DiagStatus, formatDiagStatus } from './diag-status'
 import { tokens } from './ui/tokens'
 import {
@@ -16,6 +16,9 @@ import {
 import { setCurrentStateForId } from './monitoring'
 import { fetchNews, getUnreadMessages, getPendingUpdateVersion, markNewsRead, NewsMessage } from './news'
 import { markdownToHTML } from './ui/markdown'
+import { browserOfUserAgent } from './diaglog'
+import { newIssueUrl, LOGIN_WALL_INFO_URL, REPORT_LOG_MAX_CHARS } from './report'
+import { VIEWER_KEY, isSignedInViewer } from './viewer'
 
 declare const __LATEST_RELEASE__: { version: string; description: string } | null
 
@@ -350,6 +353,8 @@ function NewsBanner({ message, onDismiss }: { message: NewsMessage; onDismiss: (
 
 function Popup() {
   const [errorStatus, setErrorStatus] = useState<string | null>(null)
+  // The connected second account (viewer.ts), if any
+  const [viewerName, setViewerName] = useState('')
   const [userData, setUserData] = useState<{
     users: Record<string, {unseen: string[]; seen: string[]}>
     otherUnseen: string[]
@@ -404,8 +409,9 @@ function Popup() {
     setConnectResult(null)
     setConnectMessage(null)
 
-    chrome.storage.local.get(['error_status'], result => {
+    chrome.storage.local.get(['error_status', VIEWER_KEY], result => {
       setErrorStatus(result?.error_status || null)
+      setViewerName(String(result?.[VIEWER_KEY]?.name || ''))
     })
 
     getSubscribedUsers_withSeenAndUnseenIDs(async (users, storage) => {
@@ -609,6 +615,42 @@ function Popup() {
     })
   }
 
+  // The options page's second-account section (viewer.ts), where its sign-in starts
+  const openSecondAccount = () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('src/options.html#second-account') })
+    window.close()
+  }
+
+  // Copies the diagnostic log (the options page's default copy, without the
+  // username) and opens a new GitHub issue form that asks for it. The copy
+  // comes first: the new tab takes focus and closes the popup.
+  const handleReport = () => {
+    const open = (logCopied: boolean) => {
+      let version = ''
+      try {
+        version = chrome.runtime.getManifest().version
+      } catch {
+        /* ignored */
+      }
+      const runningOn = [version, browserOfUserAgent(navigator.userAgent)].filter(Boolean).join(', ')
+      chrome.tabs.create({ url: newIssueUrl({ runningOn, logCopied }) })
+      window.close()
+    }
+    runtimeAny.sendMessage(
+      { action: 'get-diag-log', includeUsername: false, maxChars: REPORT_LOG_MAX_CHARS },
+      (resp: { text?: string; error?: string }) => {
+        if (runtimeAny.lastError || !resp || typeof resp.text !== 'string') {
+          open(false)
+          return
+        }
+        navigator.clipboard.writeText(resp.text).then(
+          () => open(true),
+          () => open(false),
+        )
+      },
+    )
+  }
+
   const switches: { id: string; type: string; subscribed: boolean }[] = []
   if (syncStorage && activeTab) {
     if (activeTab.commentID) {
@@ -729,22 +771,64 @@ function Popup() {
                 ⚠ Your profile appears empty to logged-out users — possibly a shadowban. Removal alerts are
                 paused. You can appeal at reddit.com/appeals.
               </MessageBanner>
+            ) : (errorStatus === 'login_required' || errorStatus === 'public_view_unavailable') &&
+              isSignedInViewer(viewerName, currentUser || '') ? (
+              <>
+                <MessageBanner variant="warning">
+                  ⚠ You&apos;re signed in to Reddit with your second account, which can&apos;t check its own posts and
+                  comments. To keep checking them, connect a different account.{' '}
+                  <a href={LOGIN_WALL_INFO_URL} target="_blank" rel="noopener noreferrer">
+                    Why?
+                  </a>
+                </MessageBanner>
+                <ActionBtn onClick={openSecondAccount}>Connect a different account</ActionBtn>
+              </>
+            ) : errorStatus === 'login_required' ? (
+              <>
+                <MessageBanner variant="warning">
+                  ⚠ Reddit now asks for a login before it shows profiles. To keep checking your posts and
+                  comments, connect a second Reddit account.{' '}
+                  <a href={LOGIN_WALL_INFO_URL} target="_blank" rel="noopener noreferrer">
+                    Why?
+                  </a>
+                </MessageBanner>
+                <ActionBtn onClick={openSecondAccount}>Connect a second account</ActionBtn>
+              </>
+            ) : errorStatus === 'viewer_signed_out' ? (
+              <>
+                <MessageBanner variant="warning">
+                  ⚠ Your second Reddit account was signed out, so your posts and comments aren&apos;t being
+                  checked. Connect it again to pick up where it left off.
+                </MessageBanner>
+                <ActionBtn onClick={openSecondAccount}>Connect it again</ActionBtn>
+              </>
+            ) : errorStatus === 'viewer_unavailable' ? (
+              <>
+                <MessageBanner variant="warning">
+                  ⚠ Reddit isn&apos;t answering checks through your second account right now. They keep retrying.
+                  If this keeps up, connect the account again, or use &ldquo;report a problem&rdquo; below.
+                </MessageBanner>
+                <ActionBtn onClick={openSecondAccount}>Second account settings</ActionBtn>
+              </>
             ) : errorStatus === 'public_view_unavailable' ? (
+              // Also how a login wall shows up when it doesn't redirect to the
+              // login page (login-wall-config.ts), so the second account is here too
               <>
                 <MessageBanner variant="warning">
                   ⚠ Removal monitoring is paused — Reddit&apos;s public view isn&apos;t loading. Opening a
-                  www.reddit.com tab usually restores it.
+                  www.reddit.com tab usually restores it. If it keeps up, connect a second Reddit account.
                 </MessageBanner>
                 <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
                   Open www.reddit.com
                 </ActionBtn>
+                <SecondaryActionBtn onClick={openSecondAccount}>Connect a second account</SecondaryActionBtn>
               </>
             ) : errorStatus === 'absent_verify_unavailable' ? (
               <>
                 <MessageBanner variant="warning">
                   ⚠ Reddit isn&apos;t letting the extension confirm whether missing content was removed, so
                   some removals can&apos;t be detected. Keeping a www.reddit.com tab open usually restores
-                  this. If it keeps up, copy the diagnostic log from options and report it.
+                  this. If it keeps up, use &ldquo;report a problem&rdquo; below.
                 </MessageBanner>
                 <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
                   Open www.reddit.com
@@ -765,8 +849,8 @@ function Popup() {
               <>
                 <MessageBanner variant="warning">
                   ⚠ Reddit isn&apos;t answering the extension&apos;s login check, so monitoring may be paused.
-                  Opening a www.reddit.com tab usually restores it. If this keeps up, copy the diagnostic log
-                  from options and report it.
+                  Opening a www.reddit.com tab usually restores it. If this keeps up, use &ldquo;report a
+                  problem&rdquo; below.
                 </MessageBanner>
                 <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
                   Open www.reddit.com
@@ -849,8 +933,8 @@ function Popup() {
           <FooterLink href="#" onClick={e => { e.preventDefault(); handleTestNotification() }}>
             send a test notification
           </FooterLink>
-          <FooterLink href="https://github.com/reveddit/real-time-extension/issues" target="_blank" rel="noopener noreferrer">
-            feedback
+          <FooterLink href="#" onClick={e => { e.preventDefault(); handleReport() }}>
+            report a problem
           </FooterLink>
         </FooterRow>
       </PopupContainer>

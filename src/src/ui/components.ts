@@ -43,6 +43,16 @@ export const ActionBtn = styled.button`
     }
 `
 
+// A warning's fallback, under its main ActionBtn
+export const SecondaryActionBtn = styled(ActionBtn)`
+    background: var(--button-bg);
+    color: var(--button-text);
+    border: 1px solid var(--border);
+    &:hover {
+        background: var(--bg-surface-hover);
+    }
+`
+
 export const Button = styled.button<{ variant?: 'primary' | 'secondary' | 'ghost' }>`
     display: inline-flex;
     align-items: center;

@@ -14,7 +14,9 @@ import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfil
 import {
     getLoggedinUserDetailed,
     getLoggedinUser,
+    whoIsSignedIn,
     recordLoginDetectOutcome,
+    isSettledByLogin,
     LOGGED_IN_VIEW_UNAVAILABLE,
     computeAbsentVerifyBudget,
     RECENT_RATE_LIMIT_WINDOW_MS,
@@ -46,6 +48,17 @@ beforeEach(() => {
 afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+})
+
+describe('whoIsSignedIn, for the second account’s sign-in', () => {
+    it('names the user, says nobody on a clean logged-out answer, and rejects when reddit says nothing clear', async () => {
+        fetchMock.mockResolvedValue(res(200, USER_JSON))
+        expect(await whoIsSignedIn()).toBe('alice')
+        fetchMock.mockResolvedValue(res(200, '{}'))
+        expect(await whoIsSignedIn()).toBe(null)
+        fetchMock.mockResolvedValue(res(200, '<html>some interstitial</html>'))
+        await expect(whoIsSignedIn()).rejects.toThrow("reddit didn't say who's signed in")
+    })
 })
 
 describe('getLoggedinUserDetailed', () => {
@@ -130,6 +143,21 @@ describe('recordLoginDetectOutcome', () => {
         await recordLoginDetectOutcome(true)
         await recordLoginDetectOutcome(false)
         expect(__getLocalStorage().login_detect_consecutive_failures).toBeUndefined()
+    })
+
+    it('finding the user signed in settles only the warnings about being signed in', () => {
+        expect(isSettledByLogin('needs_user')).toBe(true)
+        expect(isSettledByLogin(LOGGED_IN_VIEW_UNAVAILABLE)).toBe(true)
+        for (const status of [
+            'login_required',
+            'viewer_signed_out',
+            'viewer_unavailable',
+            'public_view_unavailable',
+            'absent_verify_unavailable',
+            undefined,
+        ]) {
+            expect(isSettledByLogin(status)).toBe(false)
+        }
     })
 })
 

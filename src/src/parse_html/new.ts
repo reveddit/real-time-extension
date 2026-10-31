@@ -25,6 +25,7 @@
 import { newReddit, isRateLimitError } from './common'
 import { getChallengeConfig } from '../challenge-config'
 import { getMarkupConfig } from '../markup-config'
+import { isLoginWallMessage } from '../login-wall-config'
 
 export interface PublicItem {
     name: string
@@ -53,6 +54,8 @@ export interface PublicProfileData {
     paginationStopped?: string
     // Both tabs answered 404: logged out, the account doesn't exist
     missing?: boolean
+    // A tab landed on reddit's login page (login-wall-config.ts)
+    loginWall?: boolean
     // The kinds whose tab the owner hides from logged-out visitors: none of
     // their items is listed, so absence says nothing, and each item is
     // checked on its own page
@@ -649,11 +652,16 @@ export const getPublicProfileItems = async (
                 return { ...failed(why(commentsResult)), missing: true }
             }
             // Else one tab's message, as callers and the diagnostic log read
-            // it: a 429 from either tab, so it reaches the backoff, or the
-            // first failing tab's. One tab's 404 says something about that tab.
+            // it: a 429 from either tab, so it reaches the backoff, then a
+            // login page, else the first failing tab's. One tab's 404 says
+            // something about that tab.
             const rejected = [commentsResult, postsResult].filter(r => r.status === 'rejected')
-            const error = why(rejected.find(r => isRateLimitError(why(r))) || rejected[0])
-            return failed(error.replace(/request failed: 404\b/g, 'answered 404 (the other tab did not)'))
+            const loginWall = rejected.find(r => isLoginWallMessage(why(r)))
+            const error = why(rejected.find(r => isRateLimitError(why(r))) || loginWall || rejected[0])
+            return {
+                ...failed(error.replace(/request failed: 404\b/g, 'answered 404 (the other tab did not)')),
+                ...(loginWall && { loginWall: true }),
+            }
         }
         const comments = commentsResult.value
         const posts = postsResult.value

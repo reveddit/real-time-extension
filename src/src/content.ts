@@ -86,9 +86,12 @@ import browser from 'webextension-polyfill'
                 return Promise.resolve({ success: false, error: 'invalid url' })
             }
             // The route's cache mode (see getWwwHtmlFetcher); anything else
-            // gets the browser default.
+            // gets the browser default. Where a redirect landed goes back too,
+            // so the background can tell reddit's login page (login-wall-config.ts).
+            let redirectedTo = ''
             return pageContextFetch(url, publicViewInit(isWwwRouteCache(message.cache) ? message.cache : 'default'))
                 .then(response => {
+                    redirectedTo = response.redirected ? response.url : ''
                     if (!response.ok) {
                         throw Object.assign(new Error(`www.reddit.com request failed: ${response.status}`), {
                             status: response.status,
@@ -96,11 +99,11 @@ import browser from 'webextension-polyfill'
                     }
                     return response.text()
                 })
-                .then(html => ({ success: true, html }))
+                .then(html => ({ success: true, html, redirectedTo }))
                 .catch(error => {
                     console.log('Content script fetch-www-profile-public error:', error)
                     // status 0: no HTTP answer (network error)
-                    return { success: false, error: error.message, status: Number(error?.status) || 0 }
+                    return { success: false, error: error.message, status: Number(error?.status) || 0, redirectedTo }
                 })
         }
     }

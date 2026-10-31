@@ -304,6 +304,55 @@ const redact = (text: string, redactNames: string[]): string => {
     return out
 }
 
+// For a copy that shouldn't say which posts and comments it's about (the
+// options page's "hide post and comment ids"): each id becomes a stand-in the
+// first time it appears, c_ for a comment and p_ for a post, and keeps it for
+// the rest of the copy, so the log still shows what happened to each item.
+// A stand-in is random, has nothing of the id in it, and is made anew for each
+// copy, so nobody can work back to the id. Covers fullnames (t1_, t3_), reddit
+// paths (/comments/<post>/<slug>/<comment>, and the comment partial's), and the
+// lookups' coverage floors ("t1=<n>", "floor t1 <n>"), which are ids as numbers.
+// A path's title slug and a page's title would find the post by search, so they
+// go too.
+export const idHider = (): ((text: string) => string) => {
+    const standIns = new Map<string, string>()
+    const taken = new Set<string>()
+    const standIn = (kind: 'c' | 'p', id: string): string => {
+        const key = `${kind}:${id.toLowerCase()}`
+        let s = standIns.get(key)
+        if (!s) {
+            do {
+                s = `${kind}_${Array.from(crypto.getRandomValues(new Uint8Array(8)), b => (b % 36).toString(36)).join('')}`
+            } while (taken.has(s))
+            standIns.set(key, s)
+            taken.add(s)
+        }
+        return s
+    }
+    // An id ends where the next character can't continue it, so a stand-in
+    // already in place (c_..., p_...) is never read as an id
+    return text =>
+        text
+            .replace(/(?<=^|[^0-9a-z]|%[0-9a-f]{2})t([13])_([0-9a-z]+)/gi, (_, t, id) =>
+                standIn(t === '1' ? 'c' : 'p', id),
+            )
+            .replace(
+                /(\/svc\/shreddit\/comments\/r\/[^/\s"?#]+\/)([0-9a-z]+)\/([0-9a-z]+)(?![_0-9a-z])/gi,
+                (_, head, post, comment) => `${head}${standIn('p', post)}/${standIn('c', comment)}`,
+            )
+            .replace(
+                /\/comments\/(?!r\/)([0-9a-z]+)(?![_0-9a-z])(?:\/([^/\s"?#]+)(?:\/([0-9a-z]+)(?![_0-9a-z]))?)?/gi,
+                (_, post, slug, comment) =>
+                    `/comments/${standIn('p', post)}` +
+                    (slug ? '/_' + (comment ? `/${standIn('c', comment)}` : '') : ''),
+            )
+            .replace(
+                /\b(t[13])(=| |":)([1-9]\d{3,})\b/g,
+                (_, t, sep, n) => `${t}${sep}${standIn(t === 't1' ? 'c' : 'p', Number(n).toString(36))}`,
+            )
+            .replace(/\btitle="(?:[^"\\]|\\.)*"/g, 'title=(hidden)')
+}
+
 // Pure formatter, unit-tested. redactNames are replaced (case-insensitive) so
 // the default copy leaves the reporter's username out; item ids and subreddit
 // names stay — they're what makes the log diagnosable.
@@ -341,26 +390,82 @@ export const browserOfUserAgent = (ua: string): string => {
 // detail, each section oldest first; a coverage line per tier says how much
 // time the paste actually spans, which a reader otherwise had to guess.
 // Each section's heading names the version and browser too: people paste a
-// section without the header lines above it.
+// section without the header lines above it. Past maxChars, each tier keeps
+// its newest entries that fit, the detail tier at most 40% of the room unless
+// the summary leaves some over. The coverage lines then describe what's kept,
+// and a header line says what was left out. hideIds swaps post and comment ids
+// for stand-ins (idHider), the same ones throughout.
 export const formatTieredDiagLog = (
     tiers: { summary: DiagEntry[]; details: DiagEntry[] },
     headerLines: string[],
     redactNames: string[] = [],
     runningOn = '',
+    maxChars = Infinity,
+    hideIds = false,
 ): string => {
     const on = runningOn ? ` (${runningOn})` : ''
-    const lines: string[] = [
-        ...headerLines,
-        coverageLine('summary tier', tiers.summary, `last ${SUMMARY_RETENTION_HOURS} hours`),
-        coverageLine('detail tier', tiers.details, `last ${DIAG_MAX_ENTRIES} entries`),
-        '',
-        `==== summary${on}: cycles, login detection, rate limits, news, actions (oldest first) ====`,
-        ...tiers.summary.map(renderEntry),
-        '',
-        `==== detail${on}: per-item verification, tiebreaks, bridge (oldest first) ====`,
-        ...tiers.details.map(renderEntry),
+    const hide = hideIds ? idHider() : (s: string) => s
+    // Ids first: a name redacted out of "comments" or out of an id would leave
+    // the rest unrecognized. A name with something like an id in it (Mike_t1_abc)
+    // is redacted in its hidden form too, longest first as before.
+    const names = hideIds
+        ? [...new Set([...redactNames, ...redactNames.map(hide)])].sort((a, b) => b.length - a.length)
+        : redactNames
+    const clean = (s: string) => redact(hide(s), names)
+    const text = {
+        summary: tiers.summary.map(e => clean(renderEntry(e))),
+        details: tiers.details.map(e => clean(renderEntry(e))),
+    }
+    const newestOf = <T>(list: T[], n: number) => list.slice(list.length - n)
+    // The newest s summary and d detail entries. The coverage lines describe
+    // the newest covered.s and covered.d, which differ only to reserve room.
+    const build = (s: number, d: number, note: string[] = [], covered = { s, d }) =>
+        [
+            clean(
+                [
+                    ...headerLines,
+                    coverageLine(
+                        'summary tier',
+                        newestOf(tiers.summary, covered.s),
+                        `last ${SUMMARY_RETENTION_HOURS} hours`,
+                    ),
+                    coverageLine('detail tier', newestOf(tiers.details, covered.d), `last ${DIAG_MAX_ENTRIES} entries`),
+                    ...note,
+                ].join('\n'),
+            ),
+            '',
+            `==== summary${on}: cycles, login detection, rate limits, news, actions (oldest first) ====`,
+            ...newestOf(text.summary, s),
+            '',
+            `==== detail${on}: per-item verification, tiebreaks, bridge (oldest first) ====`,
+            ...newestOf(text.details, d),
+        ].join('\n')
+    const full = build(text.summary.length, text.details.length)
+    if (full.length <= maxChars) {
+        return full
+    }
+    const note = (s: number, d: number) => [
+        `trimmed to fit: the oldest ${text.summary.length - s} summary and ` +
+            `${text.details.length - d} detail entries are left out`,
     ]
-    return redact(lines.join('\n'), redactNames)
+    // How many of the newest entries fit in room: each costs its length and
+    // the newline before it
+    const newest = (entries: string[], room: number) => {
+        let n = 0
+        let used = 0
+        while (n < entries.length && used + entries[entries.length - 1 - n].length + 1 <= room) {
+            used += entries[entries.length - 1 - n].length + 1
+            n++
+        }
+        return { n, used }
+    }
+    // The header at its longest: coverage lines for the whole tiers, and the
+    // note with everything left out
+    const room = maxChars - build(0, 0, note(0, 0), { s: text.summary.length, d: text.details.length }).length
+    let details = newest(text.details, Math.floor(room * 0.4))
+    const summary = newest(text.summary, room - details.used)
+    details = newest(text.details, room - summary.used)
+    return build(summary.n, details.n, note(summary.n, details.n))
 }
 
 // Assembles the copyable report. extraHeaderLines lets the background handler
@@ -369,6 +474,10 @@ export const formatTieredDiagLog = (
 export const buildDiagReport = async (opts: {
     includeUsername?: boolean
     extraHeaderLines?: string[]
+    // The popup's report a problem: cut to fit an issue (report.ts)
+    maxChars?: number
+    // The options page's choice: post and comment ids as stand-ins (idHider)
+    hideIds?: boolean
 }): Promise<string> => {
     const tiers = await getDiagTiers()
     let version = 'unknown'
@@ -410,7 +519,15 @@ export const buildDiagReport = async (opts: {
         `version: ${version}`,
         `ua: ${ua}`,
         `generated: ${new Date().toISOString()}`,
+        ...(opts.hideIds ? ['ids: hidden; c_ and p_ are stand-ins for comment and post ids, made for this copy'] : []),
         ...(opts.extraHeaderLines || []),
     ]
-    return formatTieredDiagLog(tiers, header, redactNames, [version, browserOfUserAgent(ua)].filter(Boolean).join(', '))
+    return formatTieredDiagLog(
+        tiers,
+        header,
+        redactNames,
+        [version, browserOfUserAgent(ua)].filter(Boolean).join(', '),
+        opts.maxChars,
+        opts.hideIds,
+    )
 }

@@ -15,15 +15,14 @@ import {
     readThreadItemLoggedIn,
     FOLLOWED_POST_IDS_KEY,
     flagIfRateLimited,
-    isAbsentVerifyUnavailable,
-    ABSENT_VERIFY_UNAVAILABLE,
-    isProfilePaginationShort,
-    PROFILE_PAGINATION_UNAVAILABLE,
+    lookupWarningToKeep,
+    whoIsSignedIn,
     hasRedditLoginCookie,
     publicViewUncheckedReason,
     postRemovedByCategory,
 } from './requests'
 import { dlog } from './diaglog'
+import { isViewerConnecting, recoverViewerConnect } from './viewer'
 import {
     REMOVED,
     DELETED,
@@ -372,6 +371,16 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
         dlog('cycle', '[reveddit] checkForChanges: previous cycle still running — skipping this trigger')
         return
     }
+    // A second account is signing in (viewer.ts): the browser holds its login,
+    // not the user's, so nothing runs until that's over. A sign-in left too
+    // long, or whose tab is gone, ends here.
+    if (await isViewerConnecting()) {
+        await recoverViewerConnect(whoIsSignedIn)
+        if (await isViewerConnecting()) {
+            dlog('cycle', '[reveddit] checkForChanges: skipping, a second account is signing in')
+            return
+        }
+    }
     // If Reddit recently rate-limited us, skip cycles until the backoff expires
     // rather than hammering and prolonging the lockout (see recordRateLimitHit).
     const backoffRemainingMs = await getRateLimitBackoffRemainingMs()
@@ -690,23 +699,18 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                         recordLoginDetectOutcome(false)
                     }
                     // Clear warning badge and error state if we successfully
-                    // processed items. A verification or pagination outage
-                    // outlives one pass: only its own recovery clears it.
-                    return Promise.all([isAbsentVerifyUnavailable(), isProfilePaginationShort()]).then(
-                        ([verifyUnavailable, paginationShort]) => {
-                            if (verifyUnavailable) {
-                                setWarningBadge(ABSENT_VERIFY_UNAVAILABLE)
-                                return
-                            }
-                            if (paginationShort) {
-                                setWarningBadge(PROFILE_PAGINATION_UNAVAILABLE)
-                                return
-                            }
-                            chrome.storage.local.remove('error_status', () => {
-                                updateBadgeUnseenCount()
-                            })
-                        },
-                    )
+                    // processed items. A page-check, pagination or
+                    // second-account thread-read outage outlives one pass:
+                    // only its own recovery clears it.
+                    return lookupWarningToKeep(loggedInUser).then(warning => {
+                        if (warning) {
+                            setWarningBadge(warning)
+                            return
+                        }
+                        chrome.storage.local.remove('error_status', () => {
+                            updateBadgeUnseenCount()
+                        })
+                    })
                 })
         })
         .catch(error => {
@@ -806,6 +810,8 @@ const checkForChanges_thing_byId = async (
                 // age — feed presence must not flip a recorded removal back to
                 // approved without a page verdict.
                 known_removed: name in knownRemovedHash,
+                // Whoever the browser is signed in as (lookupItemsByID_withFallback)
+                author: authItem.author,
             }
         }
     }

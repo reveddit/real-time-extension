@@ -73,6 +73,7 @@ import { isRemovedInModView, isViewerBlockedItem } from './common'
 import { dlog } from './diaglog'
 import { getPublicModlogsFeed } from './bridge-config'
 import { fetchLoggedIn } from './logged-in-fetch'
+import { isViewerConnecting } from './viewer'
 
 const www_reddit = 'https://www.reddit.com'
 
@@ -479,6 +480,11 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
     const url = validateBridgeUrl(request?.url)
     if (!url) {
         return { ok: false, status: 0, error: 'invalid url' }
+    }
+    // A second account is signing in (viewer.ts): the browser's login isn't
+    // the user's for that minute
+    if (await isViewerConnecting()) {
+        return busy()
     }
     // Before any wait: someone logged out shouldn't wait to be told so
     if (!(await hasRedditLoginCookie())) {

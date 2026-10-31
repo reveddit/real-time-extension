@@ -18,6 +18,7 @@ import {
     formatTieredDiagLog,
     browserOfUserAgent,
     buildDiagReport,
+    idHider,
     initDiagPersistence,
     DIAG_MAX_ENTRIES,
     DIAG_SUMMARY_MAX_ENTRIES,
@@ -141,6 +142,73 @@ describe('formatDiagLog', () => {
     })
 })
 
+describe('hiding post and comment ids', () => {
+    it('gives each id one stand-in throughout, in fullnames and in reddit paths, made anew for each copy', () => {
+        const hide = idHider()
+        // The lookups' coverage floors are ids as numbers
+        const floor = parseInt('abc123', 36)
+        const text = hide(
+            'absent item verdict t1_abc123: removed; id=t3_post9,t1_abc123\n' +
+                'bridge: /r/sub/comments/post9/a_title/abc123/ -> members-only community, answered 403\n' +
+                'thread /comments/post9/_/abc123.json, partial /svc/shreddit/comments/r/sub/post9/abc123?render-mode=partial\n' +
+                'title="Kept my deposit : r/sub" canonical="/r/sub/comments/zzz7/kept_my_deposit/" removed_t1_def\n' +
+                `www lookup: coverage t1=${floor} t3=0; second account: 3 listed (floor t1 ${floor}, t3 Infinity)\n` +
+                `encoded ?id=t3_post9%2Ct1_abc123, json {"t1":${floor}}, path /comments/t3_post9/`,
+        )
+        const comment = text.match(/c_[0-9a-z]{8}/)[0]
+        const post = text.match(/p_[0-9a-z]{8}/)[0]
+        expect(text).not.toMatch(/abc123|post9|zzz7|t1_def|t[13]_|a_title|deposit/)
+        expect(text).not.toContain(String(floor))
+        expect(text).toContain(`coverage t1=${comment} t3=0; second account: 3 listed (floor t1 ${comment}, t3 Infinity)`)
+        expect(text.split(comment)).toHaveLength(10)
+        expect(text.split(post)).toHaveLength(7)
+        // Slugs and titles would find the post by search
+        expect(text).toContain(`/r/sub/comments/${post}/_/${comment}/ -> members-only`)
+        expect(text).toContain('title=(hidden) canonical="/r/sub/comments/p_')
+        expect(text).toContain(`/comments/${post}/_/${comment}.json`)
+        expect(text).toContain(`/svc/shreddit/comments/r/sub/${post}/${comment}?render-mode=partial`)
+        // A stand-in already in a path stays whole
+        expect(text).toContain(`?id=${post}%2C${comment}, json {"t1":${comment}}, path /comments/${post}/`)
+        expect(new Set(text.match(/[cp]_[0-9a-z]{8}/g)).size).toBe(4)
+        // Another copy, other stand-ins: nothing ties one to the id
+        expect(idHider()('t1_abc123')).not.toBe(comment)
+    })
+
+    it('hides ids before leaving names out, so a name inside "comments" or an id leaks nothing', () => {
+        const tiers = {
+            summary: [{ t: Date.UTC(2026, 9, 30), a: 'bridge', m: 'bridge: https://www.reddit.com/comments/1abc2de.json -> 404' }],
+            details: [{ t: Date.UTC(2026, 9, 30, 0, 1), a: 'verify', m: 'absent item verdict t1_k9xyzq2: removed' }],
+        }
+        const text = formatTieredDiagLog(tiers, [], ['ments', 'xyz'], '', Infinity, true)
+        expect(text).not.toContain('1abc2de')
+        expect(text).not.toContain('────q2')
+        expect(text).toMatch(/absent item verdict c_[0-9a-z────]{8,}: removed/)
+        // and a name with something like an id in it still goes whole
+        const named = formatTieredDiagLog(
+            { summary: [{ t: Date.UTC(2026, 9, 30), a: 'feed', m: 'www lookup Mike_t1_abc: /user/Mike_t1_abc/comments/' }], details: [] },
+            [],
+            ['Mike_t1_abc'],
+            '',
+            Infinity,
+            true,
+        )
+        expect(named).not.toContain('Mike')
+        expect(named).toContain('www lookup ────: /user/────/comments/')
+    })
+
+    it('hides them alike in the header and the entries when the log is copied that way', async () => {
+        __resetStorage({}, {})
+        await clearDiagLog()
+        dlog('verify', '[reveddit] absent item verdict t1_abc123: removed')
+        const report = await buildDiagReport({ hideIds: true, extraHeaderLines: ['unchecked: t1_abc123 (nsfw)'] })
+        expect(report).toContain('ids: hidden; c_ and p_ are stand-ins for comment and post ids')
+        expect(report).not.toContain('abc123')
+        const comment = report.match(/c_[0-9a-z]{8}/)[0]
+        expect(report.split(comment)).toHaveLength(3)
+        expect(await buildDiagReport({})).toContain('absent item verdict t1_abc123: removed')
+    })
+})
+
 describe('buildDiagReport', () => {
     it('leaves out every account that has lists stored, not only the subscribed and logged-in ones', async () => {
         // Monitoring keeps lists for whoever is logged in, subscribed or not
@@ -206,6 +274,43 @@ describe('formatTieredDiagLog', () => {
         const text = formatTieredDiagLog({ summary: [], details: [] }, [])
         expect(text).toContain('summary tier: 0 entries')
         expect(text).toContain('detail tier: 0 entries')
+    })
+
+    it('past a size, keeps the newest entries of each tier that fit and says what the paste covers', () => {
+        const at = i => Date.UTC(2026, 9, 30) + i * 1000
+        const entry = (i, a) => ({ t: at(i), a, m: `line ${i} ${'x'.repeat(80)}` })
+        const tiers = {
+            summary: Array.from({ length: 2000 }, (_, i) => entry(i, 'cycle')),
+            details: Array.from({ length: 600 }, (_, i) => entry(i, 'verify')),
+        }
+        const full = formatTieredDiagLog(tiers, ['header line'])
+        expect(formatTieredDiagLog(tiers, ['header line'], [], '', full.length)).toBe(full)
+        expect(full).not.toContain('trimmed')
+
+        const text = formatTieredDiagLog(tiers, ['header line'], [], '', 50000)
+        expect(text.length).toBeLessThanOrEqual(50000)
+        expect(text.length).toBeGreaterThan(49000)
+        expect(text.startsWith('header line\n')).toBe(true)
+        expect(text).toContain('[cycle] line 1999 ')
+        expect(text).toContain('[verify] line 599 ')
+        expect(text).not.toContain('[cycle] line 0 ')
+        const [, summaryOut, detailOut] = text.match(
+            /trimmed to fit: the oldest (\d+) summary and (\d+) detail entries are left out/,
+        )
+        const kept = tier => text.split('\n').filter(line => line.includes(`[${tier}] line`)).length
+        expect(kept('cycle') + Number(summaryOut)).toBe(2000)
+        expect(kept('verify') + Number(detailOut)).toBe(600)
+        expect(kept('verify')).toBeGreaterThan(100)
+        // The coverage lines describe the entries kept, not the whole tiers
+        const iso = i => new Date(at(i)).toISOString()
+        expect(text).toContain(
+            `summary tier: ${kept('cycle')} entries (keeps last ${SUMMARY_RETENTION_HOURS} hours), ` +
+                `${iso(2000 - kept('cycle'))} → ${iso(1999)}`,
+        )
+        expect(text).toContain(
+            `detail tier: ${kept('verify')} entries (keeps last ${DIAG_MAX_ENTRIES} entries), ` +
+                `${iso(600 - kept('verify'))} → ${iso(599)}`,
+        )
     })
 })
 

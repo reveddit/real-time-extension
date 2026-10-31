@@ -6,6 +6,7 @@
 import { dlog } from './diaglog'
 import { sanitizeChallengeConfig, setChallengeConfig, ChallengeConfig } from './challenge-config'
 import { sanitizeMarkupConfig, setMarkupConfig, MarkupConfig } from './markup-config'
+import { sanitizeLoginWallConfig, setLoginWallConfig, LoginWallConfig } from './login-wall-config'
 import { sanitizeWwwRouteOrder, WwwRouteOrderOption } from './www-routes'
 import { sanitizePublicModlogsFeed, setPublicModlogsFeed } from './bridge-config'
 import { sanitizeNameList } from './name-list'
@@ -67,9 +68,13 @@ export interface RemoteOptions {
     // camelCase.
     markup?: Partial<MarkupConfig>
     // Names of reddit's login cookie, for the bridge's and grace mode's
-    // logged-in check (requests.ts hasRedditLoginCookie), in case reddit
+    // logged-in check (viewer.ts hasRedditLoginCookie), in case reddit
     // renames reddit_session.
     login_cookies?: string[]
+    // What a login wall looks like to the public-view fetches
+    // (login-wall-config.ts): { paths: string[], markers: string[] }, added to
+    // the built-in login paths.
+    login_wall?: Partial<LoginWallConfig>
 }
 export const LEGACY_HOSTS = ['www.reddit.com', 'old.reddit.com'] as const
 export const LEGACY_HOST_DEFAULT = 'www.reddit.com'
@@ -343,6 +348,7 @@ export const applyRemoteConfig = async (): Promise<void> => {
     const options: any = (await getCachedNews())?.feed?.options || {}
     setChallengeConfig(options.challenge || {})
     setMarkupConfig(sanitizeMarkupConfig(options.markup))
+    setLoginWallConfig(sanitizeLoginWallConfig(options.login_wall))
     setPublicModlogsFeed(options.publicmodlogs_feed || '')
 }
 
@@ -370,7 +376,7 @@ export const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList
 // the legacy rest at once: the new setting deserves a try.
 export const CAPABILITY_REST_KEY = 'capability_rest'
 
-// The login cookie names (requests.ts hasRedditLoginCookie): the feed's, else reddit_session
+// The login cookie names (viewer.ts hasRedditLoginCookie): the feed's, else reddit_session
 export const getRemoteLoginCookies = async (): Promise<string[]> => {
     const cache = await getCachedNews()
     const names = sanitizeLoginCookies(cache?.feed?.options?.login_cookies)
@@ -439,6 +445,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
         const wwwRouteOrder = sanitizeWwwRouteOrder((feed.options as any)?.www_route_order)
         const markup = sanitizeMarkupConfig((feed.options as any)?.markup)
         const loginCookies = sanitizeLoginCookies((feed.options as any)?.login_cookies)
+        const loginWall = sanitizeLoginWallConfig((feed.options as any)?.login_wall)
         const publicModlogsFeed = sanitizePublicModlogsFeed((feed.options as any)?.publicmodlogs_feed)
         const storeVersions: StoreVersions = {}
         const rawStoreVersions = (feed as any).store_versions
@@ -476,6 +483,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
                 ...(Object.keys(wwwRouteOrder).length ? { www_route_order: wwwRouteOrder } : {}),
                 ...(Object.keys(markup).length ? { markup } : {}),
                 ...(loginCookies.length ? { login_cookies: loginCookies } : {}),
+                ...(Object.keys(loginWall).length ? { login_wall: loginWall } : {}),
                 ...(publicModlogsFeed ? { publicmodlogs_feed: publicModlogsFeed } : {}),
             },
             ...(isValidVersion(feed.latest_version) ? { latest_version: feed.latest_version } : {}),
@@ -488,6 +496,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
         chrome.storage.local.set({ [NEWS_CACHE_KEY]: newCache })
         setChallengeConfig(challenge)
         setMarkupConfig(markup)
+        setLoginWallConfig(loginWall)
         setPublicModlogsFeed(publicModlogsFeed)
         // A new legacy host or switch ends a refusal rest at once
         const before = cache?.feed?.options
@@ -510,6 +519,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
             `[reveddit] news fetch ok: ${sanitized.messages.length} messages, mechanisms=${JSON.stringify(mechanisms)}` +
                 (Object.keys(wwwRouteOrder).length ? `, www_route_order=${JSON.stringify(wwwRouteOrder)}` : '') +
                 (Object.keys(markup).length ? `, markup=${JSON.stringify(markup)}` : '') +
+                (Object.keys(loginWall).length ? `, login_wall=${JSON.stringify(loginWall)}` : '') +
                 (publicModlogsFeed ? ', publicmodlogs_feed set' : ''),
         )
     } catch (err: any) {

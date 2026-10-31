@@ -690,10 +690,23 @@ describe('_fetchViaExecuteScript contract', () => {
         const func = browserMock.scripting.executeScript.mock.calls[0][0].func
 
         globalThis.fetch = vi.fn(async () => res(200, 'X'))
-        expect(await func('u')).toEqual({ ok: true, status: 200, text: 'X' })
+        expect(await func('u')).toEqual({ ok: true, status: 200, text: 'X', redirectedTo: '' })
 
         globalThis.fetch = vi.fn(async () => res(500, 'boom'))
-        expect(await func('u')).toEqual({ ok: false, status: 500, text: '' })
+        expect(await func('u')).toEqual({ ok: false, status: 500, text: '', redirectedTo: '' })
+
+        // Where a redirect landed, so the background can tell reddit's login page
+        globalThis.fetch = vi.fn(async () => ({
+            ...res(200, 'L'),
+            redirected: true,
+            url: 'https://www.reddit.com/login/',
+        }))
+        expect(await func('u')).toEqual({
+            ok: true,
+            status: 200,
+            text: 'L',
+            redirectedTo: 'https://www.reddit.com/login/',
+        })
 
         globalThis.fetch = vi.fn(async () => {
             throw new Error('net down')
@@ -720,7 +733,12 @@ describe('_fetchViaExecuteScript contract', () => {
         globalThis.fetch = vi.fn(async () => res(200, 'SANDBOX'))
         globalThis.content = { fetch: vi.fn(async () => res(200, 'PAGE')) }
         try {
-            expect(await func('u', PUBLIC_VIEW_FETCH_INIT)).toEqual({ ok: true, status: 200, text: 'PAGE' })
+            expect(await func('u', PUBLIC_VIEW_FETCH_INIT)).toEqual({
+                ok: true,
+                status: 200,
+                text: 'PAGE',
+                redirectedTo: '',
+            })
             expect(globalThis.content.fetch).toHaveBeenCalledWith('u', PUBLIC_VIEW_FETCH_INIT)
             expect(globalThis.fetch).not.toHaveBeenCalled()
         } finally {

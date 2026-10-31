@@ -22,6 +22,9 @@ import {
     noteRateLimited,
     lookupItemsByID_fromPublicProfile,
     getPublicViewUncheckedLine,
+    getLoginWallLine,
+    isSettledByLogin,
+    whoIsSignedIn,
 } from './src/requests'
 import {
     initStorage,
@@ -38,7 +41,32 @@ import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
 import { getItems_fromOld, getPost_fromOld, getInfoById_fromLegacyHTML } from './src/parse_html/old'
 import { handleBridgeFetch } from './src/bridge'
-import { applyRemoteConfig, fetchNews, getCachedNews, requestStoreUpdateIfBehind } from './src/news'
+import {
+    applyRemoteConfig,
+    fetchNews,
+    getCachedNews,
+    requestStoreUpdateIfBehind,
+    getRemoteLoginCookies,
+} from './src/news'
+import {
+    startViewerConnect,
+    cancelViewerConnect,
+    finishViewerConnect,
+    recoverViewerConnect,
+    disconnectViewer,
+    installViewerHeaderRule,
+    isViewerConnecting,
+    isLoginTab,
+    getViewer,
+    restoreCookies,
+    isExpired,
+    viewerCookieHeaderFor,
+    ViewerAccount,
+    VIEWER_KEY,
+    VIEWER_SETTLE_MS,
+    VIEWER_CONNECT_ALARM,
+} from './src/viewer'
+import { loginWallLanding } from './src/login-wall-config'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs, getSyncUsageLine } from './src/storage'
 import {
@@ -114,8 +142,40 @@ setupContextualMenu()
 if (__BUILT_FOR__ !== 'chrome') {
     const opt_extraInfoSpec = ['requestHeaders', 'blocking'] as any
 
+    // The second account (viewer.ts), kept here so the blocking listener can
+    // answer at once; reloaded when the account changes
+    let viewerForHeaders: ViewerAccount | null | undefined
+    const loadViewerForHeaders = async () => (viewerForHeaders = await getViewer())
+    browser.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && VIEWER_KEY in changes) {
+            loadViewerForHeaders()
+        }
+    })
+    const ownPrefix = browser.runtime.getURL('')
+
     browser.webRequest.onBeforeSendHeaders.addListener(
-        function (details) {
+        function (details): any {
+            // The extension's own GETs as the second account: its cookies
+            // replace the request's, if the marker carries its current token.
+            // Firefox lets a blocking listener answer with a promise.
+            if (
+                details.tabId === -1 &&
+                details.method === 'GET' &&
+                /[?&]rv_viewer=/.test(details.url) &&
+                String(details.originUrl || '').startsWith(ownPrefix)
+            ) {
+                const withViewerCookies = (viewer: ViewerAccount | null) => {
+                    const headers = (details.requestHeaders || []).filter(h => h.name.toLowerCase() !== 'cookie')
+                    const header = viewerCookieHeaderFor(details.url, viewer)
+                    if (header) {
+                        headers.push({ name: 'Cookie', value: header })
+                    }
+                    return { requestHeaders: headers }
+                }
+                return viewerForHeaders === undefined
+                    ? loadViewerForHeaders().then(withViewerCookies)
+                    : withViewerCookies(viewerForHeaders)
+            }
             // Legacy user/post pages on www: background requests carrying the
             // legacy marker get the redesign_optout cookie (see the DNR rule
             // below for Chrome/Edge and parse_html/common.ts legacyPageUrl).
@@ -165,6 +225,7 @@ if (__BUILT_FOR__ !== 'chrome') {
                 'https://oauth.reddit.com/*.json*',
                 'https://*.reddit.com/api/info*',
                 'https://www.reddit.com/*rv_legacy=1',
+                'https://www.reddit.com/*rv_viewer=*',
             ],
         },
         opt_extraInfoSpec,
@@ -316,16 +377,23 @@ let lastMeRecoverTs = 0
 const MANUAL_CHECK_MIN_INTERVAL_MS = 60000
 let lastManualCheckTs = 0
 
-function recoverIfDegraded() {
+async function recoverIfDegraded() {
     const now = Date.now()
     if (recoveringMe) return
     if (now - lastMeRecoverTs < ME_RECOVER_MIN_INTERVAL_MS) return
+    // The browser's login is a second account's while it signs in (viewer.ts)
+    if (await isViewerConnecting()) return
     recoveringMe = true
     getLoggedinUser()
         .then(user => {
             if (user) {
-                chrome.storage.local.remove('error_status', () => {
-                    updateBadgeUnseenCount()
+                // Only a warning the login settles, if it's still the one up
+                chrome.storage.local.get(['error_status'], result => {
+                    if (isSettledByLogin(result?.error_status)) {
+                        chrome.storage.local.remove('error_status', () => {
+                            updateBadgeUnseenCount()
+                        })
+                    }
                 })
             }
         })
@@ -338,9 +406,9 @@ function recoverIfDegraded() {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === 'complete' && tab && tab.url && tab.url.match(/^https?:\/\/[^/]*\.reddit\.com\//)) {
         storeRedditCookies().then(() => {
-            // If in a degraded state, try to recover by fetching the logged-in user (throttled)
+            // If signed out or the login check failed, try to recover by fetching the logged-in user (throttled)
             chrome.storage.local.get(['error_status'], result => {
-                if (result && result.error_status) {
+                if (result && isSettledByLogin(result.error_status)) {
                     recoverIfDegraded()
                 }
             })
@@ -351,16 +419,90 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.cookies.onChanged.addListener(changeInfo => {
     const cookie = changeInfo.cookie
     if (cookie && cookie.domain && cookie.domain.replace(/^\./, '').endsWith('reddit.com')) {
-        storeRedditCookies().then(() => {
-            // If in a degraded state, try to recover as soon as cookies change (throttled)
-            chrome.storage.local.get(['error_status'], result => {
-                if (result && result.error_status) {
-                    recoverIfDegraded()
+        isViewerConnecting().then(async connecting => {
+            if (connecting) {
+                // A second account signed in (viewer.ts): done once reddit has
+                // set the cookies that follow its login cookie
+                if (!changeInfo.removed && (await getRemoteLoginCookies()).includes(cookie.name)) {
+                    setTimeout(() => finishViewerConnect(whoAmI), VIEWER_SETTLE_MS)
                 }
+                return
+            }
+            storeRedditCookies().then(() => {
+                // If signed out or the login check failed, try to recover as soon as cookies change (throttled)
+                chrome.storage.local.get(['error_status'], result => {
+                    if (result && isSettledByLogin(result.error_status)) {
+                        recoverIfDegraded()
+                    }
+                })
             })
         })
     }
 })
+
+// The second account (viewer.ts): who the browser is logged in as when its
+// sign-in ends; its header rule, which session rules lose with the browser;
+// and a sign-in this worker stopped in the middle of. A sign-in ends when its
+// tab leaves reddit's login page or closes.
+const whoAmI = whoIsSignedIn
+installViewerHeaderRule().catch(() => {})
+recoverViewerConnect(whoAmI).catch(() => {})
+// A sign-in started for whoever the browser was last logged in as
+const startViewerConnectAsMain = () =>
+    browser.storage.local
+        .get({ last_logged_in_user: '' })
+        .then((r: any) => startViewerConnect(String(r.last_logged_in_user || '')))
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (
+        changeInfo.status === 'complete' &&
+        tab?.url &&
+        /^https:\/\/([^/]+\.)?reddit\.com\//.test(tab.url) &&
+        !loginWallLanding(tab.url)
+    ) {
+        isLoginTab(tabId)
+            .then(isIt => {
+                if (isIt) return finishViewerConnect(whoAmI)
+            })
+            .catch(() => {})
+    }
+})
+chrome.tabs.onRemoved.addListener(tabId => {
+    isLoginTab(tabId)
+        .then(isIt => {
+            if (isIt) return finishViewerConnect(whoAmI, 'not_signed_in')
+        })
+        .catch(() => {})
+})
+// A content script's item lookup (the subscribe button)
+const lookupItemsForContentScript = (request: any, sendResponse: (response: any) => void) => {
+    // Only get OAuth auth if user has provided a custom client ID
+    chrome.storage.sync.get(['options'], result => {
+        const needsOAuth = result.options && result.options.custom_clientid && result.options.custom_clientid !== ''
+        const authPromise = needsOAuth ? getAuth() : Promise.resolve('none')
+
+        authPromise
+            .then(auth => {
+                return lookupItemsByID(
+                    request.ids,
+                    auth,
+                    request.monitor_quarantined,
+                    false,
+                    [],
+                    request.username || '',
+                    request.authItemsMeta || {},
+                )
+            })
+            .then(items => {
+                // if request fails, items is null
+                sendResponse({ response: 'done', items })
+            })
+            .catch(error => {
+                console.log('Error in get-reddit-items-by-id:', error)
+                sendResponse({ response: 'done', items: null })
+            })
+    })
+}
+
 chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     if (request.action == 'open-options') {
         goToOptions()
@@ -379,32 +521,32 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             sendResponse({ response: 'done', cookie })
         })
         return true
+    } else if (
+        request.action === 'viewer-connect-start' ||
+        request.action === 'viewer-connect-cancel' ||
+        request.action === 'viewer-disconnect'
+    ) {
+        // The second account (viewer.ts), from the extension's own pages only
+        if (!String(sender?.url || '').startsWith(chrome.runtime.getURL(''))) {
+            sendResponse({ ok: false, error: 'forbidden' })
+            return true
+        }
+        const run =
+            request.action === 'viewer-connect-start'
+                ? startViewerConnectAsMain()
+                : request.action === 'viewer-connect-cancel'
+                  ? cancelViewerConnect('cancelled').then(() => ({ ok: true }))
+                  : disconnectViewer().then(() => ({ ok: true }))
+        run.then(sendResponse, (e: any) => sendResponse({ ok: false, error: String(e?.message || e) }))
+        return true
     } else if (request.action == 'get-reddit-items-by-id') {
-        // Only get OAuth auth if user has provided a custom client ID
-        chrome.storage.sync.get(['options'], result => {
-            const needsOAuth = result.options && result.options.custom_clientid && result.options.custom_clientid !== ''
-            const authPromise = needsOAuth ? getAuth() : Promise.resolve('none')
-
-            authPromise
-                .then(auth => {
-                    return lookupItemsByID(
-                        request.ids,
-                        auth,
-                        request.monitor_quarantined,
-                        false,
-                        [],
-                        request.username || '',
-                        request.authItemsMeta || {},
-                    )
-                })
-                .then(items => {
-                    // if request fails, items is null
-                    sendResponse({ response: 'done', items })
-                })
-                .catch(error => {
-                    console.log('Error in get-reddit-items-by-id:', error)
-                    sendResponse({ response: 'done', items: null })
-                })
+        // Not while a second account signs in: the browser's login is its
+        isViewerConnecting().then(connecting => {
+            if (connecting) {
+                sendResponse({ response: 'done', items: null })
+                return
+            }
+            lookupItemsForContentScript(request, sendResponse)
         })
         return true
     } else if (__DEV__ && request.action === 'dev-relay') {
@@ -539,10 +681,13 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             getCachedNews(),
             getPublicViewUncheckedLine(!!request.includeUsername),
             getSyncUsageLine(),
+            getLoginWallLine(),
         ])
-            .then(([backoffMs, newsCache, uncheckedLine, syncUsageLine]) =>
+            .then(([backoffMs, newsCache, uncheckedLine, syncUsageLine, loginWallLine]) =>
                 buildDiagReport({
                     includeUsername: !!request.includeUsername,
+                    hideIds: !!request.hideIds,
+                    ...(Number(request.maxChars) > 0 && { maxChars: Number(request.maxChars) }),
                     extraHeaderLines: [
                         `rate-limit backoff: ${backoffMs > 0 ? Math.ceil(backoffMs / 1000) + 's remaining' : 'none'}`,
                         `news: ${
@@ -554,6 +699,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                         }`,
                         uncheckedLine,
                         syncUsageLine,
+                        loginWallLine,
                     ],
                 }),
             )
@@ -602,47 +748,59 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         sendResponse({ started: true })
         return true
     } else if (request.action === 'try-reconnect') {
-        // Manual reconnect attempt from popup - subscribe user and trigger lookup
-        storeRedditCookies()
-            .then(() => getLoggedinUserDetailed())
-            .then(detail => {
-                const user = detail.user
-                if (user) {
-                    chrome.storage.local.set({ last_logged_in_user: user })
-                    // Subscribe the user (if not already subscribed)
-                    subscribeUser(
-                        user,
-                        () => {
-                            // Trigger immediate lookup (forced: the user clicked
-                            // Connect and expects a check now)
-                            triggerImmediateLookupOnce(user, true)
-                            chrome.storage.local.remove('error_status', () => {
-                                updateBadgeUnseenCount()
-                                sendResponse({ success: true, user })
-                            })
-                        },
-                        () => {
-                            // Already subscribed - still trigger lookup and clear error
-                            triggerImmediateLookupOnce(user, true)
-                            chrome.storage.local.remove('error_status', () => {
-                                updateBadgeUnseenCount()
-                                sendResponse({ success: true, user })
-                            })
-                        },
-                    )
-                } else {
-                    // indeterminate: reddit did not answer the probe (challenge,
-                    // block, 429), which is not the same as being logged out.
-                    sendResponse({ success: false, indeterminate: detail.indeterminate, reason: detail.reason })
-                }
-            })
-            .catch(err => {
-                console.log('try-reconnect error:', err)
-                sendResponse({ success: false })
-            })
+        // Manual reconnect attempt from popup - subscribe user and trigger lookup.
+        // Not while a second account signs in: the browser's login is its.
+        isViewerConnecting().then(connecting => {
+            if (connecting) {
+                sendResponse({ success: false, indeterminate: true, reason: 'a second account is signing in' })
+            } else {
+                tryReconnect(sendResponse)
+            }
+        })
         return true
     }
 })
+
+// The popup's Connect and Reconnect: subscribe whoever is logged in and look them up
+function tryReconnect(sendResponse: (response: any) => void) {
+    storeRedditCookies()
+        .then(() => getLoggedinUserDetailed())
+        .then(detail => {
+            const user = detail.user
+            if (user) {
+                chrome.storage.local.set({ last_logged_in_user: user })
+                // Subscribe the user (if not already subscribed)
+                subscribeUser(
+                    user,
+                    () => {
+                        // Trigger immediate lookup (forced: the user clicked
+                        // Connect and expects a check now)
+                        triggerImmediateLookupOnce(user, true)
+                        chrome.storage.local.remove('error_status', () => {
+                            updateBadgeUnseenCount()
+                            sendResponse({ success: true, user })
+                        })
+                    },
+                    () => {
+                        // Already subscribed - still trigger lookup and clear error
+                        triggerImmediateLookupOnce(user, true)
+                        chrome.storage.local.remove('error_status', () => {
+                            updateBadgeUnseenCount()
+                            sendResponse({ success: true, user })
+                        })
+                    },
+                )
+            } else {
+                // indeterminate: reddit did not answer the probe (challenge,
+                // block, 429), which is not the same as being logged out.
+                sendResponse({ success: false, indeterminate: detail.indeterminate, reason: detail.reason })
+            }
+        })
+        .catch(err => {
+            console.log('try-reconnect error:', err)
+            sendResponse({ success: false })
+        })
+}
 
 // Dev-only introspection for automated testing (the SW console and
 // chrome://extensions are unreachable for automation): Chrome pages reach it
@@ -718,6 +876,44 @@ const handleDevAction = __DEV__
                       .catch(err => sendResponse({ error: String(err?.message || err) }))
                   break
               }
+              case 'dev-viewer-connect-start':
+                  // A second-account sign-in, as the options page's continue
+                  // button starts it. Firefox's test runs need this: the relay's
+                  // messages come from a content script, which that page's
+                  // message handler refuses.
+                  startViewerConnectAsMain().then(sendResponse, (err: any) =>
+                      sendResponse({ error: String(err?.message || err) }),
+                  )
+                  break
+              case 'dev-viewer-put-back':
+                  // In place of typing a password in a test sign-in: the saved
+                  // second account's own unexpired cookies go back in the
+                  // browser, so the sign-in finishes as a real one would. Only
+                  // during a sign-in, or they'd replace the user's own login.
+                  // The values never leave the background.
+                  Promise.all([getViewer(), isViewerConnecting()])
+                      .then(async ([viewer, connecting]) => {
+                          if (!connecting) {
+                              sendResponse({ ok: false, error: 'not_connecting' })
+                              return
+                          }
+                          const cookies = (viewer?.cookies || []).filter(c => !isExpired(c))
+                          await restoreCookies(cookies)
+                          sendResponse({ ok: !!viewer, set: cookies.length })
+                      })
+                      .catch(err => sendResponse({ error: String(err?.message || err) }))
+                  break
+              case 'dev-reddit-cookie-flags':
+                  // The reddit cookies the browser holds: names and flags only
+                  browser.cookies
+                      .getAll({ domain: 'reddit.com' })
+                      .then(jar =>
+                          sendResponse({
+                              cookies: jar.map(c => ({ name: c.name, session: !!c.session, hostOnly: !!c.hostOnly })),
+                          }),
+                      )
+                      .catch(err => sendResponse({ error: String(err?.message || err) }))
+                  break
               case 'dev-www-lookup':
                   // The public-view lookup monitoring runs, for any user and
                   // with no Reddit login: the profile feeds through the fetch
@@ -1098,6 +1294,11 @@ if (!chrome.extension.inIncognitoContext) {
     // ### END WORKAROUND for broken alarms
 
     chrome.alarms.onAlarm.addListener(function (alarm) {
+        // A second account's sign-in that ran too long ends on time, whatever
+        // the monitoring interval (viewer.ts)
+        if (alarm.name === VIEWER_CONNECT_ALARM) {
+            recoverViewerConnect(whoAmI).catch(() => {})
+        }
         if (alarm.name == ALARM_NAME) {
             lastAlarm = Date.now() // part of WORKAROUND for broken alarms
             checkForChanges(true) // apply jitter to periodic (alarm-driven) polls
