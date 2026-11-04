@@ -91,7 +91,7 @@ const BACKLOG_AGE_THRESHOLD_SECONDS = 48 * 60 * 60
 interface MarkChangesResult {
     num_changes: number
     realtimeChanges: { count: number; changeTypes: string[]; ids: string[] }
-    backlogChanges: { count: number; changeTypes: string[]; ids: string[]; ageRange: { min: number; max: number } }
+    backlogChanges: { count: number; ids: string[]; ageRange: { min: number; max: number } }
 }
 
 const updateOldestDateThreshold = (items: any[], itemLookup: Record<string, any>, thing: string, isUser: boolean) => {
@@ -902,7 +902,6 @@ const checkForChanges_thing_byId = async (
         //      tracking removals && item was in removed, now in approved
         const newLocalStorageItems: Record<string, any> = {}
 
-        const changeTypes: string[] = []
         let num_changes = 0
         const mergedRealtime: { count: number; changeTypes: string[]; ids: string[] } = {
             count: 0,
@@ -911,12 +910,10 @@ const checkForChanges_thing_byId = async (
         }
         const mergedBacklog: {
             count: number
-            changeTypes: string[]
             ids: string[]
             ageRange: { min: number; max: number }
         } = {
             count: 0,
-            changeTypes: [],
             ids: [],
             ageRange: { min: Infinity, max: 0 },
         }
@@ -928,9 +925,6 @@ const checkForChanges_thing_byId = async (
             mergedBacklog.ids.push(...r.backlogChanges.ids)
             for (const t of r.realtimeChanges.changeTypes) {
                 if (!mergedRealtime.changeTypes.includes(t)) mergedRealtime.changeTypes.push(t)
-            }
-            for (const t of r.backlogChanges.changeTypes) {
-                if (!mergedBacklog.changeTypes.includes(t)) mergedBacklog.changeTypes.push(t)
             }
             if (r.backlogChanges.count > 0) {
                 mergedBacklog.ageRange.min = Math.min(mergedBacklog.ageRange.min, r.backlogChanges.ageRange.min)
@@ -954,7 +948,6 @@ const checkForChanges_thing_byId = async (
                             itemLookup,
                             removal_status.notify,
                             newLocalStorageItems,
-                            changeTypes,
                             isUser,
                             subscribedFrom,
                             existingLocalStorageItems,
@@ -979,7 +972,6 @@ const checkForChanges_thing_byId = async (
                             itemLookup,
                             lock_status.notify,
                             newLocalStorageItems,
-                            changeTypes,
                             isUser,
                             subscribedFrom,
                             existingLocalStorageItems,
@@ -1001,11 +993,10 @@ const checkForChanges_thing_byId = async (
                     known_approved: Object.keys(known_approved).length,
                     existingLS: Object.keys(existingLocalStorageItems || {}).length,
                     num_changes,
-                    changeTypes,
                     realtimeCount: mergedRealtime.count,
                     backlogCount: mergedBacklog.count,
                 })
-                if (mergedRealtime.count > 0 && mergedRealtime.changeTypes.length) {
+                if (mergedRealtime.count > 0) {
                     const msg = `${mergedRealtime.count} new [${mergedRealtime.changeTypes.join(', ')}] actions, click to view`
                     console.log(
                         `Creating realtime notification for ${thing}: ${mergedRealtime.count} changes of type ${mergedRealtime.changeTypes.join(', ')}`,
@@ -1178,7 +1169,6 @@ function markChanges(
     itemLookup: Record<string, any>,
     notify: boolean,
     newLocalStorageItems: Record<string, any>,
-    changeTypes: string[],
     isUser: boolean,
     subscribedFrom: number,
     existingLocalStorageItems: Record<string, any>,
@@ -1344,14 +1334,7 @@ function markChanges(
     })
     const allUnseenIds = [...alert_unseen_ids, ...normal_unseen_ids, ...alert_userDeleted_unseen_ids]
     const num_changes = allUnseenIds.length
-    if (notify && num_changes) {
-        if (alert_unseen_ids.length) changeTypes.push(alert_text)
-        if (alert_userDeleted_unseen_ids.length) changeTypes.push('user deleted')
-        if (normal_unseen_ids.length) changeTypes.push(normal_text)
-    }
 
-    const realtimeChangeTypes: string[] = []
-    const backlogChangeTypes: string[] = []
     const backlogAges: number[] = []
     const realtimeIds: string[] = []
     const backlogIds: string[] = []
@@ -1365,24 +1348,23 @@ function markChanges(
             backlogCount++
             backlogAges.push(age)
             backlogIds.push(id)
-        } else {
+        } else if (notify) {
             realtimeCount++
             realtimeIds.push(id)
         }
     }
-    if (realtimeCount > 0) {
-        realtimeChangeTypes.push(...changeTypes)
-    }
-    if (backlogCount > 0) {
-        backlogChangeTypes.push(...changeTypes)
-    }
+    // A notification names only the changes it counts
+    const isRealtime = (id: string) => realtimeIds.includes(id)
+    const realtimeChangeTypes: string[] = []
+    if (alert_unseen_ids.some(isRealtime)) realtimeChangeTypes.push(alert_text)
+    if (alert_userDeleted_unseen_ids.some(isRealtime)) realtimeChangeTypes.push('user deleted')
+    if (normal_unseen_ids.some(isRealtime)) realtimeChangeTypes.push(normal_text)
 
     return {
         num_changes,
         realtimeChanges: { count: realtimeCount, changeTypes: realtimeChangeTypes, ids: realtimeIds },
         backlogChanges: {
             count: backlogCount,
-            changeTypes: backlogChangeTypes,
             ids: backlogIds,
             ageRange: backlogAges.length
                 ? { min: Math.min(...backlogAges), max: Math.max(...backlogAges) }

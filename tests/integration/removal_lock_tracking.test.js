@@ -26,13 +26,13 @@ const STORED_ITEM = { t: 'text', o: 1, c: CREATED, n: 0, r: 0 }
 const keysOf = thing => getObjectNamesForThing(thing, thing !== OTHER)
 const localKey = thing => (thing === OTHER ? 'items_other' : `items_u_${thing}`)
 
-const resetStorage = ({ removal = true, lock = true } = {}) => {
+const resetStorage = ({ removal = true, lock = true, notifyRemoval = true, notifyLock = true } = {}) => {
     const init = {
         options: {
             seen_count: SEEN_COUNT,
             interval: 1,
-            removal_status: { track: removal, notify: true },
-            lock_status: { track: lock, notify: true },
+            removal_status: { track: removal, notify: notifyRemoval },
+            lock_status: { track: lock, notify: notifyLock },
         },
         user_subscriptions: { [USER]: true },
         other_subscriptions: {},
@@ -49,24 +49,28 @@ const seed = (lists, record = STORED_ITEM, thing = USER) => {
     __getLocalStorage()[localKey(thing)] = { [ID]: record }
 }
 
-// One check, reading storage fresh as each cycle does. The author's own view
-// always shows the comment; the lookup's result shows what others see.
-const check = async ({ removed = false, locked = false }, thing = USER, subscribedFrom = SUBSCRIBED_FROM_NA) => {
-    const isUser = thing !== OTHER
-    const authItem = { name: ID, author: USER, body: 'text', created_utc: CREATED, link_id: 't3_post', locked }
-    const result = removed ? { ...authItem, author: '[deleted]', body: '[removed]' } : authItem
+// One check of these lookup results, reading storage fresh as each cycle does
+const lookup = async (results, thing, subscribedFrom, itemLookup) => {
     await _checkForChanges_thing_byId(
-        [ID],
+        results.map(result => result.name),
         thing,
-        isUser,
+        thing !== OTHER,
         null,
         structuredClone(__getSyncStorage()),
         subscribedFrom,
-        isUser ? { [ID]: authItem } : {},
+        itemLookup,
         [],
-        [{ data: { ...result } }],
+        results.map(result => ({ data: { ...result } })),
     )
     await new Promise(resolve => setImmediate(resolve))
+}
+
+// The author's own view always shows the comment; the lookup's result shows
+// what others see
+const check = async ({ removed = false, locked = false }, thing = USER, subscribedFrom = SUBSCRIBED_FROM_NA) => {
+    const authItem = { name: ID, author: USER, body: 'text', created_utc: CREATED, link_id: 't3_post', locked }
+    const result = removed ? { ...authItem, author: '[deleted]', body: '[removed]' } : authItem
+    await lookup([result], thing, subscribedFrom, thing === OTHER ? {} : { [ID]: authItem })
 }
 
 const list = (name, thing = USER) => Object.keys(__getSyncStorage()[keysOf(thing)[name]])
@@ -229,6 +233,70 @@ describe('records saved by earlier versions', () => {
         expect(await checksUntilListed('removed', { removed: true, locked: true })).toBeGreaterThanOrEqual(
             MIN_CONFIRMATION,
         )
+    })
+})
+
+describe('what a notification says', () => {
+    const OLD_CREATED = CREATED - 5 * 24 * 60 * 60
+    const comment = (name, created_utc, fields) => ({
+        name,
+        author: USER,
+        body: 'text',
+        created_utc,
+        link_id: 't3_post',
+        locked: false,
+        ...fields,
+    })
+    const REMOVED_FIELDS = { author: '[deleted]', body: '[removed]' }
+    const backlogRemoval = comment('t1_old', OLD_CREATED, REMOVED_FIELDS)
+    const recentRemoval = comment('t1_removed', CREATED, REMOVED_FIELDS)
+    const recentLock = comment('t1_locked', CREATED, { locked: true })
+    const recentDeletion = comment('t1_deleted', CREATED, { author: '[deleted]', body: '[deleted]' })
+    // First seen, so nothing waits for a confirmation
+    const firstCheck = items => lookup(items, OTHER, SUBSCRIBED_FROM_NA, {})
+    const notifiedIds = () => (__getLocalStorage().notification_log || []).map(entry => entry.itemIds)
+
+    it('leaves out a backlog removal beside a recent lock', async () => {
+        await firstCheck([backlogRemoval, recentLock])
+        expect(announced()).toEqual(['1 new [locked] actions, click to view'])
+        expect(list('removed', OTHER)).toEqual([backlogRemoval.name])
+    })
+
+    it('leaves out a backlog removal beside a recent deletion, which the same pass finds', async () => {
+        await firstCheck([backlogRemoval, recentDeletion])
+        expect(announced()).toEqual(['1 new [user deleted] actions, click to view'])
+    })
+
+    it('names and counts recent changes of both tracks', async () => {
+        await firstCheck([recentRemoval, recentLock])
+        expect(announced()).toEqual(['2 new [mod removed, locked] actions, click to view'])
+        expect(notifiedIds()).toEqual([[recentRemoval.name, recentLock.name]])
+    })
+
+    it('does not count a lock whose notifications are off', async () => {
+        resetStorage({ notifyLock: false })
+        await firstCheck([recentRemoval, recentLock])
+        expect(announced()).toEqual(['1 new [mod removed] actions, click to view'])
+        expect(notifiedIds()).toEqual([[recentRemoval.name]])
+    })
+
+    it('does not count a removal whose notifications are off', async () => {
+        resetStorage({ notifyRemoval: false })
+        await firstCheck([recentRemoval, recentLock])
+        expect(announced()).toEqual(['1 new [locked] actions, click to view'])
+        expect(notifiedIds()).toEqual([[recentLock.name]])
+    })
+
+    it('stays quiet when the only recent change is one whose notifications are off', async () => {
+        resetStorage({ notifyLock: false })
+        await firstCheck([backlogRemoval, recentLock])
+        expect(announced()).toEqual([])
+        expect(list('locked', OTHER)).toEqual([recentLock.name])
+    })
+
+    it('stays quiet about the backlog alone', async () => {
+        await firstCheck([backlogRemoval, comment('t1_oldlock', OLD_CREATED, { locked: true })])
+        expect(announced()).toEqual([])
     })
 })
 
