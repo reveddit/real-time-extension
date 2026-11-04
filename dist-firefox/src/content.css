@@ -131,7 +131,7 @@
     padding: 4px 8px !important;
     border: none !important;
     border-radius: 999px !important;
-    display: inline-flex !important;
+    display: inline-flex;
     align-items: center !important;
     gap: 4px !important;
     cursor: pointer;
