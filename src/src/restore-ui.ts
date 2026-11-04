@@ -1577,9 +1577,15 @@ function shouldShowThreadScanButtons(): Promise<boolean> {
     })
 }
 
+// These observers last the whole document, across reddit's pages
+let watchingComments = false
+
 export function initRestoreOnThread(isNewReddit: boolean) {
     shouldShowThreadScanButtons().then(show => {
         if (!show) return
+        injectScanAllButton(isNewReddit)
+        if (watchingComments) return
+        watchingComments = true
         if (!isNewReddit) {
             const selector = '.thing.comment'
             for (const el of Array.from(document.querySelectorAll(selector))) {
@@ -1602,12 +1608,6 @@ export function initRestoreOnThread(isNewReddit: boolean) {
             document.querySelectorAll(commentSel).forEach(el => injectScanButton_newReddit(el as HTMLElement))
             observe(document, commentSel, el => injectScanButton_newReddit(el as HTMLElement))
         }
-
-        injectScanAllButton(isNewReddit)
-        if (isNewReddit) {
-            // Comment tree may not exist yet — retry when it appears.
-            observe(document, 'shreddit-comment-tree', () => injectScanAllButton(true))
-        }
     })
 }
 
@@ -1618,12 +1618,6 @@ export function initProfileScan(username: string, isNewReddit: boolean) {
             injectProfileScanButton_oldReddit(username)
         } else {
             injectProfileScanButton_newReddit(username)
-            setTimeout(() => injectProfileScanButton_newReddit(username), 1500)
-            setTimeout(() => injectProfileScanButton_newReddit(username), 3000)
-            setTimeout(() => injectProfileScanButton_newReddit(username), 5000)
-            setTimeout(() => injectProfileScanButton_newReddit(username), 10000)
-            // Also observe for shreddit-feed appearing dynamically
-            observe(document, 'shreddit-feed', () => injectProfileScanButton_newReddit(username))
         }
     })
 }
@@ -1741,6 +1735,19 @@ function addOwnViewMark(el: HTMLElement, isNewReddit: boolean) {
     el.appendChild(wrap)
 }
 
+// One page's watch, with the records as they stand when it starts, since a
+// document can last a whole visit to reddit. The next page's arrival stops it
+// before the records are read again, so old ones can't flag that page's items.
+let ownItemsObserver: MutationObserver | undefined
+export function stopWatchingOwnItems() {
+    ownItemsObserver?.disconnect()
+}
+function watchOwnItems(selector: string, flag: (el: HTMLElement) => void) {
+    stopWatchingOwnItems()
+    document.querySelectorAll(selector).forEach(el => flag(el as HTMLElement))
+    ownItemsObserver = observe(document, selector, el => flag(el as HTMLElement))
+}
+
 export function initOwnThreadStatus(isNewReddit: boolean) {
     loadOwnRemovedSets((removed, locked) => {
         const selector = isNewReddit ? 'shreddit-comment[thingid]' : '.thing.comment[data-fullname]'
@@ -1751,9 +1758,7 @@ export function initOwnThreadStatus(isNewReddit: boolean) {
         const getTarget = isNewReddit
             ? undefined
             : (el: HTMLElement) => (el.querySelector(':scope > .entry') as HTMLElement) || el
-        const flag = (el: HTMLElement) => flagOwnStatus(el, removed, locked, getId, getTarget)
-        document.querySelectorAll(selector).forEach(el => flag(el as HTMLElement))
-        observe(document, selector, el => flag(el as HTMLElement))
+        watchOwnItems(selector, el => flagOwnStatus(el, removed, locked, getId, getTarget))
     })
 }
 
@@ -1764,32 +1769,24 @@ export function initOwnProfileStatus(username: string, isNewReddit: boolean) {
             : '#siteTable .thing[data-fullname]'
         const getId = (el: HTMLElement) =>
             el.getAttribute('data-fullname') || el.getAttribute('comment-id') || el.getAttribute('id') || ''
-        let filter: OwnFilter = 'all'
 
+        // The bar holds the choice: reddit's back and forward buttons put it back with the page
         const applyFilter = (el: HTMLElement) => {
+            const filter = document.querySelector('.rev-own-filter-bar .rev-filter-active')?.getAttribute('data-filter')
             const status = el.getAttribute('data-rev-status') || ''
-            el.style.display = filter === 'all' || filter === status ? '' : 'none'
+            el.style.display = !filter || filter === 'all' || filter === status ? '' : 'none'
         }
-        const flag = (el: HTMLElement) => {
+        watchOwnItems(selector, el => {
             flagOwnStatus(el, removed, locked, getId, undefined, item => addOwnViewMark(item, isNewReddit))
             applyFilter(el)
-        }
-
-        document.querySelectorAll(selector).forEach(el => flag(el as HTMLElement))
-        injectOwnFilterBar(isNewReddit, removed.size > 0, locked.size > 0, f => {
-            filter = f
+        })
+        injectOwnFilterBar(isNewReddit, removed.size > 0, locked.size > 0, () => {
             document.querySelectorAll(selector).forEach(el => applyFilter(el as HTMLElement))
         })
-        observe(document, selector, el => flag(el as HTMLElement))
     }, username)
 }
 
-function injectOwnFilterBar(
-    isNewReddit: boolean,
-    hasRemoved: boolean,
-    hasLocked: boolean,
-    onFilter: (f: OwnFilter) => void,
-) {
+function injectOwnFilterBar(isNewReddit: boolean, hasRemoved: boolean, hasLocked: boolean, onFilter: () => void) {
     if (document.querySelector('.rev-own-filter-bar')) return
     const bar = document.createElement('div')
     bar.className = 'rev-filter-bar rev-own-filter-bar'
@@ -1803,10 +1800,11 @@ function injectOwnFilterBar(
         const b = document.createElement('button')
         b.className = 'rev-filter-btn' + (active ? ' rev-filter-active' : '')
         b.textContent = text
+        b.setAttribute('data-filter', f)
         b.addEventListener('click', () => {
             bar.querySelectorAll('.rev-filter-btn').forEach(x => x.classList.remove('rev-filter-active'))
             b.classList.add('rev-filter-active')
-            onFilter(f)
+            onFilter()
         })
         return b
     }

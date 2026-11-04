@@ -13,6 +13,7 @@ import {
     initOwnProfileStatus,
     initOwnThreadStatus,
     loadOwnRemovedSets,
+    stopWatchingOwnItems,
 } from './restore-ui'
 import { classifyPostPage } from './parse_html/new'
 import { getMarkupConfig } from './markup-config'
@@ -39,15 +40,23 @@ export const redditModifications = (
     }
 
     // Restore buttons on thread pages, profile scan on user pages
-    const [postID_restore, , user_restore, subreddit_restore] = getFullIDsFromPath(window.location.pathname)
-    if (postID_restore && subreddit_restore) {
-        initRestoreOnThread(isNewReddit)
-        initOwnThreadStatus(isNewReddit)
+    const startPageFeatures = () => {
+        stopWatchingOwnItems()
+        const [postID, , user, subreddit] = getFullIDsFromPath(window.location.pathname)
+        if (postID && subreddit) {
+            initRestoreOnThread(isNewReddit)
+            initOwnThreadStatus(isNewReddit)
+        }
+        if (user) {
+            initProfileScan(user, isNewReddit)
+            initOwnProfileStatus(user, isNewReddit)
+        }
     }
-    if (user_restore) {
-        initProfileScan(user_restore, isNewReddit)
-        initOwnProfileStatus(user_restore, isNewReddit)
-    }
+    startPageFeatures()
+    // Reddit moves between its pages without loading a new document. The address
+    // changes first, then a new main arrives, and on a first visit a post's
+    // comments after it (verified 2026-11-04), so each arrival starts them again.
+    if (isNewReddit) observe(document, 'main, shreddit-comment-tree', startPageFeatures)
     const subscribeIfNotUnsubscribed = (user: string) => {
         const user_lc = user.toLowerCase()
         if (

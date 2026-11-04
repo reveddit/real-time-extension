@@ -413,31 +413,45 @@ test.describe('History page', () => {
 
 // Reddit's own pages turn headless browsers away, so these pages are stand-ins
 // with the shape of real ones (read 2026-11-04). The content script can't tell.
+const POST = 't3_abc123'
+const THREAD = '/r/pics/comments/abc123/a_title/'
+// The title is why a post's own words must not count
+const postElement = (id, { banner, author = 'someone' } = {}) =>
+    `<shreddit-post id="${id}" author="${author}" permalink="/r/pics/comments/${id.slice(3)}/a_title/">` +
+    `<h1 slot="title">Why was my post removed by moderators?</h1>` +
+    (banner ? `<div slot="post-removed-banner"><span>${banner}</span></div>` : '') +
+    `</shreddit-post>`
+const open = async (context, url, html) => {
+    await context.route(url, route => route.fulfill({ contentType: 'text/html', body: html }))
+    const page = await context.newPage()
+    await page.goto(url)
+    return page
+}
+const openNewReddit = (context, path, main) =>
+    open(
+        context,
+        `https://www.reddit.com${path}`,
+        `<!doctype html><html device="desktop"><body><shreddit-app><div>` +
+            `<main id="main-content">${main}</main></div></shreddit-app></body></html>`,
+    )
+// Long enough for the content script's first look
+const settle = page => page.waitForTimeout(700)
+// Needs the extensionId fixture, which waits for the service worker
+const seedOwnRemoved = (context, id) =>
+    context
+        .serviceWorkers()[0]
+        .evaluate(
+            id =>
+                Promise.all([
+                    chrome.storage.local.set({ last_logged_in_user: 'someone' }),
+                    chrome.storage.sync.set({ removed_u_someone: { [id]: { a: 1 } } }),
+                ]),
+            id,
+        )
+
 test.describe('Post removal note on reddit pages', () => {
-    const POST = 't3_abc123'
-    const THREAD = '/r/pics/comments/abc123/a_title/'
     const HELD = 'Post is awaiting moderator approval.'
     const NOTE = '.rev-new-reddit-message-wrap'
-    // The title is why a post's own words must not count
-    const postElement = (id, { banner, author = 'someone' } = {}) =>
-        `<shreddit-post id="${id}" author="${author}" permalink="/r/pics/comments/${id.slice(3)}/a_title/">` +
-        `<h1 slot="title">Why was my post removed by moderators?</h1>` +
-        (banner ? `<div slot="post-removed-banner"><span>${banner}</span></div>` : '') +
-        `</shreddit-post>`
-    const open = async (context, url, html) => {
-        await context.route(url, route => route.fulfill({ contentType: 'text/html', body: html }))
-        const page = await context.newPage()
-        await page.goto(url)
-        return page
-    }
-    const openNewReddit = (context, path, main) =>
-        open(
-            context,
-            `https://www.reddit.com${path}`,
-            `<!doctype html><html device="desktop"><body><main id="main-content">${main}</main></body></html>`,
-        )
-    // Long enough for the content script's first look
-    const settle = page => page.waitForTimeout(700)
 
     test('shows under a removed post, whatever language the page is in', async ({ context }) => {
         const page = await openNewReddit(context, THREAD, postElement(POST, { banner: HELD }))
@@ -507,15 +521,7 @@ test.describe('Post removal note on reddit pages', () => {
         context,
         extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
     }) => {
-        const [worker] = context.serviceWorkers()
-        await worker.evaluate(
-            id =>
-                Promise.all([
-                    chrome.storage.local.set({ last_logged_in_user: 'someone' }),
-                    chrome.storage.sync.set({ removed_u_someone: { [id]: { a: 1 } } }),
-                ]),
-            POST,
-        )
+        await seedOwnRemoved(context, POST)
         const page = await openNewReddit(context, THREAD, postElement(POST))
         await expect(page.locator(NOTE)).toHaveCount(1)
 
@@ -561,6 +567,202 @@ test.describe('Post removal note on reddit pages', () => {
                 `<body><div id="header"></div><div class="content" role="main"></div></body></html>`,
         )
         await expect(page.locator('.reddit-infobar.rev-mod-removed')).toContainText('This post is unapproved.')
+    })
+})
+
+test.describe('Reddit pages reached without a new document', () => {
+    const LIST = '/r/pics/'
+    const OWN = 't1_own'
+    const OTHERS = 't1_others'
+    const THREAD_SCAN = '.rev-scan-all-btn'
+    const PROFILE_SCAN = '.rev-profile-scan-container'
+    const OWN_BAR = '.rev-own-filter-bar'
+    const post = postElement(POST)
+    const feed = (...items) => `<div><hr><shreddit-feed>${items.join('')}</shreddit-feed></div>`
+    const comment = id => `<shreddit-comment thingid="${id}"><details open><p>Words</p></details></shreddit-comment>`
+    const tree = `<shreddit-comment-tree id="comment-tree">${comment(OWN)}${comment(OTHERS)}</shreddit-comment-tree>`
+    const profileComment = id => `<shreddit-profile-comment comment-id="${id}"><p>Words</p></shreddit-profile-comment>`
+    const ownComment = page => page.locator(`[thingid="${OWN}"].rev-removed-highlight`)
+
+    // Reddit's router, as measured 2026-11-04: the address changes first, then
+    // one element under shreddit-app is replaced whole, and on a first visit a
+    // post's comments arrive after it. Back and forward put the same elements back.
+    const startRouter = page =>
+        page.evaluate(() => {
+            const app = document.querySelector('shreddit-app')
+            const left = {}
+            let shown = location.pathname
+            const show = element => {
+                left[shown] = app.firstElementChild
+                shown = location.pathname
+                app.replaceChildren(element)
+            }
+            window.addEventListener('popstate', () => setTimeout(() => show(left[location.pathname]), 20))
+            window.visit = (path, main, comments) => {
+                history.pushState({}, '', path)
+                setTimeout(() => {
+                    const element = document.createElement('div')
+                    element.innerHTML = `<main id="main-content">${main}</main>`
+                    show(element)
+                    if (comments) setTimeout(() => element.querySelector('main').append(comments), 200)
+                }, 20)
+            }
+        })
+    const visit = (page, path, main, comments) =>
+        page.evaluate(
+            ([path, main, comments]) => {
+                const late = comments && document.createRange().createContextualFragment(comments)
+                window.visit(path, main, late)
+            },
+            [path, main, comments],
+        )
+
+    test('a post reached from a list gets its scan button and own highlights, once', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await seedOwnRemoved(context, OWN)
+        const page = await openNewReddit(context, LIST, feed(post))
+        await startRouter(page)
+        await settle(page)
+        await expect(page.locator(THREAD_SCAN)).toHaveCount(0)
+
+        await visit(page, THREAD, post, tree)
+        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
+        await expect(ownComment(page)).toHaveCount(1)
+        await expect(page.locator('.rev-removed-highlight')).toHaveCount(1)
+
+        await page.goBack()
+        await expect(page.locator(THREAD_SCAN)).toHaveCount(0)
+        await page.goForward()
+        await expect(ownComment(page)).toHaveCount(1)
+        await settle(page)
+        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
+    })
+
+    test('the next post gets its own scan button, and records newer than the document count', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await seedOwnRemoved(context, OTHERS)
+        const page = await openNewReddit(context, THREAD, post + tree)
+        await startRouter(page)
+        await expect(page.locator(`[thingid="${OTHERS}"].rev-removed-highlight`)).toHaveCount(1)
+
+        await seedOwnRemoved(context, OWN)
+        await visit(page, '/r/pics/comments/abc456/a_title/', postElement('t3_abc456'), tree)
+        await expect(ownComment(page)).toHaveCount(1)
+        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
+    })
+
+    test('a profile reached from a post gets its scan button, once', async ({ context }) => {
+        const page = await openNewReddit(context, THREAD, post + tree)
+        await startRouter(page)
+        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
+
+        await visit(page, '/user/other/', feed())
+        await expect(page.locator(PROFILE_SCAN)).toHaveCount(1)
+
+        await page.goBack()
+        await expect(page.locator(PROFILE_SCAN)).toHaveCount(0)
+        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
+        await page.goForward()
+        await expect(page.locator('shreddit-feed')).toHaveCount(1)
+        await settle(page)
+        await expect(page.locator(PROFILE_SCAN)).toHaveCount(1)
+    })
+
+    test('a profile with no feed gets its scan button too', async ({ context }) => {
+        const page = await openNewReddit(context, LIST, feed(post))
+        await startRouter(page)
+        await visit(page, '/user/other/', '<div><div data-testid="profile-main"></div></div>')
+        await expect(page.locator(PROFILE_SCAN)).toHaveCount(1)
+    })
+
+    test('a scan button leaves with its profile', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await seedOwnRemoved(context, OWN)
+        const page = await openNewReddit(context, '/user/other/', feed())
+        await startRouter(page)
+        await expect(page.locator(PROFILE_SCAN)).toHaveCount(1)
+
+        // The scan is off for one's own profile unless the options turn it on
+        await visit(page, '/user/someone/', feed(profileComment(OWN)))
+        await expect(page.locator(OWN_BAR)).toHaveCount(1)
+        await settle(page)
+        await expect(page.locator(PROFILE_SCAN)).toHaveCount(0)
+    })
+
+    test("one's own profile gets its highlights and filter bar, and pages after it stay out of them", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await seedOwnRemoved(context, OWN)
+        const page = await openNewReddit(context, LIST, feed(post))
+        await startRouter(page)
+
+        await visit(page, '/user/someone/', feed(profileComment(OWN), profileComment(OTHERS)))
+        await expect(page.locator(`[comment-id="${OWN}"].rev-removed-highlight`)).toHaveCount(1)
+        const bar = page.locator(OWN_BAR)
+        await expect(bar).toHaveCount(1)
+        await bar.getByRole('button', { name: 'removed' }).click()
+        await expect(page.locator(`[comment-id="${OTHERS}"]`)).toBeHidden()
+
+        await visit(page, THREAD, post)
+        await expect(page.locator('shreddit-post')).toBeVisible()
+        await settle(page)
+        await expect(page.locator('shreddit-post')).not.toHaveAttribute('data-rev-status')
+
+        await page.goBack()
+        await expect(bar).toHaveCount(1)
+        await settle(page)
+        await expect(bar.locator('.rev-filter-active')).toHaveText('removed')
+        await expect(page.locator(`[comment-id="${OWN}"]`)).toBeVisible()
+        await expect(page.locator(`[comment-id="${OTHERS}"]`)).toBeHidden()
+    })
+
+    test('a post on a profile gets no thread scan, which needs a subreddit', async ({ context }) => {
+        const page = await openNewReddit(context, THREAD, post + tree)
+        await startRouter(page)
+        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
+
+        await visit(page, '/user/other/comments/abc123/a_title/', post, tree)
+        await expect(page.locator('shreddit-comment-tree')).toHaveCount(1)
+        await settle(page)
+        await expect(page.locator(THREAD_SCAN)).toHaveCount(0)
+    })
+
+    // Old reddit loads a new document for each page, through the same functions
+    const thing = (id, kind = '') =>
+        `<div class="thing ${kind}" data-fullname="${id}"><div class="entry"><ul class="buttons"><li>permalink</li></ul></div></div>`
+
+    test("old reddit's threads keep their scan buttons", async ({ context }) => {
+        const page = await open(
+            context,
+            `https://old.reddit.com${THREAD}`,
+            `<!doctype html><html><body><div id="header"></div><div class="content" role="main">` +
+                `<div class="commentarea"><div class="menuarea"></div>${thing(OTHERS, 'comment')}</div></div></body></html>`,
+        )
+        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
+        await expect(page.locator('.rev-scan-comment-btn')).toHaveCount(1)
+    })
+
+    test("old reddit's own profile keeps its filter", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await seedOwnRemoved(context, OWN)
+        const page = await open(
+            context,
+            'https://old.reddit.com/user/someone/',
+            `<!doctype html><html><body><div id="header"></div><div class="content" role="main">` +
+                `<div id="siteTable">${thing(OWN)}${thing(OTHERS)}</div></div></body></html>`,
+        )
+        await page.locator(OWN_BAR).getByRole('button', { name: 'removed' }).click()
+        await expect(page.locator(`[data-fullname="${OTHERS}"]`)).toBeHidden()
+        await expect(page.locator(`[data-fullname="${OWN}"]`)).toBeVisible()
     })
 })
 
