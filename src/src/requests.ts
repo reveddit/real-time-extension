@@ -47,6 +47,7 @@ import {
     MECHANISM_ABSENT_VERIFICATION,
     MECHANISM_ABSENT_UNVERIFIED_UNKNOWN,
     MECHANISM_ME_CHALLENGE,
+    MECHANISM_SCAN_FEEDS,
     getRemoteWwwRouteOrder,
     CAPABILITY_REST_KEY,
 } from './news'
@@ -191,8 +192,7 @@ export const noteCapabilityWorked = async (capability: RestingCapability) => {
 
 export const isLegacyResting = (kind: LegacyKind = 'legacy'): Promise<boolean> => isCapabilityResting(kind)
 // Off for now: disabled (dev switch, remote option, build), or resting after a
-// refusal. Monitoring and page views honor both; a restore or profile scan the
-// user started honors only the switch.
+// refusal. Monitoring and page views honor both.
 export const isLegacyOff = async (kind: LegacyKind = 'legacy'): Promise<boolean> =>
     (await isLegacyDisabled()) || (await isLegacyResting(kind))
 export const throwIfLegacyOff = async (label: string, kind: LegacyKind = 'legacy') => {
@@ -1662,6 +1662,10 @@ export const isSettledByLogin = (status: unknown): boolean =>
     status === 'needs_user' || status === LOGGED_IN_VIEW_UNAVAILABLE
 const LOGIN_DETECT_FAILURES_KEY = 'login_detect_consecutive_failures'
 const LOGIN_DETECT_FAILURE_WARN_THRESHOLD = 5
+
+// Reddit turned a login check or a listing away. A network error, an outage or a
+// rate limit is no such answer, and says nothing about the login.
+export const isLoginRefusal = (failure = ''): boolean => /(status|request failed:) 40[13]\b|non-JSON/.test(failure)
 
 export const recordLoginDetectOutcome = async (indeterminate: boolean) => {
     try {
@@ -3146,14 +3150,56 @@ const lookupItemsByID_publicThenLegacy = (
 // bridge, which import it from here
 export { hasRedditLoginCookie }
 
+// The pace measured on feeds, and half that for a while after a 429, mirroring
+// monitoring's own gentle resume (computeAbsentVerifyBudget)
+const SCAN_READ_GAP_MS = 1500
+export const scanDelayMs = async (): Promise<number> => {
+    const sinceHit = await getMsSinceLastRateLimitHit().catch(() => null)
+    return sinceHit !== null && sinceHit < RECENT_RATE_LIMIT_WINDOW_MS ? SCAN_READ_GAP_MS * 2 : SCAN_READ_GAP_MS
+}
+
+// Every tab's scans take turns, so more of them don't mean a faster pace.
+// Mutable for tests, like _wwwRouteTiming.
+export const _scanTurn = { next: 0 }
+const waitForScanTurn = async () => {
+    const gap = await scanDelayMs()
+    const now = Date.now()
+    const turn = Math.max(now, _scanTurn.next)
+    _scanTurn.next = turn + gap
+    if (turn > now) await new Promise(resolve => setTimeout(resolve, turn - now))
+}
+
 // For a scan the user started (restore.ts). A login reads reddit's feeds at a
 // scan's pace, where a logged-out browser gets one a minute (verified 2026-11-04).
+// Every scan comes through here, so they share one pace and the backoff that
+// monitoring and the bridge honor, whichever tab they run in.
 export const readWithLogin = async (path: string) => {
+    if ((await getRemoteMechanism(MECHANISM_SCAN_FEEDS)) === 'off') {
+        return { ok: false, status: 0, blockPage: true }
+    }
+    // The sign-in owns the browser's login until it ends (viewer.ts)
+    if (await isViewerConnecting()) {
+        return { ok: false, status: 0, busy: true }
+    }
     if (!(await hasRedditLoginCookie())) {
         return { ok: false, status: 0, needsLogin: true }
     }
-    const { response, blockPage } = await fetchLoggedIn(`https://www.reddit.com${path}`)
-    return { ok: response.ok, status: response.status, blockPage, text: response.ok ? await response.text() : '' }
+    await waitForScanTurn()
+    if (await isRateLimitedNow()) {
+        return { ok: false, status: 0, resting: true }
+    }
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
+    try {
+        const url = `https://www.reddit.com${path}`
+        const { response, blockPage } = await fetchLoggedIn(url, { scan: true, signal: controller.signal })
+        if (response.status === 429) {
+            noteRateLimited(new Error('www.reddit.com request failed: 429'))
+        }
+        return { ok: response.ok, status: response.status, blockPage, text: response.ok ? await response.text() : '' }
+    } finally {
+        clearTimeout(timer)
+    }
 }
 
 const cookieDetails_redditSession = { name: 'reddit_session', url: 'https://reddit.com' }
@@ -3291,7 +3337,10 @@ export const lookupItemsByLoggedInUserWithAuth = (
         return fetch(url, options)
             .then(response => {
                 if (response.ok) {
-                    return response.json()
+                    // A challenge comes with a 200, and it's a refusal all the same
+                    return response.json().catch(() => {
+                        throw new Error('non-JSON listing from www.reddit.com')
+                    })
                 } else {
                     throw new Error(`www.reddit.com request failed: ${response.status}`)
                 }

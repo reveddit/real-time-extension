@@ -64,8 +64,8 @@ export interface RemoteOptions {
     publicmodlogs_feed?: string
     // Extra names for the page classifiers (markup-config.ts):
     // { comment_id_attributes: string[], post_id_attributes: string[],
-    // post_banner_slots: string[] }. Added to the built-in names; stored in
-    // camelCase.
+    // post_banner_slots: string[], comment_button_slots: string[] }. Added to
+    // the built-in names; stored in camelCase.
     markup?: Partial<MarkupConfig>
     // Names of reddit's login cookie, for the bridge's and grace mode's
     // logged-in check (viewer.ts hasRedditLoginCookie), in case reddit
@@ -96,6 +96,10 @@ export const MECHANISM_ME_CHALLENGE = 'meJsonChallengeSolve'
 // suppress alerts, never cause false ones. Default off: absence within
 // coverage keeps counting as removed. Cached verdicts (6 h) are unaffected.
 export const MECHANISM_ABSENT_UNVERIFIED_UNKNOWN = 'absentUnverifiedIsUnknown'
+// The feeds a scan reads with the user's login (requests.ts readWithLogin).
+// Flip to 'off' if reddit closes them or starts to mind the pace: scans then
+// stop before sending anything and say reddit is refusing them.
+export const MECHANISM_SCAN_FEEDS = 'scanFeeds'
 
 export interface NewsFeed {
     messages: NewsMessage[]

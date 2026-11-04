@@ -81,6 +81,17 @@ const whatsnewGeneration = (version: string) => version.split('.').slice(0, 3).j
 // Pages that may use the bridge: reveddit.com, and the local website in dev
 // and staging builds. Dev actions take the local website only.
 const isDevSitePage = (url: string) => __DEV__ && url.startsWith('http://localhost:8080/')
+// Firefox runs one background for every window and container, and its fetches
+// carry the default container's cookies: a private window or a container tab
+// would get another identity's logged-in view. (Chrome and Edge run incognito
+// tabs in their own instance.)
+const isOtherIdentity = (sender: chrome.runtime.MessageSender) => {
+    const cookieStoreId = (sender?.tab as any)?.cookieStoreId
+    return (
+        __BUILT_FOR__ === 'firefox' &&
+        Boolean(sender?.tab?.incognito || (cookieStoreId && cookieStoreId !== 'firefox-default'))
+    )
+}
 const isBridgePage = (url: string) =>
     /^https:\/\/([a-z0-9-]+\.)?reveddit\.com\//.test(url) ||
     (__LOCAL_SITE__ && url.startsWith('http://localhost:8080/'))
@@ -501,15 +512,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             sendResponse({ ok: false, status: 0, error: 'forbidden' })
             return true
         }
-        // Firefox runs one background for every window and container, and its
-        // fetches carry the default container's cookies: a private window or
-        // a container tab would get another identity's logged-in view.
-        // (Chrome and Edge run incognito tabs in their own instance.)
-        const cookieStoreId = (sender?.tab as any)?.cookieStoreId
-        if (
-            __BUILT_FOR__ === 'firefox' &&
-            (sender?.tab?.incognito || (cookieStoreId && cookieStoreId !== 'firefox-default'))
-        ) {
+        if (isOtherIdentity(sender)) {
             sendResponse({ ok: false, status: 0, error: 'unsupported_context' })
             return true
         }
@@ -524,6 +527,10 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         // This will be handled by content script, just pass it through
         return true
     } else if (request.action === 'fetch-with-login') {
+        if (isOtherIdentity(sender)) {
+            sendResponse({ ok: false, status: 0, otherIdentity: true })
+            return true
+        }
         readWithLogin(String(request.path))
             .then(sendResponse)
             .catch(err => sendResponse({ ok: false, status: 0, error: String(err?.message || err) }))
