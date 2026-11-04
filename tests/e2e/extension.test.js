@@ -1,4 +1,4 @@
-// E2E tests for the extension's popup, options, history, and welcome pages.
+// E2E tests for the extension's popup, options, history, and welcome pages, and its note on reddit pages.
 // These tests load the real built extension in Chromium and verify what a user would see.
 // They know NOTHING about jQuery, storage internals, or implementation details.
 //
@@ -149,7 +149,10 @@ test.describe('Popup page', () => {
         const cut = await page.evaluate(
             () =>
                 new Promise(resolve =>
-                    chrome.runtime.sendMessage({ action: 'get-diag-log', includeUsername: false, maxChars: 1 }, resolve),
+                    chrome.runtime.sendMessage(
+                        { action: 'get-diag-log', includeUsername: false, maxChars: 1 },
+                        resolve,
+                    ),
                 ),
         )
         expect(cut.text).toMatch(/^reveddit real-time diagnostic log\n/)
@@ -405,6 +408,159 @@ test.describe('History page', () => {
 
         // The root container should be in the DOM
         await expect(page.locator('#root')).toBeAttached()
+    })
+})
+
+// Reddit's own pages turn headless browsers away, so these pages are stand-ins
+// with the shape of real ones (read 2026-11-04). The content script can't tell.
+test.describe('Post removal note on reddit pages', () => {
+    const POST = 't3_abc123'
+    const THREAD = '/r/pics/comments/abc123/a_title/'
+    const HELD = 'Post is awaiting moderator approval.'
+    const NOTE = '.rev-new-reddit-message-wrap'
+    // The title is why a post's own words must not count
+    const postElement = (id, { banner, author = 'someone' } = {}) =>
+        `<shreddit-post id="${id}" author="${author}" permalink="/r/pics/comments/${id.slice(3)}/a_title/">` +
+        `<h1 slot="title">Why was my post removed by moderators?</h1>` +
+        (banner ? `<div slot="post-removed-banner"><span>${banner}</span></div>` : '') +
+        `</shreddit-post>`
+    const open = async (context, url, html) => {
+        await context.route(url, route => route.fulfill({ contentType: 'text/html', body: html }))
+        const page = await context.newPage()
+        await page.goto(url)
+        return page
+    }
+    const openNewReddit = (context, path, main) =>
+        open(
+            context,
+            `https://www.reddit.com${path}`,
+            `<!doctype html><html device="desktop"><body><main id="main-content">${main}</main></body></html>`,
+        )
+    // Long enough for the content script's first look
+    const settle = page => page.waitForTimeout(700)
+
+    test('shows under a removed post, whatever language the page is in', async ({ context }) => {
+        const page = await openNewReddit(context, THREAD, postElement(POST, { banner: HELD }))
+        const note = page.locator(`shreddit-post + ${NOTE}.rev-mod-removed`)
+        await expect(note).toContainText('This post is unapproved.')
+        await expect(note).toContainText('It is not currently visible in r/pics')
+        await expect(note.getByRole('link', { name: 'View the post on Reveddit.com' })).toHaveAttribute(
+            'href',
+            `https://www.reveddit.com${THREAD}`,
+        )
+
+        const german = await openNewReddit(
+            context,
+            '/r/pics/comments/abc456/a_title/',
+            postElement('t3_abc456', { banner: 'Beitrag muss durch eine*n Moderator*in zugelassen werden.' }),
+        )
+        await expect(german.locator(NOTE)).toHaveCount(1)
+    })
+
+    test('stays away from a live post until reddit shows the banner', async ({ context }) => {
+        const page = await openNewReddit(context, THREAD, postElement(POST))
+        await settle(page)
+        await expect(page.locator(NOTE)).toHaveCount(0)
+
+        await page.evaluate(text => {
+            const banner = document.createElement('div')
+            banner.slot = 'post-removed-banner'
+            banner.textContent = text
+            document.querySelector('shreddit-post').append(banner)
+        }, HELD)
+        await expect(page.locator(NOTE)).toHaveCount(1)
+    })
+
+    test('shows on a post reached from a list, which loads no new page', async ({ context }) => {
+        const page = await openNewReddit(context, '/r/pics/', postElement(POST, { banner: HELD }))
+        await settle(page)
+        await expect(page.locator(NOTE)).toHaveCount(0)
+
+        await page.evaluate(
+            ([path, html]) => {
+                history.pushState({}, '', path)
+                document.querySelector('main').innerHTML = html
+            },
+            [THREAD, postElement(POST, { banner: HELD })],
+        )
+        await expect(page.locator(NOTE)).toHaveCount(1)
+    })
+
+    test('stays one note when reddit puts a page back or moves its post', async ({ context }) => {
+        const page = await openNewReddit(context, THREAD, postElement(POST, { banner: HELD }))
+        await expect(page.locator(NOTE)).toHaveCount(1)
+
+        await page.evaluate(() => {
+            const main = document.querySelector('main')
+            const kept = [...main.children]
+            main.replaceChildren()
+            main.replaceChildren(...kept)
+            const wrapper = document.createElement('div')
+            main.append(wrapper)
+            wrapper.append(document.querySelector('shreddit-post'))
+        })
+        await settle(page)
+        await expect(page.locator(NOTE)).toHaveCount(1)
+    })
+
+    test("shows on the author's post that monitoring found removed, which reddit can hide from them", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const [worker] = context.serviceWorkers()
+        await worker.evaluate(
+            id =>
+                Promise.all([
+                    chrome.storage.local.set({ last_logged_in_user: 'someone' }),
+                    chrome.storage.sync.set({ removed_u_someone: { [id]: { a: 1 } } }),
+                ]),
+            POST,
+        )
+        const page = await openNewReddit(context, THREAD, postElement(POST))
+        await expect(page.locator(NOTE)).toHaveCount(1)
+
+        const other = await openNewReddit(context, '/r/pics/comments/abc456/a_title/', postElement('t3_abc456'))
+        await settle(other)
+        await expect(other.locator(NOTE)).toHaveCount(0)
+    })
+
+    test("tells a deleted post from a deleted account's live one", async ({ context }) => {
+        const deleted = await openNewReddit(
+            context,
+            THREAD,
+            postElement(POST, {
+                author: '[deleted]',
+                banner: 'Sorry, this post was deleted by the person who posted it.',
+            }),
+        )
+        await expect(deleted.locator(`${NOTE}.rev-user-deleted`)).toContainText('deleted by the person who posted it')
+
+        const live = await openNewReddit(
+            context,
+            '/r/pics/comments/abc456/a_title/',
+            postElement('t3_abc456', { author: '[deleted]' }),
+        )
+        await settle(live)
+        await expect(live.locator(NOTE)).toHaveCount(0)
+    })
+
+    test("names the profile on a profile's post", async ({ context }) => {
+        const page = await openNewReddit(
+            context,
+            '/user/someone/comments/abc123/a_title/',
+            postElement(POST, { banner: HELD }),
+        )
+        await expect(page.locator(NOTE)).toContainText("It is not currently visible in u/someone's profile")
+    })
+
+    test("old reddit still reads the page's robots tag", async ({ context }) => {
+        const page = await open(
+            context,
+            `https://old.reddit.com${THREAD}`,
+            `<!doctype html><html><head><meta name="robots" content="noindex,nofollow"></head>` +
+                `<body><div id="header"></div><div class="content" role="main"></div></body></html>`,
+        )
+        await expect(page.locator('.reddit-infobar.rev-mod-removed')).toContainText('This post is unapproved.')
     })
 })
 

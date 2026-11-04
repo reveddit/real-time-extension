@@ -209,7 +209,6 @@ import browser from 'webextension-polyfill'
                 redditModifications(
                     storage.other_subscriptions,
                     storage.options.hide_subscribe,
-                    storage.options.monitor_quarantined,
                     subscribed_users_lowercase,
                     Object.keys(storage.user_unsubscriptions || {}).map(x => x.toLowerCase()),
                 )

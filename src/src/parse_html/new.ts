@@ -208,6 +208,10 @@ export const parseProfileHtml = (html: string, typePrefix: string): ParsedPage =
 export type PostPageStatus = 'live' | 'held' | 'removed' | 'unknown'
 export interface PostPageResult {
     status: PostPageStatus
+    // The post carries reddit's banner. The status reads English wording, which
+    // monitoring's fetches ask for; a page in the visitor's language has the
+    // banner in that language.
+    banner?: boolean
     author?: string
     title?: string
     created_utc?: number
@@ -252,14 +256,15 @@ export const classifyPostPage = (html: string, postId: string): PostPageResult =
     const start = postTag.index || 0
     const end = html.indexOf('</shreddit-post>', start)
     const postRegion = html.slice(start, end === -1 ? Math.min(html.length, start + 100000) : end)
-    const banner = slotText(postRegion, getMarkupConfig().postBannerSlots)
-    if (POST_HELD_REGEX.test(banner)) {
-        return { status: 'held', ...meta }
+    const bannerText = slotText(postRegion, getMarkupConfig().postBannerSlots).trim()
+    const found = { ...meta, ...(bannerText && { banner: true }) }
+    if (POST_HELD_REGEX.test(bannerText)) {
+        return { status: 'held', ...found }
     }
-    if (POST_REMOVED_REGEX.test(banner)) {
-        return { status: 'removed', ...meta }
+    if (POST_REMOVED_REGEX.test(bannerText)) {
+        return { status: 'removed', ...found }
     }
-    return { status: 'live', ...meta }
+    return { status: 'live', ...found }
 }
 
 // The text of every element in html whose slot attribute is one of slots

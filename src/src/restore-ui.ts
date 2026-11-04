@@ -1661,7 +1661,7 @@ function shouldShowProfileScanButton(username: string): Promise<boolean> {
 
 type OwnFilter = 'all' | 'removed' | 'locked'
 
-function loadOwnRemovedSets(cb: (removed: Set<string>, locked: Set<string>) => void, username?: string) {
+export function loadOwnRemovedSets(cb: (removed: Set<string>, locked: Set<string>) => void, username?: string) {
     try {
         chrome.storage.local.get(['last_logged_in_user'], local => {
             const me = local?.last_logged_in_user

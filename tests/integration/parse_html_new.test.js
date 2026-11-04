@@ -187,6 +187,20 @@ describe('classifyPostPage', () => {
 
     const POST = 't3_1ukv6vb'
 
+    it('marks the banner in any language, where the status reads only English', () => {
+        const german = classifyPostPage(postPage('Beitrag muss durch eine*n Moderator*in zugelassen werden.'), POST)
+        expect(german.banner).toBe(true)
+        expect(german.status).toBe('live')
+        expect(classifyPostPage(postPage('Post is awaiting moderator approval.'), POST).banner).toBe(true)
+    })
+
+    it('marks no banner on a live post, an empty slot or an archived post', () => {
+        expect(classifyPostPage(postPage(''), POST).banner).toBeUndefined()
+        expect(classifyPostPage(postPage('  <span> </span> '), POST).banner).toBeUndefined()
+        const archived = postPage('').replace('</shreddit-post>', '<div slot="post-archived-banner">Archived</div>$&')
+        expect(classifyPostPage(archived, POST).banner).toBeUndefined()
+    })
+
     it('classifies a held post (awaiting moderator approval)', () => {
         const result = classifyPostPage(postPage('<div><span>Post is awaiting moderator approval.</span></div>'), POST)
         expect(result.status).toBe('held')

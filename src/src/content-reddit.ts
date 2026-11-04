@@ -1,4 +1,3 @@
-import { getAuth, lookupItemsByID } from './requests'
 import { getFullIDsFromPath, REMOVED_BY_MODERATOR_TEXT, detectIsNewReddit } from './common'
 import {
     setTextAndFunction_subscribe,
@@ -8,23 +7,36 @@ import {
 import { observe, findByText } from './dom-helpers'
 import browser from 'webextension-polyfill'
 import { subscribeUser, MAX_SUBSCRIPTIONS } from './storage'
-import { initRestoreOnThread, initProfileScan, initOwnProfileStatus, initOwnThreadStatus } from './restore-ui'
+import {
+    initRestoreOnThread,
+    initProfileScan,
+    initOwnProfileStatus,
+    initOwnThreadStatus,
+    loadOwnRemovedSets,
+} from './restore-ui'
+import { classifyPostPage } from './parse_html/new'
+import { getMarkupConfig } from './markup-config'
+import { applyRemoteConfig } from './news'
 
 const USER_DELETED = 'rev-user-deleted'
 const MOD_REMOVED = 'rev-mod-removed'
 const id_match_comment = /^t1_.+/
 const id_match_post = /^t3_.+/
-const defaultNewRedditTarget = 'shreddit-post'
+const NEW_REDDIT_POST = 'shreddit-post'
+const NEW_REDDIT_NOTE = 'rev-new-reddit-message-wrap'
 
 export const redditModifications = (
     other_subscriptions: Record<string, any>,
     hide_subscribe: boolean,
-    monitor_quarantined: boolean,
     subscribed_users_lowercase: string[],
     unsubscribed_users_lowercase: string[],
 ) => {
     const isNewReddit = detectIsNewReddit()
-    ifThreadPage_showRemovalStatus(isNewReddit, monitor_quarantined)
+    if (isNewReddit) {
+        showRemovalStatusOnPostPages()
+    } else {
+        showRemovalStatus({ isNewReddit })
+    }
 
     // Restore buttons on thread pages, profile scan on user pages
     const [postID_restore, , user_restore, subreddit_restore] = getFullIDsFromPath(window.location.pathname)
@@ -89,10 +101,6 @@ export const redditModifications = (
             })
         }
         addDirectLinks_newReddit_comments()
-        const selector_newPost = '.Post div[data-test-id="post-content"]'
-        observe(document, selector_newPost, element => {
-            showRemovalStatusForThreadOverlay(element as HTMLElement, monitor_quarantined)
-        })
     }
 }
 
@@ -143,49 +151,47 @@ const addDirectLinks_newReddit_comments = () => {
     setTimeout(processCommentsOnPageLoad, 10000)
 }
 
-const ifThreadPage_showRemovalStatus = (
-    isNewReddit: boolean,
-    monitor_quarantined: boolean,
-    newRedditTarget: string | Element = defaultNewRedditTarget,
-    postData: Record<string, any> = {},
-) => {
-    const [postID, , , subreddit] = getFullIDsFromPath(window.location.pathname)
-    if (!postID) return
-    // links to comments on new reddit do not have robots noindex,nofollow, so need to lookup data if haven't already
-    // as of 2022/2023: older posts e.g. t3_9emzhp no longer have noindex,nofollow, so always need to look up data for new reddit
-    if (isNewReddit && Object.keys(postData).length === 0) {
-        browser.runtime
-            .sendMessage({ action: 'get-from-old', path: `/r/${subreddit}/comments/${postID!.substring(3)}/` })
-            .then((response: any) => {
-                // No answer, or the page couldn't be read (refused, resting):
-                // say nothing rather than "not removed"
-                if (!response || response.error) return
-                showRemovalStatus({
-                    isNewReddit,
-                    newRedditTarget,
-                    postData: {
-                        is_robot_indexable: !response.is_removed,
-                        ...response,
-                    },
-                })
+// New reddit's pages have no robots meta. A post's own element holds reddit's
+// banner instead, for visitors, other accounts and the author alike (verified
+// 2026-11-04 on two removed posts and three live ones). That is the page's own
+// answer, so it costs no request. Reddit can keep it from the author for about
+// a day, when only monitoring knows, so the author's own record counts too. No
+// banner clears nothing: the note just stays away. Reddit moves between its
+// pages without loading a new document, so every page watches for posts. The
+// banner has its own selector since it may arrive after its post.
+const showRemovalStatusOnPostPages = async () => {
+    await applyRemoteConfig().catch(() => {})
+    const bannerSlots = getMarkupConfig().postBannerSlots
+    const selector = [NEW_REDDIT_POST, ...bannerSlots.map(s => `${NEW_REDDIT_POST} [slot="${s}"]`)].join(',')
+    const check = (element: Element) => {
+        const post = element.closest(NEW_REDDIT_POST)
+        const [postID] = getFullIDsFromPath(window.location.pathname)
+        if (!post || !postID) return
+        const { status, banner, author } = classifyPostPage(post.outerHTML, postID)
+        const show = () =>
+            showRemovalStatus({ isNewReddit: true, target: post, postData: { is_robot_indexable: false, author } })
+        if (banner) {
+            show()
+        } else if (status === 'live') {
+            loadOwnRemovedSets(removed => {
+                if (removed.has(postID)) show()
             })
-            .catch(() => {})
-        // Previous code here called 'get-reddit-items-by-id', but that now returns a 403
-    } else {
-        showRemovalStatus({ isNewReddit, newRedditTarget, postData })
+        }
     }
+    document.querySelectorAll(selector).forEach(check)
+    observe(document, selector, check)
 }
 
 const showRemovalStatus = ({
     isNewReddit,
-    newRedditTarget = defaultNewRedditTarget,
+    target,
     postData = {},
 }: {
     isNewReddit: boolean
-    newRedditTarget?: string | Element
+    target?: Element
     postData?: Record<string, any>
 }) => {
-    const [postID, , , subreddit] = getFullIDsFromPath(window.location.pathname)
+    const [postID, , user, subreddit] = getFullIDsFromPath(window.location.pathname)
     let className = undefined,
         message_1 = undefined
     if (postID) {
@@ -216,7 +222,8 @@ const showRemovalStatus = ({
 
     if (message_1) {
         const optionsID = 'goto-options-from-content'
-        const message_2 = ` It is not currently visible in r/${subreddit} and may not appear in web search results.`
+        const place = subreddit ? `r/${subreddit}` : `u/${user}'s profile`
+        const message_2 = ` It is not currently visible in ${place} and may not appear in web search results.`
         const from = `<div class="rev-from"><a id="${optionsID}" href="#">Reveddit Real-Time</a> note</div>`
         const post_path = window.location.pathname.split('/', 6).join('/')
         const reveddit_link = `<p><a href="https://www.reveddit.com${post_path}/">View the post on Reveddit.com</a></p>`
@@ -232,49 +239,17 @@ const showRemovalStatus = ({
         } else {
             message_1 += ` More details may appear in a message above from reddit.`
             const wrap = document.createElement('div')
-            wrap.className = `rev-new-reddit-message-wrap ${className}`
+            wrap.className = `${NEW_REDDIT_NOTE} ${className}`
+            wrap.dataset.post = postID
             wrap.innerHTML = `${from}<div class="rev-new-reddit-message-content"><div class="rev-new-reddit-message-content-description">${message_1}${message_2}</div>${reveddit_link}</div>`
-            let target: Element | null
-            if (typeof newRedditTarget === 'string') {
-                target = document.querySelector(newRedditTarget)
-            } else {
-                target = newRedditTarget
-            }
-            if (target) {
+            // Reddit's back and forward buttons put a page's old elements back
+            if (target && !document.querySelector(`.${NEW_REDDIT_NOTE}[data-post="${postID}"]`)) {
                 target.after(wrap)
             }
         }
         document
             .getElementById(optionsID)
             ?.addEventListener('click', () => browser.runtime.sendMessage({ action: 'open-options' }))
-    }
-}
-
-const showRemovalStatusForThreadOverlay = (element: HTMLElement, monitor_quarantined: boolean) => {
-    const [postID] = getFullIDsFromPath(window.location.pathname)
-    // built for Chrome, i.e., incognito mode is 'split' and CORB applies
-    if (__BUILT_FOR__ === 'chrome') {
-        browser.runtime
-            .sendMessage({ action: 'get-reddit-items-by-id', ids: [postID], monitor_quarantined })
-            .then((response: any) => {
-                if (!response || !response.items || !response.items.length) return
-                const postData = response.items[0].data
-                ifThreadPage_showRemovalStatus(true, monitor_quarantined, element.parentNode as Element, postData)
-            })
-            .catch(() => {})
-    } else {
-        // built for Firefox, i.e., incognito mode is 'spanning' and content scripts
-        // are allowed to send cross-origin requests
-        getAuth()
-            .then(auth => {
-                return lookupItemsByID([postID!], auth, monitor_quarantined)
-            })
-            .then(items => {
-                // if request fails, items is null
-                if (!items) return
-                const postData = items[0].data
-                ifThreadPage_showRemovalStatus(true, monitor_quarantined, element.parentNode as Element, postData)
-            })
     }
 }
 

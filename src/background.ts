@@ -17,9 +17,7 @@ import {
     storeRedditCookies,
     throwIfLegacyDisabled,
     throwIfLegacyOff,
-    noteCapabilityWorked,
     noteCapabilityRefused,
-    noteRateLimited,
     lookupItemsByID_fromPublicProfile,
     getPublicViewUncheckedLine,
     getLoginWallLine,
@@ -587,30 +585,6 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         return true
     } else if (request.action == 'get-logged-in-user-items') {
         // This will be handled by content script, just pass it through
-        return true
-    } else if (request.action === 'get-from-old') {
-        // Unauthenticated legacy thread page — dying endpoint, gated, and
-        // resting after a refusal (a reddit page view sends this, not the user)
-        throwIfLegacyOff('legacy reddit post page')
-            .then(() => getPost_fromOld(request.path))
-            .then(async (data: any) => {
-                // A page that answers ends the legacy pages' rest, and the
-                // challenge, reddit's answer to every legacy page, starts one.
-                // A 403 rests nothing: a private or quarantined community's
-                // thread answers 403 too, and one page view can't tell that from
-                // reddit refusing every page (monitoring's queue can, by asking two).
-                if (data?.status === 429) {
-                    noteRateLimited(new Error(String(data.error)))
-                } else if (data?.refused) {
-                    await noteCapabilityRefused('legacy', 'challenge page')
-                } else if (data && 'is_removed' in data) {
-                    await noteCapabilityWorked('legacy')
-                }
-                sendResponse(data)
-            })
-            .catch(err => {
-                sendResponse({ error: String(err?.message || err) })
-            })
         return true
     } else if (request.action === 'fetch-userpage-html') {
         // Profile scan: content scripts on new reddit (www/sh) can't fetch
