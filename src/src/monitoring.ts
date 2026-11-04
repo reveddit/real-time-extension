@@ -1190,6 +1190,19 @@ function markChanges(
         normal_unseen_ids: string[] = [],
         alert_userDeleted_unseen_ids: string[] = [],
         now = Math.floor(Date.now() / 1000)
+    // Removal and lock tracking share one record per item, and each keeps its
+    // own counts there, so an item can be approved while it stays locked
+    const [seen_key, alert_key] = alert_type === REMOVED ? (['n', 'r'] as const) : (['ln', 'lr'] as const)
+    // With what this check has done so far: the removal pass runs first
+    const currentRecord = (name: string) =>
+        new LocalStorageItem({ object: newLocalStorageItems[name] || existingLocalStorageItems[name] })
+    // A change's record holds the item as it is now. This track's counts start
+    // over, and the other track's carry on.
+    const changeRecord = (name: string) => {
+        const { n, r, ln, lr } = currentRecord(name)
+        const record = new LocalStorageItem({ item: itemLookup[name], observed_utc: now })
+        return Object.assign(record, alert_type === REMOVED ? { ln, lr } : { n, r })
+    }
 
     alert_current_list.forEach(name => {
         const item = itemLookup[name]
@@ -1202,20 +1215,19 @@ function markChanges(
             newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
         } else if (existingLocalStorageItem) {
             // reset seen_count so that items observed as approved/normal must be consecutively seen w/that state
-            // Note: The var seen_count is really a 'seen as normal' count, but we don't need an alert_seen_count
-            const newLocalStorageItem = new LocalStorageItem({ object: existingLocalStorageItem })
-            newLocalStorageItem.resetSeenCount()
-            // Track how many consecutive times this item has been observed as removed.
-            // Only fire a removal alert after REMOVAL_CONFIRMATION_THRESHOLD consecutive observations,
+            const newLocalStorageItem = currentRecord(name)
+            newLocalStorageItem.resetCount(seen_key)
+            // Track how many consecutive times this item has been observed as removed or locked.
+            // Only fire an alert after REMOVAL_CONFIRMATION_THRESHOLD consecutive observations,
             // which prevents false alerts from transient API failures or intermittent data.
-            const removal_count = newLocalStorageItem.incrementRemovalCount()
+            const alert_count = newLocalStorageItem.incrementCount(alert_key)
             newLocalStorageItems[name] = newLocalStorageItem
             if (
                 !skipConfirmationThreshold &&
-                removal_count < REMOVAL_CONFIRMATION_THRESHOLD &&
+                alert_count < REMOVAL_CONFIRMATION_THRESHOLD &&
                 !(name in alert_known_hash)
             ) {
-                return // skip this item — not yet confirmed as genuinely removed
+                return // skip this item — not yet confirmed
             }
         }
         const itemCreatedUtc = item.created_utc
@@ -1250,7 +1262,7 @@ function markChanges(
                 changes.push(new ChangeForStorage({ id: name, observed_utc: now, change_type: alert_type_var }))
             }
             if (isUser) {
-                newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
+                newLocalStorageItems[name] = changeRecord(name)
             }
         }
         // A removal the post's own author view shows is marked so: when that
@@ -1266,24 +1278,22 @@ function markChanges(
         if (!isUser && !existingLocalStorageItems[name]) {
             newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
         }
-        // Reset removal confirmation count when item appears approved,
-        // so transient false removals don't accumulate across separate incidents
+        // Reset the confirmation count when item appears approved/normal,
+        // so transient false alerts don't accumulate across separate incidents
         if (existingLocalStorageItems[name]) {
-            const lsi = new LocalStorageItem({ object: existingLocalStorageItems[name] })
-            if (lsi.getRemovalCount() > 0) {
-                lsi.resetRemovalCount()
+            const lsi = currentRecord(name)
+            if (lsi.getCount(alert_key) > 0) {
+                lsi.resetCount(alert_key)
                 // Preserve this in newLocalStorageItems so it gets saved
-                if (!newLocalStorageItems[name]) {
-                    newLocalStorageItems[name] = lsi
-                }
+                newLocalStorageItems[name] = lsi
             }
         }
         if (name in alert_known_hash) {
-            const this_localStorageItem = new LocalStorageItem({ object: existingLocalStorageItems[name] })
+            const this_localStorageItem = currentRecord(name)
             // Track the seen count, aka 'observed same status' count
             // Doing so allows sending an alert only after N times a new status has been observed.
             // See: https://www.reddit.com/r/reveddit/comments/zc7tcm/reveddit_sending_repetitive_notifications/
-            const seen_count = this_localStorageItem.incrementSeenCount()
+            const seen_count = this_localStorageItem.incrementCount(seen_key)
             if (seen_count >= target_seen_count) {
                 const change_is_previously_recorded = changeIsPreviouslyRecorded(name, normal_type, changes)
                 // To prevent repeat notifications, whose non-deterministic cause I haven't yet figured out,
@@ -1302,7 +1312,7 @@ function markChanges(
                     )
                     normal_unseen_ids.push(name)
 
-                    newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
+                    newLocalStorageItems[name] = changeRecord(name)
                 } else {
                     newLocalStorageItems[name] = this_localStorageItem
                 }

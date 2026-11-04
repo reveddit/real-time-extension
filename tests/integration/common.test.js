@@ -269,8 +269,8 @@ describe('LocalStorageItem', () => {
         expect(item.getText()).toBe('hello & world')
         expect(item.getCreatedUTC()).toBe(1000)
         expect(item.getObservedUTC()).toBe(2000)
-        expect(item.getSeenCount()).toBe(0)
-        expect(item.getRemovalCount()).toBe(0)
+        expect(item.getCount('n')).toBe(0)
+        expect(item.getCount('r')).toBe(0)
         expect(item.getPostID()).toBe('t3_post1')
     })
 
@@ -282,37 +282,36 @@ describe('LocalStorageItem', () => {
         expect(item.getText()).toBe('My Post Title')
     })
 
-    it('tracks seen count increments', () => {
+    it('counts each of its counts apart', () => {
         const item = new LocalStorageItem({
             item: { name: 't1_x', body: 'test', created_utc: 1, link_id: 't3_p' },
             observed_utc: 2,
         })
-        expect(item.incrementSeenCount()).toBe(1)
-        expect(item.incrementSeenCount()).toBe(2)
-        expect(item.getSeenCount()).toBe(2)
-        item.resetSeenCount()
-        expect(item.getSeenCount()).toBe(0)
-    })
-
-    it('tracks removal count increments', () => {
-        const item = new LocalStorageItem({
-            item: { name: 't1_x', body: 'test', created_utc: 1, link_id: 't3_p' },
-            observed_utc: 2,
-        })
-        expect(item.incrementRemovalCount()).toBe(1)
-        expect(item.incrementRemovalCount()).toBe(2)
-        item.resetRemovalCount()
-        expect(item.getRemovalCount()).toBe(0)
+        for (const count of ['n', 'r', 'ln', 'lr']) {
+            expect(item.getCount(count)).toBe(0)
+            expect(item.incrementCount(count)).toBe(1)
+            expect(item.incrementCount(count)).toBe(2)
+            expect(item.getCount(count)).toBe(2)
+            item.resetCount(count)
+            expect(item.getCount(count)).toBe(0)
+        }
     })
 
     it('reconstructs from serialized object', () => {
         const item = new LocalStorageItem({
-            object: { t: 'saved text', o: 100, c: 50, n: 5, r: 2, p: 't3_post' },
+            object: { t: 'saved text', o: 100, c: 50, n: 5, r: 2, ln: 1, lr: 7, p: 't3_post' },
         })
         expect(item.getText()).toBe('saved text')
-        expect(item.getSeenCount()).toBe(5)
-        expect(item.getRemovalCount()).toBe(2)
+        expect(item.getCount('n')).toBe(5)
+        expect(item.getCount('r')).toBe(2)
+        expect(item.getCount('ln')).toBe(1)
+        expect(item.getCount('lr')).toBe(7)
         expect(item.getPostID()).toBe('t3_post')
+    })
+
+    it('adds nothing to a record lock tracking has not counted', () => {
+        const item = new LocalStorageItem({ object: { t: 'saved text', o: 100, c: 50, n: 5, r: 2 } })
+        expect(JSON.parse(JSON.stringify(item))).toEqual({ t: 'saved text', o: 100, c: 50, n: 5, r: 2 })
     })
 })
 

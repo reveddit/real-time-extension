@@ -289,12 +289,16 @@ export class ChangeForStorage {
     }
 }
 
+type LocalItemCount = 'n' | 'r' | 'ln' | 'lr'
+
 export class LocalStorageItem {
     t: string
     o: number | null
     c: number
     n: number
     r: number
+    ln?: number
+    lr?: number
     p?: string
     b?: string // post selftext body (comments store body in `t`)
     s?: string // subreddit name
@@ -313,6 +317,9 @@ export class LocalStorageItem {
             this.c = object.c
             this.n = object.n || 0 // seen_count, which increments when the same status is observed
             this.r = object.r || 0 // removal_count, consecutive times observed as removed
+            // n and r for lock tracking, only on items it has counted
+            if (typeof object.ln !== 'undefined') this.ln = object.ln
+            if (typeof object.lr !== 'undefined') this.lr = object.lr
             if (typeof object.p !== 'undefined') this.p = object.p
             if (typeof object.b !== 'undefined') this.b = object.b
             if (typeof object.s !== 'undefined') this.s = object.s
@@ -359,32 +366,19 @@ export class LocalStorageItem {
     getCreatedUTC() {
         return this.c
     }
-    resetSeenCount() {
-        this.n = 0
-    }
-    getSeenCount() {
-        return this.n
-    }
     getPostID() {
         return this.p
     }
-    incrementRemovalCount() {
-        if (typeof this.r === 'undefined') this.r = 0
-        this.r += 1
-        return this.r
+    getCount(count: LocalItemCount) {
+        return this[count] || 0
     }
-    resetRemovalCount() {
-        this.r = 0
+    resetCount(count: LocalItemCount) {
+        this[count] = 0
     }
-    getRemovalCount() {
-        return this.r || 0
-    }
-    incrementSeenCount() {
-        if (typeof this.n === 'undefined') {
-            this.n = 0
-        }
-        this.n += 1
-        return this.n
+    incrementCount(count: LocalItemCount) {
+        const value = this.getCount(count) + 1
+        this[count] = value
+        return value
     }
 }
 
