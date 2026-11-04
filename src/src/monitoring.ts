@@ -1312,7 +1312,10 @@ function markChanges(
                     )
                     normal_unseen_ids.push(name)
 
-                    newLocalStorageItems[name] = changeRecord(name)
+                    // A removed followed item keeps its record, as above: the
+                    // lookup's copy would show [removed] on the history page
+                    newLocalStorageItems[name] =
+                        isUser || !isRemovedItem(item) ? changeRecord(name) : this_localStorageItem
                 } else {
                     newLocalStorageItems[name] = this_localStorageItem
                 }

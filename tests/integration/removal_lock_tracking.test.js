@@ -44,9 +44,9 @@ const resetStorage = ({ removal = true, lock = true } = {}) => {
 }
 
 // The item is on these lists and has this saved record, as an earlier check left it
-const seed = (lists, record = STORED_ITEM) => {
-    for (const list of lists) __getSyncStorage()[keysOf(USER)[list]][ID] = { c: CREATED, u: false }
-    __getLocalStorage()[localKey(USER)] = { [ID]: record }
+const seed = (lists, record = STORED_ITEM, thing = USER) => {
+    for (const list of lists) __getSyncStorage()[keysOf(thing)[list]][ID] = { c: CREATED, u: false }
+    __getLocalStorage()[localKey(thing)] = { [ID]: record }
 }
 
 // One check, reading storage fresh as each cycle does. The author's own view
@@ -69,7 +69,7 @@ const check = async ({ removed = false, locked = false }, thing = USER, subscrib
     await new Promise(resolve => setImmediate(resolve))
 }
 
-const list = name => Object.keys(__getSyncStorage()[keysOf(USER)[name]])
+const list = (name, thing = USER) => Object.keys(__getSyncStorage()[keysOf(thing)[name]])
 const announced = () => (__getLocalStorage().notification_log || []).map(entry => entry.message)
 
 // Checks until the item reaches the list, and how many it took
@@ -184,6 +184,22 @@ describe('a followed item', () => {
         expect(__getSyncStorage()[keysOf(OTHER).locked][ID].u).toBe(false)
         await check({ locked: true }, OTHER)
         expect(announced()).toEqual([])
+    })
+
+    it('keeps the saved record of a removed comment when it is unlocked', async () => {
+        const saved = { ...STORED_ITEM, t: 'the text before its removal', p: 't3_saved', s: 'saved' }
+        seed(['removed', 'locked'], saved, OTHER)
+        for (let i = 0; i < SEEN_COUNT; i++) await check({ removed: true }, OTHER)
+        expect(list('unlocked', OTHER)).toEqual([ID])
+        expect(announced()).toEqual(['1 new [unlocked] actions, click to view'])
+        expect(__getLocalStorage()[localKey(OTHER)][ID]).toMatchObject({ t: saved.t, p: saved.p, s: saved.s })
+    })
+
+    it('saves the current text of a live comment when it is unlocked', async () => {
+        seed(['locked'], { ...STORED_ITEM, t: 'text before the edit' }, OTHER)
+        for (let i = 0; i < SEEN_COUNT; i++) await check({}, OTHER)
+        expect(list('unlocked', OTHER)).toEqual([ID])
+        expect(__getLocalStorage()[localKey(OTHER)][ID].t).toBe('text')
     })
 })
 
