@@ -18,12 +18,15 @@ export interface MarkupConfig {
     postIdAttributes: string[]
     // Slots inside <shreddit-post> that hold its held/removed/deleted banner
     postBannerSlots: string[]
+    // Slots of a comment's action row, the first of which takes the scan button
+    commentButtonSlots: string[]
 }
 
 export const DEFAULT_MARKUP_CONFIG: MarkupConfig = {
     commentIdAttributes: ['thingId', 'thing-id'],
     postIdAttributes: ['id'],
     postBannerSlots: ['post-removed-banner'],
+    commentButtonSlots: ['comment-share'],
 }
 
 const ATTRIBUTE_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/
@@ -32,6 +35,7 @@ let current: MarkupConfig = {
     commentIdAttributes: [...DEFAULT_MARKUP_CONFIG.commentIdAttributes],
     postIdAttributes: [...DEFAULT_MARKUP_CONFIG.postIdAttributes],
     postBannerSlots: [...DEFAULT_MARKUP_CONFIG.postBannerSlots],
+    commentButtonSlots: [...DEFAULT_MARKUP_CONFIG.commentButtonSlots],
 }
 
 export const getMarkupConfig = (): MarkupConfig => current
@@ -45,9 +49,11 @@ export const sanitizeMarkupConfig = (raw: any): Partial<MarkupConfig> => {
         const comment = names(raw.comment_id_attributes ?? raw.commentIdAttributes)
         const post = names(raw.post_id_attributes ?? raw.postIdAttributes)
         const banner = names(raw.post_banner_slots ?? raw.postBannerSlots)
+        const button = names(raw.comment_button_slots ?? raw.commentButtonSlots)
         if (comment.length) out.commentIdAttributes = comment
         if (post.length) out.postIdAttributes = post
         if (banner.length) out.postBannerSlots = banner
+        if (button.length) out.commentButtonSlots = button
     }
     return out
 }
@@ -61,5 +67,6 @@ export const setMarkupConfig = (partial: Partial<MarkupConfig>) => {
         commentIdAttributes: withDefaults(partial.commentIdAttributes, DEFAULT_MARKUP_CONFIG.commentIdAttributes),
         postIdAttributes: withDefaults(partial.postIdAttributes, DEFAULT_MARKUP_CONFIG.postIdAttributes),
         postBannerSlots: withDefaults(partial.postBannerSlots, DEFAULT_MARKUP_CONFIG.postBannerSlots),
+        commentButtonSlots: withDefaults(partial.commentButtonSlots, DEFAULT_MARKUP_CONFIG.commentButtonSlots),
     }
 }

@@ -8,8 +8,8 @@ import {
     commentFullnameFromPermalink,
     RateLimiter,
     monitoringBackoffGate,
-    scanDelayMs,
 } from '../../src/src/restore.ts'
+import { scanDelayMs } from '../../src/src/requests'
 
 // Helper to build a CommentTreeNode
 function node(id, author, parent_id, created_utc = 0) {

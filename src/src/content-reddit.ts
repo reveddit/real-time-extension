@@ -14,6 +14,7 @@ import {
     initOwnThreadStatus,
     loadOwnRemovedSets,
     stopWatchingOwnItems,
+    resetScansForPage,
 } from './restore-ui'
 import { classifyPostPage } from './parse_html/new'
 import { getMarkupConfig } from './markup-config'
@@ -26,12 +27,14 @@ const id_match_post = /^t3_.+/
 const NEW_REDDIT_POST = 'shreddit-post'
 const NEW_REDDIT_NOTE = 'rev-new-reddit-message-wrap'
 
-export const redditModifications = (
+export const redditModifications = async (
     other_subscriptions: Record<string, any>,
     hide_subscribe: boolean,
     subscribed_users_lowercase: string[],
     unsubscribed_users_lowercase: string[],
 ) => {
+    // Everything below reads reddit's markup by the names in here
+    await applyRemoteConfig().catch(() => {})
     const isNewReddit = detectIsNewReddit()
     if (isNewReddit) {
         showRemovalStatusOnPostPages()
@@ -42,6 +45,7 @@ export const redditModifications = (
     // Restore buttons on thread pages, profile scan on user pages
     const startPageFeatures = () => {
         stopWatchingOwnItems()
+        resetScansForPage()
         const [postID, , user, subreddit] = getFullIDsFromPath(window.location.pathname)
         if (postID && subreddit) {
             initRestoreOnThread(isNewReddit)
@@ -168,8 +172,7 @@ const addDirectLinks_newReddit_comments = () => {
 // banner clears nothing: the note just stays away. Reddit moves between its
 // pages without loading a new document, so every page watches for posts. The
 // banner has its own selector since it may arrive after its post.
-const showRemovalStatusOnPostPages = async () => {
-    await applyRemoteConfig().catch(() => {})
+const showRemovalStatusOnPostPages = () => {
     const bannerSlots = getMarkupConfig().postBannerSlots
     const selector = [NEW_REDDIT_POST, ...bannerSlots.map(s => `${NEW_REDDIT_POST} [slot="${s}"]`)].join(',')
     const check = (element: Element) => {
@@ -234,6 +237,10 @@ const showRemovalStatus = ({
         const place = subreddit ? `r/${subreddit}` : `u/${user}'s profile`
         const message_2 = ` It is not currently visible in ${place} and may not appear in web search results.`
         const from = `<div class="rev-from"><a id="${optionsID}" href="#">Reveddit Real-Time</a> note</div>`
+        const linkOptions = (note: Element) =>
+            note
+                .querySelector(`#${optionsID}`)
+                ?.addEventListener('click', () => browser.runtime.sendMessage({ action: 'open-options' }))
         const post_path = window.location.pathname.split('/', 6).join('/')
         const reveddit_link = `<p><a href="https://www.reveddit.com${post_path}/">View the post on Reveddit.com</a></p>`
         if (!isNewReddit) {
@@ -241,6 +248,7 @@ const showRemovalStatus = ({
             const infobar = document.createElement('div')
             infobar.className = `reddit-infobar md-container-small ${className}`
             infobar.innerHTML = `${from}<div class="md"><p>${message_1}${message_2}</p>${reveddit_link}</div>`
+            linkOptions(infobar)
             const contentMain = document.querySelector('div.content[role="main"]')
             if (contentMain) {
                 contentMain.prepend(infobar)
@@ -251,14 +259,12 @@ const showRemovalStatus = ({
             wrap.className = `${NEW_REDDIT_NOTE} ${className}`
             wrap.dataset.post = postID
             wrap.innerHTML = `${from}<div class="rev-new-reddit-message-content"><div class="rev-new-reddit-message-content-description">${message_1}${message_2}</div>${reveddit_link}</div>`
+            linkOptions(wrap)
             // Reddit's back and forward buttons put a page's old elements back
             if (target && !document.querySelector(`.${NEW_REDDIT_NOTE}[data-post="${postID}"]`)) {
                 target.after(wrap)
             }
         }
-        document
-            .getElementById(optionsID)
-            ?.addEventListener('click', () => browser.runtime.sendMessage({ action: 'open-options' }))
     }
 }
 

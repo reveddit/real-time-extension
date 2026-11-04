@@ -1,13 +1,17 @@
-import { getFullIDsFromPath, getPrettyDate, REMOVED_BY_MODERATOR_TEXT, detectIsNewReddit } from './common'
+import { getFullIDsFromPath, getPrettyDate, detectIsNewReddit } from './common'
 import { getObjectNamesForThing } from './storage'
-import { observe, findByText } from './dom-helpers'
+import { observe } from './dom-helpers'
+import { getMarkupConfig } from './markup-config'
 import {
     restoreComment,
     scanUserProfile,
     scanThreadForRemovedComments,
     commentFullnameFromPermalink,
+    commentIdOf,
+    commentSelector,
     lookupCommentsByIds,
     RateLimiter,
+    ScanReads,
     type RestoreProgress,
     type RestoreResult,
     type RecoveredComment,
@@ -18,8 +22,24 @@ import {
 // --- State tracking ---
 
 const injectedComments = new Set<string>()
-let activeRestoreLimiter: RateLimiter | null = null
-const authorCache = new Map<string, any[]>()
+// The scan running now, on this tab: one at a time
+let activeScan: RateLimiter | null = null
+// The feeds this page's scans have read, so the next click goes on from there
+const pageReads = new Map<string, any[]>()
+// Whether the profile scan on this page saw everything, so a rescan starts over
+let profileScanFinished = false
+// Places what this page's scans recover, so each click's can nest under the last's
+let pageInserter: RecoveredCommentInserter | null = null
+const inserterForPage = (isNewReddit: boolean) => (pageInserter ||= new RecoveredCommentInserter(isNewReddit))
+
+// A document can last a whole visit to reddit, so a new page starts over. Back
+// and forward can bring a page back with its buttons as they were when it left.
+export function resetScansForPage() {
+    pageReads.clear()
+    profileScanFinished = false
+    pageInserter = null
+    setScanButtonsEnabled(!activeScan)
+}
 let currentFilter: 'all' | 'removed' | 'visible' = 'removed'
 
 // --- Thread Restore: Old Reddit ---
@@ -41,6 +61,7 @@ function injectRestoreButton_oldReddit(commentEl: HTMLElement) {
     const btn = document.createElement('a')
     btn.href = '#'
     btn.className = 'rev-scan-comment-btn rev-comment-action'
+    btn.classList.toggle('rev-scan-disabled', !!activeScan)
     btn.textContent = 'scan-rev'
     btn.title = 'Search for removed comments in this thread via reveddit'
     btn.addEventListener('click', e => {
@@ -62,10 +83,19 @@ function ownPart(comment: Element, selector: string): HTMLElement | undefined {
         | undefined
 }
 
-const newRedditCommentEl = (id: string) => document.querySelector(`shreddit-comment[thingid="${id}"]`) as HTMLElement
+const newRedditCommentEl = (id: string) => document.querySelector(commentSelector(id)) as HTMLElement
 
+// A moderator's removal kept for its replies, read from its markup since its
+// words may follow the page's language: no author, no text of the comment's own
+// and not marked as the author's deletion. Its one paragraph is reddit's notice.
 const removedText_newReddit = (comment: Element) =>
-    findByText(comment, 'p', REMOVED_BY_MODERATOR_TEXT).find(el => el.closest('shreddit-comment') === comment)
+    comment.matches('[author="[deleted]"]:not([is-comment-deleted])') && !ownPart(comment, '[slot="comment"]')
+        ? ownPart(comment, 'p')
+        : undefined
+
+// Comment observers last the whole document, and a post on a profile has no
+// thread of the kind a scan reads
+const onSubredditThread = () => !!getFullIDsFromPath(window.location.pathname)[3]
 
 // Under the comment's text, above its own buttons, not below its replies. Reddit
 // collapses removed comments, so it opens one to show what it gained.
@@ -77,9 +107,10 @@ function addUnderComment(comment: HTMLElement, ...els: HTMLElement[]) {
 }
 
 function injectRestoreButton_newReddit(comment: HTMLElement) {
-    const commentId = comment.getAttribute('thingid')
+    const commentId = commentIdOf(comment)
     const textBlock = removedText_newReddit(comment)?.closest('div')
-    if (!commentId || !textBlock || textBlock.parentElement?.querySelector('.rev-restore-btn')) return
+    if (!commentId || !textBlock || !onSubredditThread()) return
+    if (textBlock.parentElement?.querySelector('.rev-restore-btn')) return
 
     const wrap = document.createElement('div')
     wrap.className = 'rev-restore-wrap'
@@ -87,6 +118,7 @@ function injectRestoreButton_newReddit(comment: HTMLElement) {
     const btn = document.createElement('a')
     btn.href = '#'
     btn.className = 'rev-restore-btn'
+    btn.classList.toggle('rev-scan-disabled', !!activeScan)
     btn.textContent = 'restore'
     btn.addEventListener('click', e => {
         e.preventDefault()
@@ -111,12 +143,14 @@ function newRedditScanBtnHTML(): string {
 // stays in reach of the page's scan state, unlike one in the row's shadow root.
 function injectScanButton_newReddit(row: Element) {
     const comment = row.closest('shreddit-comment') as HTMLElement | null
-    const thingid = comment?.getAttribute('thingid')
-    if (!comment || !thingid || row.querySelector('.rev-scan-comment-btn') || removedText_newReddit(comment)) return
+    const thingid = commentIdOf(comment)
+    if (!comment || !thingid || !onSubredditThread()) return
+    if (row.querySelector('.rev-scan-comment-btn') || removedText_newReddit(comment)) return
 
     const btn = document.createElement('button')
-    btn.slot = 'comment-share'
+    btn.slot = getMarkupConfig().commentButtonSlots[0]
     btn.className = 'rev-scan-comment-btn rev-newreddit-action'
+    btn.classList.toggle('rev-scan-disabled', !!activeScan)
     btn.title = 'Search for removed comments in this thread via reveddit'
     btn.innerHTML = newRedditScanBtnHTML()
     btn.addEventListener('click', e => {
@@ -133,16 +167,53 @@ function injectScanButton_newReddit(row: Element) {
 // Disable every scan/restore button while one search runs, so a user can't fire
 // many at once (which would multiply requests to reddit and risk a rate-limit).
 function setScanButtonsEnabled(enabled: boolean) {
-    document.querySelectorAll('.rev-scan-comment-btn, .rev-scan-all-btn').forEach(b => {
+    document.querySelectorAll('.rev-scan-comment-btn, .rev-restore-btn, .rev-scan-all-btn').forEach(b => {
         ;(b as HTMLElement).classList.toggle('rev-scan-disabled', !enabled)
     })
+}
+
+// A scan belongs to the page it started on. pageEl is part of that page: reddit
+// replaces it on leaving, which stops the scan, and nothing it finds is shown.
+function startScan(pageEl: HTMLElement): RateLimiter {
+    activeScan?.cancel()
+    const limiter = new RateLimiter(undefined, () => pageEl.isConnected)
+    activeScan = limiter
+    setScanButtonsEnabled(false)
+    return limiter
+}
+
+function endScan(limiter: RateLimiter) {
+    if (activeScan !== limiter) return
+    activeScan = null
+    setScanButtonsEnabled(true)
+}
+
+function addCancelLink(host: HTMLElement, limiter: RateLimiter): HTMLElement {
+    const cancelBtn = document.createElement('a')
+    cancelBtn.href = '#'
+    cancelBtn.className = 'rev-restore-cancel'
+    cancelBtn.textContent = 'cancel'
+    cancelBtn.onclick = e => {
+        e.preventDefault()
+        limiter.cancel()
+    }
+    host.appendChild(cancelBtn)
+    return cancelBtn
+}
+
+// Place a recovered comment and retire the buttons that would search for it
+function placeRecovered(inserter: RecoveredCommentInserter, rc: RecoveredComment, isNewReddit: boolean) {
+    inserter.add(rc)
+    const el = isNewReddit ? newRedditCommentEl(rc.id) : findOldRedditCommentEl(rc.id)
+    const otherBtn = isNewReddit
+        ? el && ownPart(el, '.rev-scan-comment-btn, .rev-restore-btn')
+        : (el?.querySelector('.rev-scan-comment-btn') as HTMLElement | null)
+    if (otherBtn) otherBtn.style.display = 'none'
 }
 
 async function handleRestore(commentId: string, container: HTMLElement, isNewReddit: boolean, btn: HTMLElement) {
     const [postID, , , subreddit] = getFullIDsFromPath(window.location.pathname)
     if (!postID || !subreddit) return
-
-    activeRestoreLimiter?.cancel()
 
     // Inline progress/cancel UI belongs next to the comment: on old reddit its own
     // .entry, and on new reddit beside its action row. Neither holds its replies.
@@ -151,17 +222,13 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
         : (container.querySelector(':scope > .entry') as HTMLElement) || container
 
     btn.style.display = 'none'
-    setScanButtonsEnabled(false)
+    const limiter = startScan(container)
 
     host.querySelector(':scope > .rev-restore-progress')?.remove()
     host.querySelector(':scope > .rev-restore-cancel')?.remove()
 
     // Cancel goes first (left) so it stays put as the progress text changes width.
-    const cancelBtn = document.createElement('a')
-    cancelBtn.href = '#'
-    cancelBtn.className = 'rev-restore-cancel'
-    cancelBtn.textContent = 'cancel'
-    host.appendChild(cancelBtn)
+    const cancelBtn = addCancelLink(host, limiter)
 
     const progressEl = document.createElement('span')
     progressEl.className = 'rev-restore-progress'
@@ -172,17 +239,10 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
     progressEl.append(spinner, progressText)
     host.appendChild(progressEl)
 
-    const limiter = new RateLimiter()
-    activeRestoreLimiter = limiter
-    cancelBtn.onclick = e => {
-        e.preventDefault()
-        limiter.cancel()
-    }
-
     // Reuse the inserter from the thread-scan so other-found comments (tombstones
     // AND removed leaves without tombstones) are placed/orphaned properly, and
     // orphans relocate when their parent turns up later.
-    const inserter = new RecoveredCommentInserter(isNewReddit)
+    const inserter = inserterForPage(isNewReddit)
 
     let result: RestoreResult
     let lastStatus = ''
@@ -196,36 +256,35 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
                 progressText.textContent = progress.message
                 lastStatus = progress.status
             },
-            authorCache,
+            pageReads,
             // Cross-check callback: when the scan finds another removed comment
             // while looking for the target, place it immediately — filling a
             // tombstone if one exists, or inserting into the tree / unattached area.
             rc => {
-                inserter.add(rc)
-                // Hide that comment's scan-rev button since it's resolved.
-                const el = isNewReddit ? newRedditCommentEl(rc.id) : findOldRedditCommentEl(rc.id)
-                const otherBtn = isNewReddit
-                    ? el && ownPart(el, '.rev-scan-comment-btn, .rev-restore-btn')
-                    : (el?.querySelector('.rev-scan-comment-btn') as HTMLElement | null)
-                if (otherBtn) otherBtn.style.display = 'none'
+                if (container.isConnected) placeRecovered(inserter, rc, isNewReddit)
             },
+            limiter,
         )
     } finally {
-        activeRestoreLimiter = null
-        setScanButtonsEnabled(true)
+        endScan(limiter)
     }
 
     spinner.remove()
     cancelBtn.remove()
+
+    // Back and forward can put this comment back, ready to search again
+    if (!container.isConnected) {
+        progressEl.remove()
+        btn.style.display = ''
+        return
+    }
 
     if (result.found) {
         progressEl.remove()
         displayRestoredComment(commentId, container, result, isNewReddit)
         // Show filter and auto-switch if this is the first found comment
         injectThreadFilter(isNewReddit)
-        shouldAutoFilterRemoved().then(auto => {
-            if (auto) applyThreadFilter('removed', isNewReddit)
-        })
+        autoFilterRemoved(isNewReddit, container)
         return
     }
 
@@ -234,27 +293,31 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
         if (result.exhausted) {
             // Every visible author has been searched — no more to find for ANY
             // comment in this thread, so disable ALL remaining scan buttons
-            // (per-comment and thread-level).
+            // (per-comment and thread-level). A comment that needs another sort
+            // of their feeds has its search still to come, so only this one goes.
             const exhaustedTitle = 'All visible authors searched — no more removed comments to find'
-            document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(b => {
-                b.textContent = 'scan-rev'
-                ;(b as HTMLElement).classList.add('rev-scan-exhausted')
-                ;(b as HTMLElement).title = exhaustedTitle
-            })
+            const scanBtns = Array.from(document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)'))
+            scanBtns
+                .filter(b => !result.otherSorts || b === btn)
+                .forEach(b => {
+                    b.textContent = 'scan-rev'
+                    ;(b as HTMLElement).classList.add('rev-scan-exhausted')
+                    ;(b as HTMLElement).title = exhaustedTitle
+                })
             const scanAllBtn = document.querySelector('.rev-scan-all-btn') as HTMLButtonElement | null
-            if (scanAllBtn && !scanAllBtn.classList.contains('rev-scan-exhausted')) {
+            if (!result.otherSorts && scanAllBtn && !scanAllBtn.classList.contains('rev-scan-exhausted')) {
                 scanAllBtn.classList.add('rev-scan-exhausted')
                 scanAllBtn.disabled = true
                 scanAllBtn.title = exhaustedTitle
             }
         } else {
-            // More authors remain; show the count and let a re-click continue.
-            // Update ALL non-exhausted scan buttons so every comment shows the
-            // same remaining count.
+            // More remains; show the count and let a re-click continue. Update
+            // ALL non-exhausted scan buttons so every comment shows the same
+            // remaining count.
             document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(b => {
                 const base = (b.textContent || '').replace(/\s*\(\d+\)\s*$/, '')
                 b.textContent = `${base} (${result.remaining})`
-                ;(b as HTMLElement).title = `${result.remaining} more author(s) to search — click to continue`
+                ;(b as HTMLElement).title = `${result.remaining} more to check — click to continue`
             })
         }
     }
@@ -290,6 +353,7 @@ function displayRestoredComment(
         const commentEl = findOldRedditCommentEl(commentId)
         if (!commentEl) return
         commentEl.classList.remove('deleted')
+        commentEl.setAttribute('data-rev-id', commentId)
         // Highlight only the comment's own row (.entry), not the whole .thing —
         // the .thing contains its nested replies (.child), so a border/tint there
         // would span the entire subtree.
@@ -338,6 +402,8 @@ function displayRestoredComment(
 
 // --- Thread Scan All ---
 
+const SCAN_ALL_TEXT = 'Scan for removed comments'
+
 function injectScanAllButton(isNewReddit: boolean) {
     if (!isNewReddit) {
         const menuarea = document.querySelector('.commentarea .menuarea')
@@ -345,7 +411,7 @@ function injectScanAllButton(isNewReddit: boolean) {
 
         const btn = document.createElement('button')
         btn.className = 'rev-scan-all-btn'
-        btn.textContent = 'Scan for removed comments'
+        btn.textContent = SCAN_ALL_TEXT
         btn.title = 'Search for removed comments in this thread'
         btn.addEventListener('click', e => {
             e.preventDefault()
@@ -359,7 +425,7 @@ function injectScanAllButton(isNewReddit: boolean) {
 
         const btn = document.createElement('button')
         btn.className = 'rev-scan-all-btn rev-profile-scan-btn'
-        btn.textContent = 'Scan for removed comments'
+        btn.textContent = SCAN_ALL_TEXT
         btn.addEventListener('click', e => {
             e.preventDefault()
             handleScanAll(true)
@@ -374,13 +440,12 @@ async function handleScanAll(isNewReddit: boolean) {
 
     const btn = document.querySelector('.rev-scan-all-btn') as HTMLButtonElement
     if (!btn) return
-    const origText = btn.textContent
     btn.textContent = 'Scanning...'
     btn.disabled = true
     btn.classList.add('rev-scan-all-loading')
     // Block per-comment scans while the thread scan runs (and vice versa); keep
     // this button itself un-dimmed since it shows the active progress.
-    setScanButtonsEnabled(false)
+    const limiter = startScan(btn)
     btn.classList.remove('rev-scan-disabled')
 
     let progressEl = document.querySelector('.rev-scan-all-progress') as HTMLElement
@@ -390,6 +455,7 @@ async function handleScanAll(isNewReddit: boolean) {
         btn.after(progressEl)
     }
     progressEl.textContent = ''
+    const cancelBtn = addCancelLink(progressEl, limiter)
     const spinner = document.createElement('span')
     spinner.className = 'rev-spinner'
     const progressText = document.createElement('span')
@@ -398,33 +464,41 @@ async function handleScanAll(isNewReddit: boolean) {
     // Place each recovered comment the moment it's found: under its parent if
     // present, otherwise parked in the "unattached" area and relocated later if
     // an ancestor turns up in a subsequent search.
-    const inserter = new RecoveredCommentInserter(isNewReddit)
+    const inserter = inserterForPage(isNewReddit)
 
     let finalStatus = ''
     const recovered = await scanThreadForRemovedComments(
         postID,
         subreddit,
         isNewReddit,
-        authorCache,
+        pageReads,
         progress => {
             progressText.textContent = progress.message
             finalStatus = progress.status
         },
-        rc => inserter.add(rc),
+        rc => {
+            if (btn.isConnected) placeRecovered(inserter, rc, isNewReddit)
+        },
+        limiter,
     )
 
-    btn.textContent =
-        recovered.length > 0 ? `${recovered.length} comment(s) recovered` : origText || 'Scan for removed comments'
+    const onPage = document.querySelectorAll('[data-rev-id]').length
+    btn.textContent = onPage > 0 ? `${onPage} comment(s) recovered` : SCAN_ALL_TEXT
+    if (finalStatus === 'partial') btn.textContent = 'Continue scan'
     btn.disabled = false
     btn.classList.remove('rev-scan-all-loading')
-    setScanButtonsEnabled(true)
+    endScan(limiter)
     // Leave the final status message visible; just drop the spinner.
     spinner.remove()
+    cancelBtn.remove()
+
+    // Left the page: what's on screen now isn't this scan's business
+    if (!btn.isConnected) return
 
     // A scan that finished searched all visible authors, so everything is now
     // exhausted: disable all per-comment scan buttons + the thread button
-    // itself. One that stopped (refused pages, rate limit, no comment tree)
-    // leaves them for another try.
+    // itself. One that stopped (refused pages, rate limit, no comment tree, the
+    // click's limit) leaves them for another try.
     if (finalStatus === 'found' || finalStatus === 'not_found') {
         const exhaustedTitle = 'All visible authors searched — no more removed comments to find'
         document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(b => {
@@ -440,9 +514,7 @@ async function handleScanAll(isNewReddit: boolean) {
     // Show the filter bar and auto-switch to "removed" view if any were found.
     if (recovered.length > 0) {
         injectThreadFilter(isNewReddit)
-        shouldAutoFilterRemoved().then(auto => {
-            if (auto) applyThreadFilter('removed', isNewReddit)
-        })
+        autoFilterRemoved(isNewReddit, btn)
     }
 }
 
@@ -468,6 +540,8 @@ function collapseComment(el: Element) {
 }
 
 function isRemovedOrRecovered(el: Element): boolean {
+    // Monitoring's record of the viewer's own comment, whose highlight is on its .entry
+    if (el.getAttribute('data-rev-status') === 'removed') return true
     // A tombstone filled by us, or inserted by us, or highlighted by per-comment scan
     if (el.classList.contains('rev-removed-highlight')) return true
     if (el.classList.contains('rev-inserted-comment')) return true
@@ -497,8 +571,8 @@ function applyThreadFilter(filter: ThreadFilter, isNewReddit: boolean) {
     })
 
     if (isNewReddit) {
-        const topComments = document.querySelectorAll('shreddit-comment-tree shreddit-comment:not([parentid])')
-        for (const el of Array.from(topComments)) {
+        const comments = Array.from(document.querySelectorAll('shreddit-comment-tree shreddit-comment'))
+        for (const el of comments.filter(c => !c.parentElement?.closest('shreddit-comment'))) {
             applyFilterToNewRedditComment(el as HTMLElement, filter)
         }
         const unattached = document.querySelector('.rev-unattached-area')
@@ -565,12 +639,16 @@ function applyFilterToComment(el: HTMLElement, filter: ThreadFilter) {
     }
 }
 
-// Replies sit deep inside their parent, and a comment names its parent
+// Replies sit deep inside their parent, and hold their own replies
 const repliesOf_newReddit = (el: Element) =>
-    Array.from(el.querySelectorAll(`shreddit-comment[parentid="${el.getAttribute('thingid')}"]`))
+    Array.from(el.querySelectorAll('shreddit-comment')).filter(c => c.parentElement?.closest('shreddit-comment') === el)
 
 function isNewRedditCommentRemoved(el: Element): boolean {
-    return !!removedText_newReddit(el) || !!ownPart(el, '.rev-inserted-comment')
+    return (
+        !!removedText_newReddit(el) ||
+        !!ownPart(el, '.rev-inserted-comment') ||
+        el.getAttribute('data-rev-status') === 'removed'
+    )
 }
 
 function hasNewRedditRemovedDescendant(el: Element): boolean {
@@ -627,16 +705,16 @@ function injectThreadFilter(isNewReddit: boolean) {
     }
 }
 
-function shouldAutoFilterRemoved(): Promise<boolean> {
-    return new Promise(resolve => {
-        try {
-            chrome.storage.sync.get(['options'], sync => {
-                resolve((sync?.options || {}).auto_filter_removed_threads !== false)
-            })
-        } catch {
-            resolve(true)
-        }
-    })
+// Unless the user turned it off, and pageEl is still showing by then
+function autoFilterRemoved(isNewReddit: boolean, pageEl: HTMLElement) {
+    try {
+        chrome.storage.sync.get(['options'], sync => {
+            const auto = (sync?.options || {}).auto_filter_removed_threads !== false
+            if (auto && pageEl.isConnected) applyThreadFilter('removed', isNewReddit)
+        })
+    } catch {
+        applyThreadFilter('removed', isNewReddit)
+    }
 }
 
 // --- Recovered comment insertion (thread restore) ---
@@ -706,15 +784,15 @@ class RecoveredCommentInserter {
         if (this.placing) return
         this.placing = true
         btn.disabled = true
-        const limiter = new RateLimiter()
+        const reads = new ScanReads(new RateLimiter(undefined, () => btn.isConnected))
         const tried = new Set<string>()
-        for (let level = 0; level < MAX_BRIDGE_DEPTH; level++) {
+        for (let level = 0; level < MAX_BRIDGE_DEPTH && !reads.stopped; level++) {
             const needed = this.pendingParents().filter(({ name }) => !tried.has(name))
             if (needed.length === 0) break
             needed.forEach(({ name }) => tried.add(name))
             btn.textContent = `Placing… (${this.orphans.size} left)`
-            const looked = await lookupCommentsByIds(needed, limiter)
-            if (looked.size === 0) break // ancestors unavailable (deleted/invalid)
+            const { looked } = await lookupCommentsByIds(needed, reads)
+            if (looked.size === 0 || !btn.isConnected) break // ancestors unavailable (deleted/invalid)
             for (const c of looked.values()) {
                 this.add({
                     id: c.id,
@@ -724,7 +802,6 @@ class RecoveredCommentInserter {
                     body: c.body,
                     body_html: c.body_html,
                     created_utc: c.created_utc,
-                    score: 0,
                     permalink: c.permalink,
                     subreddit: c.subreddit,
                     kind: c.removed ? 'recovered' : 'context',
@@ -1011,6 +1088,9 @@ function createProfileScanContainer(username: string): HTMLElement {
     btn.className = 'rev-profile-scan-btn'
     btn.textContent = 'Scan for removed content'
     btn.addEventListener('click', () => handleProfileScan(username, container))
+    isViewer(username).then(own => {
+        if (own && !btn.disabled) btn.textContent = 'Scan for removed posts'
+    })
 
     const progress = document.createElement('div')
     progress.className = 'rev-profile-scan-progress'
@@ -1031,31 +1111,46 @@ async function handleProfileScan(username: string, container: HTMLElement) {
     const progressEl = container.querySelector('.rev-profile-scan-progress') as HTMLElement
     const resultsEl = container.querySelector('.rev-profile-scan-results') as HTMLElement
 
+    // The filter bar goes with the last results, so the page goes back to all of it
+    if (resultsEl.childElementCount > 0) applyFilter('all')
+
     btn.disabled = true
     btn.textContent = 'Scanning...'
     progressEl.style.display = ''
     resultsEl.style.display = 'none'
     resultsEl.innerHTML = ''
 
-    const urlParams = getProfileURLParams()
+    if (profileScanFinished) pageReads.clear()
+    const limiter = startScan(container)
+    // Only the scanned account's own session sees its removed content as live,
+    // so the jump badge next to links is shown only to that account.
+    const isOwnProfile = await isViewer(username)
+    let lastStatus = ''
     const results = await scanUserProfile(
         username,
         (progress: RestoreProgress) => {
             progressEl.textContent = progress.message
+            lastStatus = progress.status
         },
-        urlParams,
+        { ...getProfileURLParams(), ownProfile: isOwnProfile },
+        limiter,
+        pageReads,
     )
 
+    endScan(limiter)
+    profileScanFinished = lastStatus === 'found' || lastStatus === 'not_found'
     btn.disabled = false
     btn.textContent = 'Rescan'
 
     // The scan's last message stands: "No removed items found." when it read
-    // the profile, or why it couldn't
-    if (results.length === 0) {
+    // the profile, or why it couldn't. Left the page: nothing here is for what's
+    // showing now.
+    if (results.length === 0 || !container.isConnected) {
         return
     }
 
-    progressEl.style.display = 'none'
+    // Unless it stopped short, which the results alone wouldn't show
+    if (lastStatus === 'found') progressEl.style.display = 'none'
     resultsEl.style.display = ''
 
     // Reddit shows an author their own removed content as if nothing happened,
@@ -1074,10 +1169,6 @@ async function handleProfileScan(username: string, container: HTMLElement) {
 
     const isNewReddit = detectIsNewReddit()
     const matched = highlightVisibleRemovedComments(results, isNewReddit)
-    // Only the scanned account's own session sees its removed content as live,
-    // so the jump badge next to links is shown only to that account.
-    const viewer = await getLastLoggedInUser()
-    const isOwnProfile = !!viewer && viewer.toLowerCase() === username.toLowerCase()
     const inserted = insertMissingComments(results, matched, isNewReddit, isOwnProfile)
 
     renderFilterControls(resultsEl, results)
@@ -1184,7 +1275,6 @@ function highlightComment_newReddit(el: HTMLElement, result: ScanResult) {
 interface VisibleItem {
     element: HTMLElement
     created_utc: number
-    score: number
 }
 
 function getVisibleItemPositions(isNewReddit: boolean): VisibleItem[] {
@@ -1196,9 +1286,7 @@ function getVisibleItemPositions(isNewReddit: boolean): VisibleItem[] {
             const timeEl = el.querySelector('time[datetime]')
             const datetime = timeEl?.getAttribute('datetime')
             const created_utc = datetime ? Math.floor(new Date(datetime).getTime() / 1000) : 0
-            const scoreEl = el.querySelector('.score.unvoted')
-            const score = scoreEl ? parseInt(scoreEl.getAttribute('title') || '0', 10) : 0
-            items.push({ element: el as HTMLElement, created_utc, score })
+            items.push({ element: el as HTMLElement, created_utc })
         }
     } else {
         // New reddit profile: articles containing shreddit-post elements
@@ -1207,8 +1295,7 @@ function getVisibleItemPositions(isNewReddit: boolean): VisibleItem[] {
             const shredditPost = el.querySelector('shreddit-post')
             const ts = shredditPost?.getAttribute('created-timestamp')
             const created_utc = ts ? Math.floor(new Date(ts).getTime() / 1000) : 0
-            const score = parseInt(shredditPost?.getAttribute('score') || '0', 10)
-            items.push({ element: el as HTMLElement, created_utc, score })
+            items.push({ element: el as HTMLElement, created_utc })
         }
     }
 
@@ -1242,24 +1329,22 @@ function insertMissingComments(
     return inserted
 }
 
+// Feeds carry no score, so on a page sorted by score an item goes right after
+// the one before it in its feed, which has the same order and may be one
+// inserted just now. On a page that may mix posts and comments, dates decide.
 function findInsertPosition(
     item: ScanResult,
     visibleItems: VisibleItem[],
     sort: string,
 ): { element: HTMLElement; where: 'beforebegin' | 'afterend' } | null {
-    for (const visible of visibleItems) {
-        const shouldInsertBefore =
-            sort === 'new'
-                ? item.created_utc > visible.created_utc
-                : sort === 'top'
-                  ? (item.score || 0) > visible.score
-                  : sort === 'controversial'
-                    ? (item.score || 0) < visible.score
-                    : item.created_utc > visible.created_utc
-
-        if (shouldInsertBefore) {
-            return { element: visible.element, where: 'beforebegin' }
-        }
+    if (sort === 'top' || sort === 'controversial') {
+        const before =
+            item.after && document.querySelector(`[data-fullname="${item.after}"], [data-post-id="${item.after}"]`)
+        if (before) return { element: before as HTMLElement, where: 'afterend' }
+        if (!item.after) return { element: visibleItems[0].element, where: 'beforebegin' }
+    } else {
+        const newer = visibleItems.find(visible => item.created_utc > visible.created_utc)
+        if (newer) return { element: newer.element, where: 'beforebegin' }
     }
 
     return {
@@ -1404,6 +1489,9 @@ const getLastLoggedInUser = (): Promise<string> =>
             resolve('')
         }
     })
+
+const isViewer = async (username: string): Promise<boolean> =>
+    (await getLastLoggedInUser()).toLowerCase() === username.toLowerCase()
 
 const OWN_VIEW_HINT = 'Shows your own view. Open in a private window, or as another account, to see it as others do.'
 
@@ -1673,9 +1761,8 @@ function watchOwnItems(selector: string, flag: (el: HTMLElement) => void) {
 
 export function initOwnThreadStatus(isNewReddit: boolean) {
     loadOwnRemovedSets((removed, locked) => {
-        const selector = isNewReddit ? 'shreddit-comment[thingid]' : '.thing.comment[data-fullname]'
-        const getId = (el: HTMLElement) =>
-            isNewReddit ? el.getAttribute('thingid') || '' : el.getAttribute('data-fullname') || ''
+        const selector = isNewReddit ? commentSelector() : '.thing.comment[data-fullname]'
+        const getId = (el: HTMLElement) => (isNewReddit ? commentIdOf(el) : el.getAttribute('data-fullname') || '')
         // Highlight the comment, not what wraps its nested replies
         const getTarget = (el: HTMLElement) =>
             (isNewReddit

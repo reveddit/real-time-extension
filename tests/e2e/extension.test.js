@@ -55,6 +55,18 @@ test.describe('Popup page', () => {
         expect((await opened(page)).href).toBe('https://www.reddit.com/login')
     })
 
+    test('a login reddit keeps refusing: says so, and offers to log in', async ({ context, extensionId }) => {
+        const [worker] = context.serviceWorkers()
+        await worker.evaluate(() =>
+            chrome.storage.local.set({ error_status: 'logged_in_view_unavailable', last_logged_in_user: 'someone' }),
+        )
+        const page = await context.newPage()
+        await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
+
+        await expect(page.getByText("Reddit isn't accepting your login")).toBeVisible()
+        await expect(page.getByRole('button', { name: 'Log in to Reddit' })).toBeVisible()
+    })
+
     test("reddit's login wall: offers a second account, then says why", async ({ context, extensionId }) => {
         // What monitoring leaves behind after five lookups that landed on
         // reddit's login page
@@ -449,6 +461,39 @@ const seedOwnRemoved = (context, id) =>
             id,
         )
 
+// Reddit's router, as measured 2026-11-04: the address changes first, then
+// one element under shreddit-app is replaced whole, and on a first visit a
+// post's comments arrive after it. Back and forward put the same elements back.
+const startRouter = page =>
+    page.evaluate(() => {
+        const app = document.querySelector('shreddit-app')
+        const left = {}
+        let shown = location.pathname
+        const show = element => {
+            left[shown] = app.firstElementChild
+            shown = location.pathname
+            app.replaceChildren(element)
+        }
+        window.addEventListener('popstate', () => setTimeout(() => show(left[location.pathname]), 20))
+        window.visit = (path, main, comments) => {
+            history.pushState({}, '', path)
+            setTimeout(() => {
+                const element = document.createElement('div')
+                element.innerHTML = `<main id="main-content">${main}</main>`
+                show(element)
+                if (comments) setTimeout(() => element.querySelector('main').append(comments), 200)
+            }, 20)
+        }
+    })
+const visit = (page, path, main, comments) =>
+    page.evaluate(
+        ([path, main, comments]) => {
+            const late = comments && document.createRange().createContextualFragment(comments)
+            window.visit(path, main, late)
+        },
+        [path, main, comments],
+    )
+
 test.describe('Post removal note on reddit pages', () => {
     const HELD = 'Post is awaiting moderator approval.'
     const NOTE = '.rev-new-reddit-message-wrap'
@@ -559,6 +604,19 @@ test.describe('Post removal note on reddit pages', () => {
         await expect(page.locator(NOTE)).toContainText("It is not currently visible in u/someone's profile")
     })
 
+    test('its link opens the options page once, whatever put the note there', async ({ context, extensionId }) => {
+        expect(extensionId).toBeTruthy()
+        const [worker] = context.serviceWorkers()
+        await worker.evaluate(() => {
+            self.opened = 0
+            chrome.runtime.openOptionsPage = () => self.opened++
+        })
+        const page = await openNewReddit(context, THREAD, postElement(POST, { banner: HELD }))
+        await page.locator(`${NOTE} a`, { hasText: 'Reveddit Real-Time' }).click()
+        await page.waitForTimeout(300)
+        expect(await worker.evaluate(() => self.opened)).toBe(1)
+    })
+
     test("old reddit still reads the page's robots tag", async ({ context }) => {
         const page = await open(
             context,
@@ -583,39 +641,6 @@ test.describe('Reddit pages reached without a new document', () => {
     const tree = `<shreddit-comment-tree id="comment-tree">${comment(OWN)}${comment(OTHERS)}</shreddit-comment-tree>`
     const profileComment = id => `<shreddit-profile-comment comment-id="${id}"><p>Words</p></shreddit-profile-comment>`
     const ownComment = page => page.locator(`[thingid="${OWN}"].rev-removed-highlight`)
-
-    // Reddit's router, as measured 2026-11-04: the address changes first, then
-    // one element under shreddit-app is replaced whole, and on a first visit a
-    // post's comments arrive after it. Back and forward put the same elements back.
-    const startRouter = page =>
-        page.evaluate(() => {
-            const app = document.querySelector('shreddit-app')
-            const left = {}
-            let shown = location.pathname
-            const show = element => {
-                left[shown] = app.firstElementChild
-                shown = location.pathname
-                app.replaceChildren(element)
-            }
-            window.addEventListener('popstate', () => setTimeout(() => show(left[location.pathname]), 20))
-            window.visit = (path, main, comments) => {
-                history.pushState({}, '', path)
-                setTimeout(() => {
-                    const element = document.createElement('div')
-                    element.innerHTML = `<main id="main-content">${main}</main>`
-                    show(element)
-                    if (comments) setTimeout(() => element.querySelector('main').append(comments), 200)
-                }, 20)
-            }
-        })
-    const visit = (page, path, main, comments) =>
-        page.evaluate(
-            ([path, main, comments]) => {
-                const late = comments && document.createRange().createContextualFragment(comments)
-                window.visit(path, main, late)
-            },
-            [path, main, comments],
-        )
 
     test('a post reached from a list gets its scan button and own highlights, once', async ({
         context,
@@ -829,12 +854,37 @@ test.describe("Scans on new reddit's comments", () => {
     const answerAs = async (context, answers) => {
         await context.addCookies([{ name: 'reddit_session', value: 'x', domain: '.reddit.com', path: '/' }])
         await context.serviceWorkers()[0].evaluate(answers => {
+            self.asked = []
             self.fetch = async url => {
-                const answer = answers[String(url).replace('https://www.reddit.com', '')]
+                const path = String(url).replace('https://www.reddit.com', '')
+                self.asked.push(path)
+                const answer = answers[path]
                 return new Response(answer ?? '', { status: answer === undefined ? 404 : 200 })
             }
         }, answers)
     }
+    // What scans sent, not the login checks monitoring sends alongside them
+    const askedFor = context =>
+        context
+            .serviceWorkers()[0]
+            .evaluate(() => self.asked.filter(path => /\.rss|\/(comments|submitted)\.json/.test(path)))
+    const THREAD_FEED_PATH = '/r/pics/comments/abc123/.rss?limit=500'
+    const THE_REMOVED_WORDS = {
+        [THREAD_FEED_PATH]: threadFeed,
+        [userFeed('op')]: feed(),
+        [userFeed('someone')]: feed(entry(REMOVED, 'someone', 'The removed words')),
+        [userFeed('replier')]: feed(),
+    }
+    const removedAtTop = comment(REMOVED, {
+        author: '[deleted]',
+        replies: comment(REPLY, { parent: REMOVED, author: 'replier' }),
+    })
+    const NEXT_POST = 't3_def456'
+    const NEXT_THREAD = '/r/pics/comments/def456/b_title/'
+    const nextThread = () => [
+        postElement(NEXT_POST).replace('<shreddit-post', '<shreddit-post comment-count="5"'),
+        `<shreddit-comment-tree id="comment-tree"><section>${comment('t1_next')}</section></shreddit-comment-tree>`,
+    ]
 
     test('a comment gets its button when reddit stamps its row, inline with Share', async ({
         context,
@@ -974,6 +1024,402 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(page.locator(`[thingid="${OTHER}"]`)).toBeHidden()
         await page.locator('.rev-thread-filter-btn', { hasText: 'all' }).click()
         await expect(page.locator(`[thingid="${OTHER}"]`)).toBeVisible()
+    })
+
+    test("a tombstone's restore link goes once a scan has filled it in", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, THE_REMOVED_WORDS)
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST), removedAtTop))
+        await expect(page.locator(RESTORE)).toHaveCount(1)
+        await page.locator('.rev-scan-all-btn').click()
+        await expect(page.locator(RECOVERED)).toContainText('The removed words')
+        await expect(page.locator(RESTORE)).toBeHidden()
+    })
+
+    test('a tombstone in any language offers restore, not Scan-Rev', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const german = thread(comment(FIRST, { replies: removedWithReply })).replace(
+            'Comment removed by moderator',
+            'Von Moderator*innen entfernter Kommentar',
+        )
+        const page = await openNewReddit(context, THREAD, german)
+        await expect(page.locator(RESTORE)).toHaveCount(1)
+        await stampRows(page)
+        await expect(rowOf(page, REMOVED).locator(SCAN)).toHaveCount(0)
+    })
+
+    test("a user's own deletion and a deleted account's live comment offer no restore", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const deletedByAuthor = comment(REMOVED, { author: '[deleted]' }).replace(
+            '<shreddit-comment ',
+            '<shreddit-comment is-comment-deleted ',
+        )
+        const deletedAccount = comment('t1_account', { text: 'Words' }).replace('author="someone"', 'author="[deleted]"')
+        const page = await openNewReddit(context, THREAD, thread(deletedByAuthor, deletedAccount))
+        await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
+        await settle(page)
+        await expect(page.locator(RESTORE)).toHaveCount(0)
+    })
+
+    test("the filter keeps one's own removed comment, and needs no parentid to find replies", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const OTHER = 't1_other'
+        await seedOwnRemoved(context, OTHER)
+        await answerAs(context, THE_REMOVED_WORDS)
+        const page = await openNewReddit(
+            context,
+            THREAD,
+            thread(
+                comment(FIRST, { author: 'bystander', replies: removedWithReply }),
+                comment(OTHER),
+                comment('t1_quiet', { author: 'bystander' }),
+            ).replaceAll('parentid=', 'parent-id='),
+        )
+        await page.locator('.rev-scan-all-btn').click()
+        await expect(page.locator(RECOVERED)).toContainText('The removed words')
+
+        await expect(page.locator(`[thingid="${OTHER}"]`)).toBeVisible()
+        await expect(page.locator(`[thingid="${FIRST}"]`)).toBeVisible()
+        await expect(page.locator('[thingid="t1_quiet"]')).toBeHidden()
+    })
+
+    test('Scan-Rev hides while it searches, and cancel stops the search', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, THE_REMOVED_WORDS)
+        const page = await openNewReddit(
+            context,
+            THREAD,
+            thread(comment(FIRST, { author: 'bystander' }), comment('t1_b', { author: 'b' }), comment('t1_c', { author: 'c' })),
+        )
+        await stampRows(page)
+        const button = rowOf(page, FIRST).locator(SCAN)
+        await button.click()
+        await expect(button).toBeHidden()
+        await page.locator('.rev-restore-cancel').click()
+        await expect(page.locator('.rev-restore-progress')).toContainText('Search cancelled.')
+        await expect(button).toBeVisible()
+        await expect(page.locator('.rev-scan-exhausted')).toHaveCount(0)
+
+        const sent = (await askedFor(context)).length
+        await page.waitForTimeout(2000)
+        expect(await askedFor(context)).toHaveLength(sent)
+    })
+
+    test('a search dims the restore links, and a thread scan can be cancelled', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, THE_REMOVED_WORDS)
+        const page = await openNewReddit(
+            context,
+            THREAD,
+            thread(comment(FIRST, { author: 'bystander', replies: removedWithReply }), comment('t1_b', { author: 'b' })),
+        )
+        await page.locator('.rev-scan-all-btn').click()
+        await expect(page.locator(`${RESTORE}.rev-scan-disabled`)).toHaveCount(1)
+        await page.locator('.rev-scan-all-progress .rev-restore-cancel').click()
+        await expect(page.locator('.rev-scan-all-progress')).toContainText('Scan cancelled.')
+        await expect(page.locator(`${RESTORE}.rev-scan-disabled`)).toHaveCount(0)
+        await expect(page.locator('.rev-scan-all-btn')).toBeEnabled()
+        await expect(page.locator('.rev-scan-exhausted')).toHaveCount(0)
+    })
+
+    test('a scan left running stops, and leaves the next post alone', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, THE_REMOVED_WORDS)
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST), removedAtTop))
+        await startRouter(page)
+        await page.locator('.rev-scan-all-btn').click()
+        await visit(page, NEXT_THREAD, ...nextThread())
+        await expect(page.locator('[thingid="t1_next"]')).toBeVisible()
+        await stampRows(page)
+        await page.waitForTimeout(2500)
+
+        await expect(page.locator(RECOVERED)).toHaveCount(0)
+        await expect(page.locator('[thingid="t1_next"]')).toBeVisible()
+        await expect(page.locator('.rev-scan-exhausted')).toHaveCount(0)
+        await expect(page.locator('.rev-scan-all-btn')).toBeEnabled()
+        expect(await askedFor(context)).toEqual([THREAD_FEED_PATH])
+    })
+
+    test("a post's scan isn't answered from another post's reads", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, {
+            ...THE_REMOVED_WORDS,
+            '/r/pics/comments/def456/.rss?limit=500': feed(entry(NEXT_POST, 'op', 'The post')),
+        })
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST), removedAtTop))
+        await startRouter(page)
+        await page.locator('.rev-scan-all-btn').click()
+        await expect(page.locator('.rev-scan-all-progress')).toContainText('Scan complete')
+        await visit(page, NEXT_THREAD, ...nextThread())
+        await expect(page.locator('[thingid="t1_next"]')).toBeVisible()
+
+        await page.locator('.rev-scan-all-btn').click()
+        await expect
+            .poll(() => askedFor(context).then(asked => asked.filter(path => path === userFeed('someone')).length))
+            .toBe(2)
+    })
+
+    test('a post on a profile gets no comment buttons, even after a thread', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
+        await settle(page)
+        await startRouter(page)
+        await visit(page, '/user/other/comments/abc123/a_title/', ...nextThread())
+        await expect(page.locator('[thingid="t1_next"]')).toBeVisible()
+        await settle(page)
+        await stampRows(page)
+        await settle(page)
+        await expect(page.locator(SCAN)).toHaveCount(0)
+    })
+
+    const LOOKUP = '/comments/abc123/_/gone/.rss?context=1'
+    const oneRemovedOnProfile = () => {
+        const query = 'sort=new&limit=100'
+        return {
+            [`/user/other/comments/.rss?${query}`]: feed(entry('t1_gone', 'other', 'The removed words')),
+            [`/user/other/comments.json?${query}`]: '{"data":{"children":[]}}',
+            [`/user/other/submitted/.rss?${query}`]: feed(),
+            [`/user/other/submitted.json?${query}`]: '{"data":{"children":[]}}',
+            [LOOKUP]: feed(entry(POST, 'op', 'The post')),
+        }
+    }
+    const thing = id => `<div class="thing" data-fullname="${id}"><div class="entry"><p>Words</p></div></div>`
+    const oldProfile = (...things) =>
+        `<!doctype html><html><body><div class="content" role="main"><div id="siteTable">${things.join('')}</div></div></body></html>`
+
+    test('a removed item goes by date on a page that mixes posts and comments', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const hoursAgo = hours => new Date(Date.now() - hours * 3600 * 1000).toISOString()
+        const dated = (id, hours) => thing(id).replace('<p>', `<time datetime="${hoursAgo(hours)}"></time><p>`)
+        const query = 'sort=new&limit=100'
+        await answerAs(context, {
+            ...oneRemovedOnProfile(),
+            [`/user/other/comments/.rss?${query}`]: feed(
+                entry('t1_c1', 'other', 'Words'),
+                entry('t1_gone', 'other', 'The removed words').replace(NOW, hoursAgo(4)),
+                entry('t1_c2', 'other', 'Words'),
+            ),
+            [`/user/other/comments.json?${query}`]:
+                '{"data":{"children":[{"data":{"name":"t1_c1"}},{"data":{"name":"t1_c2"}}]}}',
+        })
+        const url = 'https://old.reddit.com/user/other/'
+        const page = await open(
+            context,
+            url,
+            oldProfile(dated('t3_post1', 1), dated('t1_c1', 2), dated('t3_post2', 3), dated('t1_c2', 5)),
+        )
+        await page.locator('.rev-profile-scan-btn').click()
+        await expect(page.locator(`#siteTable > ${RECOVERED}`)).toHaveCount(1, { timeout: 15000 })
+        const order = await page
+            .locator('#siteTable > [data-fullname]')
+            .evaluateAll(items => items.map(item => item.getAttribute('data-fullname')))
+        expect(order).toEqual(['t3_post1', 't1_c1', 't3_post2', 't1_gone', 't1_c2'])
+    })
+
+    test("a comment's search leaves the buttons of comments that need another sort", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const eightMonthsAgo = new Date(Date.now() - 240 * 24 * 3600 * 1000).toISOString()
+        const OLD = 't1_old'
+        await answerAs(context, {
+            [THREAD_FEED_PATH]: feed(entry(POST, 'op', 'The post')),
+            [userFeed('op')]: feed(),
+            [userFeed('someone')]: feed(),
+            [userFeed('bystander')]: feed(),
+        })
+        const page = await openNewReddit(
+            context,
+            THREAD,
+            thread(comment(FIRST), comment(OLD, { author: 'bystander' }).replace(NOW, eightMonthsAgo)),
+        )
+        await stampRows(page)
+        await rowOf(page, FIRST).locator(SCAN).click()
+        await expect(page.locator('.rev-restore-progress')).toContainText('Not found', { timeout: 10000 })
+        await expect(rowOf(page, FIRST).locator(SCAN)).toHaveClass(/rev-scan-exhausted/)
+        await expect(rowOf(page, OLD).locator(SCAN)).not.toHaveClass(/rev-scan-exhausted/)
+        await expect(page.locator('.rev-scan-all-btn')).toBeEnabled()
+    })
+
+    test('a rescan reads again, and one that fails leaves the whole page showing', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, oneRemovedOnProfile())
+        const url = 'https://old.reddit.com/user/other/comments/'
+        const page = await open(context, url, oldProfile(thing('t1_live')))
+        const button = page.locator('.rev-profile-scan-btn')
+        await button.click()
+        await expect(page.locator(`#siteTable > ${RECOVERED}`)).toHaveCount(1, { timeout: 15000 })
+        await expect(page.locator('[data-fullname="t1_live"]')).toBeHidden()
+
+        await button.click()
+        await expect(button).toHaveText('Rescan', { timeout: 15000 })
+        expect((await askedFor(context)).filter(path => path === LOOKUP)).toHaveLength(2)
+
+        await answerAs(context, {})
+        await button.click()
+        await expect(page.locator('.rev-profile-scan-progress')).toHaveText('User not found.', { timeout: 15000 })
+        await expect(page.locator('[data-fullname="t1_live"]')).toBeVisible()
+    })
+
+    test('a page left during a search comes back ready to search', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, THE_REMOVED_WORDS)
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST), removedAtTop))
+        await stampRows(page)
+        await startRouter(page)
+        await rowOf(page, FIRST).locator(SCAN).click()
+        await visit(page, NEXT_THREAD, ...nextThread())
+        await expect(page.locator('[thingid="t1_next"]')).toBeVisible()
+        await page.waitForTimeout(2500)
+
+        await page.goBack()
+        await expect(rowOf(page, FIRST).locator(SCAN)).toBeVisible()
+        await expect(page.locator('.rev-scan-disabled')).toHaveCount(0)
+    })
+
+    test('what each click recovers goes in one place for unattached comments', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const orphan = (id, author, parent) => feed(entry(POST, 'op', 'The post'), entry(parent, author, 'A parent'))
+        await answerAs(context, {
+            [THREAD_FEED_PATH]: feed(entry(POST, 'op', 'The post')),
+            [userFeed('op')]: feed(),
+            [userFeed('someone')]: feed(entry('t1_orphan1', 'someone', 'First')),
+            [userFeed('bystander')]: feed(entry('t1_orphan2', 'bystander', 'Second')),
+            '/comments/abc123/_/orphan1/.rss?context=1': orphan('t1_orphan1', 'someone', 't1_lost1'),
+            '/comments/abc123/_/orphan2/.rss?context=1': orphan('t1_orphan2', 'bystander', 't1_lost2'),
+        })
+        const page = await openNewReddit(
+            context,
+            THREAD,
+            thread(comment(FIRST), comment('t1_b', { author: 'bystander' })),
+        )
+        await page.locator('.rev-scan-all-btn').click()
+        await expect(page.locator('.rev-unattached-area')).toContainText('First', { timeout: 10000 })
+        await page.locator('.rev-scan-all-progress .rev-restore-cancel').click()
+        await expect(page.locator('.rev-scan-all-progress')).toContainText('Scan cancelled.')
+
+        await page.locator('.rev-scan-all-btn').click()
+        await expect(page.locator('.rev-unattached-area')).toContainText('Second', { timeout: 10000 })
+        await expect(page.locator('.rev-unattached-area')).toHaveCount(1)
+    })
+
+    test('placing unattached comments stops with its page', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, {
+            [THREAD_FEED_PATH]: feed(entry(POST, 'op', 'The post')),
+            [userFeed('op')]: feed(),
+            [userFeed('someone')]: feed(entry('t1_orphan', 'someone', 'First')),
+            '/comments/abc123/_/orphan/.rss?context=1': feed(
+                entry(POST, 'op', 'The post'),
+                entry('t1_lost', 'someone', 'A parent'),
+            ),
+            '/comments/abc123/_/lost/.rss?context=1': feed(
+                entry(POST, 'op', 'The post'),
+                entry('t1_lost', 'someone', 'A parent'),
+            ),
+        })
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await startRouter(page)
+        await page.locator('.rev-scan-all-btn').click()
+        await expect(page.locator('.rev-unattached-area')).toContainText('First', { timeout: 10000 })
+        await page.locator('.rev-place-unattached-btn').click()
+        await visit(page, NEXT_THREAD, ...nextThread())
+        await expect(page.locator('[thingid="t1_next"]')).toBeVisible()
+        await page.waitForTimeout(2500)
+        await expect(page.locator('shreddit-comment-tree [data-rev-id]')).toHaveCount(0)
+    })
+
+    test('a profile scan left running stops, and leaves the next page alone', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, oneRemovedOnProfile())
+        const page = await openNewReddit(context, '/user/other/', '<shreddit-feed></shreddit-feed>')
+        await startRouter(page)
+        await page.locator('.rev-profile-scan-btn').click()
+        await visit(page, '/', '<article data-post-id="t3_home"><p>A post</p></article>')
+        await expect(page.locator('[data-post-id="t3_home"]')).toBeVisible()
+        await page.waitForTimeout(2500)
+
+        await expect(page.locator('[data-post-id="t3_home"]')).toBeVisible()
+        await expect(page.locator(RECOVERED)).toHaveCount(0)
+        expect((await askedFor(context)).length).toBeLessThan(3)
+    })
+
+    test("one's own profile offers a scan for posts", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const [worker] = context.serviceWorkers()
+        // The install writes the default options
+        const options = () => worker.evaluate(() => chrome.storage.sync.get(['options']).then(sync => sync.options))
+        await expect.poll(options).toBeTruthy()
+        await worker.evaluate(
+            options =>
+                Promise.all([
+                    chrome.storage.local.set({ last_logged_in_user: 'someone' }),
+                    chrome.storage.sync.set({ options: { ...options, show_scan_on_own_profile: true } }),
+                ]),
+            await options(),
+        )
+        const page = await openNewReddit(context, '/user/someone/', '<shreddit-feed></shreddit-feed>')
+        await expect(page.locator('.rev-profile-scan-btn')).toHaveText('Scan for removed posts')
+    })
+
+    test('a profile scan puts what it finds where the sort has it, on a page sorted by top', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const query = 'sort=top&limit=100'
+        await answerAs(context, {
+            [`/user/other/comments/.rss?${query}`]: feed(
+                entry('t1_high', 'other', 'Words'),
+                entry('t1_gone', 'other', 'The removed words'),
+                entry('t1_low', 'other', 'Words'),
+            ),
+            [`/user/other/comments.json?${query}`]:
+                '{"data":{"children":[{"data":{"name":"t1_high"}},{"data":{"name":"t1_low"}}]}}',
+            [`/user/other/submitted/.rss?${query}`]: feed(),
+            [`/user/other/submitted.json?${query}`]: '{"data":{"children":[]}}',
+            [LOOKUP]: feed(entry(POST, 'op', 'The post')),
+        })
+        const url = 'https://old.reddit.com/user/other/comments/?sort=top'
+        const page = await open(context, url, oldProfile(thing('t1_high'), thing('t1_low')))
+        await page.locator('.rev-profile-scan-btn').click()
+        await expect(page.locator(`#siteTable > ${RECOVERED}`)).toHaveCount(1, { timeout: 15000 })
+        const order = await page
+            .locator('#siteTable > [data-fullname]')
+            .evaluateAll(items => items.map(item => item.getAttribute('data-fullname')))
+        expect(order).toEqual(['t1_high', 't1_gone', 't1_low'])
     })
 
     test("one's own removed comment is highlighted, not the replies inside it", async ({

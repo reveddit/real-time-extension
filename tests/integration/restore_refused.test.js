@@ -65,14 +65,14 @@ const withTimers = async run => {
 }
 
 describe("restore and the thread scan when reddit refuses authors' feeds", () => {
-    it('restore stops at the first refused page and leaves the thread unsearched', async () => {
+    it('restore stops after three refused feeds and leaves the thread unsearched', async () => {
         __resetStorage()
         const asked = refuseUserPages()
         const progress = []
         const result = await withTimers(() =>
             restoreComment('t1_target', 't3_post', 'sub', false, p => progress.push(p), new Map()),
         )
-        expect(asked).toHaveLength(1)
+        expect(asked).toHaveLength(3)
         expect(result.found).toBe(false)
         // exhausted would disable every scan button in the thread
         expect(result.exhausted).toBeFalsy()
@@ -82,14 +82,14 @@ describe("restore and the thread scan when reddit refuses authors' feeds", () =>
         })
     })
 
-    it('the thread scan stops at the first refused page and says why', async () => {
+    it('the thread scan stops after three refused feeds and says why', async () => {
         __resetStorage()
         const asked = refuseUserPages()
         const progress = []
         const recovered = await withTimers(() =>
             scanThreadForRemovedComments('t3_post', 'sub', false, new Map(), p => progress.push(p)),
         )
-        expect(asked).toHaveLength(1)
+        expect(asked).toHaveLength(3)
         expect(recovered).toEqual([])
         expect(progress.at(-1)).toMatchObject({ status: 'error' })
         expect(progress.at(-1).message).toMatch(/^Reddit is refusing the feeds a scan reads/)
