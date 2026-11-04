@@ -471,6 +471,8 @@ li.rev-own-mark-li {
     line-height: 1.4;
 }
 .rev-rec-children {
+    /* New reddit's list of replies is a two-column grid */
+    grid-column: 1 / -1;
     margin-left: 18px;
     padding-left: 10px;
     border-left: 1px solid #e0e0e0;
