@@ -845,27 +845,19 @@ function Popup() {
                   Open www.reddit.com
                 </ActionBtn>
               </>
-            ) : errorStatus === 'logged_in_view_unavailable' ? (
-              <>
-                <MessageBanner variant="warning">
-                  ⚠ Reddit isn&apos;t answering the extension&apos;s login check, so monitoring may be paused.
-                  Opening a www.reddit.com tab usually restores it. If this keeps up, use &ldquo;report a
-                  problem&rdquo; below.
-                </MessageBanner>
-                <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
-                  Open www.reddit.com
-                </ActionBtn>
-              </>
             ) : (
               <>
                 <MessageBanner variant="warning">
                   {reconnectSuccess === false
-                    ? '⚠ Still disconnected. Try logging into Reddit again.'
-                    : '⚠ Session may be disconnected.'}
+                    ? "⚠ Reddit still isn't showing you as logged in."
+                    : "⚠ You don't seem to be logged in to Reddit, so your posts and comments aren't being checked."}
                 </MessageBanner>
-                <ActionBtn onClick={handleReconnect} disabled={reconnecting}>
-                  {reconnecting ? 'Checking...' : 'Reconnect'}
+                <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/login', active: true })}>
+                  Log in to Reddit
                 </ActionBtn>
+                <SecondaryActionBtn onClick={handleReconnect} disabled={reconnecting}>
+                  {reconnecting ? 'Checking...' : 'Check again'}
+                </SecondaryActionBtn>
               </>
             )}
           </div>

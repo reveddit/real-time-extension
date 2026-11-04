@@ -9,7 +9,8 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
+import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
 
 import {
     getLoggedinUserDetailed,
@@ -21,6 +22,8 @@ import {
     computeAbsentVerifyBudget,
     RECENT_RATE_LIMIT_WINDOW_MS,
 } from '../../src/src/requests'
+import { checkForChanges } from '../../src/src/monitoring'
+import { getUserInit } from '../../src/src/storage'
 
 const res = (status, body) => ({
     ok: status >= 200 && status < 300,
@@ -40,12 +43,15 @@ let fetchMock
 
 beforeEach(() => {
     __resetStorage()
+    fill([cookie('reddit_session', 'S1')])
+    browserMock.cookies = cookiesApi
     vi.spyOn(console, 'log').mockImplementation(() => {})
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 })
 
 afterEach(() => {
+    delete browserMock.cookies
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
 })
@@ -124,6 +130,67 @@ describe('getLoggedinUserDetailed', () => {
         expect(await getLoggedinUser()).toBe('alice')
         fetchMock.mockResolvedValue(res(200, '{}'))
         expect(await getLoggedinUser()).toBe(null)
+    })
+})
+
+describe('a browser with no Reddit login', () => {
+    beforeEach(() => fill([cookie('token_v2', 'T1')]))
+
+    it("is signed out without asking reddit, which would only refuse", async () => {
+        expect(await getLoggedinUserDetailed()).toEqual({ user: null, indeterminate: false })
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('gets a login it lost back first, then asks', async () => {
+        __getLocalStorage().stored_reddit_cookie_objects = [cookie('reddit_session', 'S1')]
+        fetchMock.mockResolvedValue(res(200, USER_JSON))
+        expect(await getLoggedinUserDetailed()).toEqual({ user: 'alice', indeterminate: false })
+    })
+})
+
+describe('a check for a remembered user', () => {
+    const REFUSED = res(403, 'blocked')
+    const LISTING = { ok: true, status: 200, json: async () => ({ data: { children: [] } }) }
+    // The check's work finishes after checkForChanges returns
+    const check = async () => {
+        const sync = __getSyncStorage()
+        delete sync.last_check
+        await checkForChanges()
+        await vi.waitFor(() => expect(sync.last_check).toBeDefined())
+    }
+
+    beforeEach(() => {
+        const options = { removal_status: { track: true }, lock_status: { track: true } }
+        const subscriptions = { user_subscriptions: {}, other_subscriptions: {} }
+        Object.assign(__getSyncStorage(), subscriptions, { options }, getUserInit('alice'))
+        __getLocalStorage().last_logged_in_user = 'alice'
+    })
+
+    it('with no login, asks the user to log in in place of any earlier warning, and sends nothing', async () => {
+        fill([])
+        __getLocalStorage().error_status = 'reddit_blocked'
+        await check()
+        expect(__getLocalStorage().error_status).toBe('needs_user')
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it("says the login isn't working once reddit has refused the login check and the listing five times", async () => {
+        fetchMock.mockResolvedValue(REFUSED)
+        for (let i = 0; i < 4; i++) await check()
+        expect(__getLocalStorage().error_status).toBe('reddit_blocked')
+        await check()
+        expect(__getLocalStorage().error_status).toBe(LOGGED_IN_VIEW_UNAVAILABLE)
+    })
+
+    it('a listing that comes back ends the count: the login works, whatever the login check says', async () => {
+        fetchMock.mockResolvedValue(REFUSED)
+        for (let i = 0; i < 4; i++) await check()
+        fetchMock.mockImplementation(async url => (String(url).includes('/user/me.json') ? LISTING : REFUSED))
+        await check()
+        expect(__getLocalStorage().login_detect_consecutive_failures).toBeUndefined()
+        fetchMock.mockResolvedValue(REFUSED)
+        await check()
+        expect(__getLocalStorage().error_status).not.toBe(LOGGED_IN_VIEW_UNAVAILABLE)
     })
 })
 

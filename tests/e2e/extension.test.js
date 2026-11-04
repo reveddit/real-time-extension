@@ -41,6 +41,20 @@ test.describe('Popup page', () => {
         return new URL(await page.evaluate(() => window.__opened[0]))
     }
 
+    test("logged out: says so, and a button opens reddit's login page", async ({ context, extensionId }) => {
+        const [worker] = context.serviceWorkers()
+        await worker.evaluate(() =>
+            chrome.storage.local.set({ error_status: 'needs_user', last_logged_in_user: 'someone' }),
+        )
+        const page = await context.newPage()
+        await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
+
+        await expect(page.getByText("You don't seem to be logged in to Reddit")).toBeVisible()
+        await recordOpens(page)
+        await page.getByRole('button', { name: 'Log in to Reddit' }).click()
+        expect((await opened(page)).href).toBe('https://www.reddit.com/login')
+    })
+
     test("reddit's login wall: offers a second account, then says why", async ({ context, extensionId }) => {
         // What monitoring leaves behind after five lookups that landed on
         // reddit's login page
@@ -258,7 +272,8 @@ test.describe('Background: a reddit tab finishing a load', () => {
         await expect
             .poll(() => worker.evaluate(() => chrome.storage.local.get('error_status')), { timeout: 15000 })
             .toEqual({ error_status: 'needs_user' })
-        await worker.evaluate(() => {
+        await worker.evaluate(async () => {
+            await chrome.cookies.set({ url: 'https://www.reddit.com/', name: 'reddit_session', value: 'test' })
             const realFetch = globalThis.fetch.bind(globalThis)
             globalThis.fetch = (url, init) =>
                 String(url).includes('/api/me.json')

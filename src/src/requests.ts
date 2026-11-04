@@ -3549,6 +3549,16 @@ export const getLoggedinUserDetailed = async (): Promise<LoginDetectResult> => {
         }
     }
 
+    // Reddit answers a browser with no login with a refusal, not a clean
+    // "nobody", so with none there's nothing to ask it. A login the browser
+    // lost is put back first.
+    if (!(await hasRedditLoginCookie())) {
+        await rehydrateStoredRedditCookies()
+        if (!(await hasRedditLoginCookie())) {
+            return { user: null, indeterminate: false }
+        }
+    }
+
     // Pick a host: prefer old.reddit.com if an old.reddit tab is open (quarantine
     // opt-in lives there), otherwise default to www.reddit.com. With `cookies`
     // permission + reddit host_permissions the browser includes the user's real

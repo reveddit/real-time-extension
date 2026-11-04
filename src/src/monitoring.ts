@@ -504,6 +504,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     dlog('auth', `No logged-in user found, skipping user monitoring (indeterminate: ${detect.reason})`)
                 } else {
                     dlog('auth', 'No logged-in user found, skipping user monitoring')
+                    setWarningBadge('needs_user')
                 }
                 await recordLoginDetectOutcome(detect.indeterminate)
                 return
@@ -691,13 +692,9 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                 })
                 .then(() => {
                     if (!processedItems) return
-                    // A completed pass with a directly-detected user is a
-                    // definite login-detection success; grace-mode passes stay
-                    // neutral (the channel is still broken, but working around
-                    // it shouldn't escalate toward a warning badge either).
-                    if (!usedGrace) {
-                        recordLoginDetectOutcome(false)
-                    }
+                    // The user's own listing came back, so their login works,
+                    // even when the login check didn't answer
+                    recordLoginDetectOutcome(false)
                     // Clear warning badge and error state if we successfully
                     // processed items. A page-check, pagination or
                     // second-account thread-read outage outlives one pass:
@@ -711,6 +708,13 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                             updateBadgeUnseenCount()
                         })
                     })
+                })
+                .finally(() => {
+                    // Reddit refused the login check and the user's own listing
+                    // too, so their login isn't working, whatever cookie is held
+                    if (usedGrace && !processedItems) {
+                        return recordLoginDetectOutcome(true)
+                    }
                 })
         })
         .catch(error => {
