@@ -1029,3 +1029,39 @@ test.describe('Welcome page', () => {
         await expect(page.locator('img[alt="Reveddit"]')).toBeVisible()
     })
 })
+
+test.describe('Reddit thread pages', () => {
+    // Before 0.0.4.0, a scan meant for spans read the text of every element,
+    // <html> included, a few times per page view. Threads froze for seconds at
+    // a time (the survey's reports of 2026-02-21 and 2026-03-05).
+    test('a long thread is not held up by the content script', async ({ context, extensionId }) => {
+        // extensionId waits for the worker. The page's removal check stays off reddit.
+        const [worker] = context.serviceWorkers()
+        await worker.evaluate(() => {
+            self.fetch = async () => new Response('', { status: 404 })
+        })
+        // As on Reddit, comments sit under nested wrappers, each holding all of their text
+        const comment = `<div><span>someone</span>${' '.repeat(300)}<p>${'words in a comment '.repeat(20)}</p></div>`
+        const thread = Array.from({ length: 12 }).reduce(html => `<div>${html}</div>`, comment.repeat(1000))
+        await context.route('https://www.reddit.com/**', route =>
+            route.fulfill({
+                status: 200,
+                contentType: 'text/html',
+                body: `<html device="desktop"><body><shreddit-comment-tree>${thread}</shreddit-comment-tree></body></html>`,
+            }),
+        )
+        const page = await context.newPage()
+        await page.addInitScript(() => {
+            window.blockedMs = 0
+            new PerformanceObserver(list => {
+                for (const task of list.getEntries()) window.blockedMs += task.duration
+            }).observe({ type: 'longtask', buffered: true })
+        })
+        await page.goto('https://www.reddit.com/r/test/comments/abc123/title/')
+
+        // The content script is done with the page, and its rescan a second later has run
+        await expect(page.locator('.rev-scan-all-btn')).toBeAttached()
+        await page.waitForTimeout(1500)
+        expect(await page.evaluate(() => window.blockedMs)).toBeLessThan(1000)
+    })
+})
