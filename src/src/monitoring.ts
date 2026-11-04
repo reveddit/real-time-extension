@@ -4,6 +4,7 @@ import {
     getAuth,
     getLoggedinUserDetailed,
     recordLoginDetectOutcome,
+    isLoginRefusal,
     LoginDetectResult,
     storeRedditCookies,
     isLegacyOff,
@@ -506,7 +507,9 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     dlog('auth', 'No logged-in user found, skipping user monitoring')
                     setWarningBadge('needs_user')
                 }
-                await recordLoginDetectOutcome(detect.indeterminate)
+                if (!detect.indeterminate || isLoginRefusal(detect.reason)) {
+                    await recordLoginDetectOutcome(detect.indeterminate)
+                }
                 return
             }
             // Remember the last detected logged-in user for popup display without
@@ -538,6 +541,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
             // Only a pass that actually processed items may clear the warning
             // badge below; a failed or skipped lookup must not read as a clean cycle.
             let processedItems = false
+            let listingRefused = false
             // Use message passing to get items from content script context
             return new Promise(resolve => {
                 // Try to find a Reddit tab to make the request from
@@ -571,7 +575,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                         { action: 'get-logged-in-user-items' },
                         (response: any) => {
                             if ((chrome.runtime as any).lastError) {
-                                // Receiving end does not exist, fall back gracefully and set warning badge
+                                // Receiving end does not exist: the stored cookies' read decides
                                 dlog(
                                     'cycle',
                                     'Error sending message to content script:',
@@ -579,7 +583,6 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                                         (chrome.runtime as any).lastError?.message || (chrome.runtime as any).lastError,
                                     ),
                                 )
-                                setWarningBadge('needs_user')
                                 resolve('use_stored_cookies')
                                 return
                             }
@@ -709,10 +712,14 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                         })
                     })
                 })
+                .catch(error => {
+                    listingRefused = isLoginRefusal(String(error?.message))
+                    throw error
+                })
                 .finally(() => {
                     // Reddit refused the login check and the user's own listing
                     // too, so their login isn't working, whatever cookie is held
-                    if (usedGrace && !processedItems) {
+                    if (usedGrace && listingRefused && !processedItems) {
                         return recordLoginDetectOutcome(true)
                     }
                 })

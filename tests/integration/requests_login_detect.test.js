@@ -182,6 +182,66 @@ describe('a check for a remembered user', () => {
         expect(__getLocalStorage().error_status).toBe(LOGGED_IN_VIEW_UNAVAILABLE)
     })
 
+    it("doesn't take an outage or a rate limit for a lost login", async () => {
+        for (const answer of [
+            () => Promise.reject(new TypeError('Failed to fetch')),
+            async () => res(503, 'down'),
+            async () => res(429, 'slow down'),
+        ]) {
+            fetchMock.mockImplementation(answer)
+            for (let i = 0; i < 6; i++) {
+                await check()
+                delete __getLocalStorage().rate_limit_until
+            }
+            expect(__getLocalStorage().error_status).not.toBe(LOGGED_IN_VIEW_UNAVAILABLE)
+            expect(__getLocalStorage().login_detect_consecutive_failures).toBeUndefined()
+        }
+    })
+
+    it("doesn't call a reddit tab that can't answer a lost login during an outage", async () => {
+        vi.spyOn(chrome.tabs, 'query').mockImplementation((query, callback) =>
+            callback([{ id: 1, url: 'https://www.reddit.com/' }]),
+        )
+        vi.spyOn(chrome.tabs, 'sendMessage').mockImplementation((id, message, callback) => {
+            chrome.runtime.lastError = { message: 'Receiving end does not exist.' }
+            callback()
+            delete chrome.runtime.lastError
+        })
+        fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
+        await check()
+        expect(__getLocalStorage().error_status).not.toBe('needs_user')
+    })
+
+    it('counts a challenge on both reads as a refusal: nothing is being checked', async () => {
+        const challenge = {
+            ...res(200, '<html>js_challenge</html>'),
+            json: () => Promise.reject(new SyntaxError('Unexpected token <')),
+        }
+        fetchMock.mockResolvedValue(challenge)
+        for (let i = 0; i < 5; i++) await check()
+        expect(__getLocalStorage().error_status).toBe(LOGGED_IN_VIEW_UNAVAILABLE)
+    })
+
+    it("doesn't take an outage for a lost login with no remembered user either", async () => {
+        delete __getLocalStorage().last_logged_in_user
+        fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
+        for (let i = 0; i < 6; i++) await check()
+        expect(__getLocalStorage().error_status).not.toBe(LOGGED_IN_VIEW_UNAVAILABLE)
+    })
+
+    it('keeps the warning mark through the pass over followed items', async () => {
+        fill([])
+        __getSyncStorage().other_subscriptions = { t1_followed: true }
+        fetchMock.mockResolvedValue(LISTING)
+        // The background, where the badge is set directly
+        vi.stubGlobal('location', { protocol: 'chrome-extension:' })
+        const badge = vi.spyOn(chrome.action, 'setBadgeText')
+        await check()
+        await vi.waitFor(() => expect(badge.mock.calls.length).toBeGreaterThan(1))
+        expect(__getLocalStorage().error_status).toBe('needs_user')
+        await vi.waitFor(() => expect(badge.mock.calls.at(-1)[0]).toEqual({ text: '!' }))
+    })
+
     it('a listing that comes back ends the count: the login works, whatever the login check says', async () => {
         fetchMock.mockResolvedValue(REFUSED)
         for (let i = 0; i < 4; i++) await check()

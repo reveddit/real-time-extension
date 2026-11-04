@@ -850,7 +850,9 @@ function Popup() {
                 <MessageBanner variant="warning">
                   {reconnectSuccess === false
                     ? "⚠ Reddit still isn't showing you as logged in."
-                    : "⚠ You don't seem to be logged in to Reddit, so your posts and comments aren't being checked."}
+                    : errorStatus === 'logged_in_view_unavailable'
+                      ? "⚠ Reddit isn't accepting your login, so your posts and comments aren't being checked."
+                      : "⚠ You don't seem to be logged in to Reddit, so your posts and comments aren't being checked."}
                 </MessageBanner>
                 <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/login', active: true })}>
                   Log in to Reddit

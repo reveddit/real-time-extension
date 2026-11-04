@@ -565,10 +565,19 @@ export const updateBadgeUnseenCount = () => {
             Object.values(usersUnseenIDs).forEach(ids => {
                 total += ids.length
             })
-            let text = total.toString()
-            if (total == 0) text = ''
-            ;(chrome as any)[ACTION_API].setBadgeBackgroundColor({ color: 'red' })
-            ;(chrome as any)[ACTION_API].setBadgeText({ text: text })
+            const setCount = (text: string) => {
+                ;(chrome as any)[ACTION_API].setBadgeBackgroundColor({ color: 'red' })
+                ;(chrome as any)[ACTION_API].setBadgeText({ text })
+            }
+            if (total > 0) {
+                setCount(total.toString())
+                return
+            }
+            // A warning still standing keeps its mark: every check ends up here
+            chrome.storage.local.get(['error_status'], local => {
+                if (local?.error_status) setWarningBadge()
+                else setCount('')
+            })
         })
     }
 }
