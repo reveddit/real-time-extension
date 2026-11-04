@@ -1243,7 +1243,7 @@ function markChanges(
             delete normal_known_hash[name]
             if (markUnseen) {
                 let alert_type_var = alert_type
-                if (isUserDeletedItem(item)) {
+                if (alert_type === REMOVED && isUserDeletedItem(item)) {
                     alert_type_var = DELETED
                     alert_userDeleted_unseen_ids.push(name)
                 } else {

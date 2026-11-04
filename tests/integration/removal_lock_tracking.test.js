@@ -9,7 +9,7 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { _checkForChanges_thing_byId } from '../../src/src/monitoring.ts'
-import { getObjectNamesForThing, REMOVED, APPROVED, LOCKED, UNLOCKED } from '../../src/src/storage.ts'
+import { getObjectNamesForThing, REMOVED, APPROVED, LOCKED, UNLOCKED, DELETED } from '../../src/src/storage.ts'
 
 const USER = 'someuser'
 const OTHER = 'other'
@@ -267,6 +267,18 @@ describe('what a notification says', () => {
         expect(announced()).toEqual(['1 new [user deleted] actions, click to view'])
     })
 
+    it('leaves out a backlog deletion beside a recent removal', async () => {
+        await firstCheck([{ ...recentDeletion, created_utc: OLD_CREATED }, recentRemoval])
+        expect(announced()).toEqual(['1 new [mod removed] actions, click to view'])
+    })
+
+    it('leaves out a backlog approval beside a recent removal', async () => {
+        seed(['removed'], { ...STORED_ITEM, n: SEEN_COUNT - 1 }, OTHER)
+        await firstCheck([comment(ID, OLD_CREATED), recentRemoval])
+        expect(list('approved', OTHER)).toEqual([ID])
+        expect(announced()).toEqual(['1 new [mod removed] actions, click to view'])
+    })
+
     it('names and counts recent changes of both tracks', async () => {
         await firstCheck([recentRemoval, recentLock])
         expect(announced()).toEqual(['2 new [mod removed, locked] actions, click to view'])
@@ -292,6 +304,12 @@ describe('what a notification says', () => {
         await firstCheck([backlogRemoval, recentLock])
         expect(announced()).toEqual([])
         expect(list('locked', OTHER)).toEqual([recentLock.name])
+    })
+
+    it('calls a lock on a deleted comment a lock', async () => {
+        await firstCheck([{ ...recentDeletion, locked: true }])
+        expect(announced()).toEqual(['2 new [user deleted, locked] actions, click to view'])
+        expect(__getSyncStorage()[keysOf(OTHER).changes].map(change => change.g)).toEqual([DELETED, LOCKED])
     })
 
     it('stays quiet about the backlog alone', async () => {
