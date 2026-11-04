@@ -187,10 +187,10 @@ describe('classifyPostPage', () => {
 
     const POST = 't3_1ukv6vb'
 
-    it('marks the banner in any language, where the status reads only English', () => {
+    it('a banner in words it does not know is still a banner, never live', () => {
         const german = classifyPostPage(postPage('Beitrag muss durch eine*n Moderator*in zugelassen werden.'), POST)
         expect(german.banner).toBe(true)
-        expect(german.status).toBe('live')
+        expect(german.status).toBe('held')
         expect(classifyPostPage(postPage('Post is awaiting moderator approval.'), POST).banner).toBe(true)
     })
 
@@ -754,6 +754,11 @@ describe('markup config', () => {
                     .map((_, i) => `a${i}`),
             }).commentIdAttributes,
         ).toHaveLength(8)
+    })
+
+    it("puts the feed's slot for the scan button ahead of the built-in one", () => {
+        setMarkupConfig(sanitizeMarkupConfig({ comment_button_slots: ['comment-actions'] }))
+        expect(getMarkupConfig().commentButtonSlots).toEqual(['comment-actions', 'comment-share'])
     })
 
     it('adds names to the built-in ones, which always stay', () => {

@@ -219,8 +219,7 @@ export interface PostPageResult {
 }
 
 // Read only from the post's banner (classifyPostPage), never the author's
-// words, so any removal wording counts: a reworded banner mustn't read live.
-// Logged out, a post moderators removed and one held for review both say
+// words. Logged out, a post moderators removed and one held for review both say
 // "Post is awaiting moderator approval." (verified 2026-10-26).
 const POST_HELD_REGEX = /awaiting moderator approval/i
 const POST_REMOVED_REGEX = /\b(removed|deleted)\b|spam filters?|banned from this community|community is private/i
@@ -264,7 +263,8 @@ export const classifyPostPage = (html: string, postId: string): PostPageResult =
     if (POST_REMOVED_REGEX.test(bannerText)) {
         return { status: 'removed', ...found }
     }
-    return { status: 'live', ...found }
+    // A banner in words these don't know is still a banner: it mustn't read live
+    return { status: bannerText ? 'held' : 'live', ...found }
 }
 
 // The text of every element in html whose slot attribute is one of slots
