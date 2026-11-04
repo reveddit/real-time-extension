@@ -123,6 +123,12 @@ export function commentFullnameFromPermalink(permalink: string | null | undefine
     return m ? 't1_' + m[1] : ''
 }
 
+function linkChildren(map: Map<string, CommentTreeNode>) {
+    for (const node of map.values()) {
+        map.get(node.parent_id)?.children.push(node)
+    }
+}
+
 export function extractCommentTree_oldReddit(
     postFullname: string,
     root: ParentNode = document,
@@ -160,13 +166,7 @@ export function extractCommentTree_oldReddit(
         map.set(id, node)
     }
 
-    // Link children to parents
-    for (const node of map.values()) {
-        const parent = map.get(node.parent_id)
-        if (parent) {
-            parent.children.push(node)
-        }
-    }
+    linkChildren(map)
 
     return map
 }
@@ -208,13 +208,7 @@ export function extractCommentTree_fromJSON(jsonData: any[]): {
         parseCommentListing(jsonData[1].data.children, map)
     }
 
-    // Link children to parents
-    for (const node of map.values()) {
-        const parent = map.get(node.parent_id)
-        if (parent) {
-            parent.children.push(node)
-        }
-    }
+    linkChildren(map)
 
     return { map, postAuthor }
 }
