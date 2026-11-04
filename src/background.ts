@@ -15,7 +15,7 @@ import {
     getCookie,
     getAuth,
     storeRedditCookies,
-    throwIfLegacyDisabled,
+    readWithLogin,
     throwIfLegacyOff,
     noteCapabilityRefused,
     lookupItemsByID_fromPublicProfile,
@@ -37,7 +37,7 @@ import {
 } from './src/storage'
 import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
-import { getItems_fromOld, getPost_fromOld, getInfoById_fromLegacyHTML } from './src/parse_html/old'
+import { getItems_fromOld } from './src/parse_html/old'
 import { handleBridgeFetch } from './src/bridge'
 import {
     applyRemoteConfig,
@@ -67,14 +67,7 @@ import {
 import { loginWallLanding } from './src/login-wall-config'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs, getSyncUsageLine } from './src/storage'
-import {
-    getLegacyBase,
-    legacyPageUrl,
-    isLegacyPageUrl,
-    LEGACY_PAGE_MARKER_PATTERN,
-    isLegacyChallengeHtml,
-    LEGACY_REFUSED_ERROR,
-} from './src/parse_html/common'
+import { isLegacyPageUrl, LEGACY_PAGE_MARKER_PATTERN } from './src/parse_html/common'
 
 // The background context is the diagnostic log's single writer — see diaglog.ts.
 initDiagPersistence()
@@ -308,62 +301,6 @@ if (__BUILT_FOR__ !== 'chrome') {
     }
 })()
 
-// Legacy-HTML replacement for the old unauthenticated api/info.json lookup.
-// Comments: rendered -> live (or [removed]/[deleted] by body), absent -> removed
-// (only when the listing was valid). Posts: one legacy page fetch each, spaced,
-// since the listing renders them regardless of removal; unverifiable posts are
-// reported live so a throttle can never manufacture a removal.
-const LEGACY_POST_CHECK_SPACING_MS = 400
-const legacyApiInfo = async (idsCsv: string): Promise<{ kind: string; data: any }[]> => {
-    const ids = idsCsv.split(',').filter(Boolean)
-    if (!ids.length) {
-        return []
-    }
-    const info = await getInfoById_fromLegacyHTML(ids)
-    if (!info.valid) {
-        throw new Error('legacy api/info listing unreadable (challenge or login page)')
-    }
-    const byName: Record<string, any> = {}
-    for (const item of info.items) {
-        if (item.name) {
-            byName[item.name] = item
-        }
-    }
-    const children: { kind: string; data: any }[] = []
-    let postFetches = 0
-    for (const id of ids) {
-        const item = byName[id]
-        if (id.startsWith('t1_')) {
-            if (item) {
-                children.push({ kind: 't1', data: item })
-            } else {
-                children.push({
-                    kind: 't1',
-                    data: { name: id, author: '[deleted]', body: '[removed]', _absent_from_legacy_listing: true },
-                })
-            }
-        } else if (id.startsWith('t3_')) {
-            if (!item) {
-                continue
-            }
-            let is_removed = false
-            if (item.permalink) {
-                if (postFetches > 0) {
-                    await new Promise(r => setTimeout(r, LEGACY_POST_CHECK_SPACING_MS))
-                }
-                postFetches++
-                const page = (await getPost_fromOld(item.permalink).catch(() => ({ error: 'fetch failed' }))) as any
-                is_removed = !!(page && !page.error && page.is_removed)
-            }
-            children.push({
-                kind: 't3',
-                data: { ...item, is_robot_indexable: !is_removed, ...(is_removed ? { author: '[deleted]' } : {}) },
-            })
-        }
-    }
-    return children
-}
-
 console.log('bg script running')
 // Throttle recovery calls that fetch /api/me.json to at most ~2 per minute
 const ME_RECOVER_MIN_INTERVAL_MS = 30000 // 30 seconds
@@ -586,61 +523,10 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     } else if (request.action == 'get-logged-in-user-items') {
         // This will be handled by content script, just pass it through
         return true
-    } else if (request.action === 'fetch-userpage-html') {
-        // Profile scan: content scripts on new reddit (www/sh) can't fetch
-        // old.reddit.com (cross-origin → CORS). The background has the
-        // host_permissions CORS bypass, so fetch the HTML here and hand the raw
-        // text back to the content script to parse.
-        // Use the explicit path if provided (e.g. /user/X/comments?sort=new),
-        // otherwise fall back to the overview for backward compatibility.
-        const path = request.path
-            ? String(request.path)
-            : `/user/${encodeURIComponent(request.username)}${request.qs || ''}`
-        let url = ''
-        throwIfLegacyDisabled('legacy reddit userpage HTML')
-            .then(() => getLegacyBase())
-            .then(base => {
-                url = legacyPageUrl(base, path)
-                return fetch(url, { credentials: 'omit' })
-            })
-            .then(async r => {
-                console.log(`[reveddit] bg fetch-userpage-html ${url} -> ${r.status}`)
-                const text = r.ok ? await r.text() : ''
-                if (isLegacyChallengeHtml(text)) {
-                    // Not an empty profile: the scan says it couldn't read it
-                    sendResponse({ ok: false, status: r.status, error: LEGACY_REFUSED_ERROR, refused: true })
-                    return
-                }
-                sendResponse({ ok: r.ok, status: r.status, text })
-            })
-            .catch(err => {
-                const error = String(err?.message || err)
-                console.log('[reveddit] bg fetch-userpage-html error:', error)
-                // Turned off by the remote option, every page is refused too:
-                // restore and the scans stop rather than try every author
-                sendResponse({ ok: false, status: 0, error, refused: error.includes('legacy endpoints disabled') })
-            })
-        return true
-    } else if (request.action === 'fetch-api-info') {
-        // Profile scan / thread restore removal check. Unauthenticated .json is
-        // 403 for every host and cookie since 2026-08-31, so this reads the
-        // legacy /api/info HTML listing on www instead: comments that are
-        // removed are simply not rendered (absence = removed, only trusted when
-        // the response was a real listing), and posts get their own legacy page
-        // for the meta-robots removal signal. Response keeps the JSON shape the
-        // callers already consume: { ok, status, children: [{ kind, data }] }.
-        throwIfLegacyDisabled('legacy reddit api/info HTML')
-            .then(() => legacyApiInfo(String(request.ids || '')))
-            .then(children => {
-                console.log(
-                    `[reveddit] bg fetch-api-info (${String(request.ids).split(',').length} ids) -> ${children.length} rendered`,
-                )
-                sendResponse({ ok: true, status: 200, children })
-            })
-            .catch(err => {
-                console.log('[reveddit] bg fetch-api-info error:', err?.message || String(err))
-                sendResponse({ ok: false, status: 0, error: String(err?.message || err) })
-            })
+    } else if (request.action === 'fetch-with-login') {
+        readWithLogin(String(request.path))
+            .then(sendResponse)
+            .catch(err => sendResponse({ ok: false, status: 0, error: String(err?.message || err) }))
         return true
     } else if (request.action === 'immediate-user-lookup') {
         const user = request.user

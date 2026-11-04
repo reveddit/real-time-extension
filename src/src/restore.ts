@@ -1,4 +1,4 @@
-import { isRemovedComment, isRemovedPost, isComment } from './common'
+import { isRemovedPost } from './common'
 import { RECENT_RATE_LIMIT_WINDOW_MS } from './requests'
 import { recordRateLimitHit, getMsSinceLastRateLimitHit, getRateLimitBackoffRemainingMs } from './storage'
 import browser from 'webextension-polyfill'
@@ -171,26 +171,26 @@ export function extractCommentTree_oldReddit(
     return map
 }
 
-// Same extraction over a fetched legacy thread page. The post author comes
-// from the link thing at the top of the page.
-export function extractCommentTree_fromHTML(
-    html: string,
+// The comments new reddit's page shows, with who replied to whom. A comment at
+// the top of the thread has no parentid.
+export function extractCommentTree_newReddit(
     postFullname: string,
-    parse: (html: string) => ParentNode = h => new DOMParser().parseFromString(h, 'text/html'),
-): { map: Map<string, CommentTreeNode>; postAuthor: string; postNumComments: number; postCreatedUtc: number } {
-    const root = parse(html)
-    const link = root.querySelector('#siteTable .thing.link') || root.querySelector('.thing.link')
-    if (!link) {
-        throw new Error('legacy thread page unreadable (no post thing)')
+    root: ParentNode = document,
+): Map<string, CommentTreeNode> {
+    const map = new Map<string, CommentTreeNode>()
+    for (const el of Array.from(root.querySelectorAll('shreddit-comment[thingid]'))) {
+        const id = el.getAttribute('thingid') as string
+        map.set(id, {
+            id,
+            author: el.getAttribute('author') || '',
+            parent_id: el.getAttribute('parentid') || postFullname,
+            created_utc: Math.floor(Date.parse(el.getAttribute('created') || '') / 1000) || 0,
+            link_id: postFullname,
+            children: [],
+        })
     }
-    // data-timestamp is epoch milliseconds in the legacy markup
-    const ts = Number(link.getAttribute('data-timestamp') || 0)
-    return {
-        map: extractCommentTree_oldReddit(postFullname, root),
-        postAuthor: link.getAttribute('data-author') || '',
-        postNumComments: Number(link.getAttribute('data-comments-count') || 0) || 0,
-        postCreatedUtc: ts ? Math.floor(ts / 1000) : 0,
-    }
+    linkChildren(map)
+    return map
 }
 
 export function extractCommentTree_fromJSON(jsonData: any[]): {
@@ -333,7 +333,7 @@ export function getCandidateAuthors(
     return result
 }
 
-// --- User Page Fetching ---
+// --- Which sort finds an old comment ---
 
 function getUserPageSort(
     created_utc: number,
@@ -358,117 +358,63 @@ function getUserPageSort(
     return { sort, t }
 }
 
-// Fetch an author's comments UNAUTHENTICATED. Uses the HTML path because the
-// JSON endpoint hides removed comments from the listing — the HTML page still
-// shows them logged-out. Fetches /comments (not the overview) so posts don't
-// dilute the 25-per-page limit.
-export async function fetchUserPage(
-    author: string,
-    sort: string = 'new',
-    _t: string = '',
-    _after?: string,
-    _before?: string,
-): Promise<any[]> {
-    return fetchUserPageHTML(author, sort, true)
+// --- Reddit's feeds ---
+
+// What a scan reads. A person's feed still has the comments moderators removed,
+// with their text, and leaves out what the person deleted. A thread's feed shows
+// a removed comment with replies as [deleted] and no author, and leaves out one
+// without replies. A comment's feed has its parent, itself and its replies, and
+// leaves it out the same way. No page or JSON listing shows a removed comment's
+// text any more (verified 2026-11-04). Logged out, reddit allows one feed a
+// minute, so these go through the background with the user's login.
+async function fetchWithLogin(path: string): Promise<string> {
+    const res = (await browser.runtime.sendMessage({ action: 'fetch-with-login', path })) as any
+    console.log(`[reveddit scan] ${path} -> status ${res?.status ?? 'none'}`)
+    if (res?.ok) return res.text
+    throw Object.assign(new Error(`reddit request failed (status ${res?.status ?? 'none'})`), {
+        needsLogin: res?.needsLogin,
+        refused: res?.blockPage,
+    })
 }
 
-// Fetch a legacy (old-markup) reddit page by path, logged out, through the
-// background: it resolves the legacy host (www since old.reddit.com began
-// requiring login) and injects the redesign_optout cookie on marked requests.
-async function fetchLegacyPageHTML(path: string): Promise<string> {
-    return fetchUserPageHTMLViaBackground('', path)
+const fetchFeed = async (path: string): Promise<any[]> => parseFeed(await fetchWithLogin(path))
+
+// The removed comments a scan looks for are in here, and it's why a scan goes
+// author by author. Comments only, so posts don't dilute the 100 per request.
+const fetchAuthorComments = (author: string, sort: string, t: string): Promise<any[]> => {
+    const query = new URLSearchParams({ sort, limit: '100', ...(t && { t }) })
+    return fetchFeed(`/user/${encodeURIComponent(author)}/comments/.rss?${query}`)
 }
 
-// --- User page via HTML ---
-// The unauthenticated .json user page is 403'd, but Reddit still serves the
-// HTML user page unauthenticated WITH removed bodies. Fetch + parse that.
-// Route by page host: on old.reddit.com it's a same-origin fetch (works on all
-// browsers, no DNR needed); on new reddit (www/sh) old.reddit.com is cross-origin
-// and CORS-blocked in the content script, so the background does it (it has the
-// host_permissions CORS bypass + the DNR header strip).
-// commentsOnly: true  → /user/X/comments (thread restore — no posts diluting)
-// commentsOnly: false → /user/X (profile scan — needs both posts and comments)
-export async function fetchUserPageHTML(username: string, sort = 'new', commentsOnly = false): Promise<any[]> {
-    const subpath = commentsOnly ? '/comments' : ''
-    const qs = sort && sort !== 'new' ? `?sort=${encodeURIComponent(sort)}` : ''
-    const path = `/user/${encodeURIComponent(username)}${subpath}${qs}`
-    // Always via the background: old.reddit.com login-walls logged-out requests
-    // since 2026-08-31, so the same-origin fetch that used to work from an
-    // old.reddit tab now returns a login form. The background fetches the
-    // legacy page from www with the redesign_optout cookie injected.
-    const html = await fetchUserPageHTMLViaBackground(username, path)
-    return parseUserPageHTML(html)
-}
-
-async function fetchUserPageHTMLViaBackground(username: string, path: string): Promise<string> {
-    const res = (await browser.runtime.sendMessage({
-        action: 'fetch-userpage-html',
-        username,
-        path,
-    })) as any
-    console.log(
-        `[reveddit scan] user-page background fetch -> status ${res?.status ?? 'none'} (${res?.ok ? 'ok' : res?.error || 'fail'})`,
-    )
-    if (res?.ok && res.text) return res.text
-    if (res?.refused) {
-        // Reddit answers every legacy page with its challenge: no other author's
-        // page can be read either, so the loops stop on this
-        throw Object.assign(new Error(`background user-page fetch refused: ${res.error}`), { legacyRefused: true })
-    }
-    throw new Error(`background user-page fetch failed (status ${res?.status ?? 'none'})`)
-}
-
-async function fetchApiInfoViaBackground(ids: string): Promise<any[]> {
-    const res = (await browser.runtime.sendMessage({ action: 'fetch-api-info', ids })) as any
-    console.log(
-        `[reveddit scan] /api/info background -> status ${res?.status ?? 'none'} (${res?.ok ? 'ok' : res?.error || 'fail'})`,
-    )
-    if (res?.ok && res.children) return res.children
-    throw new Error(`background /api/info fetch failed (status ${res?.status ?? 'none'})`)
-}
-
-export function parseUserPageHTML(html: string): any[] {
-    const doc = new DOMParser().parseFromString(html, 'text/html')
-    const items: any[] = []
-    for (const el of Array.from(doc.querySelectorAll('#siteTable > .thing[data-fullname]'))) {
-        const name = el.getAttribute('data-fullname') || ''
-        if (!name) continue
+export function parseFeed(xml: string): any[] {
+    const feed = new DOMParser().parseFromString(xml, 'text/xml')
+    return Array.from(feed.querySelectorAll('entry')).map(entry => {
+        const name = entry.querySelector('id')?.textContent || ''
         const isCommentItem = name.startsWith('t1_')
-        const bodyEl = el.querySelector('.entry .usertext-body .md')
-        const titleEl = el.querySelector('.entry a.title')
-        // For comments, the parent post title (shown above the comment on the user page).
-        const linkTitleEl = el.querySelector('.parent a.title')
-        const timeEl = el.querySelector('.tagline time')
-        const scoreEl = el.querySelector('.tagline .score.unvoted')
-        const permalink = el.getAttribute('data-permalink') || ''
-        let link_id: string | undefined
-        if (isCommentItem && permalink) {
-            const parts = permalink.split('/').filter(Boolean)
-            if (parts[2] === 'comments' && parts[3]) link_id = 't3_' + parts[3]
-        }
-        const datetime = timeEl?.getAttribute('datetime')
-        items.push({
+        const href = entry.querySelector('link')?.getAttribute('href') || ''
+        const permalink = href.replace(/^https:\/\/[^/]+/, '')
+        const post = permalink.match(/\/comments\/([a-z0-9]+)/i)?.[1]
+        const content = entry.querySelector('content')?.textContent || ''
+        const bodyEl = new DOMParser().parseFromString(content, 'text/html').querySelector('.md')
+        const title = entry.querySelector('title')?.textContent || ''
+        const date = entry.querySelector('published')?.textContent || entry.querySelector('updated')?.textContent
+        return {
             kind: isCommentItem ? 't1' : 't3',
             data: {
                 name,
-                author: el.getAttribute('data-author') || '',
-                subreddit: el.getAttribute('data-subreddit') || '',
-                body: bodyEl ? (bodyEl.textContent || '').trim() : undefined,
-                body_html: bodyEl ? bodyEl.innerHTML : undefined,
-                title: !isCommentItem && titleEl ? (titleEl.textContent || '').trim() : undefined,
-                link_title: isCommentItem && linkTitleEl ? (linkTitleEl.textContent || '').trim() : undefined,
-                created_utc: datetime ? Math.floor(new Date(datetime).getTime() / 1000) : 0,
-                score: scoreEl?.getAttribute('title') ? parseInt(scoreEl.getAttribute('title')!, 10) || 0 : undefined,
+                author: entry.querySelector('author name')?.textContent?.replace(/^\/u\//, '') || '[deleted]',
+                subreddit: entry.querySelector('category')?.getAttribute('term') || '',
+                body: (bodyEl?.textContent || '').trim(),
+                body_html: bodyEl?.innerHTML || '',
+                title: isCommentItem ? undefined : title,
+                // A comment's title reads "/u/name on the post's title"
+                link_title: isCommentItem ? title.replace(/^\/u\/\S+ on /, '') : undefined,
+                created_utc: Math.floor(Date.parse(date || '') / 1000) || 0,
                 permalink,
-                link_id,
-                // parent_id isn't in the HTML, but link_id (the thread) is; the
-                // inserter can still place comments by link_id when parent_id is
-                // missing (they land in the unattached area and can be bridged).
-                parent_id: link_id,
+                link_id: post ? 't3_' + post : undefined,
             },
-        })
-    }
-    return items
+        }
+    })
 }
 
 // --- Rate Limit Persistence ---
@@ -532,14 +478,32 @@ async function setRateLimitCooldown(durationMs: number = 60000) {
     }
 }
 
-// --- Thread page fetch (for new reddit, where the DOM has no usable tree) ---
+// --- The thread being scanned ---
 
-// The legacy thread page in old markup, the same thing extractCommentTree_oldReddit
-// reads from the live DOM on old.reddit pages. Replaces the thread .json fetch,
-// which is 403 logged out for every host since 2026-08-31.
-export async function fetchThreadHTML(postId: string, subreddit: string): Promise<string> {
-    const shortId = postId.replace(/^t3_/, '')
-    return fetchLegacyPageHTML(`/r/${encodeURIComponent(subreddit)}/comments/${shortId}/?limit=500`)
+// The feed has the thread's comments and says which are gone. The page has who
+// replied to whom, for the comments it shows.
+async function readThread(threadPostId: string, subreddit: string, isNewReddit: boolean) {
+    const shortId = threadPostId.replace(/^t3_/, '')
+    const items = await fetchFeed(`/r/${encodeURIComponent(subreddit)}/comments/${shortId}/.rss?limit=500`)
+    const post = items.find(item => item.kind === 't3')?.data
+    if (!post) {
+        throw new Error('thread feed unreadable (no post)')
+    }
+    const tree = isNewReddit ? extractCommentTree_newReddit(threadPostId) : extractCommentTree_oldReddit(threadPostId)
+    for (const { kind, data } of items) {
+        if (kind !== 't1') continue
+        const { name: id, author, body, created_utc } = data
+        const shown = tree.get(id)
+        if (shown) Object.assign(shown, { author, body })
+        else tree.set(id, { id, author, body, created_utc, parent_id: '', link_id: threadPostId, children: [] })
+    }
+    return { tree, postAuthor: post.author as string, postCreatedUtc: post.created_utc as number }
+}
+
+const scanFailure = (err: any, otherwise: string): string => {
+    if (err.needsLogin) return 'Sign in to Reddit to scan. Logged out, it allows one request a minute.'
+    if (err.refused) return 'Reddit is refusing the feeds a scan reads. Try again later.'
+    return err.message?.includes('429') ? 'Rate limited by Reddit. Try again in a minute.' : otherwise
 }
 
 // --- Main Restore Function ---
@@ -571,33 +535,22 @@ export async function restoreComment(
         return { found: false }
     }
 
-    let treeResult: { treeMap: Map<string, CommentTreeNode>; postAuthor: string }
-
+    let thread: Awaited<ReturnType<typeof readThread>>
     try {
-        if (isNewReddit) {
-            const html = await fetchThreadHTML(threadPostId, subreddit)
-            const parsed = extractCommentTree_fromHTML(html, threadPostId)
-            treeResult = { treeMap: parsed.map, postAuthor: parsed.postAuthor }
-        } else {
-            const opEl = document.querySelector('.link .top-matter .author')
-            treeResult = {
-                treeMap: extractCommentTree_oldReddit(threadPostId),
-                postAuthor: opEl?.textContent?.trim() || '',
-            }
-        }
-    } catch {
+        thread = await readThread(threadPostId, subreddit, isNewReddit)
+    } catch (err: any) {
         onProgress({
             current: 0,
             total: 0,
             currentAuthor: '',
             status: 'error',
-            message: 'Could not load comment tree.',
+            message: scanFailure(err, 'Could not load comment tree.'),
         })
         return { found: false }
     }
 
-    const { treeMap, postAuthor } = treeResult
-    const { visibleRealIds, tombstoneIds } = summarizeThreadTree(treeMap)
+    const { tree: treeMap, postAuthor } = thread
+    const { candidateAuthors, visibleRealIds, tombstoneIds } = summarizeThreadTree(treeMap)
 
     // Track which comments we've already resolved (across clicks) so we don't
     // report them again.
@@ -611,9 +564,7 @@ export async function restoreComment(
     // once ALL visible authors are exhausted.
     const proximityOrdered = getCandidateAuthors(targetCommentId, treeMap, postAuthor, Number.MAX_SAFE_INTEGER)
     const seenAuthors = new Set(proximityOrdered)
-    const candidates = proximityOrdered.concat(
-        summarizeThreadTree(treeMap).candidateAuthors.filter(a => !seenAuthors.has(a)),
-    )
+    const candidates = proximityOrdered.concat(candidateAuthors.filter(a => !seenAuthors.has(a)))
 
     if (candidates.length === 0) {
         onProgress({
@@ -647,7 +598,7 @@ export async function restoreComment(
 
     const makeRecovered = (d: any, subreddit_: string): RecoveredComment => ({
         id: d.name,
-        parent_id: d.parent_id || threadPostId,
+        parent_id: d.parent_id || treeMap.get(d.name)?.parent_id || threadPostId,
         link_id: d.link_id,
         author: d.author || '',
         body: d.body || '',
@@ -658,11 +609,11 @@ export async function restoreComment(
         subreddit: d.subreddit || subreddit_,
     })
 
-    // Cross-check an author's page against this thread. Three cases:
-    //   1. Tombstone (in removedIds) — removal already confirmed, report directly.
-    //   2. Target comment — save as the result.
-    //   3. Not in tree at all (no tombstone, not visible) — might be a removed
-    //      leaf or just not loaded. Collect for /api/info verification.
+    // Cross-check an author's feed against this thread. Three cases:
+    //   1. Tombstone on the page: its removal and its place are known.
+    //   2. Target comment: save as the result.
+    //   3. Anything else that isn't live here might be a removed comment with no
+    //      replies, or one the thread's feed cut off. Its own feed tells.
     const pendingVerify: any[] = []
 
     const crossCheck = (items: any[], _sourceAuthor: string) => {
@@ -681,12 +632,10 @@ export async function restoreComment(
                     body_html: d.body_html,
                     sourceAuthor: _sourceAuthor,
                 }
-            } else if (tombstoneIds.has(d.name)) {
-                // Tombstone — removal confirmed, report immediately.
+            } else if (tombstoneIds.has(d.name) && treeMap.get(d.name)?.parent_id) {
                 alreadyResolved.add(d.name)
                 onOtherFound?.(makeRecovered(d, subreddit))
             } else {
-                // Not in tree at all — queue for /api/info verification.
                 pendingVerify.push(d)
             }
         }
@@ -725,7 +674,7 @@ export async function restoreComment(
             if (cached) {
                 items = authorCache!.get(author)!
             } else {
-                items = await limiter.schedule(() => fetchUserPage(author, sort, t))
+                items = await limiter.schedule(() => fetchAuthorComments(author, sort, t))
                 authorCache?.set(author, items)
                 newFetches++
             }
@@ -741,25 +690,22 @@ export async function restoreComment(
                 })
                 return { found: false }
             }
-            if (err.legacyRefused) {
+            if (err.refused || err.needsLogin) {
                 // Not "searched all": nothing was read, and the buttons stay
                 onProgress({
                     current: i + 1,
                     total: candidates.length,
                     currentAuthor: '',
                     status: 'error',
-                    message: 'Reddit is refusing the pages restore reads. Try again later.',
+                    message: scanFailure(err, ''),
                 })
                 return { found: false }
             }
-            if (err.message?.includes('429') || err.message?.includes('403')) {
-                if (err.message?.includes('429')) {
-                    // Shared client-level signal: monitoring halves its
-                    // verification budget for an hour and backs off, and the
-                    // popup badge tells the user why. Not for 403 — that shape
-                    // includes throwIfLegacyDisabled's synthetic error.
-                    recordRateLimitHit()
-                }
+            if (err.message?.includes('429')) {
+                // Shared client-level signal: monitoring halves its verification
+                // budget for an hour and backs off, and the popup badge tells
+                // the user why.
+                recordRateLimitHit()
                 await setRateLimitCooldown()
                 onProgress({
                     current: i + 1,
@@ -773,29 +719,17 @@ export async function restoreComment(
         }
     }
 
-    // Verify not-in-tree comments via /api/info before reporting them. A
-    // removed comment reads [removed]/[deleted]; a live-but-not-loaded one
-    // reads its real body and should be skipped. Use the full lookup (not just
-    // the removed-set) so we get the real parent_id for proper tree placement —
-    // the HTML parser doesn't have parent_id, so without this the inserter
-    // can't tell where the comment belongs and it would be misplaced.
+    // Verify the rest through their own feeds before reporting them: a live
+    // comment the thread's feed cut off stays out, and the feed names the parent.
     if (pendingVerify.length > 0) {
         const unverified = pendingVerify.filter(d => !alreadyResolved.has(d.name))
         if (unverified.length > 0) {
-            const looked = await lookupCommentsByIds(
-                unverified.map(d => d.name),
-                limiter,
-            )
+            const looked = await lookupCommentsByIds(unverified, limiter)
             for (const d of unverified) {
                 const info = looked.get(d.name)
                 if (!info?.removed) continue
                 alreadyResolved.add(d.name)
-                const rc = makeRecovered(d, subreddit)
-                // Use the real parent_id from /api/info (the HTML parser doesn't
-                // have it, so without this correction the comment would be
-                // misplaced as a top-level comment).
-                if (info.parent_id) rc.parent_id = info.parent_id
-                onOtherFound?.(rc)
+                onOtherFound?.(makeRecovered({ ...d, parent_id: info.parent_id }, subreddit))
             }
         }
     }
@@ -843,18 +777,32 @@ export async function scanUserProfile(
         message: 'Fetching user profile...',
     })
 
-    const sort = options?.sort || 'new'
+    const user = encodeURIComponent(username)
+    const query = new URLSearchParams({ sort: options?.sort || 'new', limit: '100' })
+    const limiter = new RateLimiter(await scanDelayMs())
+    const cachedItems: any[] = []
+    // What reddit still lists: not removed comments, but removed posts, marked
+    const liveItems = new Map<string, any>()
 
-    let cachedItems: any[]
     try {
-        cachedItems = await fetchUserPageHTML(username, sort)
+        for (const tab of ['comments', 'submitted']) {
+            cachedItems.push(...(await limiter.schedule(() => fetchFeed(`/user/${user}/${tab}/.rss?${query}`))))
+            const listing = JSON.parse(
+                await limiter.schedule(() => fetchWithLogin(`/user/${user}/${tab}.json?${query}`)),
+            )
+            for (const child of listing?.data?.children || []) {
+                liveItems.set(child.data.name, child.data)
+            }
+        }
     } catch (err: any) {
         onProgress({
             current: 0,
             total: 0,
             currentAuthor: username,
             status: 'error',
-            message: err.message?.includes('404') ? 'User not found.' : 'Could not fetch user profile.',
+            message: err.message?.includes('404')
+                ? 'User not found.'
+                : scanFailure(err, 'Could not fetch user profile.'),
         })
         return []
     }
@@ -870,7 +818,7 @@ export async function scanUserProfile(
         return []
     }
 
-    console.log(`[reveddit scan] parsed ${cachedItems.length} items from user page for u/${username}`)
+    console.log(`[reveddit scan] read ${cachedItems.length} items from u/${username}'s feeds`)
 
     onProgress({
         current: 0,
@@ -880,59 +828,38 @@ export async function scanUserProfile(
         message: `Checking removal status of ${cachedItems.length} items...`,
     })
 
-    // Batch removal check through the background, which reads the legacy
-    // /api/info HTML listing (unauthenticated .json is gone for every host):
-    // absent comments are reported as removed, posts get their own page check.
-    const ids = cachedItems.map(item => item.data.name)
-    const liveItems: Map<string, any> = new Map()
-    let children: any[]
-
-    try {
-        children = await fetchApiInfoViaBackground(ids.join(','))
-    } catch (err: any) {
-        console.log('[reveddit scan] /api/info failed:', err?.message || err)
-        onProgress({
-            current: 0,
-            total: cachedItems.length,
-            currentAuthor: username,
-            status: 'error',
-            message: 'Could not check removal status.',
-        })
-        return []
-    }
-    for (const child of children) {
-        liveItems.set(child.data.name, child.data)
-    }
+    // A comment the listing leaves out may only be in a subreddit they hid
+    const unlisted = cachedItems.filter(item => item.kind === 't1' && !liveItems.has(item.data.name))
+    const looked = await lookupCommentsByIds(
+        unlisted.map(item => item.data),
+        limiter,
+    )
 
     const results: ScanResult[] = []
 
     for (const item of cachedItems) {
         const cached = item.data
         const live = liveItems.get(cached.name)
+        const removed = item.kind === 't1' ? looked.get(cached.name)?.removed : live && isRemovedPost(live)
+        if (!removed) continue
 
         const cachedHasContent = cached.body && cached.body !== '[removed]' && cached.body !== '[deleted]'
         const cachedHasTitle = cached.title && cached.title !== '[removed]' && cached.title !== '[deleted]'
-
         if (!cachedHasContent && !cachedHasTitle) continue
 
-        const liveIsRemoved = !live || (isComment(cached.name) ? isRemovedComment(live) : isRemovedPost(live))
-
-        if (liveIsRemoved) {
-            results.push({
-                id: cached.name,
-                type: cached.name.startsWith('t1_') ? 'comment' : 'post',
-                subreddit: cached.subreddit || '',
-                body: cached.body,
-                body_html: cached.body_html,
-                title: cached.title,
-                link_title: cached.link_title,
-                created_utc: cached.created_utc || 0,
-                score: cached.score,
-                permalink: cached.permalink || '',
-                parent_id: cached.parent_id,
-                link_id: cached.link_id,
-            })
-        }
+        results.push({
+            id: cached.name,
+            type: item.kind === 't1' ? 'comment' : 'post',
+            subreddit: cached.subreddit || '',
+            body: cached.body,
+            body_html: cached.body_html,
+            title: cached.title,
+            link_title: cached.link_title,
+            created_utc: cached.created_utc || 0,
+            permalink: cached.permalink || '',
+            parent_id: looked.get(cached.name)?.parent_id,
+            link_id: cached.link_id,
+        })
     }
 
     onProgress({
@@ -980,8 +907,8 @@ export interface RecoveredComment {
 
 export type RecoveredCommentCallback = (c: RecoveredComment) => void
 
-// A comment fetched by id from /api/info (logged-out). `removed` means its public
-// body is a [removed]/[deleted] tombstone (real content is not available here).
+// A comment read through its own feed. `removed` means it's a [deleted] tombstone
+// there, or left out, so its text isn't available from it.
 export interface LookedUpComment {
     id: string
     parent_id: string
@@ -995,38 +922,37 @@ export interface LookedUpComment {
     removed: boolean
 }
 
-// Batched, rate-limited lookup of comments by fullname over the legacy
-// /api/info HTML listing (via the background). Removed comments are absent
-// from that listing; the background reports each absent id with a [removed]
-// body, so `removed` below stays correct. parent_id is not in the legacy HTML,
-// so it is empty here and callers keep their own placement.
-export async function lookupCommentsByIds(ids: string[], limiter: RateLimiter): Promise<Map<string, LookedUpComment>> {
+// Rate-limited, one request per comment, so callers pass few
+export async function lookupCommentsByIds(
+    comments: { name: string; link_id: string }[],
+    limiter: RateLimiter,
+): Promise<Map<string, LookedUpComment>> {
     const out = new Map<string, LookedUpComment>()
-    for (let i = 0; i < ids.length; i += 100) {
-        const batch = ids.slice(i, i + 100)
-        let children: any[]
+    for (const { name, link_id } of comments.slice(0, MAX_RESTORE_LOOKUPS)) {
+        const path = `/comments/${link_id.replace(/^t3_/, '')}/_/${name.replace(/^t1_/, '')}/.rss?context=1`
+        let items: any[]
         try {
-            children = await limiter.schedule(() => fetchApiInfoViaBackground(batch.join(',')))
+            items = await limiter.schedule(() => fetchFeed(path))
         } catch {
             continue
         }
-        for (const child of children || []) {
-            const d = child?.data
-            if (!d || child.kind !== 't1') continue
-            const b = (d.body || '').replace(/\\/g, '')
-            out.set(d.name, {
-                id: d.name,
-                parent_id: d.parent_id || '',
-                link_id: d.link_id || '',
-                author: d.author || '',
-                body: d.body || '',
-                body_html: d.body_html || '',
-                created_utc: d.created_utc || 0,
-                permalink: d.permalink || '',
-                subreddit: d.subreddit || '',
-                removed: b === '[removed]' || b === '[deleted]',
-            })
-        }
+        if (!items.length) continue
+        const at = items.findIndex(item => item.data.name === name)
+        const d = items[at]?.data
+        // With no replies, a removed comment's feed ends at its parent
+        const parent = items[at < 0 ? items.length - 1 : at - 1]?.data
+        out.set(name, {
+            id: name,
+            parent_id: parent?.name || '',
+            link_id,
+            author: d?.author || '[deleted]',
+            body: d?.body || '[deleted]',
+            body_html: d?.body_html || '',
+            created_utc: d?.created_utc || 0,
+            permalink: d?.permalink || '',
+            subreddit: d?.subreddit || '',
+            removed: !d || d.body === '[removed]' || d.body === '[deleted]',
+        })
     }
     return out
 }
@@ -1049,25 +975,20 @@ function summarizeThreadTree(map: Map<string, CommentTreeNode>): {
                 authors.push(node.author)
             }
         } else {
-            // A removed comment that IS present in the view (has a tombstone) —
-            // its removal is already confirmed, no need to re-verify via /api/info.
+            // A removed comment that IS present in the view (has a tombstone)
             tombstoneIds.add(node.id)
         }
     }
     return { candidateAuthors: authors, visibleRealIds, tombstoneIds }
 }
 
-function getOldRedditNumComments(): number {
-    const el = document.querySelector(
-        '#siteTable .thing[data-comments-count], .linklisting .thing[data-comments-count]',
-    )
-    const n = parseInt(el?.getAttribute('data-comments-count') || '', 10)
-    return Number.isFinite(n) ? n : 0
-}
-
-function getOldRedditPostCreatedUtc(): number {
-    const dt = document.querySelector('#siteTable .thing .tagline time')?.getAttribute('datetime')
-    return dt ? Math.floor(new Date(dt).getTime() / 1000) : 0
+function getNumComments(isNewReddit: boolean): number {
+    const count = isNewReddit
+        ? document.querySelector('shreddit-post')?.getAttribute('comment-count')
+        : document
+              .querySelector('#siteTable .thing[data-comments-count], .linklisting .thing[data-comments-count]')
+              ?.getAttribute('data-comments-count')
+    return parseInt(count || '', 10) || 0
 }
 
 export async function scanThreadForRemovedComments(
@@ -1081,42 +1002,26 @@ export async function scanThreadForRemovedComments(
     if (!(await monitoringBackoffGate(onProgress))) {
         return []
     }
-    let candidateAuthors: string[]
-    let visibleRealIds: Set<string>
-    let tombstoneIds: Set<string>
-    let postAuthor: string
-    let numComments: number
-    let postCreatedUtc: number
-
+    let thread: Awaited<ReturnType<typeof readThread>>
     try {
-        if (isNewReddit) {
-            const html = await fetchThreadHTML(threadPostId, subreddit)
-            const parsed = extractCommentTree_fromHTML(html, threadPostId)
-            postAuthor = parsed.postAuthor
-            numComments = parsed.postNumComments
-            postCreatedUtc = parsed.postCreatedUtc
-            ;({ candidateAuthors, visibleRealIds, tombstoneIds } = summarizeThreadTree(parsed.map))
-        } else {
-            const treeMap = extractCommentTree_oldReddit(threadPostId)
-            postAuthor = document.querySelector('.link .top-matter .author')?.textContent?.trim() || ''
-            numComments = getOldRedditNumComments()
-            postCreatedUtc = getOldRedditPostCreatedUtc()
-            ;({ candidateAuthors, visibleRealIds, tombstoneIds } = summarizeThreadTree(treeMap))
-        }
-    } catch {
+        thread = await readThread(threadPostId, subreddit, isNewReddit)
+    } catch (err: any) {
         onProgress({
             current: 0,
             total: 0,
             currentAuthor: '',
             status: 'error',
-            message: 'Could not load comment tree.',
+            message: scanFailure(err, 'Could not load comment tree.'),
         })
         return []
     }
 
+    const { tree, postAuthor, postCreatedUtc } = thread
+    const { candidateAuthors, visibleRealIds, tombstoneIds } = summarizeThreadTree(tree)
+
     // num_comments includes removed comments, so (total − visible) is how many
     // are missing. If nothing's missing there's nothing to scan for.
-    const missingCount = Math.max(0, numComments - visibleRealIds.size)
+    const missingCount = Math.max(tombstoneIds.size, getNumComments(isNewReddit) - visibleRealIds.size)
     if (missingCount === 0) {
         onProgress({
             current: 0,
@@ -1148,13 +1053,13 @@ export async function scanThreadForRemovedComments(
     const recovered: RecoveredComment[] = []
     const recoveredIds = new Set<string>()
     let searched = 0
-    // Reddit refused an author's page with its challenge, so none can be read
-    let refused = false
+    // Why reddit won't let any author's feed be read, if so
+    let stopped = ''
 
     const recordRecovery = (d: any, sourceAuthor: string) => {
         const rc: RecoveredComment = {
             id: d.name,
-            parent_id: d.parent_id || threadPostId,
+            parent_id: d.parent_id || tree.get(d.name)?.parent_id || threadPostId,
             link_id: d.link_id,
             author: d.author || sourceAuthor,
             body: d.body || '',
@@ -1186,69 +1091,57 @@ export async function scanThreadForRemovedComments(
             if (authorCache.has(author)) {
                 items = authorCache.get(author)!
             } else {
-                items = await limiter.schedule(() => fetchUserPage(author, sort, t))
+                items = await limiter.schedule(() => fetchAuthorComments(author, sort, t))
                 authorCache.set(author, items)
             }
         } catch (err: any) {
             if (err.message === 'Cancelled') break
-            if (err.legacyRefused) {
-                refused = true
+            if (err.refused || err.needsLogin) {
+                stopped = scanFailure(err, '')
                 break
             }
-            if (err.message?.includes('429') || err.message?.includes('403')) {
-                if (err.message?.includes('429')) {
-                    // Shared signal — see the twin catch in restoreComment.
-                    recordRateLimitHit()
-                }
+            if (err.message?.includes('429')) {
+                // Shared signal — see the twin catch in restoreComment.
+                recordRateLimitHit()
                 await setRateLimitCooldown()
+                stopped = scanFailure(err, '')
                 break
             }
             continue
         }
 
-        // This author's comments in this thread that aren't already shown. A
-        // tombstone confirms removal; anything else is only "missing from this
-        // view" until /api/info confirms it's actually removed (it may simply
-        // not be loaded here, e.g. a single-comment-thread view).
+        // This author's comments in this thread that aren't live here. A tombstone
+        // on the page confirms removal. Anything else needs its own feed to say:
+        // it may be live, and only cut off from the thread's feed.
         const threadComments = items.filter(i => i?.data && i.kind === 't1' && i.data.link_id === threadPostId)
         console.log(`[reveddit scan] u/${author}: ${items.length} items, ${threadComments.length} in this thread`)
         const uncertain: any[] = []
         for (const item of threadComments) {
             const d = item.data
             if (visibleRealIds.has(d.name) || recoveredIds.has(d.name)) continue
-            if (tombstoneIds.has(d.name)) {
-                console.log(`[reveddit scan]   ${d.name} → tombstone match, recovering`)
+            if (tombstoneIds.has(d.name) && tree.get(d.name)?.parent_id) {
                 recordRecovery(d, author)
             } else {
-                console.log(`[reveddit scan]   ${d.name} → not in tree, queuing for /api/info verify`)
                 uncertain.push(d)
             }
         }
         if (uncertain.length) {
-            const looked = await lookupCommentsByIds(
-                uncertain.map(d => d.name),
-                limiter,
-            )
-            const confirmedCount = [...looked.values()].filter(c => c.removed).length
-            console.log(`[reveddit scan]   /api/info verified ${confirmedCount}/${uncertain.length} as removed`)
+            const looked = await lookupCommentsByIds(uncertain, limiter)
             for (const d of uncertain) {
                 const info = looked.get(d.name)
-                if (!info?.removed) continue
-                // Use real parent_id from /api/info (HTML parser doesn't have it)
-                if (info.parent_id) d.parent_id = info.parent_id
-                recordRecovery(d, author)
+                if (info?.removed) recordRecovery({ ...d, parent_id: info.parent_id }, author)
             }
         }
     }
 
     const unsearched = candidates.length - searched
-    if (refused) {
+    if (stopped) {
         onProgress({
             current: searched,
             total: candidates.length,
             currentAuthor: '',
             status: 'error',
-            message: `Reddit is refusing the pages this scan reads. ${recovered.length} recovered; try again later.`,
+            message: `${stopped} ${recovered.length} recovered.`,
         })
         return recovered
     }

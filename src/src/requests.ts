@@ -3146,6 +3146,16 @@ const lookupItemsByID_publicThenLegacy = (
 // bridge, which import it from here
 export { hasRedditLoginCookie }
 
+// For a scan the user started (restore.ts). A login reads reddit's feeds at a
+// scan's pace, where a logged-out browser gets one a minute (verified 2026-11-04).
+export const readWithLogin = async (path: string) => {
+    if (!(await hasRedditLoginCookie())) {
+        return { ok: false, status: 0, needsLogin: true }
+    }
+    const { response, blockPage } = await fetchLoggedIn(`https://www.reddit.com${path}`)
+    return { ok: response.ok, status: response.status, blockPage, text: response.ok ? await response.text() : '' }
+}
+
 const cookieDetails_redditSession = { name: 'reddit_session', url: 'https://reddit.com' }
 
 // What cookies.set needs to put a cookie back as it was, expiry included: one

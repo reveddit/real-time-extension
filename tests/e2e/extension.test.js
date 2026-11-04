@@ -766,6 +766,240 @@ test.describe('Reddit pages reached without a new document', () => {
     })
 })
 
+test.describe("Scans on new reddit's comments", () => {
+    const FIRST = 't1_first'
+    const REPLY = 't1_reply'
+    const REMOVED = 't1_removed'
+    const SCAN = '.rev-scan-comment-btn'
+    const RESTORE = '.rev-restore-btn'
+    const RECOVERED = '.rev-inserted-comment'
+    const NOW = new Date().toISOString()
+
+    // The markup read 2026-11-04: a comment's parts sit deep inside <details>, its
+    // replies in its own #comment-children, and a removed comment has no slotted
+    // body and starts collapsed.
+    const comment = (id, { author = 'someone', parent, text = 'Words', replies = '' } = {}) =>
+        `<shreddit-comment thingid="${id}" author="${author}" created="${NOW}" ${parent ? `parentid="${parent}"` : ''}>` +
+        `<details role="article" ${author === '[deleted]' ? '' : 'open'}><summary><div slot="commentMeta">${author}</div></summary><div class="grid">` +
+        `<div class="col-start-2">${
+            author === '[deleted]'
+                ? '<div class="md"><div><p class="text-neutral-content-weak">Comment removed by moderator</p></div></div>'
+                : `<div class="md" slot="comment"><div><p>${text}</p></div></div>`
+        }</div>` +
+        `<div class="col-start-2"><div class="min-h-xl" slot="actionRow"></div></div>` +
+        `<div id="comment-children">${replies}</div></div></details></shreddit-comment>`
+    const removedWithReply = comment(REMOVED, {
+        author: '[deleted]',
+        parent: FIRST,
+        replies: comment(REPLY, { parent: REMOVED, author: 'replier' }),
+    })
+    const thread = (...comments) =>
+        postElement(POST, { author: 'op' }).replace('<shreddit-post', '<shreddit-post comment-count="5"') +
+        `<shreddit-comment-tree id="comment-tree"><section>${comments.join('')}</section></shreddit-comment-tree>`
+
+    // Reddit stamps a comment's row when the comment comes into view
+    const stampRows = page =>
+        page.evaluate(() => {
+            for (const place of document.querySelectorAll('shreddit-comment [slot="actionRow"]:empty')) {
+                const row = document.createElement('shreddit-comment-action-row')
+                row.setAttribute('slot', 'actionRow')
+                row.innerHTML = '<button slot="comment-share">Share</button>'
+                place.append(row)
+            }
+        })
+    const buttonOf = (page, id) => page.locator(`shreddit-comment-action-row:has(> ${SCAN})`).and(rowOf(page, id))
+    const rowOf = (page, id) =>
+        page.locator(`[thingid="${id}"] > details > .grid > div > [slot="actionRow"] > shreddit-comment-action-row`)
+
+    const entry = (id, author, body) =>
+        `<entry>${author ? `<author><name>/u/${author}</name></author>` : ''}<content type="html">` +
+        `&lt;div class=&quot;md&quot;&gt;&lt;p&gt;${body}&lt;/p&gt;&lt;/div&gt;</content><id>${id}</id>` +
+        `<link href="https://www.reddit.com/r/pics/comments/abc123/a_title/${id.slice(3)}/"/>` +
+        `<updated>${NOW}</updated><title>/u/${author} on A title</title></entry>`
+    const feed = (...entries) => `<feed xmlns="http://www.w3.org/2005/Atom">${entries.join('')}</feed>`
+    const threadFeed = feed(
+        entry(POST, 'op', 'The post'),
+        entry(FIRST, 'someone', 'Words'),
+        entry(REMOVED, null, '[deleted]'),
+        entry(REPLY, 'replier', 'Words'),
+    )
+    const userFeed = name => `/user/${name}/comments/.rss?sort=new&limit=100`
+
+    // A login, and reddit's answers in the background, which sends everything else away
+    const answerAs = async (context, answers) => {
+        await context.addCookies([{ name: 'reddit_session', value: 'x', domain: '.reddit.com', path: '/' }])
+        await context.serviceWorkers()[0].evaluate(answers => {
+            self.fetch = async url => {
+                const answer = answers[String(url).replace('https://www.reddit.com', '')]
+                return new Response(answer ?? '', { status: answer === undefined ? 404 : 200 })
+            }
+        }, answers)
+    }
+
+    test('a comment gets its button when reddit stamps its row, inline with Share', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const page = await openNewReddit(
+            context,
+            THREAD,
+            thread(comment(FIRST, { replies: comment(REPLY, { parent: FIRST }) })),
+        )
+        await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
+        await settle(page)
+        await expect(page.locator(SCAN)).toHaveCount(0)
+
+        await stampRows(page)
+        await expect(buttonOf(page, FIRST)).toHaveCount(1)
+        await expect(buttonOf(page, REPLY)).toHaveCount(1)
+        await expect(page.locator(SCAN)).toHaveCount(2)
+        await expect(rowOf(page, FIRST).locator(SCAN)).toHaveAttribute('slot', 'comment-share')
+    })
+
+    test('a row reddit puts back keeps one button, and a comment rendered again gets one', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
+        await settle(page)
+        await stampRows(page)
+        await expect(page.locator(SCAN)).toHaveCount(1)
+
+        await page.evaluate(() => {
+            const row = document.querySelector('shreddit-comment-action-row')
+            const place = row.parentElement
+            row.remove()
+            place.append(row)
+        })
+        await settle(page)
+        await expect(page.locator(SCAN)).toHaveCount(1)
+
+        await page.evaluate(html => {
+            document.querySelector('shreddit-comment').outerHTML = html
+        }, comment(FIRST))
+        await stampRows(page)
+        await expect(page.locator(SCAN)).toHaveCount(1)
+    })
+
+    test('a removed comment offers restore, and its reply still gets a scan button', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST, { replies: removedWithReply })))
+        await expect(page.locator(RESTORE)).toHaveCount(1)
+        await stampRows(page)
+        await expect(buttonOf(page, REPLY)).toHaveCount(1)
+        await expect(buttonOf(page, FIRST)).toHaveCount(1)
+        await expect(rowOf(page, REMOVED).locator(SCAN)).toHaveCount(0)
+    })
+
+    test('restore shows the text under the removed comment, above its replies', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, {
+            '/r/pics/comments/abc123/.rss?limit=500': threadFeed,
+            [userFeed('op')]: feed(),
+            [userFeed('someone')]: feed(entry(REMOVED, 'someone', 'The removed words')),
+        })
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST, { replies: removedWithReply })))
+        await stampRows(page)
+        await page.locator(`[thingid="${REMOVED}"] > details > summary`).click()
+        await page.locator(RESTORE).click()
+
+        const restored = page.locator(`[thingid="${REMOVED}"] > details > .grid > div > ${RECOVERED}`)
+        await expect(restored).toContainText('The removed words')
+        await expect(page.locator(RESTORE)).toBeHidden()
+        const above = await restored.evaluate(el => {
+            const reply = document.querySelector('[thingid="t1_reply"]')
+            return !!(el.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING)
+        })
+        expect(above).toBe(true)
+    })
+
+    test("a scan button's progress stays by its comment, above the replies", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, {
+            '/r/pics/comments/abc123/.rss?limit=500': threadFeed,
+            [userFeed('op')]: feed(),
+            [userFeed('someone')]: feed(),
+            [userFeed('replier')]: feed(),
+        })
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST, { replies: removedWithReply })))
+        await stampRows(page)
+        await rowOf(page, FIRST).locator(SCAN).click()
+
+        const message = page.locator(`[thingid="${FIRST}"] > details > .grid > div > .rev-restore-progress`)
+        await expect(message).toContainText('Not found')
+        await expect(rowOf(page, FIRST).locator(SCAN)).toBeVisible()
+    })
+
+    test('the thread scan places what it finds, and the filter keeps those branches', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const LEAF = 't1_leaf'
+        const OTHER = 't1_other'
+        await answerAs(context, {
+            '/r/pics/comments/abc123/.rss?limit=500': threadFeed.replace(
+                '</feed>',
+                `${entry(OTHER, 'bystander', 'Words')}</feed>`,
+            ),
+            [userFeed('op')]: feed(),
+            [userFeed('someone')]: feed(entry(REMOVED, 'someone', 'The removed words')),
+            [userFeed('replier')]: feed(entry(LEAF, 'replier', 'A removed leaf')),
+            [userFeed('bystander')]: feed(),
+            // With no replies, a removed comment's feed ends at its parent
+            '/comments/abc123/_/leaf/.rss?context=1': feed(entry(POST, 'op', 'The post'), entry(REPLY, 'replier', 'x')),
+        })
+        const page = await openNewReddit(
+            context,
+            THREAD,
+            thread(comment(FIRST, { replies: removedWithReply }), comment(OTHER, { author: 'bystander' })),
+        )
+        await page.locator('.rev-scan-all-btn').click()
+
+        const filled = page.locator(`[thingid="${REMOVED}"] > details > .grid > div > ${RECOVERED}`)
+        await expect(filled).toContainText('The removed words')
+        await expect(filled).toBeVisible()
+        const leaf = page.locator(`[thingid="${REPLY}"] #comment-children ${RECOVERED}`)
+        await expect(leaf).toContainText('A removed leaf')
+        await expect(page.locator('.rev-scan-all-btn')).toContainText('2 comment(s) recovered')
+
+        await expect(leaf).toBeVisible()
+        await expect(page.locator(`[thingid="${FIRST}"]`)).toBeVisible()
+        await expect(page.locator(`[thingid="${OTHER}"]`)).toBeHidden()
+        await page.locator('.rev-thread-filter-btn', { hasText: 'all' }).click()
+        await expect(page.locator(`[thingid="${OTHER}"]`)).toBeVisible()
+    })
+
+    test("one's own removed comment is highlighted, not the replies inside it", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await seedOwnRemoved(context, FIRST)
+        const page = await openNewReddit(
+            context,
+            THREAD,
+            thread(comment(FIRST, { replies: comment(REPLY, { parent: FIRST }) })),
+        )
+        await expect(page.locator(`[thingid="${FIRST}"] [slot="comment"].rev-removed-highlight`)).toHaveCount(1)
+        await expect(page.locator('.rev-removed-highlight')).toHaveCount(1)
+    })
+
+    test('a logged-out browser is asked to sign in, and nothing is sent', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await page.locator('.rev-scan-all-btn').click()
+        await expect(page.locator('.rev-scan-all-progress')).toContainText('Sign in to Reddit to scan')
+    })
+})
+
 test.describe('Welcome page', () => {
     test('renders welcome UI with connection check', async ({ context, extensionId }) => {
         // The rendered state depends on the connection check: "Getting started"

@@ -1,7 +1,6 @@
 // Restore and the thread scan on an old reddit thread while reddit answers every
-// legacy user page with its challenge (the background's fetch-userpage-html
-// says refused, since 2026-10-28): they stop at the first author instead of
-// fetching everyone's page, and don't call the thread searched.
+// author's feed with its block page: they stop at the first author instead of
+// fetching everyone's feed, and don't call the thread searched.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
@@ -32,21 +31,26 @@ beforeAll(async () => {
     ;({ restoreComment, scanThreadForRemovedComments } = await import('../../src/src/restore.ts'))
 })
 
+const THREAD_FEED =
+    '<feed xmlns="http://www.w3.org/2005/Atom"><entry><author><name>/u/opuser</name></author>' +
+    '<id>t3_post</id><updated>2026-11-03T02:17:21+00:00</updated></entry></feed>'
+
 const savedSendMessage = browserMock.runtime.sendMessage
 afterEach(() => {
     browserMock.runtime.sendMessage = savedSendMessage
     vi.useRealTimers()
 })
 
-// Every author's page is refused; returns the pages asked for
+// The thread's feed reads, and every author's is refused; returns the feeds asked for
 const refuseUserPages = () => {
     const asked = []
     browserMock.runtime.sendMessage = async message => {
-        if (message.action === 'fetch-userpage-html') {
-            asked.push(message.path)
-            return { ok: false, status: 200, error: 'challenge page: reddit refuses legacy pages', refused: true }
+        if (message.action !== 'fetch-with-login') return undefined
+        if (message.path.startsWith('/r/')) {
+            return { ok: true, status: 200, text: THREAD_FEED }
         }
-        return undefined
+        asked.push(message.path)
+        return { ok: false, status: 403, blockPage: true }
     }
     return asked
 }
@@ -60,7 +64,7 @@ const withTimers = async run => {
     return running
 }
 
-describe('restore and the thread scan when reddit refuses the legacy user pages', () => {
+describe("restore and the thread scan when reddit refuses authors' feeds", () => {
     it('restore stops at the first refused page and leaves the thread unsearched', async () => {
         __resetStorage()
         const asked = refuseUserPages()
@@ -74,7 +78,7 @@ describe('restore and the thread scan when reddit refuses the legacy user pages'
         expect(result.exhausted).toBeFalsy()
         expect(progress.at(-1)).toMatchObject({
             status: 'error',
-            message: 'Reddit is refusing the pages restore reads. Try again later.',
+            message: 'Reddit is refusing the feeds a scan reads. Try again later.',
         })
     })
 
@@ -88,6 +92,6 @@ describe('restore and the thread scan when reddit refuses the legacy user pages'
         expect(asked).toHaveLength(1)
         expect(recovered).toEqual([])
         expect(progress.at(-1)).toMatchObject({ status: 'error' })
-        expect(progress.at(-1).message).toMatch(/^Reddit is refusing the pages this scan reads/)
+        expect(progress.at(-1).message).toMatch(/^Reddit is refusing the feeds a scan reads/)
     })
 })
