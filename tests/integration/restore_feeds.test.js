@@ -9,21 +9,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import browserMock, { __resetStorage } from '../mocks/webextension-polyfill.js'
 import { parseHTML, DOMParser } from 'linkedom'
 import { setMarkupConfig } from '../../src/src/markup-config'
-
-const POST = 't3_post'
-// A thread's age picks the sort, so these stay young
-const NOW = new Date().toISOString()
-const entry = (id, author, body, post = 'post', sub = 'sub') =>
-    `<entry>${author ? `<author><name>/u/${author}</name><uri>https://www.reddit.com/user/${author}</uri></author>` : ''}` +
-    `<category term="${sub}" label="r/${sub}" />` +
-    `<content type="html">&lt;!-- SC_OFF --&gt;&lt;div class=&quot;md&quot;&gt;&lt;p&gt;${body}&lt;/p&gt; &lt;/div&gt;&lt;!-- SC_ON --&gt;</content>` +
-    `<id>${id}</id><link href="https://www.reddit.com/r/${sub}/comments/${post}/a_title/${id.slice(3)}/"/>` +
-    `<updated>${NOW}</updated><title>/u/${author || '[deleted]'} on A title</title></entry>`
-const postEntry = (id = POST, author = 'op_user', body = 'the post', extra = '') =>
-    entry(id, author, body, id.slice(3)).replace('</title>', `</title>${extra}`)
-const feed = (...entries) =>
-    `<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"><id>/x/.rss</id>${entries.join('')}</feed>`
-const listing = (...children) => JSON.stringify({ data: { children } })
+import { POST, NOW, entry, postEntry, feed, listing } from '../mocks/feeds.js'
 
 const comment = (id, author, parent, inner = '<div slot="comment"><p>live words</p></div>') =>
     `<shreddit-comment thingid="${id}" author="${author}" ${parent ? `parentid="${parent}"` : ''} ` +
@@ -416,6 +402,21 @@ describe('restoring one comment', () => {
         expect(asked).not.toContain(commentPath('t1_offpage'))
     })
 
+    it("says what it couldn't read, keeps the buttons, and the next click tries it", async () => {
+        const pageReads = new Map()
+        pages[authorPath('bob')] = { ok: false, status: 500 }
+        await run('t1_bob1', pageReads)
+        const { result, last } = await run('t1_bob1', pageReads)
+        expect(result).toMatchObject({ found: false, exhausted: false, remaining: 1 })
+        expect(last.message).toContain("1 feed(s) couldn't be read. Click again to try them.")
+
+        pages[authorPath('bob')] = feed(entry('t1_bob1', 'bob', 'live words'))
+        asked.length = 0
+        const third = await run('t1_bob1', pageReads)
+        expect(third.result).toMatchObject({ exhausted: true, remaining: 0 })
+        expect(asked).toEqual([threadPath, authorPath('bob')])
+    })
+
     it('leaves a failed feed to read again, and the next click reads only that', async () => {
         const pageReads = new Map()
         pages[authorPath('bob')] = { ok: false, status: 500 }
@@ -525,6 +526,20 @@ describe('reads that fail', () => {
         expect(pageReads.has(authorPath('alice'))).toBe(false)
     })
 
+    it('counts a read the block page made two requests of, as a click promises', async () => {
+        for (const answered of [
+            { ...refused, retried: true },
+            { ok: true, status: 200, text: feed(), retried: true },
+        ]) {
+            pages['/a'] = pages['/b'] = answered
+            const reads = new restore.ScanReads(new restore.RateLimiter(1), 4)
+            await withTimers(() => reads.feed('/a'))
+            expect(reads.canRead('/c')).toBe(true)
+            await withTimers(() => reads.feed('/b'))
+            expect(reads.canRead('/c')).toBe(false)
+        }
+    })
+
     it('stops after three failures in a row of any kind, and says it could not read', async () => {
         for (const name of ['alice', 'bob', 'op_user']) pages[authorPath(name)] = { ok: false, status: 503 }
         const { last } = await scan()
@@ -549,23 +564,42 @@ describe('reads that fail', () => {
         const first = await scan(pageReads)
         expect(first.last.status).toBe('partial')
         const second = await scan(pageReads)
-        expect(second.last.status).toBe('not_found')
+        expect(second.last.status).toBe('partial')
         expect(second.last.message).toContain("3 feed(s) couldn't be read.")
     })
 
-    it('gives up on a feed after two clicks, and stops promising another', async () => {
+    it("after two clicks says it couldn't read a feed, hasn't finished, and tries it on the next", async () => {
         authorsPage(['a', 'b'])
         pages[authorPath('b')] = refused
         const pageReads = new Map()
         expect((await scan(pageReads)).last.message).toContain('1 left to check. Click again to continue.')
 
         const second = await scan(pageReads)
-        expect(second.last.status).toBe('not_found')
-        expect(second.last.message).toMatch(/^Scan complete: 0 recovered \(\d not found\)\. 1 feed\(s\) couldn't be read\.$/)
+        expect(second.last).toMatchObject({
+            status: 'partial',
+            message: "0 recovered. 1 feed(s) couldn't be read. Click again to try them.",
+        })
 
+        pages[authorPath('b')] = feed(entry('t1_gone', 'b', 'the removed text'))
+        pages[commentPath('t1_gone')] = feed(postEntry())
         asked.length = 0
+        const third = await scan(pageReads)
+        expect(asked).toEqual([threadPath, authorPath('b'), commentPath('t1_gone')])
+        expect(third.found.map(rc => rc.id)).toEqual(['t1_gone'])
+    })
+
+    it('tries a feed that goes on failing once on each click after that, saying the same', async () => {
+        authorsPage(['a', 'b'])
+        pages[authorPath('b')] = refused
+        const pageReads = new Map()
         await scan(pageReads)
-        expect(asked).toEqual([threadPath])
+        await scan(pageReads)
+        for (let i = 0; i < 2; i++) {
+            asked.length = 0
+            const { last } = await scan(pageReads)
+            expect(asked).toEqual([threadPath, authorPath('b')])
+            expect(last).toMatchObject({ status: 'partial', message: expect.stringContaining("couldn't be read") })
+        }
     })
 
     it('gets past failing feeds next to each other, rather than stopping there on every click', async () => {
@@ -626,6 +660,200 @@ describe('reads that fail', () => {
             expect(last).toMatchObject({ status: 'error' })
             expect(last.message).toMatch(words)
         }
+    })
+})
+
+describe("the page's comment count", () => {
+    const threadOf = count =>
+        parseHTML(
+            `<shreddit-post comment-count="${count}"></shreddit-post><shreddit-comment-tree>` +
+                comment('t1_alice1', 'alice') +
+                comment('t1_bob1', 'bob') +
+                '</shreddit-comment-tree>',
+        ).document
+    const onPage = [entry('t1_alice1', 'alice', 'live words'), entry('t1_bob1', 'bob', 'live words')]
+
+    beforeEach(() => {
+        globalThis.document = threadOf(3)
+        pages[authorPath('alice')] = feed(onPage[0], entry('t1_leaf', 'alice', 'the removed text'))
+        pages[authorPath('carol')] = feed()
+        pages[commentPath('t1_leaf')] = feed(postEntry(), onPage[0])
+    })
+
+    const later = new Date(Date.now() + 3600 * 1000).toISOString()
+    const seenAt = at => document.querySelector('shreddit-post').setAttribute('data-rev-seen', String(at))
+
+    it("doesn't say what's missing when the thread is bigger than its feed holds", async () => {
+        globalThis.document = threadOf(3000)
+        pages[threadPath] = feed(postEntry(), ...onPage)
+        const { found, last } = await scan()
+        expect(found.map(rc => rc.id)).toEqual(['t1_leaf'])
+        expect(last.message).toBe('Scan complete: 1 recovered')
+    })
+
+    it('goes by the count up to what the feed holds', async () => {
+        globalThis.document = threadOf(500)
+        pages[threadPath] = feed(postEntry(), ...onPage)
+        const { last } = await scan()
+        expect(last.message).toBe('Scan complete: 1 recovered (497 not found)')
+    })
+
+    it("isn't taken to include a comment posted since the page loaded", async () => {
+        pages[threadPath] = feed(postEntry(), ...onPage, entry('t1_new', 'carol', 'just posted').replace(NOW, later))
+        const { found } = await scan()
+        expect(found.map(rc => rc.id)).toEqual(['t1_leaf'])
+    })
+
+    it('includes one the feed has from before then, which the page may just not have loaded', async () => {
+        pages[threadPath] = feed(postEntry(), ...onPage, entry('t1_unloaded', 'carol', 'further down'))
+        const { last } = await scan()
+        expect(last.message).toBe('All comments are visible — nothing removed.')
+    })
+
+    it('goes by when the count was seen, which on a page reached without a load is after the document', async () => {
+        seenAt(Math.floor(Date.parse(later) / 1000) + 60)
+        pages[threadPath] = feed(postEntry(), ...onPage, entry('t1_unloaded', 'carol', 'further down').replace(NOW, later))
+        const { last } = await scan()
+        expect(last.message).toBe('All comments are visible — nothing removed.')
+    })
+
+    it("doesn't let what it recovers from after the count stand in for what the count has missing", async () => {
+        seenAt(Math.floor(Date.now() / 1000))
+        pages[threadPath] = feed(postEntry(), ...onPage)
+        pages[authorPath('alice')] = feed(onPage[0], entry('t1_late', 'alice', 'posted and removed since').replace(NOW, later))
+        pages[authorPath('bob')] = feed(onPage[1], entry('t1_leaf', 'bob', 'the removed text'))
+        pages[commentPath('t1_late')] = feed(postEntry(), onPage[0])
+        const { found, last } = await scan()
+        expect(found.map(rc => rc.id).sort()).toEqual(['t1_late', 't1_leaf'])
+        expect(last.message).toBe('Scan complete: 2 recovered')
+    })
+
+    it('counts a tombstone posted since on both sides, so finding it all reads as finding it all', async () => {
+        const tombstone = (id, created) =>
+            comment(id, '[deleted]', 't1_alice1', '<p>Comment removed by moderator</p>').replace(NOW, created)
+        globalThis.document = threadOf(3)
+        seenAt(Math.floor(Date.now() / 1000))
+        document.querySelector('[thingid="t1_bob1"]').insertAdjacentHTML('afterend', tombstone('t1_tomb', NOW) + tombstone('t1_late', later))
+        pages[threadPath] = feed(postEntry(), ...onPage, entry('t1_tomb', null, '[deleted]'), entry('t1_late', null, '[deleted]').replace(NOW, later))
+        pages[authorPath('alice')] = feed(onPage[0], entry('t1_tomb', 'alice', 'words'), entry('t1_late', 'alice', 'more words').replace(NOW, later))
+        const { found, last } = await scan()
+        expect(found.map(rc => rc.id).sort()).toEqual(['t1_late', 't1_tomb'])
+        expect(last.message).toBe('Scan complete: 2 recovered')
+        expect(asked).not.toContain(authorPath('bob'))
+    })
+
+    it("goes on for what the count has missing, past a tombstone posted since", async () => {
+        const tombstone = (id, created) =>
+            comment(id, '[deleted]', 't1_alice1', '<p>Comment removed by moderator</p>').replace(NOW, created)
+        globalThis.document = threadOf(4)
+        seenAt(Math.floor(Date.now() / 1000))
+        document.querySelector('[thingid="t1_bob1"]').insertAdjacentHTML('afterend', tombstone('t1_tomb', NOW) + tombstone('t1_late', later))
+        pages[threadPath] = feed(postEntry(), ...onPage, entry('t1_tomb', null, '[deleted]'), entry('t1_late', null, '[deleted]').replace(NOW, later))
+        pages[authorPath('alice')] = feed(onPage[0], entry('t1_tomb', 'alice', 'words'), entry('t1_late', 'alice', 'more words').replace(NOW, later))
+        pages[authorPath('bob')] = feed(onPage[1], entry('t1_leaf', 'bob', 'the removed text'))
+        pages[commentPath('t1_leaf')] = feed(postEntry(), onPage[1])
+        const { found } = await scan()
+        expect(found.map(rc => rc.id).sort()).toEqual(['t1_late', 't1_leaf', 't1_tomb'])
+    })
+
+    it('still says what the count has missing, when all it recovered came after the count', async () => {
+        seenAt(Math.floor(Date.now() / 1000))
+        pages[threadPath] = feed(postEntry(), ...onPage)
+        pages[authorPath('alice')] = feed(onPage[0], entry('t1_late', 'alice', 'posted and removed since').replace(NOW, later))
+        pages[authorPath('bob')] = feed(onPage[1])
+        pages[commentPath('t1_late')] = feed(postEntry(), onPage[0])
+        const { last } = await scan()
+        expect(last.message).toBe('Scan complete: 1 recovered (1 not found)')
+    })
+
+    it("isn't taken to include one on the page itself that came after the count did", async () => {
+        seenAt(Math.floor(Date.now() / 1000))
+        document.querySelector('[thingid="t1_bob1"]').insertAdjacentHTML('afterend', comment('t1_reply', 'carol').replace(NOW, later))
+        pages[threadPath] = feed(postEntry(), ...onPage, entry('t1_reply', 'carol', 'just replied').replace(NOW, later))
+        const { found } = await scan()
+        expect(found.map(rc => rc.id)).toEqual(['t1_leaf'])
+    })
+})
+
+describe('comments a scan already placed on the page', () => {
+    const placed = (id, classes) => `<div class="thing comment rev-inserted-comment ${classes}" data-rev-id="${id}"></div>`
+    const pageWith = (count, ...extras) => {
+        globalThis.document = parseHTML(
+            PAGE.replace('comment-count="6"', `comment-count="${count}"`).replace(
+                '</section>',
+                `</section>${extras.join('')}`,
+            ),
+        ).document
+    }
+
+    it('count as recovered only if they are: a live comment placed for context is not', async () => {
+        pageWith(4, placed('t1_ctx1', 'rev-context'), placed('t1_ctx2', 'rev-context'))
+        const { found, last } = await scan()
+        expect(found.map(rc => rc.id)).toEqual(['t1_tomb'])
+        expect(last.message).toBe('Scan complete: 1 recovered (1 not found)')
+    })
+
+    it('count as recovered only if they are: one placed without its text is not', async () => {
+        pageWith(3, placed('t1_ph', 'rev-removed-highlight rev-placeholder'))
+        const { found } = await scan()
+        expect(found.map(rc => rc.id)).toEqual(['t1_tomb'])
+    })
+
+    it('that are recovered do count, so a scan with nothing left to find stops', async () => {
+        pageWith(3, placed('t1_tomb', 'rev-removed-highlight'))
+        const { found, last } = await scan()
+        expect(found).toEqual([])
+        expect(last.message).toBe('Scan complete: 1 recovered')
+        expect(asked).toEqual([threadPath])
+    })
+
+    it("aren't looked up again when live, and are when their text is still wanted", async () => {
+        pageWith(6, placed('t1_ctx', 'rev-context'), placed('t1_ph', 'rev-removed-highlight rev-placeholder'))
+        pages[authorPath('bob')] = feed(entry('t1_ctx', 'bob', 'live'), entry('t1_ph', 'bob', 'the removed text'))
+        pages[commentPath('t1_ph')] = feed(postEntry())
+        const { found } = await scan()
+        expect(found.map(rc => rc.id)).toContain('t1_ph')
+        expect(asked).not.toContain(commentPath('t1_ctx'))
+    })
+})
+
+describe('a comment by someone who blocked the viewer', () => {
+    const blocked = comment('t1_blk', '[unavailable]', 't1_alice1', '<p>Unavailable</p>')
+    const threadWith = (...extras) => {
+        globalThis.document = parseHTML(
+            '<shreddit-post comment-count="2"></shreddit-post><shreddit-comment-tree>' +
+                comment('t1_alice1', 'alice') +
+                extras.join('') +
+                '</shreddit-comment-tree>',
+        ).document
+    }
+    const live = entry('t1_alice1', 'alice', 'live words')
+
+    it('reads as live when the page masks it, whatever the feed says', async () => {
+        for (const inFeed of [entry('t1_blk', null, '[deleted]'), entry('t1_blk', '[unavailable]', '[unavailable]')]) {
+            threadWith(blocked)
+            pages[threadPath] = feed(postEntry(), live, inFeed)
+            const { last } = await scan()
+            expect(last.message).toBe('All comments are visible — nothing removed.')
+        }
+    })
+
+    it('reads as live when only the feed masks it', async () => {
+        for (const inFeed of [entry('t1_blk', '[unavailable]', '[unavailable]'), entry('t1_blk', null, '[unavailable]')]) {
+            threadWith(comment('t1_blk', 'blocker', 't1_alice1'))
+            pages[threadPath] = feed(postEntry(), live, inFeed)
+            const { last } = await scan()
+            expect(last.message).toBe('All comments are visible — nothing removed.')
+        }
+    })
+
+    it("isn't reported as removed when their own feed lists it", async () => {
+        threadWith(blocked, comment('t1_gone', '[deleted]', 't1_alice1', '<p>removed</p>'))
+        document.querySelector('shreddit-post').setAttribute('comment-count', '3')
+        pages[threadPath] = feed(postEntry(), live, entry('t1_blk', null, '[unavailable]'), entry('t1_gone', null, '[deleted]'))
+        pages[authorPath('op_user')] = feed(entry('t1_blk', 'op_user', 'their words'))
+        const { found } = await scan()
+        expect(found).toEqual([])
     })
 })
 
@@ -723,18 +951,99 @@ describe('the profile scan', () => {
         listAll()
         const { results, last } = await scanProfile({ ownProfile: true })
         expect(results.map(r => r.id)).toEqual(['t3_gone'])
-        expect(last).toMatchObject({ status: 'partial', message: OWN_VIEW })
+        expect(last).toMatchObject({ status: 'noted', message: OWN_VIEW })
     })
 
     it("asks who's signed in when every comment is listed, since the stored name can be out of date", async () => {
         listAll()
         pages['/api/me.json'] = JSON.stringify({ data: { name: 'Someone' } })
         const own = await scanProfile()
-        expect(own.last).toMatchObject({ status: 'partial', message: OWN_VIEW })
+        expect(own.last).toMatchObject({ status: 'noted', message: OWN_VIEW })
 
         pages['/api/me.json'] = JSON.stringify({ data: { name: 'another' } })
         const other = await scanProfile()
         expect(other.last).toMatchObject({ status: 'found', message: 'Found 1 removed item(s).' })
+    })
+
+    it("doesn't take a read that failed for someone else's profile: the caveat stays", async () => {
+        listAll()
+        for (const failed of [
+            '<html>a challenge</html>',
+            { ok: false, status: 403, blockPage: true },
+            { ok: false, status: 503 },
+            { ok: false, status: 0, resting: true },
+        ]) {
+            pages['/api/me.json'] = failed
+            const { last } = await scanProfile()
+            expect(last).toMatchObject({
+                status: 'noted',
+                message:
+                    "Found 1 removed item(s). If this is your own profile, a scan can't check its comments: Reddit shows them to you as live.",
+            })
+        }
+    })
+
+    it('reads the list the page shows, whichever part of it that is', async () => {
+        const sent = options => {
+            const shown = new URLSearchParams(options)
+            for (const tab of ['comments', 'submitted']) {
+                pages[`/user/someone/${tab}/.rss?${shown}`] = pages[`/user/someone/${tab}/.rss?${query}`]
+                pages[`/user/someone/${tab}.json?${shown}`] = pages[`/user/someone/${tab}.json?${query}`]
+            }
+            return shown
+        }
+        const firstOnPage = { t1: 't1_first', t3: 't3_first' }
+        const above = name => `sort=new&limit=1&before=${name}`
+        pages[`/user/someone/submitted/.rss?${above('t3_first')}`] = feed(postEntry('t3_above'))
+        pages[`/user/someone/comments/.rss?${above('t1_first')}`] = feed(entry('t1_above', 'someone', 'words'))
+        for (const [options, comments, posts, oneAbove] of [
+            [{ sort: 'top', t: 'month', firstOnPage }, { sort: 'top', limit: '100', t: 'month' }],
+            [{ after: 't1_x', firstOnPage }, { sort: 'new', limit: '100', after: 't1_x' }, { sort: 'new', limit: '100', after: 't3_above' }, 'submitted/.rss?' + above('t3_first')],
+            [{ after: 't3_x', firstOnPage }, { sort: 'new', limit: '100', after: 't1_above' }, { sort: 'new', limit: '100', after: 't3_x' }, 'comments/.rss?' + above('t1_first')],
+            [{ before: 't1_x', firstOnPage }, { sort: 'new', limit: '100', before: 't1_x' }, { sort: 'new', limit: '100', after: 't3_above' }, 'submitted/.rss?' + above('t3_first')],
+            [{ after: 't1_x' }, { sort: 'new', limit: '100', after: 't1_x' }, { sort: 'new', limit: '100' }],
+        ]) {
+            const c = sent(comments)
+            const p = sent(posts || comments)
+            asked.length = 0
+            await scanProfile(options)
+            const read = asked.slice(0, oneAbove ? 5 : 4)
+            if (oneAbove) expect(read.splice(oneAbove.startsWith('comments') ? 0 : 2, 1)).toEqual([`/user/someone/${oneAbove}`])
+            expect(read).toEqual([
+                `/user/someone/comments/.rss?${c}`,
+                `/user/someone/comments.json?${c}`,
+                `/user/someone/submitted/.rss?${p}`,
+                `/user/someone/submitted.json?${p}`,
+            ])
+        }
+    })
+
+    it("reads a tab from the top when the page's first of it has nothing above", async () => {
+        pages[`/user/someone/submitted/.rss?sort=new&limit=1&before=t3_first`] = feed()
+        const c = 'sort=new&limit=100&after=t1_x'
+        pages[`/user/someone/comments/.rss?${c}`] = pages[`/user/someone/comments/.rss?${query}`]
+        pages[`/user/someone/comments.json?${c}`] = pages[`/user/someone/comments.json?${query}`]
+        await scanProfile({ after: 't1_x', firstOnPage: { t3: 't3_first' } })
+        expect(asked).toContain(`/user/someone/submitted/.rss?${query}`)
+    })
+
+    it('leaves room in the click for the read above the page', async () => {
+        const unlisted = Array.from({ length: 60 }, (_, i) => `t1_off${i}`)
+        const c = 'sort=new&limit=100&after=t1_x'
+        pages[`/user/someone/comments/.rss?${c}`] = feed(...unlisted.map(id => entry(id, 'someone', 'words')))
+        pages[`/user/someone/comments.json?${c}`] = listing()
+        pages[`/user/someone/submitted/.rss?sort=new&limit=1&before=t3_first`] = feed()
+        for (const id of unlisted) pages[commentPath(id)] = feed(postEntry(), entry(id, 'someone', 'words'))
+        await scanProfile({ after: 't1_x', firstOnPage: { t3: 't3_first' } })
+        expect(asked.filter(path => !path.includes('me.json'))).toHaveLength(50)
+    })
+
+    it("says when it's the viewer's own profile, which the page can't know from a stale name", async () => {
+        listAll()
+        pages['/api/me.json'] = JSON.stringify({ data: { name: 'someone' } })
+        expect((await scanProfile()).last.own).toBe(true)
+        pages['/api/me.json'] = JSON.stringify({ data: { name: 'another' } })
+        expect((await scanProfile()).last.own).toBe(false)
     })
 
     it('says a scan stopped by leaving the page did not finish', async () => {
@@ -759,7 +1068,7 @@ describe('the profile scan', () => {
         expect((await scanProfile(undefined, pageReads)).last.status).toBe('partial')
         const { last } = await scanProfile(undefined, pageReads)
         expect(last).toMatchObject({
-            status: 'partial',
+            status: 'noted',
             message: "Found 1 removed item(s). 1 comment(s) couldn't be checked.",
         })
     })

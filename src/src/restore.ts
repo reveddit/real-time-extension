@@ -1,4 +1,4 @@
-import { isRemovedInModView, isRemovedPost } from './common'
+import { isRemovedInModView, isRemovedPost, isViewerBlockedItem, VIEWER_BLOCKED } from './common'
 import { isRateLimitError } from './parse_html/common'
 import { getMarkupConfig } from './markup-config'
 import { getRateLimitBackoffRemainingMs } from './storage'
@@ -36,9 +36,12 @@ export interface RestoreProgress {
     current: number
     total: number
     currentAuthor: string
-    // partial: it stopped short of everything, and another click goes on
-    status: 'searching' | 'found' | 'not_found' | 'partial' | 'cancelled' | 'rate_limited' | 'error'
+    // partial: it stopped short of everything, and another click goes on.
+    // noted: it read all it could, and its message says what that leaves out.
+    status: 'searching' | 'found' | 'not_found' | 'partial' | 'noted' | 'cancelled' | 'rate_limited' | 'error'
     message: string
+    // A profile scan found this is the viewer's own profile
+    own?: boolean
 }
 
 export type ProgressCallback = (progress: RestoreProgress) => void
@@ -64,6 +67,8 @@ export interface ProfileScanOptions {
     t?: string
     after?: string
     before?: string
+    // The first comment and post on the page, for the tab that page's anchor isn't from
+    firstOnPage?: { t1?: string; t3?: string }
     // Reddit shows an author their own removed comments as live, so a scan of
     // one's own profile can only say anything about posts
     ownProfile?: boolean
@@ -81,6 +86,8 @@ const MAX_SCAN_READS = 50
 // measured, and a feed's own 403 looks like the edge's block page), and one
 // failure may be a blip. A few in a row aren't.
 const MAX_FAILED_READS_IN_A_ROW = 3
+// The most a thread's feed holds, the post included, whatever a request asks for
+const THREAD_FEED_LIMIT = 500
 const ONE_MONTH_SECONDS = 30 * 60 * 60 * 24
 const FIVE_MONTHS_SECONDS = 5 * ONE_MONTH_SECONDS
 const ONE_YEAR_SECONDS = 365 * 60 * 60 * 24
@@ -171,7 +178,10 @@ export function extractCommentTree_oldReddit(
 
         const timeEl = el.querySelector(':scope > .entry .tagline time')
         const datetime = timeEl?.getAttribute('datetime')
-        const created_utc = datetime ? Math.floor(new Date(datetime).getTime() / 1000) : 0
+        // One a scan placed has no time of reddit's
+        const created_utc =
+            Number(el.getAttribute('data-rev-created')) ||
+            (datetime ? Math.floor(new Date(datetime).getTime() / 1000) : 0)
 
         const node: CommentTreeNode = {
             id,
@@ -512,11 +522,12 @@ const GAVE_UP: any[] = []
 // it all and found nothing" from "couldn't read it". Feeds it has read are kept
 // in pageReads, if given, so the next click goes on from there. A read with no
 // answer gets one more try on the next click, then the scan moves past it, so
-// no click is promised work it can't do.
+// no click is promised work it can't do. Once nothing else is left, each further
+// click tries those again: a scan that couldn't read something hasn't finished.
 export class ScanReads {
     // Left for the next click
     unread = 0
-    // Tried on two clicks
+    // Tried on two clicks, with no answer
     gaveUp = 0
     failure: any
     private left: number
@@ -551,6 +562,12 @@ export class ScanReads {
             this.pageReads?.set(tried, NO_FEED)
             this.pageReads?.delete(path)
             this.unread++
+        }
+    }
+
+    retryGivenUp() {
+        for (const [path, kept] of this.pageReads || []) {
+            if (kept === GAVE_UP) this.pageReads?.delete(path)
         }
     }
 
@@ -594,7 +611,9 @@ export class ScanReads {
 // replied to whom, for the comments it shows.
 async function readThread(threadPostId: string, subreddit: string, isNewReddit: boolean) {
     const shortId = threadPostId.replace(/^t3_/, '')
-    const items = await fetchFeed(`/r/${encodeURIComponent(subreddit)}/comments/${shortId}/.rss?limit=500`)
+    const items = await fetchFeed(
+        `/r/${encodeURIComponent(subreddit)}/comments/${shortId}/.rss?limit=${THREAD_FEED_LIMIT}`,
+    )
     const post = items.find(item => item.kind === 't3')?.data
     if (!post) {
         throw new Error('thread feed unreadable (no post)')
@@ -604,14 +623,16 @@ async function readThread(threadPostId: string, subreddit: string, isNewReddit: 
         if (kind !== 't1') continue
         const { name: id, author, body, created_utc } = data
         const shown = tree.get(id)
-        // Gone in either view is gone: a page can be older than the feed
+        // Gone in either view is gone, as a page can be older than the feed. But
+        // a mask in either view means someone blocked the viewer, and it's live.
         if (!shown) tree.set(id, { id, author, body, created_utc, parent_id: '', link_id: threadPostId, children: [] })
+        else if (isViewerBlockedItem(data) || shown.author === VIEWER_BLOCKED) shown.author = VIEWER_BLOCKED
         else if (!validAuthor(author)) shown.author = author
     }
     return { tree, postAuthor: post.author as string, postCreatedUtc: post.created_utc as number }
 }
 
-const scanFailure = (err: any, otherwise: string): string => {
+export const scanFailure = (err: any, otherwise: string): string => {
     if (err.needsLogin) return 'Sign in to Reddit to scan. Logged out, it allows one request a minute.'
     if (err.busy) return 'A second account is signing in. Try again in a moment.'
     if (err.otherIdentity) return "Scans need a regular window: here they'd read as your regular windows' account."
@@ -619,11 +640,21 @@ const scanFailure = (err: any, otherwise: string): string => {
     if (err.refused) return 'Reddit is refusing the feeds a scan reads. Try again later.'
     return otherwise
 }
-const COULD_NOT_READ = "Couldn't read reddit's feeds. Try again."
+export const COULD_NOT_READ = "Couldn't read reddit's feeds. Try again."
 
-// Comments a scan already put on this page
-const recoveredOnPage = () =>
-    new Set(Array.from(document.querySelectorAll('[data-rev-id]'), el => el.getAttribute('data-rev-id')!))
+// Comments a scan put on this page and needn't look for again. A live one placed
+// for context stays, but one placed without its text still needs it.
+const placedOnPage = () =>
+    new Set(
+        Array.from(
+            document.querySelectorAll('[data-rev-id]:not(.rev-placeholder)'),
+            el => el.getAttribute('data-rev-id')!,
+        ),
+    )
+
+// Those that are removed comments it recovered
+const recoveredEls = () => document.querySelectorAll('[data-rev-id]:not(.rev-placeholder):not(.rev-context)')
+export const recoveredOnPage = () => recoveredEls().length
 
 const toRecovered = (
     d: any,
@@ -686,7 +717,7 @@ export async function restoreComment(
 
     // Track which comments we've already resolved (across clicks) so we don't
     // report them again.
-    const alreadyResolved = recoveredOnPage()
+    const alreadyResolved = placedOnPage()
 
     // Search EVERY visible author, nearest-first for the target. We usually
     // find it in a few fetches and stop early, but only conclude "not found"
@@ -832,7 +863,8 @@ export async function restoreComment(
     }
 
     const remaining = unsearched + reads.unread + unchecked
-    const couldntRead = `Not found — searched ${candidates.length} visible author(s), but ${reads.gaveUp} feed(s) couldn't be read.`
+    if (!remaining) reads.retryGivenUp()
+    const couldntRead = `Not found — searched ${candidates.length} visible author(s), but ${reads.gaveUp} feed(s) couldn't be read. Click again to try them.`
     onProgress({
         current: candidates.length,
         total: candidates.length,
@@ -848,7 +880,8 @@ export async function restoreComment(
         const other = getUserPageSort(created_utc)
         return created_utc > 0 && (other.sort !== sort || other.t !== t)
     })
-    return { found: false, exhausted: remaining === 0, remaining, otherSorts }
+    const left = remaining + reads.gaveUp
+    return { found: false, exhausted: left === 0, remaining: left, otherSorts }
 }
 
 // --- Profile Scan ---
@@ -872,13 +905,32 @@ export async function scanUserProfile(
     })
 
     const user = encodeURIComponent(username)
-    const query = new URLSearchParams({ sort: options?.sort || 'new', limit: '100' })
+    // The page's own list. Feeds take these as listings do, but a tab ignores an
+    // anchor that's the other tab's (reddit.md), so that tab goes from the page's
+    // first of its own. A page with none of them reads that tab from the top.
+    const { t, after, before, firstOnPage } = options ?? {}
+    const queryWith = (more: Record<string, string> = {}) =>
+        new URLSearchParams({ sort: options?.sort || 'new', limit: '100', ...(t && { t }), ...more })
+    const startOf = async (tab: string, kind: string): Promise<Record<string, string>> => {
+        if (after?.startsWith(kind)) return { after }
+        if (before?.startsWith(kind)) return { before }
+        const first = (after || before) && firstOnPage?.[kind as 't1' | 't3']
+        if (!first) return {}
+        // after leaves its anchor out, and the first may be the one that's removed
+        const query = queryWith({ limit: '1', before: first })
+        const [above] = await limiter.schedule(() => fetchFeed(`/user/${user}/${tab}/.rss?${query}`))
+        return above ? { after: above.data.name } : {}
+    }
     const cachedItems: any[] = []
     // What reddit still lists: not removed comments, but removed posts, marked
     const liveItems = new Map<string, any>()
 
     try {
-        for (const tab of ['comments', 'submitted']) {
+        for (const [tab, kind] of [
+            ['comments', 't1'],
+            ['submitted', 't3'],
+        ] as const) {
+            const query = queryWith(await startOf(tab, kind))
             cachedItems.push(...(await limiter.schedule(() => fetchFeed(`/user/${user}/${tab}/.rss?${query}`))))
             const listing = JSON.parse(
                 await limiter.schedule(() => fetchWithLogin(`/user/${user}/${tab}.json?${query}`)),
@@ -927,6 +979,7 @@ export async function scanUserProfile(
     // A comment the listing leaves out may only be in a subreddit they hid. An
     // author's own listing and feeds show their removed comments as live.
     const unlisted = cachedItems.filter(item => item.kind === 't1' && !liveItems.has(item.data.name))
+    // The four reads above, and one more: the one above the page, or who's signed in
     const reads = new ScanReads(limiter, MAX_SCAN_READS - 5, pageReads)
     const { looked, unchecked } = await lookupCommentsByIds(
         unlisted.map(item => item.data),
@@ -979,28 +1032,32 @@ export async function scanUserProfile(
     }
     const unread = unchecked + reads.unread
     // Every comment listed is how a profile looks to its own author, and the
-    // stored name may be empty or out of date
-    const own = options?.ownProfile || (unlisted.length === 0 && (await isSignedInAs(username, limiter)))
+    // stored name may be empty or out of date. Undefined: reddit didn't say.
+    const own = options?.ownProfile || (unlisted.length === 0 ? await isSignedInAs(username, limiter) : false)
     const notes = [
         unread > 0 && `${unread} comment(s) not checked yet; scan again to go on.`,
         reads.gaveUp > 0 && `${reads.gaveUp} comment(s) couldn't be checked.`,
         own && "Reddit shows you your own comments as live, so a scan can't check them.",
+        own === undefined &&
+            "If this is your own profile, a scan can't check its comments: Reddit shows them to you as live.",
     ].filter(Boolean)
     const nothing = own ? 'No removed posts found.' : `No removed items found${unread ? ' so far' : ''}.`
     onProgress({
         ...progress,
-        status: notes.length ? 'partial' : results.length > 0 ? 'found' : 'not_found',
+        own: Boolean(own),
+        status: unread > 0 ? 'partial' : notes.length ? 'noted' : results.length > 0 ? 'found' : 'not_found',
         message: [found || nothing, ...notes].join(' '),
     })
     return results
 }
 
-const isSignedInAs = async (username: string, limiter: RateLimiter): Promise<boolean> => {
+// Not getLoggedinUserDetailed: this read takes its turn with the scan's others
+const isSignedInAs = async (username: string, limiter: RateLimiter): Promise<boolean | undefined> => {
     try {
         const me = JSON.parse(await limiter.schedule(() => fetchWithLogin('/api/me.json')))
         return String(me?.data?.name).toLowerCase() === username.toLowerCase()
     } catch {
-        return false
+        return undefined
     }
 }
 
@@ -1031,10 +1088,11 @@ export interface RecoveredComment {
     created_utc: number
     permalink: string
     subreddit: string
-    // 'recovered' = a removed comment (red). 'context' = a live comment that was
-    // just not loaded here, reconstructed to bridge an unattached comment into
-    // the tree (muted). Absent ⇒ 'recovered'.
-    kind?: 'recovered' | 'context'
+    // Absent: a removed comment, with its text (red). 'context' = a live comment
+    // that was just not loaded here, reconstructed to bridge an unattached comment
+    // into the tree (muted). 'placeholder' = a removed comment bridging the same
+    // way, whose text isn't known yet.
+    kind?: 'context' | 'placeholder'
 }
 
 export type RecoveredCommentCallback = (c: RecoveredComment) => void
@@ -1109,8 +1167,9 @@ function summarizeThreadTree(map: Map<string, CommentTreeNode>): {
     const tombstoneIds = new Set<string>()
     for (const node of map.values()) {
         // A tombstone has no author, or one in brackets, in every view, whatever
-        // its text. AutoModerator is live but has no feed worth reading.
-        if (node.author && node.author[0] !== '[') {
+        // its text. AutoModerator is live but has no feed worth reading, and so
+        // is someone who blocked the viewer, in brackets though they are.
+        if (isViewerBlockedItem(node) || (node.author && node.author[0] !== '[')) {
             visibleRealIds.add(node.id)
             if (validAuthor(node.author) && !seenAuthor.has(node.author)) {
                 seenAuthor.add(node.author)
@@ -1124,15 +1183,29 @@ function summarizeThreadTree(map: Map<string, CommentTreeNode>): {
     return { candidateAuthors: authors, visibleRealIds, tombstoneIds }
 }
 
+const countHolder = (isNewReddit: boolean) =>
+    document.querySelector(
+        isNewReddit
+            ? 'shreddit-post'
+            : '#siteTable .thing[data-comments-count], .linklisting .thing[data-comments-count]',
+    )
+
 // null when the page doesn't say
 function getNumComments(isNewReddit: boolean): number | null {
-    const count = isNewReddit
-        ? document.querySelector('shreddit-post')?.getAttribute('comment-count')
-        : document
-              .querySelector('#siteTable .thing[data-comments-count], .linklisting .thing[data-comments-count]')
-              ?.getAttribute('data-comments-count')
+    const holder = countHolder(isNewReddit)
+    const count = holder?.getAttribute(isNewReddit ? 'comment-count' : 'data-comments-count')
     const parsed = parseInt(count ?? '', 10)
     return Number.isNaN(parsed) ? null : parsed
+}
+
+// The count is as old as its element, which isn't the document's age: reddit moves
+// between pages in one document, and Back brings an old element back. So the element
+// keeps the time it was first seen, set as a page arrives.
+export const noteCountSeen = (isNewReddit: boolean, at: number) => {
+    const holder = countHolder(isNewReddit)
+    if (!holder?.hasAttribute('data-rev-seen')) {
+        holder?.setAttribute('data-rev-seen', String(Math.floor(at / 1000)))
+    }
 }
 
 export async function scanThreadForRemovedComments(
@@ -1172,9 +1245,17 @@ export async function scanThreadForRemovedComments(
 
     // num_comments includes removed comments, so (total − visible) is how many
     // are missing. If nothing's missing there's nothing to scan for. A page
-    // that doesn't give the count can't say that.
-    const total = getNumComments(isNewReddit)
-    const missingCount = total === null ? Infinity : Math.max(tombstoneIds.size, total - visibleRealIds.size)
+    // that doesn't give the count can't say that. A comment posted since the
+    // count was shown isn't in it. With no time kept, the document's errs toward
+    // reading more. Past what the feed holds, the rest are only out of reach, so
+    // a count that big doesn't say what's missing either.
+    const count = getNumComments(isNewReddit)
+    const total = count !== null && count > THREAD_FEED_LIMIT ? null : count
+    const seenAt = Number(countHolder(isNewReddit)?.getAttribute('data-rev-seen')) || performance.timeOrigin / 1000
+    const inCount = Array.from(visibleRealIds).filter(id => tree.get(id)!.created_utc <= seenAt)
+    // A tombstone posted since is missing on top of what the count has
+    const late = Array.from(tombstoneIds).filter(id => tree.get(id)!.created_utc > seenAt).length
+    const missingCount = total === null ? Infinity : Math.max(tombstoneIds.size - late, total - inCount.length) + late
     const counted = Number.isFinite(missingCount)
     if (missingCount === 0) {
         onProgress({
@@ -1206,9 +1287,16 @@ export async function scanThreadForRemovedComments(
     // The thread's own feed was the first read
     const reads = new ScanReads(limiter, MAX_SCAN_READS - 1, pageReads)
     const recovered: RecoveredComment[] = []
-    const recoveredIds = recoveredOnPage()
-    const alreadyRecovered = recoveredIds.size
+    const recoveredIds = placedOnPage()
+    const alreadyRecovered = recoveredOnPage()
     const recoveredCount = () => recovered.length + alreadyRecovered
+    // Those that answer for what's missing: one posted since doesn't stand in for
+    // one the count has, unless it's a tombstone, which was added to what's missing
+    const answersMissing = (id: string, created_utc: number) => created_utc <= seenAt || tombstoneIds.has(id)
+    const alreadyInCount = Array.from(recoveredEls()).filter(el =>
+        answersMissing(el.getAttribute('data-rev-id')!, Number(el.getAttribute('data-rev-created'))),
+    ).length
+    const recoveredInCount = () => alreadyInCount + recovered.filter(rc => answersMissing(rc.id, rc.created_utc)).length
     let searched = 0
     let unsearched = 0
     let unchecked = 0
@@ -1221,7 +1309,7 @@ export async function scanThreadForRemovedComments(
     }
 
     for (const author of candidates) {
-        if (recoveredCount() >= missingCount || reads.stopped) break // found everything that's missing
+        if (recoveredInCount() >= missingCount || reads.stopped) break // found everything that's missing
 
         const path = authorFeedPath(author, sort, t)
         if (!reads.canRead(path)) {
@@ -1282,13 +1370,18 @@ export async function scanThreadForRemovedComments(
         onProgress({ ...progress, status: 'partial', message })
         return recovered
     }
+    if (reads.gaveUp) {
+        reads.retryGivenUp()
+        const message = `${recoveredCount()} recovered. ${reads.gaveUp} feed(s) couldn't be read. Click again to try them.`
+        onProgress({ ...progress, status: 'partial', message })
+        return recovered
+    }
     onProgress({
         ...progress,
         status: recovered.length > 0 ? 'found' : 'not_found',
         message:
             `Scan complete: ${recoveredCount()} recovered` +
-            (counted && recoveredCount() < missingCount ? ` (${missingCount - recoveredCount()} not found)` : '') +
-            (reads.gaveUp ? `. ${reads.gaveUp} feed(s) couldn't be read.` : ''),
+            (counted && recoveredInCount() < missingCount ? ` (${missingCount - recoveredInCount()} not found)` : ''),
     })
 
     return recovered

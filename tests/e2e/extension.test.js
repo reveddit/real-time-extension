@@ -1154,10 +1154,18 @@ test.describe("Scans on new reddit's comments", () => {
         await answerAs(context, THE_REMOVED_WORDS)
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST), removedAtTop))
         await startRouter(page)
+        // The scan's first read is still out when the page changes
+        const [worker] = context.serviceWorkers()
+        await worker.evaluate(() => {
+            const answered = self.fetch
+            const held = new Promise(resolve => (self.answerNow = resolve))
+            self.fetch = url => held.then(() => answered(url))
+        })
         await page.locator('.rev-scan-all-btn').click()
         await visit(page, NEXT_THREAD, ...nextThread())
         await expect(page.locator('[thingid="t1_next"]')).toBeVisible()
         await stampRows(page)
+        await worker.evaluate(() => self.answerNow())
         await page.waitForTimeout(2500)
 
         await expect(page.locator(RECOVERED)).toHaveCount(0)

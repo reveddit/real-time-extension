@@ -523,6 +523,11 @@ li.rev-own-mark-li {
     opacity: 0.7;
     cursor: wait;
 }
+.rev-unattached-note {
+    margin-left: 8px;
+    font-size: 11px;
+    color: #787c7e;
+}
 
 /* Live comments reconstructed only to bridge an unattached comment into the
    tree — muted gray so they read as scaffolding, not recovered removals. */

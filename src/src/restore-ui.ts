@@ -10,6 +10,10 @@ import {
     commentIdOf,
     commentSelector,
     lookupCommentsByIds,
+    noteCountSeen,
+    recoveredOnPage,
+    scanFailure,
+    COULD_NOT_READ,
     RateLimiter,
     ScanReads,
     type RestoreProgress,
@@ -28,6 +32,8 @@ let activeScan: RateLimiter | null = null
 const pageReads = new Map<string, any[]>()
 // Whether the profile scan on this page saw everything, so a rescan starts over
 let profileScanFinished = false
+// Pages this script has seen arrive
+let arrivals = 0
 // Places what this page's scans recover, so each click's can nest under the last's
 let pageInserter: RecoveredCommentInserter | null = null
 const inserterForPage = (isNewReddit: boolean) => (pageInserter ||= new RecoveredCommentInserter(isNewReddit))
@@ -35,6 +41,7 @@ const inserterForPage = (isNewReddit: boolean) => (pageInserter ||= new Recovere
 // A document can last a whole visit to reddit, so a new page starts over. Back
 // and forward can bring a page back with its buttons as they were when it left.
 export function resetScansForPage() {
+    arrivals++
     pageReads.clear()
     profileScanFinished = false
     pageInserter = null
@@ -97,13 +104,22 @@ const removedText_newReddit = (comment: Element) =>
 // thread of the kind a scan reads
 const onSubredditThread = () => !!getFullIDsFromPath(window.location.pathname)[3]
 
-// Under the comment's text, above its own buttons, not below its replies. Reddit
-// collapses removed comments, so it opens one to show what it gained.
+// Reddit collapses removed comments, and old reddit low-scored ones, with their
+// replies inside, so something placed in one needs it and all around it open.
+function openComment(comment: Element) {
+    let c: Element | null | undefined = comment
+    for (; c; c = c.parentElement?.closest('shreddit-comment, .thing.comment')) {
+        c.querySelector(':scope > details')?.setAttribute('open', '')
+        expandComment(c)
+    }
+}
+
+// Under the comment's text, above its own buttons, not below its replies
 function addUnderComment(comment: HTMLElement, ...els: HTMLElement[]) {
     const actionRow = ownPart(comment, '[slot="actionRow"]')
     if (actionRow) actionRow.before(...els)
     else comment.append(...els)
-    comment.querySelector(':scope > details')?.setAttribute('open', '')
+    openComment(comment)
 }
 
 function injectRestoreButton_newReddit(comment: HTMLElement) {
@@ -167,9 +183,11 @@ function injectScanButton_newReddit(row: Element) {
 // Disable every scan/restore button while one search runs, so a user can't fire
 // many at once (which would multiply requests to reddit and risk a rate-limit).
 function setScanButtonsEnabled(enabled: boolean) {
-    document.querySelectorAll('.rev-scan-comment-btn, .rev-restore-btn, .rev-scan-all-btn').forEach(b => {
-        ;(b as HTMLElement).classList.toggle('rev-scan-disabled', !enabled)
-    })
+    document
+        .querySelectorAll('.rev-scan-comment-btn, .rev-restore-btn, .rev-scan-all-btn, .rev-place-unattached-btn')
+        .forEach(b => {
+            ;(b as HTMLElement).classList.toggle('rev-scan-disabled', !enabled)
+        })
 }
 
 // A scan belongs to the page it started on. pageEl is part of that page: reddit
@@ -244,6 +262,7 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
     // orphans relocate when their parent turns up later.
     const inserter = inserterForPage(isNewReddit)
 
+    const placedBefore = inserter.placedCount
     let result: RestoreResult
     let lastStatus = ''
     try {
@@ -285,8 +304,9 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
         // Show filter and auto-switch if this is the first found comment
         injectThreadFilter(isNewReddit)
         autoFilterRemoved(isNewReddit, container)
-        return
     }
+    if (result.found || inserter.placedCount > placedBefore) refreshThreadFilter(isNewReddit)
+    if (result.found) return
 
     btn.style.display = ''
     if (lastStatus === 'not_found') {
@@ -482,7 +502,7 @@ async function handleScanAll(isNewReddit: boolean) {
         limiter,
     )
 
-    const onPage = document.querySelectorAll('[data-rev-id]').length
+    const onPage = recoveredOnPage()
     btn.textContent = onPage > 0 ? `${onPage} comment(s) recovered` : SCAN_ALL_TEXT
     if (finalStatus === 'partial') btn.textContent = 'Continue scan'
     btn.disabled = false
@@ -515,13 +535,20 @@ async function handleScanAll(isNewReddit: boolean) {
     if (recovered.length > 0) {
         injectThreadFilter(isNewReddit)
         autoFilterRemoved(isNewReddit, btn)
+        refreshThreadFilter(isNewReddit)
     }
 }
 
 // --- Thread comment filter (all / removed) ---
 
 type ThreadFilter = 'all' | 'removed'
-let _activeThreadFilter: ThreadFilter = 'all'
+
+// A placement may have gone under a comment the filter hid. The bar holds the
+// choice: it comes and goes with its page, and a document can last a whole visit.
+function refreshThreadFilter(isNewReddit: boolean) {
+    const active = document.querySelector('.rev-thread-filter-btn.rev-filter-active')
+    if (active?.getAttribute('data-filter') === 'removed') applyThreadFilter('removed', isNewReddit)
+}
 
 function expandComment(el: Element) {
     if (!el.classList.contains('collapsed')) return
@@ -564,7 +591,6 @@ function hasRemovedDescendant(el: Element): boolean {
 }
 
 function applyThreadFilter(filter: ThreadFilter, isNewReddit: boolean) {
-    _activeThreadFilter = filter
     // Update button states
     document.querySelectorAll('.rev-thread-filter-btn').forEach(b => {
         b.classList.toggle('rev-filter-active', b.getAttribute('data-filter') === filter)
@@ -738,19 +764,37 @@ class RecoveredCommentInserter {
     }
 
     add(rc: RecoveredComment) {
-        if (this.placed.has(rc.id) || this.orphans.has(rc.id)) return
+        // On the page, it may be from before Back, which this inserter doesn't know
+        const kept =
+            this.placed.get(rc.id) ||
+            this.orphans.get(rc.id)?.el ||
+            (document.querySelector(`[data-rev-id="${rc.id}"]`) as HTMLElement | null)
+        if (kept) {
+            if (!rc.kind) fillPlaceholder(kept, rc)
+            if (!this.placed.has(rc.id) && !this.orphans.has(rc.id)) {
+                this.placed.set(rc.id, kept)
+                this.drainOrphans()
+            }
+            return
+        }
 
-        const shown = this.isNewReddit && newRedditCommentEl(rc.id)
-        if (shown) {
+        const onPage = this.isNewReddit ? newRedditCommentEl(rc.id) : findOldRedditCommentEl(rc.id)
+        // It reached the page since, so nothing needs to stand in for it
+        if (rc.kind && onPage) {
+            this.drainOrphans()
+            return
+        }
+
+        if (this.isNewReddit && onPage) {
             const el = createRecoveredCommentEl(rc)
-            addUnderComment(shown, el)
+            addUnderComment(onPage, el)
             this.placed.set(rc.id, el)
             this.drainOrphans()
             return
         }
 
         // Prefer filling an existing tombstone in place (old reddit only).
-        const tombstone = this.isNewReddit ? null : findOldRedditCommentEl(rc.id)
+        const tombstone = this.isNewReddit ? null : onPage
         const el =
             tombstone && !tombstone.classList.contains('rev-inserted-comment')
                 ? fillRecoveredTombstone(tombstone, rc)
@@ -776,40 +820,70 @@ class RecoveredCommentInserter {
         return [...parents].map(([name, link_id]) => ({ name, link_id }))
     }
 
+    get placedCount() {
+        return this.placed.size
+    }
+
     // Walk up the ancestor chain, through each comment's feed, to bridge unattached comments into
     // the tree: reconstruct each missing ancestor (removed → red, live-but-not-
     // loaded → muted "context") until its own parent is known, capped by depth.
     // Every chain ultimately reaches the post, so within the cap most attach.
-    async placeUnattached(btn: HTMLButtonElement) {
-        if (this.placing) return
+    async placeUnattached(btn: HTMLButtonElement, note: HTMLElement) {
+        // One scan at a time: this one would cancel a running scan
+        if (this.placing || activeScan) return
+        const placedBefore = this.placed.size
+        // A parent may have reached the page since
+        this.drainOrphans()
         this.placing = true
         btn.disabled = true
-        const reads = new ScanReads(new RateLimiter(undefined, () => btn.isConnected))
+        const limiter = startScan(btn)
+        btn.classList.remove('rev-scan-disabled')
+        note.textContent = ''
+        addCancelLink(note, limiter)
+        const reads = new ScanReads(limiter, undefined, pageReads)
         const tried = new Set<string>()
-        for (let level = 0; level < MAX_BRIDGE_DEPTH && !reads.stopped; level++) {
-            const needed = this.pendingParents().filter(({ name }) => !tried.has(name))
-            if (needed.length === 0) break
-            needed.forEach(({ name }) => tried.add(name))
-            btn.textContent = `Placing… (${this.orphans.size} left)`
-            const { looked } = await lookupCommentsByIds(needed, reads)
-            if (looked.size === 0 || !btn.isConnected) break // ancestors unavailable (deleted/invalid)
-            for (const c of looked.values()) {
-                this.add({
-                    id: c.id,
-                    parent_id: c.parent_id || c.link_id,
-                    link_id: c.link_id,
-                    author: c.author,
-                    body: c.body,
-                    body_html: c.body_html,
-                    created_utc: c.created_utc,
-                    permalink: c.permalink,
-                    subreddit: c.subreddit,
-                    kind: c.removed ? 'recovered' : 'context',
-                })
+        let unchecked = 0
+        try {
+            for (let level = 0; level < MAX_BRIDGE_DEPTH && !reads.stopped; level++) {
+                const needed = this.pendingParents().filter(({ name }) => !tried.has(name))
+                if (needed.length === 0) break
+                needed.forEach(({ name }) => tried.add(name))
+                btn.textContent = `Placing… (${this.orphans.size} left)`
+                const lookup = await lookupCommentsByIds(needed, reads)
+                unchecked += lookup.unchecked
+                if (lookup.looked.size === 0 || !btn.isConnected) break // ancestors unavailable (deleted/invalid)
+                for (const c of lookup.looked.values()) {
+                    this.add({
+                        id: c.id,
+                        parent_id: c.parent_id || c.link_id,
+                        link_id: c.link_id,
+                        author: c.author,
+                        body: c.body,
+                        body_html: c.body_html,
+                        created_utc: c.created_utc,
+                        permalink: c.permalink,
+                        subreddit: c.subreddit,
+                        kind: c.removed ? 'placeholder' : 'context',
+                    })
+                }
             }
+        } finally {
+            this.placing = false
+            endScan(limiter)
         }
-        this.placing = false
+        if (this.placed.size > placedBefore) refreshThreadFilter(this.isNewReddit)
         if (this.orphans.size === 0) return // orphan area auto-removed when empty
+        const left = unchecked + reads.unread
+        if (!left && !reads.failure) reads.retryGivenUp()
+        note.textContent = limiter.isCancelled()
+            ? ''
+            : reads.failure
+              ? scanFailure(reads.failure, COULD_NOT_READ)
+              : left
+                ? `${left} left to read. Click again to continue.`
+                : reads.gaveUp
+                  ? `${reads.gaveUp} couldn't be read. Click again to try them.`
+                  : ''
         btn.disabled = false
         btn.textContent = `Place unattached comments (${this.orphans.size} left)`
     }
@@ -841,7 +915,10 @@ class RecoveredCommentInserter {
     private resolvePlacement(parentId: string): Placement | null {
         // A previously-recovered comment — nest under it (works on old & new reddit).
         const placedParent = this.placed.get(parentId)
-        if (placedParent) return { container: childSlotOf(placedParent), prepend: false }
+        if (placedParent) {
+            openComment(placedParent)
+            return { container: childSlotOf(placedParent), prepend: false }
+        }
 
         if (this.isNewReddit) {
             if (parentId.startsWith('t3_')) {
@@ -881,11 +958,14 @@ class RecoveredCommentInserter {
         placeBtn.className = 'rev-place-unattached-btn'
         placeBtn.textContent = 'Place unattached comments'
         placeBtn.title = 'Look up the missing parent comments to nest these into the thread'
+        placeBtn.classList.toggle('rev-scan-disabled', !!activeScan)
+        const note = document.createElement('span')
+        note.className = 'rev-unattached-note'
         placeBtn.addEventListener('click', e => {
             e.preventDefault()
-            this.placeUnattached(placeBtn)
+            this.placeUnattached(placeBtn, note)
         })
-        header.append(title, desc, placeBtn)
+        header.append(title, desc, placeBtn, note)
         area.appendChild(header)
         // Place above the comment list so unattached comments lead, not trail.
         const anchor = this.isNewReddit
@@ -924,6 +1004,7 @@ function childSlotOf(el: HTMLElement): HTMLElement {
 
 // Returns/creates the child comment listing of a native old-reddit comment.
 function oldRedditChildListing(nativeEl: HTMLElement): HTMLElement {
+    openComment(nativeEl)
     let child = nativeEl.querySelector(':scope > .child') as HTMLElement | null
     if (!child) {
         child = document.createElement('div')
@@ -940,6 +1021,7 @@ function oldRedditChildListing(nativeEl: HTMLElement): HTMLElement {
 }
 
 function newRedditChildSlot(parentComment: HTMLElement): HTMLElement {
+    openComment(parentComment)
     const replies = ownPart(parentComment, '#comment-children') || parentComment
     let wrapper = replies.querySelector(':scope > .rev-rec-children') as HTMLElement | null
     if (!wrapper) {
@@ -1004,8 +1086,12 @@ function createRecoveredCommentEl(rc: RecoveredComment): HTMLElement {
         rc.kind === 'context'
             ? 'thing comment rev-inserted-comment rev-context'
             : 'thing comment rev-inserted-comment rev-removed-highlight'
+    if (rc.kind === 'placeholder') el.classList.add('rev-placeholder')
+    // Old reddit's comment tree reads an element with no author as a tombstone
+    if (rc.kind === 'context') el.setAttribute('data-author', rc.author)
     el.setAttribute('data-fullname', rc.id)
     el.setAttribute('data-rev-id', rc.id)
+    el.setAttribute('data-rev-created', String(rc.created_utc))
     const entry = document.createElement('div')
     entry.className = 'rev-rec-entry'
     entry.append(recoveredMeta(rc), recoveredBody(rc))
@@ -1013,8 +1099,17 @@ function createRecoveredCommentEl(rc: RecoveredComment): HTMLElement {
     return el
 }
 
+// The scan has the text of a comment placed without it
+function fillPlaceholder(el: HTMLElement, rc: RecoveredComment) {
+    if (!el.classList.contains('rev-placeholder')) return
+    el.classList.remove('rev-placeholder')
+    el.setAttribute('data-rev-created', String(rc.created_utc))
+    el.querySelector(':scope > .rev-rec-entry')?.replaceChildren(recoveredMeta(rc), recoveredBody(rc))
+}
+
 // Fills an existing old-reddit tombstone in place with the recovered content.
 function fillRecoveredTombstone(tombstone: HTMLElement, rc: RecoveredComment): HTMLElement {
+    openComment(tombstone)
     tombstone.classList.remove('deleted')
     tombstone.setAttribute('data-rev-id', rc.id)
     // Highlight only this comment's row, not its nested replies (see displayRestoredComment).
@@ -1045,8 +1140,14 @@ function getProfileURLParams(): ProfileScanOptions {
         t: params.get('t') || undefined,
         after: params.get('after') || undefined,
         before: params.get('before') || undefined,
+        firstOnPage: { t1: firstOnPage('t1'), t3: firstOnPage('t3') },
     }
 }
+
+const firstOnPage = (kind: string) =>
+    document
+        .querySelector(`#siteTable > .thing[data-fullname^="${kind}_"]:not(.rev-inserted-comment)`)
+        ?.getAttribute('data-fullname') || undefined
 
 function injectProfileScanButton_oldReddit(username: string) {
     if (document.querySelector('.rev-profile-scan-container')) return
@@ -1123,14 +1224,16 @@ async function handleProfileScan(username: string, container: HTMLElement) {
     if (profileScanFinished) pageReads.clear()
     const limiter = startScan(container)
     // Only the scanned account's own session sees its removed content as live,
-    // so the jump badge next to links is shown only to that account.
-    const isOwnProfile = await isViewer(username)
+    // so the jump badge next to links is shown only to that account. The stored
+    // name may be out of date, and the scan can find out better.
+    let isOwnProfile = await isViewer(username)
     let lastStatus = ''
     const results = await scanUserProfile(
         username,
         (progress: RestoreProgress) => {
             progressEl.textContent = progress.message
             lastStatus = progress.status
+            isOwnProfile ||= !!progress.own
         },
         { ...getProfileURLParams(), ownProfile: isOwnProfile },
         limiter,
@@ -1138,7 +1241,7 @@ async function handleProfileScan(username: string, container: HTMLElement) {
     )
 
     endScan(limiter)
-    profileScanFinished = lastStatus === 'found' || lastStatus === 'not_found'
+    profileScanFinished = lastStatus === 'found' || lastStatus === 'not_found' || lastStatus === 'noted'
     btn.disabled = false
     btn.textContent = 'Rescan'
 
@@ -1154,18 +1257,20 @@ async function handleProfileScan(username: string, container: HTMLElement) {
     resultsEl.style.display = ''
 
     // Reddit shows an author their own removed content as if nothing happened,
-    // so the reddit links below look normal to the person running the scan.
-    // Say so once, at the top, rather than next to every link.
-    const note = document.createElement('div')
-    note.className = 'rev-scan-note'
-    note.appendChild(createNoteMark(false))
-    const noteText = document.createElement('span')
-    noteText.textContent =
-        'Reddit shows you your own removed content as if it were still up, so these links will ' +
-        'look normal while you are logged in. To see what everyone else sees, open a link in a ' +
-        'private/incognito window or while logged in as another account.'
-    note.appendChild(noteText)
-    resultsEl.appendChild(note)
+    // so on their own profile the reddit links below look normal to them. Say
+    // so once, at the top, rather than next to every link.
+    if (isOwnProfile) {
+        const note = document.createElement('div')
+        note.className = 'rev-scan-note'
+        note.appendChild(createNoteMark(false))
+        const noteText = document.createElement('span')
+        noteText.textContent =
+            'Reddit shows you your own removed content as if it were still up, so these links will ' +
+            'look normal while you are logged in. To see what everyone else sees, open a link in a ' +
+            'private/incognito window or while logged in as another account.'
+        note.appendChild(noteText)
+        resultsEl.appendChild(note)
+    }
 
     const isNewReddit = detectIsNewReddit()
     const matched = highlightVisibleRemovedComments(results, isNewReddit)
@@ -1391,7 +1496,7 @@ function createInlineItem(item: ScanResult, isNewReddit: boolean, showOwnViewMar
     link.className = 'rev-scan-item-link'
     link.href = `https://www.reddit.com${item.permalink}${item.type === 'post' ? '' : '?context=3'}`
     link.target = '_blank'
-    link.title = OWN_VIEW_HINT
+    if (showOwnViewMark) link.title = OWN_VIEW_HINT
     link.textContent = 'View on reddit'
     const linkRow = document.createElement('div')
     linkRow.className = 'rev-scan-item-linkrow'
@@ -1525,8 +1630,8 @@ function createNoteMark(jump: boolean, noteSelector = '.rev-scan-note'): HTMLEle
 }
 
 // showOwnViewMark: only the scanned account's own session sees removed content
-// as if it were live, so the jump badge is only shown when the viewer is that
-// account. The note above the results is shown regardless.
+// as if it were live, so the jump badge, like the note above the results it
+// leads to, is only shown when the viewer is that account.
 function createScanResultItem(item: ScanResult, showOwnViewMark: boolean): HTMLElement {
     const el = document.createElement('div')
     el.className = 'rev-scan-item rev-removed-highlight'
@@ -1599,6 +1704,9 @@ function shouldShowThreadScanButtons(): Promise<boolean> {
 let watchingComments = false
 
 export function initRestoreOnThread(isNewReddit: boolean) {
+    // The page this script started on may be older than the script: a tab from
+    // before an install. Only the document's time covers that.
+    noteCountSeen(isNewReddit, arrivals > 1 ? Date.now() : performance.timeOrigin)
     shouldShowThreadScanButtons().then(show => {
         if (!show) return
         injectScanAllButton(isNewReddit)
