@@ -67,6 +67,19 @@ test.describe('Popup page', () => {
         await expect(page.getByRole('button', { name: 'Log in to Reddit' })).toBeVisible()
     })
 
+    test("checks that keep failing: says nothing's being checked, even with no user to name", async ({
+        context,
+        extensionId,
+    }) => {
+        const [worker] = context.serviceWorkers()
+        await worker.evaluate(() => chrome.storage.local.set({ error_status: 'checks_failing' }))
+        const page = await context.newPage()
+        await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
+
+        await expect(page.getByText("Reddit isn't answering")).toBeVisible()
+        await expect(page.getByRole('button', { name: 'Log in to Reddit' })).toHaveCount(0)
+    })
+
     test("reddit's login wall: offers a second account, then says why", async ({ context, extensionId }) => {
         // What monitoring leaves behind after five lookups that landed on
         // reddit's login page

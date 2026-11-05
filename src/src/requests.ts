@@ -1647,12 +1647,11 @@ export const verifyFeedAbsentItems = async (
     return verdicts
 }
 
-// Consecutive-failure tracking for the logged-in detection path, mirroring
-// recordWwwDetectOutcome below: one indeterminate probe is noise, a streak
-// means the extension is blind and the user should see a badge instead of
-// silently getting zero detections. Definite outcomes (a username, or a clean
-// logged-out response) reset the streak. Only the monitoring cycle records
-// outcomes — content-script probes have different fetch conditions.
+// Consecutive refusals of the logged-in detection path, mirroring
+// recordWwwDetectOutcome below: one is noise, a streak means reddit isn't
+// accepting the login. Definite outcomes (a username, or a clean logged-out
+// response) reset the streak. Only the monitoring cycle records outcomes —
+// content-script probes have different fetch conditions.
 export const LOGGED_IN_VIEW_UNAVAILABLE = 'logged_in_view_unavailable'
 // The warnings that finding the user signed in settles: nobody was signed in,
 // or the login check wasn't answering. The rest are about checks a login
@@ -1685,6 +1684,28 @@ export const recordLoginDetectOutcome = async (indeterminate: boolean) => {
         dlog('auth', `[reveddit] login detection indeterminate — consecutive failures: ${failures}`)
         if (failures >= LOGIN_DETECT_FAILURE_WARN_THRESHOLD) {
             setWarningBadge(LOGGED_IN_VIEW_UNAVAILABLE)
+        }
+    } catch {
+        /* ignored */
+    }
+}
+
+// Cycles in a row that checked none of the user's items, for any reason. A
+// refusal, a rate limit or a block says so in its own words. This is for the
+// rest, such as an outage, so a check that read nothing can't pass for a clean one.
+export const CHECKS_FAILING = 'checks_failing'
+const CHECK_FAILURES_KEY = 'check_consecutive_failures'
+export const recordCheckOutcome = async (checked: boolean) => {
+    try {
+        if (checked) {
+            await browser.storage.local.remove(CHECK_FAILURES_KEY)
+            return
+        }
+        const failures = await countFailure(CHECK_FAILURES_KEY)
+        dlog('cycle', `[reveddit] nothing checked this cycle — consecutive failures: ${failures}`)
+        const { error_status } = (await browser.storage.local.get({ error_status: '' })) as any
+        if (failures >= LOGIN_DETECT_FAILURE_WARN_THRESHOLD && !error_status) {
+            setWarningBadge(CHECKS_FAILING)
         }
     } catch {
         /* ignored */

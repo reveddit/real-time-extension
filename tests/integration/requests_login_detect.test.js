@@ -19,6 +19,7 @@ import {
     recordLoginDetectOutcome,
     isSettledByLogin,
     LOGGED_IN_VIEW_UNAVAILABLE,
+    CHECKS_FAILING,
     computeAbsentVerifyBudget,
     RECENT_RATE_LIMIT_WINDOW_MS,
 } from '../../src/src/requests'
@@ -227,6 +228,117 @@ describe('a check for a remembered user', () => {
         fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
         for (let i = 0; i < 6; i++) await check()
         expect(__getLocalStorage().error_status).not.toBe(LOGGED_IN_VIEW_UNAVAILABLE)
+    })
+
+    describe('when no cycle reads the listing', () => {
+        const local = () => __getLocalStorage()
+        const ME = res(200, USER_JSON)
+        const listingIs = answer => async url => (String(url).includes('/user/me.json') ? answer() : ME)
+        const fiveCycles = async () => {
+            for (let i = 0; i < 4; i++) await check()
+            expect(local().error_status).toBeUndefined()
+            await check()
+        }
+
+        it('warns on the fifth, blaming nobody, and a listing that comes back ends it', async () => {
+            for (const answer of [
+                () => Promise.reject(new TypeError('Failed to fetch')),
+                async () => res(503, 'down'),
+                async () => res(404, 'gone'),
+            ]) {
+                fetchMock.mockImplementation(answer)
+                await fiveCycles()
+                expect(local().error_status).toBe(CHECKS_FAILING)
+                fetchMock.mockImplementation(listingIs(async () => LISTING))
+                await check()
+                await vi.waitFor(() => expect(local().error_status).toBeUndefined())
+                expect(local().check_consecutive_failures).toBeUndefined()
+            }
+        })
+
+        it('counts the listing failing on its own, with the login check answering', async () => {
+            fetchMock.mockImplementation(listingIs(async () => res(503, 'down')))
+            await fiveCycles()
+            expect(local().error_status).toBe(CHECKS_FAILING)
+        })
+
+        it('leaves a rate limit to say it is the reason', async () => {
+            fetchMock.mockImplementation(async () => res(429, 'slow down'))
+            for (let i = 0; i < 6; i++) {
+                await check()
+                delete local().rate_limit_until
+            }
+            expect(local().error_status).toBe('rate_limited')
+            expect(local().check_consecutive_failures).toBeUndefined()
+        })
+
+        it("doesn't talk over a warning already up", async () => {
+            local().error_status = 'reddit_blocked'
+            fetchMock.mockImplementation(async () => res(503, 'down'))
+            for (let i = 0; i < 6; i++) await check()
+            expect(local().error_status).toBe('reddit_blocked')
+        })
+    })
+
+    it("takes a login check that names the user as the end of the refusals, whatever the listing does", async () => {
+        __getLocalStorage().login_detect_consecutive_failures = 7
+        fetchMock.mockImplementation(async url =>
+            String(url).includes('/user/me.json') ? res(503, 'down') : res(200, USER_JSON),
+        )
+        await check()
+        expect(__getLocalStorage().login_detect_consecutive_failures).toBeUndefined()
+    })
+
+    it("doesn't check another account's listing under the remembered name", async () => {
+        const listingBy = author => ({
+            ok: true,
+            status: 200,
+            json: async () => ({ data: { children: [{ kind: 't1', data: { name: 't1_a', author, body: 'b' } }] } }),
+        })
+        const local = __getLocalStorage()
+        // The login check doesn't answer, so all there is to go on is the name
+        const listing = answer => async url => (String(url).includes('/user/me.json') ? answer : res(503, 'down'))
+        fetchMock.mockImplementation(listing(listingBy('bob')))
+        await check()
+        expect(local.check_consecutive_failures).toBe(1)
+        // Theirs, in any case: this one's checked, so it adds no failure
+        fetchMock.mockImplementation(listing(listingBy('Alice')))
+        await check()
+        expect(local.check_consecutive_failures).toBe(1)
+    })
+
+    describe('with a reddit tab open', () => {
+        const container = { id: 1, url: 'https://www.reddit.com/', cookieStoreId: 'firefox-container-1' }
+        const privateWindow = { id: 2, url: 'https://old.reddit.com/', incognito: true }
+        const regular = { id: 3, url: 'https://www.reddit.com/', cookieStoreId: 'firefox-default' }
+        let send
+        const withTabs = tabs => vi.spyOn(chrome.tabs, 'query').mockImplementation((query, callback) => callback(tabs))
+
+        beforeEach(() => {
+            fetchMock.mockImplementation(async url => (String(url).includes('/user/me.json') ? LISTING : res(200, USER_JSON)))
+            send = vi.spyOn(chrome.tabs, 'sendMessage').mockImplementation((id, message, callback) => callback([]))
+        })
+
+        it("in Firefox, doesn't read the user's listing through another identity's tab", async () => {
+            vi.stubGlobal('__BUILT_FOR__', 'firefox')
+            withTabs([container, privateWindow, regular])
+            await check()
+            expect(send.mock.calls.map(call => call[0])).toEqual([regular.id])
+        })
+
+        it('in Firefox, reads it from the background when only such tabs are open', async () => {
+            vi.stubGlobal('__BUILT_FOR__', 'firefox')
+            withTabs([container, privateWindow])
+            await check()
+            expect(send).not.toHaveBeenCalled()
+            expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/user/me.json'))).toBe(true)
+        })
+
+        it("in Chrome, an incognito tab's content script runs in its own instance's world, so it stays in use", async () => {
+            withTabs([privateWindow])
+            await check()
+            expect(send.mock.calls.map(call => call[0])).toEqual([privateWindow.id])
+        })
     })
 
     it('keeps the warning mark through the pass over followed items', async () => {

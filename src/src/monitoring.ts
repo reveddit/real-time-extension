@@ -4,6 +4,7 @@ import {
     getAuth,
     getLoggedinUserDetailed,
     recordLoginDetectOutcome,
+    recordCheckOutcome,
     isLoginRefusal,
     LoginDetectResult,
     storeRedditCookies,
@@ -70,6 +71,7 @@ import {
     ChangeForStorage,
     setWarningBadge,
     getFullIDsFromURL,
+    isOtherIdentity,
 } from './common'
 import browser from 'webextension-polyfill'
 import { getPost_fromOld } from './parse_html/old'
@@ -512,6 +514,8 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                 }
                 return
             }
+            // A name is a definite answer, so the login check isn't being refused
+            if (!usedGrace) await recordLoginDetectOutcome(false)
             // Remember the last detected logged-in user for popup display without
             // extra network calls. Grace mode skips the write: it only ever
             // echoes the stored value back, and a stale echo must not refresh it.
@@ -542,13 +546,21 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
             // badge below; a failed or skipped lookup must not read as a clean cycle.
             let processedItems = false
             let listingRefused = false
-            const checkListing = (listing: any) => {
+            const checkListing = async (listing: any) => {
                 const ids: string[] = []
                 let quarantined_subreddits = new Set()
                 const itemLookup: Record<string, any> = {}
                 if (listing.user && listing.user.items) {
                     // format from cred2.reveddit.com
                     listing = listing.user.items
+                }
+                // Grace mode has only the remembered name, and the browser may
+                // hold another account by now
+                const isTheirs = (item: any) =>
+                    String((item.data || item).author).toLowerCase() === String(loggedInUser).toLowerCase()
+                if (usedGrace && listing.length && !listing.some(isTheirs)) {
+                    dlog('auth', "[reveddit] the listing isn't the remembered user's, so it isn't checked")
+                    return
                 }
                 ;(listing as any[]).forEach((item: any) => {
                     if (item.data && item.data.name) {
@@ -587,7 +599,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     // Check if we have a supported subdomain (www.reddit.com or old.reddit.com)
                     const supportedTabs = tabs.filter(tab => {
                         const hostname = new URL(tab.url!).hostname
-                        return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
+                        return (hostname === 'www.reddit.com' || hostname === 'old.reddit.com') && !isOtherIdentity(tab)
                     })
 
                     if (supportedTabs.length === 0) {
@@ -672,6 +684,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     // The user's own listing came back, so their login works,
                     // even when the login check didn't answer
                     recordLoginDetectOutcome(false)
+                    recordCheckOutcome(true)
                     // Clear warning badge and error state if we successfully
                     // processed items. A page-check, pagination or
                     // second-account thread-read outage outlives one pass:
@@ -690,11 +703,15 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     listingRefused = isLoginRefusal(String(error?.message))
                     throw error
                 })
-                .finally(() => {
+                .finally(async () => {
                     // Reddit refused the login check and the user's own listing
                     // too, so their login isn't working, whatever cookie is held
                     if (usedGrace && listingRefused && !processedItems) {
-                        return recordLoginDetectOutcome(true)
+                        await recordLoginDetectOutcome(true)
+                    }
+                    // A rate limit already says it's why
+                    if (!processedItems && !(await isRateLimitedNow())) {
+                        await recordCheckOutcome(false)
                     }
                 })
         })

@@ -753,7 +753,8 @@ function Popup() {
 
         {newsMessage && <NewsBanner message={newsMessage} onDismiss={handleDismissNews} />}
 
-        {errorStatus && (currentUser || errorStatus === 'logged_in_view_unavailable') && (
+        {errorStatus &&
+          (currentUser || errorStatus === 'logged_in_view_unavailable' || errorStatus === 'checks_failing') && (
           <div>
             {reconnectSuccess ? (
               <MessageBanner variant="success">✓ Connected!</MessageBanner>
@@ -765,6 +766,11 @@ function Popup() {
               <MessageBanner variant="warning">
                 ⚠ Reddit blocked the extension&apos;s last request (HTTP 403). It keeps retrying; opening a
                 www.reddit.com tab usually clears this.
+              </MessageBanner>
+            ) : errorStatus === 'checks_failing' ? (
+              <MessageBanner variant="warning">
+                ⚠ Reddit isn&apos;t answering, so your posts and comments aren&apos;t being checked right now. The
+                extension keeps trying.
               </MessageBanner>
             ) : errorStatus === 'profile_publicly_empty' ? (
               <MessageBanner variant="warning">
