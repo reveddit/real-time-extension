@@ -28,7 +28,7 @@ Firefox: `yarn start-firefox`, load `dist-dev-firefox/`
 
 ## Dev: Production build
 
-`yarn build-prod` builds Chrome and Firefox code and packages it into zip files.
+`yarn build-prod` builds Chrome, Firefox and Edge code and packages it into zip files.
 
 ## Dev: Testing
 
@@ -46,7 +46,7 @@ yarn test:e2e
 
 `yarn test:all` — run both Vitest and Playwright suites
 
-`yarn preflight` — full pre-publish verification: typecheck, unit tests, dev build, then E2E
+`yarn preflight` — full pre-publish verification: typecheck, unit tests, `yarn test:firefox` (Firefox build, load test and web-ext lint), dev build, then E2E
 
 ## Dev: Checking a build in real Firefox
 
@@ -76,7 +76,7 @@ To run one monitoring check in that Firefox and read the diagnostic log it wrote
 
 ## Publishing
 
-`yarn publish:all` runs `yarn preflight`, then publishes to Chrome, Edge and Firefox in turn. A store that fails doesn't stop the others. Each store that takes the current version is recorded in `.publish-status.json` (gitignored), so after fixing a failure (an expired key, say), run `yarn publish:all` again: it publishes only to the stores still missing this version, and skips the preflight while the extension's files are unchanged since it passed. It refuses to go on if the extension's files changed after a store got the version; bump the version instead. `yarn publish:chrome`, `publish:edge` and `publish:firefox` publish to one store (after the preflight) and record it the same way. To publish to one store without the preflight, run its script directly, e.g. `node scripts/publishing/publish-firefox.js`.
+`yarn publish:all` runs `yarn preflight` and `yarn test:signin:chrome`, then publishes to Chrome, Edge and Firefox in turn. A store that fails doesn't stop the others. Each store that takes the current version is recorded in `.publish-status.json` (gitignored), so after fixing a failure (an expired key, say), run `yarn publish:all` again: it publishes only to the stores still missing this version, and skips those two checks while the extension's files are unchanged since they passed. It refuses to go on if the extension's files changed after a store got the version; bump the version instead. `yarn publish:chrome`, `publish:edge` and `publish:firefox` publish to one store (after the same two checks) and record it the same way. To publish to one store without them, run its script directly, e.g. `node scripts/publishing/publish-firefox.js`.
 
 ## Smoke testing
 

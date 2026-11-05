@@ -1,4 +1,4 @@
-Reveddit real-time watches the posts and comments you make on reddit, plus any others you subscribe to, and tells you when one is removed, locked, reapproved or unlocked. It can also scan a thread or profile for what moderators removed, while you're signed in to reddit. Scans can't find what people deleted themselves.
+Reveddit real-time watches the posts and comments you make on reddit, plus any others you subscribe to, and tells you when one is removed, locked, reapproved or unlocked. It can also scan a thread or profile for what moderators removed, while you're signed in to reddit. Scans can miss some, and can't find what people deleted themselves.
 
 Features:
 
@@ -13,18 +13,18 @@ Features:
 
 Upon installing the extension, it automatically watches the account you're logged in to reddit with. To monitor another account, create a separate browser profile, log into reddit as that account, and install the extension there.
 
-To monitor additional comments or posts, click the subscribe button beneath the item, or right-click on a link and choose `reveddit subscribe`. Note that subscribing to a post does not subscribe to its comments, only the post itself.
+To monitor additional comments or posts, click the subscribe button beneath the item (a bell on new reddit), or right-click on a link and choose `reveddit subscribe`. Note that subscribing to a post does not subscribe to its comments, only the post itself.
 
 Reveddit real-time is developed independently and is not officially endorsed by or affiliated with reddit. Enhancements will be added as they are developed. You can support this work through a non-tax-deductible donation:
 
 https://www.reveddit.com/about/donate
 
-Note, the extension can't check comments in private, quarantined or 18+ (NSFW) communities, since reddit doesn't show those to everyone. Posts there are reported only when reddit marks them removed.
+Note, the extension can't check your own comments in private, quarantined or 18+ (NSFW) communities or on 18+ posts, since reddit doesn't show those to everyone. Posts there are reported only when reddit marks them removed.
 
 VERSION HISTORY:
 
 2026/11/05 - 0.0.5.31
-- scans for removed comments work again while signed in to reddit; the removed post note is back on new reddit
+- scans for removed comments work again while signed in to reddit; the removed post note is back on new reddit, and subscribing is back as a bell
 
 2026/10/31 - 0.0.5.30
 - a way to keep checks working if reddit starts asking for a login; report a problem from the popup

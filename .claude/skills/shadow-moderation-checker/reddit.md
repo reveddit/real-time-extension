@@ -50,6 +50,7 @@ Reddit's Atom feeds come from older code than its pages, and they're the one pla
 - A post's feed shows a removed post's title, with its body as `[removed]`. With a login, `submitted.json` lists removed posts, and every one seen with `is_robot_indexable: false` had a `removed_by_category` (14 posts, two accounts).
 - `after` and `before` work on feeds as on JSON listings: page 2 of a person's feed had the same 100 ids as `comments.json` with that `after`, and none of page 1's. An anchor from the other tab (a post on `comments`, a comment on `submitted`) is ignored, and the list starts from the top. `sort=top` with no `t` is `t=all`, and `t=month` shared 3 of 100 ids with it. (2026-11-04)
 - Limits: with no cookies, one feed uses up the allowance (`x-ratelimit-remaining: 0.0`, used 1, reset within a minute), and the next gets a 429. With a login there are no rate headers, and scans at one request per 1.5 s got 200s on all of about 170 feeds, up to 50 in a row. Curl with no cookies got a 403. A missing user gets a 404. Feeds send `cache-control: private, max-age=3600`, so a browser may answer from its cache: use `cache: 'no-store'`, as scans do. A fetch from a www.reddit.com page itself, signed in, got the block page on all of these (14 of 14), where the extension's background got 200s. (2026-11-04)
+- 2026-11-05: one test account began getting `x-ratelimit-*` headers on logged-in JSON: limit 100 per 10 minutes, each read counting 4 as `used`, in a plain tab with no extension too, and feeds appear to draw on it. A one-minute check interval ran it out in 5 minutes. That morning the same account read 114 feeds with no refusal, and another account's same request that day had no such headers, so this isn't everyone. On that account old.reddit.com also redirected to www or answered 429.
 
 ## Fetch paths
 
@@ -86,6 +87,7 @@ Young posts still in the feed are checked on their own pages, at most 10 per cyc
 - **Cycle:** every minute by default, one at a time, with up to 10 seconds of jitter.
 - **Items missing from the feed:** checked on their own pages, the lighter route first. Up to 20 per cycle, 500 ms apart, halved and spaced twice as far for an hour after a 429. Verdicts are cached for 6 hours if live, 2 hours if removed, and 30 minutes if held or unknown.
 - **When the public profile fails:** a legacy chain takes over. Comments are checked every cycle, and posts go to a pending queue that checks each one at most 3 times. After a real 403 from it, every legacy path rests for 6 hours (0.0.5.27).
+- 2026-11-05: that rest is no longer shared or fixed. The legacy `/api/info` listing and the legacy post pages rest apart, each refusal in a row doubles the rest up to a week, one success ends it, and a challenge page answered with a 200 counts as a refusal, like a 403.
 - **Alerts:** a removal alerts after 3 to 5 consecutive removed verdicts (the count is drawn again each time the background starts), and a reinstatement after 2 live ones by default.
 - **Warnings** after 5 consecutive failed cycles: `public_view_unavailable`, `absent_verify_unavailable`, `logged_in_view_unavailable`. `profile_publicly_empty` is the account-wide shadowban signature.
 
@@ -108,6 +110,7 @@ Also worth copying: a closed list of allowed paths, not a URL proxy; requests wa
 - `page unreadable after challenge solve` or `page unreadable (no solvable challenge)`, with the page's shape: `bytes`, `challenge`, `scaffold`, `title`, `canonical`, `wall=captcha`.
 - `absent verify: N fetched, N paced (recent unknown), N resolved this cycle`.
 - `www public-view lookup failed — consecutive failures: N`.
+- 2026-11-05: `www tab fetch refused`, `background www fetch refused` and `via=` are gone. `www route for <kind> pages is now <route>` records a change of route, and `routes=` on each `www lookup` line names the route that last served each kind of page.
 
 ## Code map
 
@@ -115,3 +118,4 @@ Also worth copying: a closed list of allowed paths, not a URL proxy; requests wa
 - `src/src/parse_html/new.ts`: profile parsing, `classifyPostPage`, `classifyCommentPage`, `solveChallenge`, `describePageForDiag`.
 - `src/src/content-reddit.ts`: `showRemovalStatusOnPostPages`, the note on a post's page.
 - `src/src/challenge-config.ts`, `src/src/bridge.ts`, `src/src/monitoring.ts` (the cycle, confirmation counts, never-public classes) and `src/src/diaglog.ts`.
+- 2026-11-05: `fetchAndClassifyAbsentItem` is now `fetchAndClassifyItemPage`, and `BACKGROUND_FETCH_INIT` is gone: `publicViewInit` puts each route's cache mode on `PUBLIC_VIEW_FETCH_INIT`.

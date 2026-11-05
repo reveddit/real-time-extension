@@ -18,9 +18,9 @@ Testing subreddit: **r/CantSayAnything** (auto-removes all posts/comments).
 
 ## Installation / Welcome
 
-- [ ] Load unpacked extension in Chrome → welcome page opens
-- [ ] "Check Connection" detects logged-in Reddit user
-- [ ] User is auto-subscribed and redirected to reveddit.com
+- [ ] Load unpacked extension in Chrome → welcome page opens if logged out of Reddit, otherwise the history page opens
+- [ ] "Check connection now" detects logged-in Reddit user
+- [ ] User is auto-subscribed and redirected to the history page
 
 ---
 
@@ -29,7 +29,7 @@ Testing subreddit: **r/CantSayAnything** (auto-removes all posts/comments).
 - [ ] Click extension icon → popup opens
 - [ ] Subscribed user is listed
 - [ ] "options" link opens options page
-- [ ] "clear notifications" link works
+- [ ] "mark all as seen" link works
 - [ ] Badge count shows correctly (or is empty when no unseen changes)
 - [ ] "send a test notification" shows a notification; with a notify setting off, its message names the disabled type(s)
 
@@ -38,23 +38,26 @@ Testing subreddit: **r/CantSayAnything** (auto-removes all posts/comments).
 ## Options Page
 
 - [ ] All checkboxes render with correct defaults
-- [ ] Change "minutes between updates" → save → reopen → value persists
+- [ ] Change "minutes between Reddit checks" → save → reopen → value persists
 - [ ] Change removed/locked pickers (off / badge only / badge + notifications) → save → verify persistence
 - [ ] "turn off all notifications" link sets both pickers to badge only, leaves "off" pickers alone, and hides itself
 - [ ] With both pickers on "badge only": detection updates badge and history, no notification appears (including the install-time backlog notice)
-- [ ] "hide subscribe" and "monitor quarantined" toggles work
+- [ ] "hide subscribe" toggle works
+- [ ] "monitor quarantined" toggle works; it shows only when a custom client ID is set
 - [ ] "advanced" section reveals client ID field
-- [ ] "reset to defaults" restores default values
+- [ ] "reset to defaults" restores only "minutes between Reddit checks", "same-status count before alert" and the client ID
 - [ ] Invalid interval value shows error
 
 ---
 
 ## Content Script — Reddit Subscribe Button
 
-- [ ] Navigate to a Reddit user profile → subscribe button appears
-- [ ] Click subscribe → user added to popup list
-- [ ] Navigate to a Reddit post → subscribe button appears on post and comments
-- [ ] "hide subscribe" option removes the button
+- [ ] Old reddit: posts and comments have a `subscribe-rev` link
+- [ ] New reddit: comment rows on threads and profiles have a subscribe button, a bell icon whose tooltip reads "Get told if this is removed", and so does the end of a post's action row on threads and feeds
+- [ ] Click subscribe on someone else's comment and on a post → the link flips to `unsubscribe-rev`, or the bell fills in and its tooltip says "Stop following this", and each item is listed under the popup's "other" link
+- [ ] Click unsubscribe → it flips back and the item leaves the "other" list
+- [ ] Your own comments get a disabled button whose tooltip says why
+- [ ] "hide subscribe" option removes them on both reddits, after a page reload
 
 ---
 
@@ -81,7 +84,7 @@ Testing subreddit: **r/CantSayAnything** (auto-removes all posts/comments).
 ## Other Subscriptions
 
 - [ ] From popup, click "other" link → other.html opens
-- [ ] Add a subreddit/post/comment ID → verify it appears in storage
+- [ ] On a Reddit post or comment page, turn on the popup's "subscribe to post" or "subscribe to comment" toggle, or right-click a link and choose "reveddit subscribe" → the item appears on other.html
 - [ ] Monitored "other" items appear in history when changes are detected
 
 ---
