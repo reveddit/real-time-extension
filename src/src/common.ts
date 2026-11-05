@@ -56,6 +56,17 @@ export const setWarningBadge = (errorStatus?: string) => {
     }
 }
 
+// Firefox runs one background for every window and container, and its fetches
+// carry the default container's cookies: a private window or a container tab
+// would get another identity's logged-in view. (Chrome and Edge run incognito
+// tabs in their own instance.)
+export const isOtherIdentity = (tab?: chrome.tabs.Tab): boolean => {
+    const cookieStoreId = (tab as any)?.cookieStoreId
+    return (
+        __BUILT_FOR__ === 'firefox' && Boolean(tab?.incognito || (cookieStoreId && cookieStoreId !== 'firefox-default'))
+    )
+}
+
 // https://stackoverflow.com/questions/25933556/chrome-extension-open-new-tab-when-browser-opened-in-background-mac/25933964#25933964
 export const createTab = (url: string) => {
     // chrome.windows is unavailable on Firefox Android (single-window browser);

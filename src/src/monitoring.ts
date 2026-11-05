@@ -542,6 +542,38 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
             // badge below; a failed or skipped lookup must not read as a clean cycle.
             let processedItems = false
             let listingRefused = false
+            const checkListing = (listing: any) => {
+                const ids: string[] = []
+                let quarantined_subreddits = new Set()
+                const itemLookup: Record<string, any> = {}
+                if (listing.user && listing.user.items) {
+                    // format from cred2.reveddit.com
+                    listing = listing.user.items
+                }
+                ;(listing as any[]).forEach((item: any) => {
+                    if (item.data && item.data.name) {
+                        // format from reddit
+                        item = item.data
+                    }
+                    ids.push(item.name)
+                    itemLookup[item.name] = item
+                    if (item.quarantine) {
+                        quarantined_subreddits.add(item.subreddit)
+                        storage.tempVar_quarantined_content_found = true
+                    }
+                })
+                processedItems = true
+                return checkForChanges_thing_byId(
+                    ids,
+                    loggedInUser,
+                    true,
+                    auth,
+                    storage,
+                    SUBSCRIBED_FROM_NA,
+                    itemLookup,
+                    Array.from(quarantined_subreddits) as string[],
+                )
+            }
             // Use message passing to get items from content script context
             return new Promise(resolve => {
                 // Try to find a Reddit tab to make the request from
@@ -629,69 +661,11 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                                 setWarningBadge('needs_user')
                                 return // handle expected errors
                             }
-                            const ids: string[] = []
-                            let quarantined_subreddits = new Set()
-                            const itemLookup: Record<string, any> = {}
-                            if ((storedItems as any).user && (storedItems as any).user.items) {
-                                // format from cred2.reveddit.com
-                                storedItems = (storedItems as any).user.items
-                            }
-                            ;(storedItems as any[]).forEach((item: any) => {
-                                if (item.data && item.data.name) {
-                                    // format from reddit
-                                    item = item.data
-                                }
-                                ids.push(item.name)
-                                itemLookup[item.name] = item
-                                if (item.quarantine) {
-                                    quarantined_subreddits.add(item.subreddit)
-                                    storage.tempVar_quarantined_content_found = true
-                                }
-                            })
-                            processedItems = true
-                            return checkForChanges_thing_byId(
-                                ids,
-                                loggedInUser,
-                                true,
-                                auth,
-                                storage,
-                                SUBSCRIBED_FROM_NA,
-                                itemLookup,
-                                Array.from(quarantined_subreddits) as string[],
-                            )
+                            return checkListing(storedItems)
                         })
                     }
 
-                    const ids: string[] = []
-                    let quarantined_subreddits = new Set()
-                    const itemLookup: Record<string, any> = {}
-                    if ((items as any).user && (items as any).user.items) {
-                        // format from cred2.reveddit.com
-                        items = (items as any).user.items
-                    }
-                    ;(items as any[]).forEach((item: any) => {
-                        if (item.data && item.data.name) {
-                            // format from reddit
-                            item = item.data
-                        }
-                        ids.push(item.name)
-                        itemLookup[item.name] = item
-                        if (item.quarantine) {
-                            quarantined_subreddits.add(item.subreddit)
-                            storage.tempVar_quarantined_content_found = true
-                        }
-                    })
-                    processedItems = true
-                    return checkForChanges_thing_byId(
-                        ids,
-                        loggedInUser,
-                        true,
-                        auth,
-                        storage,
-                        SUBSCRIBED_FROM_NA,
-                        itemLookup,
-                        Array.from(quarantined_subreddits) as string[],
-                    )
+                    return checkListing(items)
                 })
                 .then(() => {
                     if (!processedItems) return

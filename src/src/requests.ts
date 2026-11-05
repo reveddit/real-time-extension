@@ -1667,15 +1667,21 @@ const LOGIN_DETECT_FAILURE_WARN_THRESHOLD = 5
 // rate limit is no such answer, and says nothing about the login.
 export const isLoginRefusal = (failure = ''): boolean => /(status|request failed:) 40[13]\b|non-JSON/.test(failure)
 
+// One more failure in a streak kept in storage
+const countFailure = async (key: string): Promise<number> => {
+    const stored = (await browser.storage.local.get({ [key]: 0 })) as any
+    const failures = Number(stored[key] || 0) + 1
+    await browser.storage.local.set({ [key]: failures })
+    return failures
+}
+
 export const recordLoginDetectOutcome = async (indeterminate: boolean) => {
     try {
         if (!indeterminate) {
             await browser.storage.local.remove(LOGIN_DETECT_FAILURES_KEY)
             return
         }
-        const stored = (await browser.storage.local.get({ [LOGIN_DETECT_FAILURES_KEY]: 0 })) as any
-        const failures = Number(stored[LOGIN_DETECT_FAILURES_KEY] || 0) + 1
-        await browser.storage.local.set({ [LOGIN_DETECT_FAILURES_KEY]: failures })
+        const failures = await countFailure(LOGIN_DETECT_FAILURES_KEY)
         dlog('auth', `[reveddit] login detection indeterminate — consecutive failures: ${failures}`)
         if (failures >= LOGIN_DETECT_FAILURE_WARN_THRESHOLD) {
             setWarningBadge(LOGGED_IN_VIEW_UNAVAILABLE)
@@ -1698,9 +1704,7 @@ const recordWwwDetectOutcome = async (ok: boolean, reason = '', loginWall = fals
             await browser.storage.local.remove(WWW_DETECT_FAILURES_KEY)
             return
         }
-        const stored = (await browser.storage.local.get({ [WWW_DETECT_FAILURES_KEY]: 0 })) as any
-        const failures = Number(stored[WWW_DETECT_FAILURES_KEY] || 0) + 1
-        await browser.storage.local.set({ [WWW_DETECT_FAILURES_KEY]: failures })
+        const failures = await countFailure(WWW_DETECT_FAILURES_KEY)
         dlog(
             'feed',
             `[reveddit] www public-view lookup failed — consecutive failures: ${failures}` +
