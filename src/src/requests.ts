@@ -1674,6 +1674,12 @@ const countFailure = async (key: string): Promise<number> => {
     return failures
 }
 
+// Reddit keeps refusing the login check and the user's listing
+const isLoginKeptOut = async (): Promise<boolean> => {
+    const stored = (await browser.storage.local.get({ [LOGIN_DETECT_FAILURES_KEY]: 0 })) as any
+    return Number(stored[LOGIN_DETECT_FAILURES_KEY]) >= LOGIN_DETECT_FAILURE_WARN_THRESHOLD
+}
+
 export const recordLoginDetectOutcome = async (indeterminate: boolean) => {
     try {
         if (!indeterminate) {
@@ -3217,11 +3223,29 @@ export const readWithLogin = async (path: string) => {
     const timer = setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
     try {
         const url = `https://www.reddit.com${path}`
-        const { response, blockPage } = await fetchLoggedIn(url, { scan: true, signal: controller.signal })
+        const { response, blockPage, retried } = await fetchLoggedIn(url, {
+            scan: true,
+            signal: controller.signal,
+            onRetry: async () => {
+                await waitForScanTurn()
+                return !(await isRateLimitedNow()) && !(await isViewerConnecting())
+            },
+        })
+        // Reddit's logout leaves a short cookie of the login's name, so holding one
+        // settles nothing, and no wait helps. Its answers to the login check do.
+        if ((response.status === 429 || blockPage) && (await isLoginKeptOut())) {
+            return { ok: false, status: 0, retried, needsLogin: true }
+        }
         if (response.status === 429) {
             noteRateLimited(new Error('www.reddit.com request failed: 429'))
         }
-        return { ok: response.ok, status: response.status, blockPage, text: response.ok ? await response.text() : '' }
+        return {
+            ok: response.ok,
+            status: response.status,
+            blockPage,
+            retried,
+            text: response.ok ? await response.text() : '',
+        }
     } finally {
         clearTimeout(timer)
     }

@@ -73,8 +73,9 @@ export interface ProfileScanOptions {
 
 const RESTORE_DELAY_MS = 1500
 const MAX_RESTORE_LOOKUPS = 20
-// The most requests one click sends. They carry the user's login, and 50 in a row
-// is the longest run measured at this pace (reddit.md). The next click goes on.
+// The requests one click may send, counting a block page's retry, though not on
+// the few reads that open a scan. They carry the user's login, and 50 in a row is
+// the longest run measured at this pace (reddit.md). The next click goes on.
 const MAX_SCAN_READS = 50
 // One refused read may be about that author (a suspended account's feed isn't
 // measured, and a feed's own 403 looks like the edge's block page), and one
@@ -404,9 +405,10 @@ function getUserPageSort(
 // leaves it out the same way. No page or JSON listing shows a removed comment's
 // text any more (verified 2026-11-04). Logged out, reddit allows one feed a
 // minute, so these go through the background with the user's login.
-async function fetchWithLogin(path: string): Promise<string> {
+async function fetchWithLogin(path: string, onRetried?: () => void): Promise<string> {
     const res = (await browser.runtime.sendMessage({ action: 'fetch-with-login', path })) as any
     console.log(`[reveddit scan] ${path} -> status ${res?.status ?? 'none'}`)
+    if (res?.retried) onRetried?.()
     if (res?.ok) return res.text
     throw Object.assign(new Error(`reddit request failed: ${res?.status ?? 'none'}`), {
         status: res?.status,
@@ -418,7 +420,8 @@ async function fetchWithLogin(path: string): Promise<string> {
     })
 }
 
-const fetchFeed = async (path: string): Promise<any[]> => parseFeed(await fetchWithLogin(path))
+const fetchFeed = async (path: string, onRetried?: () => void): Promise<any[]> =>
+    parseFeed(await fetchWithLogin(path, onRetried))
 
 // The removed comments a scan looks for are in here, and it's why a scan goes
 // author by author. Comments only, so posts don't dilute the 100 per request.
@@ -562,7 +565,7 @@ export class ScanReads {
         }
         this.left--
         try {
-            const items = await this.limiter.schedule(() => fetchFeed(path))
+            const items = await this.limiter.schedule(() => fetchFeed(path, () => this.left--))
             this.failedInARow = 0
             this.pageReads?.set(path, items)
             return items

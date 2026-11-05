@@ -27,8 +27,9 @@ export interface LoggedInFetchOptions {
     signal?: AbortSignal
     // Whether the retry may still go out (the bridge's deadline)
     canRetry?: () => boolean
-    // Just before the retry goes out (the bridge counts it as a request)
-    onRetry?: () => void
+    // Just before the retry goes out, which waits for it and stays home on false:
+    // the bridge counts it as a request, and a scan's read takes another turn
+    onRetry?: () => unknown
     // The other mode got past the edge after a block page
     onSwitched?: (blocked: RequestCache, answered: RequestCache, status: number) => void
     // A scan's read. A feed's own 403 isn't JSON either, so both modes refusing
@@ -56,10 +57,10 @@ export const fetchLoggedIn = async (
     let blockPage = isBlockPage(response)
     let retried = false
     if (blockPage && Date.now() >= _loggedInFetchState.doubleBlockUntil && (opts.canRetry?.() ?? true)) {
-        retried = true
         const blockedMode = mode
         mode = (mode + 1) % modes.length
-        opts.onRetry?.()
+        if ((await opts.onRetry?.()) === false) return { response, blockPage, retried }
+        retried = true
         response = await fetchIn(mode)
         blockPage = isBlockPage(response)
         if (!blockPage) {

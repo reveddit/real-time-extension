@@ -52,6 +52,13 @@ describe('a read for a scan', () => {
         expect(_loggedInFetchState.doubleBlockUntil).toBe(0)
     })
 
+    it('says a block page was tried twice, so the click can count both', async () => {
+        fetchMock.mockImplementation(async () => blockPage())
+        expect(await readWithLogin(PATH)).toMatchObject({ retried: true })
+        fetchMock.mockImplementation(async () => answer(200))
+        expect(await readWithLogin(PATH)).toMatchObject({ ok: true, retried: false })
+    })
+
     it('a 429 enters the backoff that monitoring and the bridge honor, once', async () => {
         fetchMock.mockImplementation(async () => answer(429))
         expect(await readWithLogin(PATH)).toMatchObject({ ok: false, status: 429 })
@@ -75,6 +82,39 @@ describe('a read for a scan', () => {
 })
 
 describe('scans in several tabs', () => {
+    it("doesn't send a retry that its wait has made wrong", async () => {
+        for (const meanwhile of [
+            () => (__getLocalStorage().rate_limit_until = Date.now() + 60000),
+            () => (__getLocalStorage()[VIEWER_CONNECT_KEY] = { started: Date.now(), mainUser: 'alice', main: [] }),
+        ]) {
+            vi.useFakeTimers()
+            _scanTurn.next = 0
+            fetchMock.mockClear()
+            fetchMock.mockImplementation(async () => blockPage())
+            const reading = readWithLogin(PATH)
+            await vi.advanceTimersByTimeAsync(100)
+            meanwhile()
+            await vi.advanceTimersByTimeAsync(2000)
+            expect(await reading).toMatchObject({ ok: false, status: 403, blockPage: true, retried: false })
+            expect(fetchMock).toHaveBeenCalledTimes(1)
+            __resetStorage()
+            vi.useRealTimers()
+        }
+    })
+
+    it('take turns for a retry too', async () => {
+        vi.useFakeTimers()
+        const sent = []
+        fetchMock.mockImplementation(async () => {
+            sent.push(Date.now())
+            return sent.length === 1 ? blockPage() : answer(200)
+        })
+        const reads = [readWithLogin(PATH), readWithLogin(PATH)]
+        await vi.advanceTimersByTimeAsync(4000)
+        await Promise.all(reads)
+        expect(sent.map(at => at - sent[0])).toEqual([0, 1500, 3000])
+    })
+
     it('take turns at the pace measured', async () => {
         vi.useFakeTimers()
         const sent = []
@@ -100,6 +140,30 @@ describe('scans in several tabs', () => {
         await vi.advanceTimersByTimeAsync(4000)
         await Promise.all(reads)
         expect(sent[1] - sent[0]).toBe(3000)
+    })
+})
+
+describe('a login reddit keeps refusing', () => {
+    // What monitoring leaves after refused login checks, whatever cookie is held
+    beforeEach(() => {
+        __getLocalStorage().login_detect_consecutive_failures = 5
+    })
+
+    it('asks to sign in where a rate limit would read as a wait, and starts no backoff', async () => {
+        __getLocalStorage().error_status = 'logged_in_view_unavailable'
+        fetchMock.mockImplementation(async () => answer(429))
+        expect(await readWithLogin(PATH)).toMatchObject({ ok: false, status: 0, needsLogin: true })
+        expect(__getLocalStorage().rate_limit_until).toBeUndefined()
+        expect(__getLocalStorage().error_status).toBe('logged_in_view_unavailable')
+    })
+
+    it('asks to sign in where a block page would read as try later', async () => {
+        fetchMock.mockImplementation(async () => blockPage())
+        expect(await readWithLogin(PATH)).toMatchObject({ ok: false, status: 0, needsLogin: true })
+    })
+
+    it("still reads what reddit answers: only a refusal is taken for the login's", async () => {
+        expect(await readWithLogin(PATH)).toMatchObject({ ok: true, text: '<feed/>' })
     })
 })
 
