@@ -899,6 +899,36 @@ test.describe("Scans on new reddit's comments", () => {
         `<shreddit-comment-tree id="comment-tree"><section>${comment('t1_next')}</section></shreddit-comment-tree>`,
     ]
 
+    test("reddit's own size for every button leaves the text of ours centered", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
+
+        const offCenter = await page.evaluate(() => {
+            const style = document.createElement('style')
+            // As measured on www.reddit.com, 2026-11-05
+            style.textContent = 'button { box-sizing: border-box; height: 32px; line-height: 30px }'
+            document.head.append(style)
+            return ['rev-scan-all-btn', 'rev-profile-scan-btn', 'rev-place-unattached-btn', 'rev-filter-btn'].map(
+                name => {
+                    const button = document.createElement('button')
+                    button.className = name
+                    button.textContent = 'Scan'
+                    document.body.append(button)
+                    const box = button.getBoundingClientRect()
+                    const text = document.createRange()
+                    text.selectNodeContents(button)
+                    const { top, bottom } = text.getBoundingClientRect()
+                    return Math.abs(top - box.top - (box.bottom - bottom))
+                },
+            )
+        })
+        expect(offCenter).toHaveLength(4)
+        for (const pixels of offCenter) expect(pixels).toBeLessThanOrEqual(1)
+    })
+
     test('a comment gets its button when reddit stamps its row, inline with Share', async ({
         context,
         extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
