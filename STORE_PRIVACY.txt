@@ -1,0 +1,60 @@
+Answers for the stores' privacy forms: the Chrome Web Store's Privacy tab and the same fields in Edge Partner Center. Firefox has nothing to fill in, and its data collection stays "none". Each justification field takes 1,000 characters at most.
+
+Update this file whenever a permission changes, or what the extension does with one.
+
+Privacy policy URL: https://www.reveddit.com/about/extension-privacy/
+Remote code: No
+Data usage: tick Authentication information, Website content and all three certifications.
+
+
+SINGLE PURPOSE
+
+(Not recorded yet: copy it here from the dashboard.)
+
+
+HOST PERMISSIONS
+
+The extension checks the user's own Reddit posts and comments for removal, and scans threads and profiles for removed content when the user asks. reddit.com: its background fetches reddit pages, JSON and feeds. It reads the user's own listing with their Reddit login, then checks that listing logged out or through the user's optional second account. A scan the user starts reads feeds with the user's Reddit login, because reddit allows too few logged-out feed requests for a scan. It also reads and restores the reddit.com login cookies these reads use, and its content script shows removal status, scan and subscribe buttons on reddit pages. reveddit.com: its content script tells reveddit.com pages the extension is installed, and those pages can ask it to load reddit data for them. It sends nothing to any other site.
+
+
+COOKIES
+
+Reads and manages the user's reddit.com session cookies so the extension can make requests to Reddit as the logged-in user and look up the removal status of their posts and comments. It keeps a copy of them for those checks. If the user connects an optional second Reddit account, it briefly clears reddit.com cookies while they sign in to that account on Reddit's own page, saves that account's login, then restores the user's own login. Cookies stay in the browser and are only ever sent to reddit.com, never to the developer or any third party.
+
+
+DECLARATIVENETREQUESTWITHHOSTACCESS
+
+reveddit real-time tells users when reddit removes their own posts and comments. Its background service worker fetches reddit pages the way other people see them: logged out, or, if the user connects an optional second Reddit account, as that account.
+
+declarativeNetRequestWithHostAccess installs session rules for these background requests only. They remove the Origin header on requests to old.reddit.com and www.reddit.com, which reddit otherwise refuses. They set two cookies that reddit's older page layout needs, because the fetch API cannot set cookies itself. If the user connected a second account, they set its login cookies on the GET requests the extension makes as that account.
+
+Every rule is limited to reddit.com and to the extension's own background requests, never the user's tabs. The rules only modify request headers. They never block, redirect, or read requests or responses.
+
+
+SCRIPTING
+
+Two uses, both limited to the extension's reddit.com and reveddit.com host permissions, and both running only the extension's own bundled code, never remote or dynamically generated code.
+
+1) Content script for open tabs. The browser only runs a content script on pages loaded after the extension starts, so reddit and reveddit tabs already open at install, update or a background restart have none. The extension probes each such tab with a one-line check and, if the script is missing, injects its own declared src/content.js and content.css, so monitoring works without reloading tabs.
+
+2) Same-origin fallback fetch. When an update has disconnected an open reddit tab's content script, the extension runs a small self-contained function from its bundle in that tab to fetch a reddit page the way the tab itself would, and passes the response back to the background for the same removal check the content script performs.
+
+
+STORAGE
+
+Used to persist user preferences, the list of subscribed usernames and content IDs, the status and history of monitored content, a diagnostic log the user can copy into a bug report, and cached state such as the last logged-in user and unseen notification count. It also keeps copies of the reddit.com login cookies the checks use: the user's own and, if they connect one, an optional second Reddit account's. chrome.storage.sync holds settings and lists that roam across the user's devices; chrome.storage.local holds the rest. Everything stays in the browser, and the login cookies are only ever sent to reddit.com.
+
+
+CONTEXTMENUS
+
+Adds a "reveddit subscribe" item to the right-click menu on links, so the user can monitor the linked reddit post or comment for removal.
+
+
+NOTIFICATIONS
+
+The extension shows a notification when content the user monitors is removed, locked, unlocked or approved again, and when the user asks for a test notification.
+
+
+ALARMS
+
+(Not recorded yet: copy it here from the dashboard.)
