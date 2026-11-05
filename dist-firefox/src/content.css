@@ -62,15 +62,10 @@
     margin: 0 8px 8px 16px;
 }
 
-.rev-new-reddit-message-content .rev-new-reddit-message-content-heading {
-    font-weight: 700;
-}
-
 .rev-new-reddit-message-content a {
     font-size: 14px;
 }
 
-.rev-new-reddit-message-content-heading,
 .rev-new-reddit-message-content-description {
     padding-top: 4px;
     padding-bottom: 4px;
@@ -124,18 +119,25 @@
 
 /* New reddit action row: match shreddit's native button style. */
 .rev-newreddit-action {
+    /* Above the link that covers a post's whole card in a feed */
+    position: relative;
     background: none !important;
     color: inherit !important;
-    font-size: 12px !important;
-    font-weight: 600 !important;
     padding: 4px 8px !important;
     border: none !important;
-    border-radius: 999px !important;
     display: inline-flex;
     align-items: center !important;
     gap: 4px !important;
-    cursor: pointer;
-    line-height: 16px !important;
+}
+/* Reddit's rows don't wrap, so Scan-Rev gives up its label where they run out of
+   room, and the title still says what it does */
+shreddit-comment[depth]:not([depth='0'], [depth='1'], [depth='2'], [depth='3']) .rev-newreddit-action span {
+    display: none;
+}
+@media (max-width: 640px) {
+    .rev-newreddit-action span {
+        display: none;
+    }
 }
 .rev-newreddit-action:hover {
     background: var(--color-neutral-background-hover, rgba(0, 0, 0, 0.05)) !important;
@@ -173,7 +175,7 @@
 
 .rev-restore-progress {
     font-size: 11px;
-    color: #787c7e;
+    color: var(--color-neutral-content-weak, #787c7e);
     font-style: italic;
 }
 
@@ -196,7 +198,7 @@
 
 .rev-restore-cancel {
     font-size: 11px;
-    color: #787c7e;
+    color: var(--color-neutral-content-weak, #787c7e);
     margin-right: 8px;
     cursor: pointer;
 }
@@ -206,30 +208,18 @@
 
 /* --- Restored comment --- */
 
-.rev-restored {
-    border-left: 3px solid #0079d3;
-    padding-left: 8px;
-    background-color: rgba(0, 121, 211, 0.05);
-}
-
 .rev-restore-attribution {
     font-size: 11px;
-    color: #787c7e;
+    color: var(--color-neutral-content-weak, #787c7e);
     margin-top: 4px;
 }
 
 /* --- Buttons --- */
 
-/* Reddit's shape in the extension icon's blue. New reddit gives every button a
-   fixed height and a line height nearly as tall, so padding alone pushes the
-   text down: these center it and set their own line height. */
-.rev-profile-scan-btn,
-.rev-scan-all-btn,
-.rev-place-unattached-btn,
-.rev-filter-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+/* Reddit's shape. New reddit gives every button a fixed height and a line height
+   nearly as tall, and text in a line taller than the space inside the padding
+   sits low: hence the line height here. */
+.rev-btn {
     border-radius: 999px;
     padding: 4px 12px;
     font-size: 12px;
@@ -237,21 +227,17 @@
     line-height: 16px;
     cursor: pointer;
 }
-.rev-profile-scan-btn,
-.rev-scan-all-btn,
-.rev-place-unattached-btn {
+/* In the extension icon's blue. The clear border gives it the height of the
+   outlined pills beside it. */
+.rev-btn-solid {
     background: #0079d3;
     color: white;
-    border: none;
+    border: 1px solid transparent;
 }
-.rev-profile-scan-btn:hover,
-.rev-scan-all-btn:hover,
-.rev-place-unattached-btn:hover {
+.rev-btn-solid:hover:not(:disabled, .rev-scan-exhausted) {
     background: #005fa3;
 }
-.rev-profile-scan-btn:disabled,
-.rev-scan-all-btn:disabled,
-.rev-place-unattached-btn:disabled {
+.rev-btn-solid:disabled {
     opacity: 0.7;
     cursor: wait;
 }
@@ -270,7 +256,7 @@
 
 .rev-profile-scan-progress {
     font-size: 12px;
-    color: #787c7e;
+    color: var(--color-neutral-content-weak, #787c7e);
     margin-top: 6px;
 }
 
@@ -291,7 +277,7 @@
     align-items: flex-start;
     gap: 8px;
     font-size: 12px;
-    color: #787c7e;
+    color: var(--color-neutral-content-weak, #787c7e);
     line-height: 1.4;
     margin: 0 0 10px;
     padding: 6px 8px;
@@ -387,9 +373,9 @@ li.rev-own-mark-li {
 .rev-scan-item-title {
     display: block;
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 600;
     color: #0079d3;
-    margin-bottom: 2px;
+    margin-bottom: 4px;
 }
 .rev-scan-item-title:hover {
     text-decoration: underline;
@@ -397,7 +383,7 @@ li.rev-own-mark-li {
 
 .rev-scan-item-meta {
     font-size: 11px;
-    color: #787c7e;
+    color: var(--color-neutral-content-weak, #787c7e);
     margin-bottom: 4px;
 }
 
@@ -493,10 +479,7 @@ li.rev-own-mark-li {
     grid-column: 1 / -1;
     margin-left: 18px;
     padding-left: 10px;
-    border-left: 1px solid #e0e0e0;
-}
-.res-nightmode .rev-rec-children {
-    border-left-color: #343536;
+    border-left: 1px solid var(--color-neutral-border-weak, #e0e0e0);
 }
 
 /* Comments whose parent is also removed and couldn't be placed in the tree. */
@@ -520,7 +503,7 @@ li.rev-own-mark-li {
 }
 .rev-unattached-desc {
     font-size: 11px;
-    color: #787c7e;
+    color: var(--color-neutral-content-weak, #787c7e);
     margin-top: 2px;
 }
 .rev-place-unattached-btn {
@@ -529,7 +512,7 @@ li.rev-own-mark-li {
 .rev-unattached-note {
     margin-left: 8px;
     font-size: 11px;
-    color: #787c7e;
+    color: var(--color-neutral-content-weak, #787c7e);
 }
 
 /* Live comments reconstructed only to bridge an unattached comment into the
@@ -549,12 +532,6 @@ li.rev-own-mark-li {
     border-radius: 2px;
     text-transform: uppercase;
     margin-left: 4px;
-}
-
-.rev-scan-item-title {
-    font-weight: 600;
-    font-size: 14px;
-    margin-bottom: 4px;
 }
 
 /* --- Filter bar --- */
@@ -591,7 +568,7 @@ li.rev-own-mark-li {
     align-items: center;
 }
 
-.rev-filter-btn {
+.rev-btn.rev-filter-btn {
     background: none;
     border: 1px solid var(--color-neutral-border-weak, #edeff1);
     color: var(--color-neutral-content-weak, #787c7e);
@@ -620,7 +597,7 @@ li.rev-own-mark-li {
     display: inline-block;
     margin-left: 8px;
     font-size: 11px;
-    color: #787c7e;
+    color: var(--color-neutral-content-weak, #787c7e);
     font-style: italic;
     vertical-align: middle;
 }
@@ -636,13 +613,10 @@ li.rev-own-mark-li {
     border-color: rgba(255, 88, 91, 0.5);
 }
 
-.res-nightmode .rev-filter-btn {
-    border-color: #343536;
-    color: #818384;
-}
-
-.res-nightmode .rev-filter-bar {
-    border-bottom-color: #343536;
+/* RES night mode's values for reddit's theme variables, which old reddit lacks */
+.res-nightmode {
+    --color-neutral-border-weak: #343536;
+    --color-neutral-content-weak: #818384;
 }
 
 .res-nightmode .rev-scan-comment-btn,
