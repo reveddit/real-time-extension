@@ -513,6 +513,9 @@ function Options() {
     </>
   )
 
+  // Only requests made with this id's token read monitor_quarantined
+  const hasClientId = clientId.trim() !== ''
+
   return (
     <>
       <AppGlobal />
@@ -579,11 +582,13 @@ function Options() {
             <label>same-status count before alert</label>
             <input type="text" value={seenCount} onChange={e => setSeenCount(e.target.value)} />
           </Field>
-          <Field>
-            <label>monitor quarantined content</label>
-            <input type="checkbox" checked={monitorQuarantined}
-              onChange={e => setMonitorQuarantined(e.target.checked)} />
-          </Field>
+          {hasClientId && (
+            <Field>
+              <label>monitor quarantined content</label>
+              <input type="checkbox" checked={monitorQuarantined}
+                onChange={e => setMonitorQuarantined(e.target.checked)} />
+            </Field>
+          )}
           <Field>
             <label>hide subscribe button</label>
             <input type="checkbox" checked={hideSubscribe}
@@ -615,7 +620,7 @@ function Options() {
               onChange={e => setAutoFilterRemovedThreads(e.target.checked)} />
           </Field>
         </FieldStack>
-        {monitorQuarantined && (
+        {hasClientId && monitorQuarantined && (
           <Note>
             Enabling "monitor quarantined content" may appear to cause an occasional logout.
             Refreshing the page should show you are still logged in. Increase "minutes between
@@ -672,7 +677,8 @@ function Options() {
         <AdvancedSection visible={showAdvanced}>
           <SectionHeader>Advanced</SectionHeader>
           <Note>
-            This option overrides the "installed app" client id from reddit &gt; preferences &gt; apps.
+            Takes an "installed app" client id from reddit &gt; preferences &gt; apps. Checks then also use
+            Reddit&apos;s API with it.
           </Note>
           <FieldStack>
             <Field>

@@ -92,7 +92,6 @@ const check = async view => {
         storage,
         SUBSCRIBED_FROM_NA,
         { [ID]: authItem },
-        [],
         [{ data: { ...view } }],
     )
     for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 0))
@@ -200,7 +199,6 @@ const nearlyFullStore = () => {
         user_initial_lookup_done: {},
         other_subscriptions: {},
         last_check: NOW,
-        last_check_quarantined: NOW,
         [otherKeys.removed]: {},
         [otherKeys.approved]: {},
         [otherKeys.locked]: {},

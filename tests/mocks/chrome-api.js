@@ -95,6 +95,7 @@ globalThis.chrome = {
         setBadgeBackgroundColor() {},
     },
     runtime: {
+        id: 'fakeid',
         sendMessage(msg, cb) {
             if (cb) cb()
             return Promise.resolve()

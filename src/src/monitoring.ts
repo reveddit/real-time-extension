@@ -259,7 +259,6 @@ const processPendingPosts = async (storage: Record<string, any>) => {
                             storage,
                             SUBSCRIBED_FROM_NA,
                             itemLookup,
-                            [],
                             [{ data: itemData }],
                             true,
                         )
@@ -344,8 +343,6 @@ export const setCurrentStateForId = (id: string, subscribedFromURL: string, post
     })
 }
 
-const MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS = 20 * (60 * 60 * 24)
-
 // Random jitter (0–10s) applied to periodic polls so they don't fire at a fixed
 // instant each cycle, reducing the chance of coinciding with the user's own
 // browsing and tripping Reddit's rate limit (429).
@@ -413,22 +410,8 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
         const other = Object.keys(storage.other_subscriptions)
         const now = Math.floor(Date.now() / 1000)
 
-        // check for quarantined content once in awhile and enable monitor_quarantined if some is found
-        // because users may not know to enable this option
-        // the option is off by default because it can appear to cause an occasional logout
-        if (
-            !storage.last_check_quarantined ||
-            now - storage.last_check_quarantined > MIN_QUARANTINED_CHECK_INTERVAL_IN_SECONDS
-        ) {
-            storage.tempVar_monitor_quarantined = true
-        }
-
-        // Only get OAuth auth if user has provided a custom client ID
-        const needsOAuth = storage.options.custom_clientid && storage.options.custom_clientid !== ''
-        const authPromise = needsOAuth ? getAuth(storage.tempVar_monitor_quarantined) : Promise.resolve('none')
-
         let cachedAuth: any
-        authPromise
+        getAuth()
             .then((auth: any) => {
                 cachedAuth = auth
                 // Always check for logged-in user, regardless of subscription status
@@ -445,15 +428,7 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
                 return processPendingPosts(storage)
             })
             .then(() => {
-                const newStorage: Record<string, any> = { last_check: now }
-                if (storage.tempVar_monitor_quarantined) {
-                    newStorage.last_check_quarantined = now
-                }
-                if (storage.tempVar_quarantined_content_found) {
-                    newStorage.options = storage.options
-                    newStorage.options.monitor_quarantined = true
-                }
-                chrome.storage.sync.set(newStorage)
+                chrome.storage.sync.set({ last_check: now })
                 cycleEndedAtMs = Date.now()
                 dlog('cycle', '[reveddit] checkForChanges: cycle done')
                 return maybeFireBacklogSummary(storage)
@@ -548,12 +523,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
             let listingRefused = false
             const checkListing = async (listing: any) => {
                 const ids: string[] = []
-                let quarantined_subreddits = new Set()
                 const itemLookup: Record<string, any> = {}
-                if (listing.user && listing.user.items) {
-                    // format from cred2.reveddit.com
-                    listing = listing.user.items
-                }
                 // Grace mode has only the remembered name, and the browser may
                 // hold another account by now
                 const isTheirs = (item: any) =>
@@ -569,10 +539,6 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     }
                     ids.push(item.name)
                     itemLookup[item.name] = item
-                    if (item.quarantine) {
-                        quarantined_subreddits.add(item.subreddit)
-                        storage.tempVar_quarantined_content_found = true
-                    }
                 })
                 processedItems = true
                 return checkForChanges_thing_byId(
@@ -583,7 +549,6 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     storage,
                     SUBSCRIBED_FROM_NA,
                     itemLookup,
-                    Array.from(quarantined_subreddits) as string[],
                 )
             }
             // Use message passing to get items from content script context
@@ -661,7 +626,6 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                             'new',
                             '',
                             storage.options.monitor_quarantined,
-                            storage.tempVar_monitor_quarantined,
                             auth,
                         ).then(storedItems => {
                             if (!storedItems) {
@@ -778,7 +742,6 @@ const checkForChanges_thing_byId = async (
     storage: Record<string, any>,
     subscribedFrom: number,
     itemLookup: Record<string, any> = {},
-    quarantined_subreddits: string[] = [],
     preFetchedItems: any[] | null = null,
     skipConfirmationThreshold = false,
 ) => {
@@ -829,15 +792,7 @@ const checkForChanges_thing_byId = async (
             authItemsMeta,
         })
     } else {
-        promise = lookupItemsByID(
-            ids,
-            auth,
-            monitor_quarantined,
-            storage.tempVar_monitor_quarantined,
-            quarantined_subreddits,
-            username,
-            authItemsMeta,
-        )
+        promise = lookupItemsByID(ids, auth, monitor_quarantined, username, authItemsMeta)
     }
     return promise.then(result => {
         if (!result) return // handle expected errors

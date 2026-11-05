@@ -186,7 +186,6 @@ const getStorageInit = () => {
             auto_filter_removed_threads: true,
         },
         last_check: null,
-        last_check_quarantined: null,
     }
     addTrackTypes(result, 'other', false)
     return result
@@ -413,12 +412,7 @@ export const unsubscribeId = (id: string, callback: () => void = () => {}) => {
                 delete result[fullKeyname][id]
             }
         })
-        chrome.storage.sync.set(result, () => {
-            chrome.runtime
-                .sendMessage({ action: 'update-badge' })
-                .then(callback)
-                .catch(() => callback())
-        })
+        setStorageUpdateBadge(result).then(() => callback())
     })
 }
 export const getSubscribedIds = (callback: (ids: string[]) => void = () => {}) => {

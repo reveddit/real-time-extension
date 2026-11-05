@@ -587,7 +587,7 @@ function Popup() {
         setConnecting(false)
         setConnectMessage(
           response?.indeterminate
-            ? `Reddit isn't answering the login check${response.reason ? ` (${response.reason})` : ''}. ` +
+            ? `Couldn't confirm your Reddit login${response.reason ? ` (${response.reason})` : ''}. ` +
               "If you're already logged in, open www.reddit.com in a tab and try again."
             : 'Could not detect user. Make sure you are logged in to Reddit.',
         )
@@ -769,8 +769,8 @@ function Popup() {
               </MessageBanner>
             ) : errorStatus === 'checks_failing' ? (
               <MessageBanner variant="warning">
-                ⚠ Can&apos;t reach Reddit, so your posts and comments aren&apos;t being checked right now. The
-                extension keeps trying.
+                ⚠ Your posts and comments aren&apos;t being checked right now. Reddit or your connection may be
+                down. The extension keeps trying.
               </MessageBanner>
             ) : errorStatus === 'profile_publicly_empty' ? (
               <MessageBanner variant="warning">

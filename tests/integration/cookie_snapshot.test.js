@@ -233,8 +233,12 @@ describe('the cookie snapshot', () => {
             return { ok: true, json: async () => ({ data: { children: [] } }) }
         })
         // Its only callers pass OAuth details (the fallback after www fails)
-        await lookupItemsByUser('alice', '', 'new', '', true, false, { headers: { Authorization: 'bearer x' } })
-        expect(globalThis.fetch).toHaveBeenCalled()
+        const auth = { headers: { Authorization: 'bearer x' } }
+        await lookupItemsByUser('alice', '', 'new', '', true, auth)
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            'https://oauth.reddit.com/user/alice/overview.json?limit=100&sort=new&raw_json=1',
+            { ...auth, cache: 'reload' },
+        )
         expect(loginDuringRequest).toBeUndefined()
         expect(find('reddit_session')).toMatchObject({
             value: 'S1',

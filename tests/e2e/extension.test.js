@@ -76,7 +76,7 @@ test.describe('Popup page', () => {
         const page = await context.newPage()
         await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
 
-        await expect(page.getByText("Can't reach Reddit")).toBeVisible()
+        await expect(page.getByText("aren't being checked right now")).toBeVisible()
         await expect(page.getByRole('button', { name: 'Log in to Reddit' })).toHaveCount(0)
     })
 
@@ -182,6 +182,17 @@ test.describe('Popup page', () => {
         )
         expect(cut.text).toMatch(/^reveddit real-time diagnostic log\n/)
         expect(cut.text).toContain('trimmed to fit')
+    })
+})
+
+test.describe('Header rules', () => {
+    test("reach only the extension's own background requests", async ({ context, extensionId }) => {
+        const [worker] = context.serviceWorkers()
+        const rules = () => worker.evaluate(() => chrome.declarativeNetRequest.getSessionRules())
+        await expect.poll(async () => (await rules()).length).toBeGreaterThan(0)
+        for (const { condition } of await rules()) {
+            expect(condition).toMatchObject({ tabIds: [-1], initiatorDomains: [extensionId] })
+        }
     })
 })
 
@@ -785,6 +796,33 @@ test.describe('Reddit pages reached without a new document', () => {
         )
         await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
         await expect(page.locator('.rev-scan-comment-btn')).toHaveCount(1)
+        await expect(page.locator('.buttons a:not(.rev-scan-comment-btn)')).toHaveText('subscribe-rev')
+    })
+
+    test("old reddit's posts get a subscribe link, among the buttons under the title", async ({ context }) => {
+        const page = await open(
+            context,
+            `https://old.reddit.com/r/pics/`,
+            `<!doctype html><html><body><div id="header"></div><div class="content" role="main">` +
+                `<div class="thing link" data-fullname="${POST}"><div class="entry"><div class="top-matter">` +
+                `<ul class="buttons"><li>comments</li></ul></div></div></div></div></body></html>`,
+        )
+        await expect(page.locator('.top-matter .buttons a')).toHaveText('subscribe-rev')
+    })
+
+    test("old reddit's buttons from the extension's last run give way to working ones", async ({ context }) => {
+        const dead = '<li><a class="rev-comment-action">dead</a></li><li><a class="rev-scan-comment-btn rev-comment-action">dead</a></li>'
+        const page = await open(
+            context,
+            `https://old.reddit.com${THREAD}`,
+            `<!doctype html><html><body><div id="header"></div><div class="content" role="main">` +
+                `<div class="commentarea"><div class="menuarea"><button class="rev-scan-all-btn">dead</button></div>` +
+                `${thing(OTHERS, 'comment').replace('<li>permalink</li>', dead)}</div></div></body></html>`,
+        )
+        await expect(page.locator(`${THREAD_SCAN}[data-rev-subscribe-run]`)).toHaveCount(1)
+        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
+        await expect(page.locator('.rev-scan-comment-btn')).toHaveText('scan-rev')
+        await expect(page.locator('.buttons a:not(.rev-scan-comment-btn)')).toHaveText('subscribe-rev')
     })
 
     test("old reddit's own profile keeps its filter", async ({
@@ -817,7 +855,7 @@ test.describe("Scans on new reddit's comments", () => {
     // replies in its own #comment-children, and a removed comment has no slotted
     // body and starts collapsed.
     const comment = (id, { author = 'someone', parent, text = 'Words', replies = '' } = {}) =>
-        `<shreddit-comment thingid="${id}" author="${author}" created="${NOW}" ${parent ? `parentid="${parent}"` : ''}>` +
+        `<shreddit-comment thingid="${id}" postid="${POST}" author="${author}" created="${NOW}" ${parent ? `parentid="${parent}"` : ''}>` +
         `<details role="article" ${author === '[deleted]' ? '' : 'open'}><summary><div slot="commentMeta">${author}</div></summary><div class="grid">` +
         `<div class="col-start-2">${
             author === '[deleted]'
@@ -899,34 +937,307 @@ test.describe("Scans on new reddit's comments", () => {
         `<shreddit-comment-tree id="comment-tree"><section>${comment('t1_next')}</section></shreddit-comment-tree>`,
     ]
 
+    const buttonWith = (page, className) =>
+        page.evaluate(className => {
+            const button = document.createElement('button')
+            button.className = className
+            button.textContent = 'Scan'
+            document.body.append(button)
+            const box = button.getBoundingClientRect()
+            const text = document.createRange()
+            text.selectNodeContents(button)
+            const { top, bottom } = text.getBoundingClientRect()
+            return { height: box.height, offCenter: Math.abs(top - box.top - (box.bottom - bottom)) }
+        }, className)
+
     test("reddit's own size for every button leaves the text of ours centered", async ({
         context,
         extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
     }) => {
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
+        // As measured on www.reddit.com, 2026-11-05
+        await page.addStyleTag({ content: 'button { box-sizing: border-box; height: 32px; line-height: 30px }' })
 
-        const offCenter = await page.evaluate(() => {
-            const style = document.createElement('style')
-            // As measured on www.reddit.com, 2026-11-05
-            style.textContent = 'button { box-sizing: border-box; height: 32px; line-height: 30px }'
-            document.head.append(style)
-            return ['rev-scan-all-btn', 'rev-profile-scan-btn', 'rev-place-unattached-btn', 'rev-filter-btn'].map(
-                name => {
-                    const button = document.createElement('button')
-                    button.className = name
-                    button.textContent = 'Scan'
-                    document.body.append(button)
-                    const box = button.getBoundingClientRect()
-                    const text = document.createRange()
-                    text.selectNodeContents(button)
-                    const { top, bottom } = text.getBoundingClientRect()
-                    return Math.abs(top - box.top - (box.bottom - bottom))
-                },
-            )
+        for (const className of ['rev-btn rev-btn-solid', 'rev-btn rev-filter-btn', 'rev-btn rev-newreddit-action']) {
+            expect((await buttonWith(page, className)).offCenter).toBeLessThanOrEqual(1)
+        }
+        await expect(page.locator('.rev-scan-all-btn')).toHaveCSS('line-height', '16px')
+    })
+
+    test('solid and outlined buttons are one height where reddit sets none', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
+        const solid = await buttonWith(page, 'rev-btn rev-btn-solid')
+        const outlined = await buttonWith(page, 'rev-btn rev-filter-btn')
+        expect(solid.height).toBe(outlined.height)
+    })
+
+    test('a disabled button stays as it is under the mouse', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        const button = page.locator('.rev-scan-all-btn')
+        await expect(button).toHaveCount(1)
+        await button.evaluate(el => {
+            el.disabled = true
+            el.classList.add('rev-scan-all-loading')
         })
-        expect(offCenter).toHaveLength(4)
-        for (const pixels of offCenter) expect(pixels).toBeLessThanOrEqual(1)
+        await button.hover({ force: true })
+        await expect(button).toHaveCSS('background-color', 'rgb(120, 124, 126)')
+    })
+
+    test('RES night mode leaves the selected pill readable and every border dark', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
+
+        const styles = await page.evaluate(() => {
+            const night = document.createElement('div')
+            night.className = 'res-nightmode'
+            night.innerHTML =
+                '<div class="rev-profile-scan-container"></div>' +
+                '<div class="rev-own-filter-bar rev-filter-bar"></div>' +
+                '<div class="rev-rec-children"></div>' +
+                '<button class="rev-btn rev-filter-btn"></button>' +
+                '<button class="rev-btn rev-filter-btn rev-filter-active"></button>'
+            document.body.append(night)
+            const style = selector => getComputedStyle(night.querySelector(selector))
+            return {
+                box: style('.rev-profile-scan-container').borderTopColor,
+                bar: style('.rev-own-filter-bar').borderTopColor,
+                rail: style('.rev-rec-children').borderLeftColor,
+                pill: style('.rev-filter-btn').color,
+                selected: style('.rev-filter-active').color,
+            }
+        })
+        const dark = 'rgb(52, 53, 54)'
+        expect(styles).toEqual({
+            box: dark,
+            bar: dark,
+            rail: dark,
+            pill: 'rgb(129, 131, 132)',
+            selected: 'rgb(255, 255, 255)',
+        })
+    })
+
+    // The install writes the default options, and the lists of what's followed
+    const installed = async context => {
+        const options = () =>
+            context
+                .serviceWorkers()[0]
+                .evaluate(() => chrome.storage.sync.get(['options']).then(sync => sync.options))
+        await expect.poll(options).toBeTruthy()
+        return options()
+    }
+
+    const followed = async context => {
+        const worker = context.serviceWorkers()[0]
+        const { other_subscriptions } = await worker.evaluate(() => chrome.storage.sync.get('other_subscriptions'))
+        return Object.keys(other_subscriptions)
+    }
+    const profileRow =
+        `<shreddit-comment-action-row slot="actionRow"><button slot="comment-share">Share</button>` +
+        `</shreddit-comment-action-row>`
+    const onProfile = (context, path) =>
+        openNewReddit(
+            context,
+            path,
+            `<shreddit-profile-comment comment-id="${REPLY}" href="/r/pics/comments/abc123/comment/reply/">` +
+                `${profileRow}</shreddit-profile-comment>`,
+        )
+
+    test('a comment and its post get a bell that follows them', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await installed(context)
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        const postBell = page.locator('shreddit-post > .rev-comment-action')
+        await expect(postBell).toHaveAttribute('slot', 'action-row-whitespace')
+        await postBell.click()
+        await expect(postBell).toHaveAttribute('aria-label', 'unsubscribe-rev')
+        await stampRows(page)
+        const bell = rowOf(page, FIRST).locator('.rev-comment-action')
+        await expect(bell).toHaveAttribute('slot', 'comment-share')
+        await expect(bell).toHaveAttribute('title', 'Get told if this is removed')
+        await bell.click()
+        await expect(bell).toHaveAttribute('aria-label', 'unsubscribe-rev')
+        await expect(bell).toHaveAttribute('title', 'Stop following this')
+        expect(await followed(context)).toEqual(expect.arrayContaining([POST, FIRST]))
+        await bell.click()
+        await expect(bell).toHaveAttribute('aria-label', 'subscribe-rev')
+    })
+
+    test('a comment on a profile can be followed', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await installed(context)
+        const page = await onProfile(context, '/user/another/comments/')
+        const bell = page.locator('.rev-comment-action')
+        await bell.click()
+        await expect(bell).toHaveAttribute('aria-label', 'unsubscribe-rev')
+        expect(await followed(context)).toContain(REPLY)
+        const postOf = () =>
+            context
+                .serviceWorkers()[0]
+                .evaluate(id => chrome.storage.local.get('followed_post_ids').then(l => l.followed_post_ids?.[id]), REPLY)
+        await expect.poll(postOf).toContain('abc123')
+    })
+
+    test("a row reddit draws again says what's followed now", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await installed(context)
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await expect(page.locator('shreddit-post > .rev-comment-action')).toHaveCount(1)
+        await stampRows(page)
+        await rowOf(page, FIRST).locator('.rev-comment-action').click()
+        await expect(rowOf(page, FIRST).locator('.rev-comment-action')).toHaveAttribute('aria-label', 'unsubscribe-rev')
+        await rowOf(page, FIRST).evaluate(row => row.remove())
+        await stampRows(page)
+        const bell = rowOf(page, FIRST).locator('.rev-comment-action')
+        await expect(bell).toHaveAttribute('aria-label', 'unsubscribe-rev')
+
+        // Unfollowed elsewhere, such as the popup, with the bell on the page
+        await context.serviceWorkers()[0].evaluate(() => chrome.storage.sync.set({ other_subscriptions: {} }))
+        await expect(bell).toHaveAttribute('aria-label', 'subscribe-rev')
+    })
+
+    test("a bell left by the extension's last run gives way to a working one", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await installed(context)
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await expect(page.locator('shreddit-post > .rev-comment-action')).toHaveCount(1)
+        await page.evaluate(() => {
+            const place = document.querySelector('shreddit-comment [slot="actionRow"]:empty')
+            const row = document.createElement('shreddit-comment-action-row')
+            row.innerHTML = '<button class="rev-comment-action" data-rev-subscribe-run="last">dead</button>'
+            place.append(row)
+        })
+        const bell = rowOf(page, FIRST).locator('.rev-comment-action')
+        await expect(bell).toHaveCount(1)
+        await expect(bell).not.toHaveAttribute('data-rev-subscribe-run', 'last')
+        await bell.click()
+        await expect(bell).toHaveAttribute('aria-label', 'unsubscribe-rev')
+    })
+
+    test("one's own comment can't be followed, on a thread or one's profile, but others' saved ones can", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await context.serviceWorkers()[0].evaluate(() => chrome.storage.local.set({ last_logged_in_user: 'someone' }))
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
+        await stampRows(page)
+        await expect(rowOf(page, FIRST).locator('.rev-comment-action')).toHaveAttribute('aria-disabled', 'true')
+
+        const own = (await onProfile(context, '/user/someone/comments/')).locator('.rev-comment-action')
+        await expect(own).toHaveAttribute('aria-disabled', 'true')
+        for (const path of ['/user/another/comments/', '/user/someone/saved/']) {
+            const bell = (await onProfile(context, path)).locator('.rev-comment-action')
+            await expect(bell).toHaveAttribute('aria-label', 'subscribe-rev')
+            await expect(bell).not.toHaveAttribute('aria-disabled', 'true')
+        }
+
+        // The browser signs in as someone else, with the thread still open
+        await context.serviceWorkers()[0].evaluate(() => chrome.storage.local.set({ last_logged_in_user: 'another' }))
+        const bell = rowOf(page, FIRST).locator('.rev-comment-action')
+        await expect(bell).not.toHaveAttribute('aria-disabled', 'true')
+        await expect(bell).toHaveCSS('opacity', '1')
+    })
+
+    test("a restore link and a profile's scan from the extension's last run give way to working ones", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const removed = comment(REMOVED, { author: '[deleted]' }).replace(
+            '</p></div></div>',
+            '</p></div><div class="rev-restore-wrap"><a class="rev-restore-btn">dead</a></div></div>',
+        )
+        const page = await openNewReddit(context, THREAD, thread(removed))
+        await expect(page.locator(RESTORE)).toHaveText('restore')
+        await expect(page.locator(RESTORE)).toHaveCount(1)
+
+        const profile = await openNewReddit(
+            context,
+            '/user/another/',
+            '<div class="rev-profile-scan-container">dead</div><shreddit-feed>' +
+                '<article data-post-id="t3_x" style="display: none">Hidden by the last run</article></shreddit-feed>',
+        )
+        await expect(profile.locator('.rev-profile-scan-btn')).toHaveCount(1)
+        await expect(profile.locator('.rev-profile-scan-container')).toHaveCount(1)
+        await expect(profile.locator('article')).toBeVisible()
+    })
+
+    test("unfollowing one's own comment leaves its bell disabled", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await installed(context)
+        await context
+            .serviceWorkers()[0]
+            .evaluate(
+                id =>
+                    Promise.all([
+                        chrome.storage.local.set({ last_logged_in_user: 'someone' }),
+                        chrome.storage.sync.set({ other_subscriptions: { [id]: { t: 1 } } }),
+                    ]),
+                FIRST,
+            )
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await expect(page.locator('shreddit-post > .rev-comment-action')).toHaveCount(1)
+        await stampRows(page)
+        const bell = rowOf(page, FIRST).locator('.rev-comment-action')
+        await expect(bell).toHaveAttribute('aria-label', 'unsubscribe-rev')
+        await bell.click()
+        await expect(bell).toHaveAttribute('aria-disabled', 'true')
+        await page.waitForTimeout(500)
+        await expect(bell).toHaveAttribute('aria-disabled', 'true')
+    })
+
+    test("Scan-Rev gives up its label where a row runs out of room, and a bell stays above a post's link", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        const page = await openNewReddit(
+            context,
+            THREAD,
+            thread(comment(FIRST), comment(REPLY).replace('<shreddit-comment ', '<shreddit-comment depth="4" ')),
+        )
+        await expect(page.locator('shreddit-post > .rev-comment-action')).toHaveCSS('position', 'relative')
+        await stampRows(page)
+        await expect(rowOf(page, FIRST).locator(`${SCAN} span`)).toBeVisible()
+        await expect(rowOf(page, REPLY).locator(`${SCAN} span`)).toBeHidden()
+        await page.setViewportSize({ width: 400, height: 800 })
+        await expect(rowOf(page, FIRST).locator(`${SCAN} span`)).toBeHidden()
+    })
+
+    test('the option to hide subscribe buttons hides them', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await context
+            .serviceWorkers()[0]
+            .evaluate(
+                options => chrome.storage.sync.set({ options: { ...options, hide_subscribe: true } }),
+                await installed(context),
+            )
+        const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
+        await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
+        await stampRows(page)
+        await expect(rowOf(page, FIRST).locator(SCAN)).toHaveCount(1)
+        await expect(page.locator('.rev-comment-action')).toHaveCount(0)
     })
 
     test('a comment gets its button when reddit stamps its row, inline with Share', async ({
@@ -1148,6 +1459,9 @@ test.describe("Scans on new reddit's comments", () => {
         const button = rowOf(page, FIRST).locator(SCAN)
         await button.click()
         await expect(button).toBeHidden()
+        // Dimmed stops the mouse, not the keyboard, which must leave the search running
+        await page.locator('.rev-scan-all-btn').evaluate(btn => btn.click())
+        await expect(page.locator('.rev-scan-all-btn')).not.toHaveText('Scanning...')
         await page.locator('.rev-restore-cancel').click()
         await expect(page.locator('.rev-restore-progress')).toContainText('Search cancelled.')
         await expect(button).toBeVisible()
@@ -1170,6 +1484,10 @@ test.describe("Scans on new reddit's comments", () => {
         )
         await page.locator('.rev-scan-all-btn').click()
         await expect(page.locator(`${RESTORE}.rev-scan-disabled`)).toHaveCount(1)
+        // Dimmed stops the mouse, not the keyboard, which must leave the scan running
+        await page.locator(RESTORE).evaluate(link => link.click())
+        await expect(page.locator(RESTORE)).not.toHaveCSS('display', 'none')
+        await expect(page.locator('.rev-scan-all-progress .rev-restore-cancel')).toBeVisible()
         await page.locator('.rev-scan-all-progress .rev-restore-cancel').click()
         await expect(page.locator('.rev-scan-all-progress')).toContainText('Scan cancelled.')
         await expect(page.locator(`${RESTORE}.rev-scan-disabled`)).toHaveCount(0)
@@ -1309,6 +1627,7 @@ test.describe("Scans on new reddit's comments", () => {
         await rowOf(page, FIRST).locator(SCAN).click()
         await expect(page.locator('.rev-restore-progress')).toContainText('Not found', { timeout: 10000 })
         await expect(rowOf(page, FIRST).locator(SCAN)).toHaveClass(/rev-scan-exhausted/)
+        await expect(rowOf(page, FIRST).locator(SCAN)).toHaveText('Scan-Rev')
         await expect(rowOf(page, OLD).locator(SCAN)).not.toHaveClass(/rev-scan-exhausted/)
         await expect(page.locator('.rev-scan-all-btn')).toBeEnabled()
     })

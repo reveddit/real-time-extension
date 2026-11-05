@@ -8,6 +8,7 @@ import {
     getSubscribedUsers_withUnseenIDs,
     getNotifyFlags,
 } from './storage'
+import browser from 'webextension-polyfill'
 
 export interface RedditItem {
     name: string
@@ -98,6 +99,12 @@ export const getFullIDsFromURL = (
 
 const regex_pc = /^\/(v|r|user)\/([^/]+)\/comments\/([^/]+)\/[^/]*(?:\/([^/?&#]+))?/
 const regex_user = /^\/(?:user|y|u)\/([^/?&#]+)\/?/
+
+// Updating opens the what's new page when the first 3 segments change (e.g.
+// "0.0.5"), so patch bumps like 0.0.5.0 → 0.0.5.1 don't show the same page again.
+const whatsNewGeneration = (version: string) => version.split('.').slice(0, 3).join('.')
+export const showsWhatsNew = (previous: string | undefined, current: string) =>
+    !!previous && whatsNewGeneration(previous) !== whatsNewGeneration(current)
 
 export const getFullIDsFromPath = (
     path: string,
@@ -565,7 +572,7 @@ export const createNotification = ({
 
 export const updateBadgeUnseenCount = () => {
     if (location.protocol.match(/^http/)) {
-        chrome.runtime
+        browser.runtime
             .sendMessage({
                 action: 'update-badge',
             })

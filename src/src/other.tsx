@@ -163,7 +163,7 @@ function Other() {
             <Empty>
               <p>No &quot;other&quot; subscriptions yet. To subscribe:</p>
               <ul>
-                <li>Click &quot;subscribe-rev&quot; beneath any comment or post</li>
+                <li>Click the bell on new reddit, or &quot;subscribe-rev&quot; on old reddit, beneath any comment or post</li>
                 <li>Right-click a Reddit or reveddit link and choose &quot;reveddit subscribe&quot;</li>
                 <li>Open the reveddit extension popup on a Reddit page and toggle &quot;subscribe to comment/post&quot;</li>
               </ul>

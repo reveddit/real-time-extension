@@ -761,6 +761,12 @@ describe('markup config', () => {
         expect(getMarkupConfig().commentButtonSlots).toEqual(['comment-actions', 'comment-share'])
     })
 
+    it("puts the feed's slot for a post's subscribe button ahead of the built-in one", () => {
+        setMarkupConfig(sanitizeMarkupConfig({ post_button_slots: ['post-actions'] }))
+        expect(getMarkupConfig().postButtonSlots).toEqual(['post-actions', 'action-row-whitespace'])
+        setMarkupConfig({})
+    })
+
     it('adds names to the built-in ones, which always stay', () => {
         setMarkupConfig({ commentIdAttributes: ['data-fullname'] })
         expect(getMarkupConfig().commentIdAttributes).toEqual(['data-fullname', 'thingId', 'thing-id'])

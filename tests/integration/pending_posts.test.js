@@ -16,7 +16,6 @@ const legacyPages = {}
 vi.mock('../../src/src/parse_html/old', () => ({
     getPost_fromOld: async path => legacyPages[path] || { error: 'no page', status: 404 },
     getItemsById_fromOldHTML: async () => [],
-    getItems_fromOld: async () => [],
 }))
 
 import { _processPendingPosts, _pendingPostTiming } from '../../src/src/monitoring'

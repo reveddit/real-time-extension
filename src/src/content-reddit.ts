@@ -3,7 +3,9 @@ import {
     setTextAndFunction_subscribe,
     setTextAndFunction_unsubscribe,
     setTextAndFunction_disabledOwn,
+    BELL_BUTTON,
 } from './content-common'
+import { placeForThisRun, ofThisRun, markThisRun, orphaned } from './run-token'
 import { observe, findByText } from './dom-helpers'
 import browser from 'webextension-polyfill'
 import { subscribeUser, MAX_SUBSCRIPTIONS } from './storage'
@@ -15,15 +17,15 @@ import {
     loadOwnRemovedSets,
     stopWatchingOwnItems,
     resetScansForPage,
+    ownPart,
 } from './restore-ui'
+import { commentIdOf } from './restore'
 import { classifyPostPage } from './parse_html/new'
 import { getMarkupConfig } from './markup-config'
 import { applyRemoteConfig } from './news'
 
 const USER_DELETED = 'rev-user-deleted'
 const MOD_REMOVED = 'rev-mod-removed'
-const id_match_comment = /^t1_.+/
-const id_match_post = /^t3_.+/
 const NEW_REDDIT_POST = 'shreddit-post'
 const NEW_REDDIT_NOTE = 'rev-new-reddit-message-wrap'
 
@@ -88,31 +90,7 @@ export const redditModifications = async (
             })
         }
     } else {
-        const username = Array.from(document.querySelectorAll('.header-user-dropdown span'))
-            .map(x => (x.textContent || '').trim())
-            .filter(x => !x.match(/ /))[0]
-        if (username) {
-            subscribeIfNotUnsubscribed(username)
-        }
-        if (!hide_subscribe) {
-            let selector_comments = '.Comment'
-            addSubscribeLinks_newReddit_comments(
-                Array.from(document.querySelectorAll(selector_comments)) as HTMLElement[],
-                other_subscriptions,
-                username,
-            )
-            observe(document, selector_comments, element => {
-                addSubscribeLinks_newReddit_comments([element as HTMLElement], other_subscriptions, username)
-            })
-            const selector_posts = '.Post'
-            addSubscribeLinks_newReddit_posts(
-                Array.from(document.querySelectorAll(selector_posts)) as HTMLElement[],
-                other_subscriptions,
-            )
-            observe(document, selector_posts, element => {
-                addSubscribeLinks_newReddit_posts([element as HTMLElement], other_subscriptions)
-            })
-        }
+        if (!hide_subscribe) addSubscribeButtons_newReddit(other_subscriptions)
         addDirectLinks_newReddit_comments()
     }
 }
@@ -217,9 +195,6 @@ const showRemovalStatus = ({
                 Array.from(document.querySelectorAll('.link .top-matter .tagline span')).find(el =>
                     el.textContent?.includes('[deleted]'),
                 )?.textContent ||
-                '' ||
-                Array.from(document.querySelectorAll('.Post span')).find(el => el.textContent?.includes('u/[deleted]'))
-                    ?.textContent ||
                 document.querySelector('span[slot="authorName"]')?.textContent?.trim() ||
                 ''
             if ((author === '[deleted]' || author === 'u/[deleted]') && postData.removed_by_category !== 'moderator') {
@@ -268,108 +243,97 @@ const showRemovalStatus = ({
     }
 }
 
-const getID_newReddit = (element: HTMLElement, id_match: RegExp) => {
-    let id: string = element.id
-    if (id && id.match(id_match)) return id
-    id = (element.className || '').split(/\s+/).filter(c => c.match(id_match))[0]
-    if (id && id.match(id_match)) return id
-    id = (element.parentNode as HTMLElement)?.id
-    if (id && id.match(id_match)) return id
-    id = element.closest('div[tabindex="-1"]')?.id || ''
-    return id
-}
-
 // The logged-in user's own content is already monitored via their profile, and the
 // "other" bucket can't reliably detect their own mod-removals anyway — so on their
 // own comments the track button renders disabled with a tooltip explaining why
 // (setTextAndFunction_disabledOwn), instead of silently doing the wrong thing.
-// Author comes from data-author (old reddit) or the comment's author link (new
-// reddit); fail open (normal button) if the author can't be determined.
+// Fail open (normal button) if the author can't be determined.
 const normalizeUser = (u: string | null | undefined): string => (u || '').trim().replace(/^u\//i, '').toLowerCase()
 const isOwnComment = (author: string | null | undefined, loggedInUser: string | null | undefined): boolean => {
     const a = normalizeUser(author)
     const me = normalizeUser(loggedInUser)
     return !!a && !!me && a === me
 }
-const getCommentAuthor_newReddit = (comment: HTMLElement): string | null => {
-    const link =
-        (comment.querySelector('a[data-testid="comment_author_link"]') as HTMLElement | null) ||
-        (comment.querySelector('a[href^="/user/"]') as HTMLElement | null)
-    if (!link) return null
-    const text = (link.textContent || '').trim()
-    if (text) return text
-    const m = (link.getAttribute('href') || '').match(/\/user\/([^/]+)/)
-    return m ? m[1] : null
-}
-
-const addSubscribeLinks_newReddit_comments = (
-    elements: HTMLElement[],
+// What a subscribe button says and does for an item, by whether it's followed
+const setSubscribeButton = (
+    element: HTMLElement,
+    id: string,
     subscriptions: Record<string, any>,
-    loggedInUser?: string | null,
-) => {
-    elements.forEach(targetedElement => {
-        const element = targetedElement.closest('.Comment') as HTMLElement
-        if (!element) return
-        if (element.querySelector('.rev-comment-action')) return
-        const id = getID_newReddit(element, id_match_comment)
-        if (!id || !id.match(id_match_comment)) return
-        const own = isOwnComment(getCommentAuthor_newReddit(element), loggedInUser)
-        let button = getButton(element, 'save')
-        let appendButtonTo = button?.parentElement
-        if (!button) {
-            button = getButton(element, 'share')
-            appendButtonTo = button?.parentElement
-        }
-        if (!button || !appendButtonTo) return
-        const buttonClone = button.cloneNode(true) as HTMLElement
-        let commentBody = ''
-        const bodyElement = element.querySelector('.RichTextJSON-root')
-        if (bodyElement) {
-            commentBody = bodyElement.textContent || ''
-        }
-        if (id in subscriptions) {
-            // Already tracked (e.g. from before) — keep unsubscribe available.
-            appendButtonTo.appendChild(setTextAndFunction_unsubscribe(id, buttonClone, commentBody))
-        } else if (own) {
-            appendButtonTo.appendChild(setTextAndFunction_disabledOwn(buttonClone))
-        } else {
-            appendButtonTo.appendChild(setTextAndFunction_subscribe(id, buttonClone, commentBody))
-        }
-    })
+    own: boolean,
+    commentBody?: string,
+    postId?: string,
+): HTMLElement => {
+    // Already tracked (e.g. from before) — keep unsubscribe available.
+    if (id in subscriptions) return setTextAndFunction_unsubscribe(id, element, commentBody, postId, own)
+    if (own) return setTextAndFunction_disabledOwn(element)
+    return setTextAndFunction_subscribe(id, element, commentBody, postId)
 }
 
-const getButton = (element: Element, button_search_text: string): Element | null => {
-    return findByText(element, 'button', button_search_text)[0] || null
-}
-
-const addSubscribeLinks_newReddit_posts = (elements: HTMLElement[], subscriptions: Record<string, any>) => {
-    elements.forEach(element => {
-        if (element.querySelector('.rev-comment-action')) return
-        const id = getID_newReddit(element, id_match_post)
-        if (!id || !id.match(id_match_post)) return
-        // Find a descendant of a button with text "save", then get its parent (the button)
-        const allButtonDescendants = element.querySelectorAll('button *')
-        const saveEl = Array.from(allButtonDescendants).find(
-            el => (el.textContent || '').toLowerCase().trim() === 'save',
+// A comment's button takes a slot of its action row, beside Scan-Rev, and a post's
+// takes the spare slot at the end of its action row: its share button's slot would
+// push Share out of line. Reddit stamps a comment's row when the comment comes
+// into view (restore-ui.ts injectScanButton_newReddit).
+const addSubscribeButtons_newReddit = async (subscriptions: Record<string, any>) => {
+    let followed = subscriptions
+    let { last_logged_in_user: me } = (await browser.storage.local.get({ last_logged_in_user: '' })) as any
+    // One bell for a row or post, ours from before if this run placed one
+    const place = (host: Element, slot: string, id: string, own: boolean, body?: string, postId?: string) => {
+        const placed = host.querySelector(':scope > .rev-comment-action') as HTMLElement | null
+        if (ofThisRun(placed)) {
+            setSubscribeButton(placed as HTMLElement, id, followed, own, body, postId)
+            return
+        }
+        const bell = document.createElement('button')
+        bell.slot = slot
+        bell.className = `rev-btn rev-newreddit-action ${BELL_BUTTON}`
+        setSubscribeButton(bell, id, followed, own, body, postId)
+        placeForThisRun(host, bell, '.rev-comment-action')
+    }
+    // Only a profile's own lists are by its owner, not saved and the like, and
+    // comments there name no author
+    const profileOwner = () =>
+        window.location.pathname.match(/^\/u(?:ser)?\/([^/]+)(?:\/(?:comments|overview)?\/?)?$/)?.[1]
+    const addToRow = (row: Element) => {
+        const comment = row.closest('shreddit-comment, shreddit-profile-comment')
+        const id = commentIdOf(comment) || comment?.getAttribute('comment-id')
+        if (!comment || !id || orphaned()) return
+        const author = comment.getAttribute('author') || profileOwner()
+        const postId = comment.getAttribute('postid') || getFullIDsFromPath(comment.getAttribute('href') || '')[0]
+        const text =
+            comment.localName === 'shreddit-comment'
+                ? ownPart(comment, '[slot="comment"]')
+                : comment.querySelector('.md')
+        place(
+            row,
+            getMarkupConfig().commentButtonSlots[0],
+            id,
+            isOwnComment(author, me),
+            text?.textContent || '',
+            postId,
         )
-        const button = saveEl?.parentElement
-        if (!button) return
-        const buttonClone = button.cloneNode(true) as HTMLElement
-        const iconEl = buttonClone.querySelector('i.icon')
-        if (iconEl?.parentElement) {
-            iconEl.parentElement.remove()
-        }
-        const lastButton = Array.from(button.parentElement!.children)
-            .filter(el => el.tagName === 'BUTTON')
-            .pop()
-        if (id in subscriptions) {
-            const btn = setTextAndFunction_unsubscribe(id, buttonClone)
-            if (lastButton) lastButton.after(btn)
-        } else {
-            const btn = setTextAndFunction_subscribe(id, buttonClone)
-            if (lastButton) lastButton.after(btn)
-        }
+    }
+    const addToPost = (post: Element) => {
+        const id = getMarkupConfig()
+            .postIdAttributes.map(name => post.getAttribute(name))
+            .find(value => value?.startsWith('t3_'))
+        if (id && !orphaned()) place(post, getMarkupConfig().postButtonSlots[0], id, false)
+    }
+    const rows = 'shreddit-comment-action-row'
+    const addToAll = () => {
+        document.querySelectorAll(rows).forEach(addToRow)
+        document.querySelectorAll(NEW_REDDIT_POST).forEach(addToPost)
+    }
+    // One document outlasts many pages here, unlike on old reddit, and bells
+    // already on the page should say what's followed now
+    browser.storage.onChanged.addListener((changes: any, area: string) => {
+        if (area === 'sync' && changes.other_subscriptions) followed = changes.other_subscriptions.newValue || {}
+        else if (area === 'local' && changes.last_logged_in_user) me = changes.last_logged_in_user.newValue
+        else return
+        addToAll()
     })
+    addToAll()
+    observe(document, rows, addToRow)
+    observe(document, NEW_REDDIT_POST, addToPost)
 }
 
 const addSubscribeLinks_oldReddit = (
@@ -390,8 +354,13 @@ const addSubscribeLinks_oldReddit = (
         }
         if (!id) return
         const own = id.match(/^t1_/) && isOwnComment(element.getAttribute('data-author'), loggedInUser)
-        const buttons = element.querySelector(':scope > .entry > ul.buttons')
-        if (!buttons || buttons.querySelector('.rev-comment-action')) return
+        // A post's sit under its title
+        const buttons = element.querySelector(
+            ':scope > .entry > ul.buttons, :scope > .entry > .top-matter > ul.buttons',
+        )
+        const placed = buttons?.querySelector('.rev-comment-action:not(.rev-scan-comment-btn)')
+        if (!buttons || ofThisRun(placed) || orphaned()) return
+        placed?.closest('li')?.remove()
         let commentBody = ''
         const bodyElement = element.querySelector('.usertext-body')
         if (bodyElement && id.match(/^t1_/)) {
@@ -400,17 +369,9 @@ const addSubscribeLinks_oldReddit = (
 
         const a = document.createElement('a')
         a.href = ''
-        let newButton: HTMLElement
-        if (id in subscriptions) {
-            // Already tracked (e.g. from before) — keep unsubscribe available.
-            newButton = setTextAndFunction_unsubscribe(id, a, commentBody, postID)
-        } else if (own) {
-            newButton = setTextAndFunction_disabledOwn(a)
-        } else {
-            newButton = setTextAndFunction_subscribe(id, a, commentBody, postID)
-        }
+        markThisRun(a)
         const li = document.createElement('li')
-        li.appendChild(newButton)
+        li.appendChild(setSubscribeButton(a, id, subscriptions, !!own, commentBody, postID))
         buttons.appendChild(li)
     })
 }

@@ -109,7 +109,7 @@ export const throwIfLegacyDisabled = async (label: string) => {
 // Methods reddit can refuse outright with its block page, each resting on its
 // own: 'api_info' (api/info.json with the user's login, refused everywhere
 // tried on 2026-10-24), 'legacy_info' (the legacy /api/info HTML listing,
-// refused with it), 'legacy' (the legacy user and post pages, which still
+// refused with it), 'legacy' (the legacy post pages, which still
 // answered then) and 'thread_json' (a thread's JSON with the user's login,
 // which followed items and pending posts read while api/info rests). One
 // kind's refusal says nothing about another's, so they don't share a rest. A
@@ -195,7 +195,7 @@ export const isLegacyResting = (kind: LegacyKind = 'legacy'): Promise<boolean> =
 // refusal. Monitoring and page views honor both.
 export const isLegacyOff = async (kind: LegacyKind = 'legacy'): Promise<boolean> =>
     (await isLegacyDisabled()) || (await isLegacyResting(kind))
-export const throwIfLegacyOff = async (label: string, kind: LegacyKind = 'legacy') => {
+const throwIfLegacyOff = async (label: string, kind: LegacyKind) => {
     await throwIfLegacyDisabled(label)
     if (await isLegacyResting(kind)) {
         throw new Error(`${label} skipped: resting after reddit refused it`)
@@ -234,11 +234,8 @@ export const flagIfRateLimited = (err: Error) => {
     }
 }
 
-const clientID = 'SEw1uvRd6kxFEw'
 const oauth_reddit = 'https://oauth.reddit.com/'
 const www_reddit = 'https://www.reddit.com/'
-const OAUTH_REVEDDIT = 'https://cred2.reveddit.com/'
-const WWW_REVEDDIT = 'https://wred.reveddit.com/'
 
 const NO_AUTH = 'none'
 
@@ -302,31 +299,17 @@ export const lookupItemsByID = (
     ids: string | string[],
     auth: any,
     monitor_quarantined = false,
-    monitor_quarantined_remote = false,
-    quarantined_subreddits: string[] = [],
     username = '',
     authItemsMeta: AuthItemsMeta = {},
 ) => {
     const params: Record<string, any> = { id: ids, raw_json: 1 }
-    if (monitor_quarantined_remote) {
-        params.quarantined_subreddits = quarantined_subreddits.join(',')
-    }
     const search =
         '?' +
         Object.keys(params)
             .map(k => `${k}=${params[k]}`)
             .join('&')
 
-    return lookupItemsByID_withFallback(
-        'api/info',
-        search,
-        auth,
-        monitor_quarantined,
-        monitor_quarantined_remote,
-        ids,
-        username,
-        authItemsMeta,
-    )
+    return lookupItemsByID_withFallback('api/info', search, auth, monitor_quarantined, ids, username, authItemsMeta)
 }
 
 // Options every public-view (logged-out) www fetch starts from, whichever
@@ -1710,7 +1693,7 @@ export const recordCheckOutcome = async (checked: boolean) => {
         const failures = await countFailure(CHECK_FAILURES_KEY)
         dlog('cycle', `[reveddit] nothing checked this cycle — consecutive failures: ${failures}`)
         const { error_status } = (await browser.storage.local.get({ error_status: '' })) as any
-        if (failures >= LOGIN_DETECT_FAILURE_WARN_THRESHOLD && !error_status) {
+        if (failures >= LOGIN_DETECT_FAILURE_WARN_THRESHOLD && (!error_status || PARTIAL_WARNINGS.has(error_status))) {
             setWarningBadge(CHECKS_FAILING)
         }
     } catch {
@@ -2208,7 +2191,6 @@ const lookupItemsByID_legacy = (
     search: string,
     auth: any,
     monitor_quarantined: boolean,
-    monitor_quarantined_remote: boolean,
     ids: string | string[],
     authItemsMeta: AuthItemsMeta = {},
 ) => {
@@ -2245,23 +2227,24 @@ const lookupItemsByID_legacy = (
                     }
                     throw new Error('Invalid data format from www.reddit.com')
                 })
-                .catch(wwwError => {
+                .catch(async wwwError => {
                     console.log('www.reddit.com JSON failed:', wwwError.message)
 
                     // Fall back to OAuth if available
                     if (auth && auth !== 'none') {
                         console.log('Trying OAuth fallback')
-                        return fetch_forReddit(
-                            ...getFetchParams(path, search, auth, monitor_quarantined_remote),
-                            monitor_quarantined,
-                        )
-                    } else {
-                        // Only a 429 enters the backoff here. This chain runs
-                        // when the public view already failed, and its refusal
-                        // must not replace the status that failure reports.
-                        noteRateLimited(wwwError)
-                        throw htmlError
+                        const children = await fetch_forReddit(path + search, auth, monitor_quarantined)
+                        // It swallows its own errors (returns undefined), which
+                        // monitoring would read as a pass that found nothing
+                        if (Array.isArray(children)) {
+                            return children
+                        }
                     }
+                    // Only a 429 enters the backoff here. This chain runs
+                    // when the public view already failed, and its refusal
+                    // must not replace the status that failure reports.
+                    noteRateLimited(wwwError)
+                    throw htmlError
                 })
         })
 }
@@ -2509,8 +2492,7 @@ const lookupOtherItemsByID_authed = async (ids: string[], auth: any, monitor_qua
         const search = `?id=${chunk.join(',')}&raw_json=1`
         let batch: any
         if (useOAuth) {
-            // getFetchParams returns [url, auth] here, so the spread is well-formed.
-            batch = await fetch_forReddit(...getFetchParams('api/info', search, auth, false), monitor_quarantined)
+            batch = await fetch_forReddit('api/info' + search, auth, monitor_quarantined)
         } else {
             const r = await fetchJsonLoggedIn(`${www_reddit}api/info.json${search}`)
             if (r.blocked) {
@@ -2771,6 +2753,10 @@ const restViewer = async (viewer: ViewerAccount) => {
 // Which view last checked each user's items (lookupItemsByID_withFallback),
 // so the pass's end keeps that view's warnings (lookupWarningToKeep)
 const viewerCheckedLast = new Map<string, boolean>()
+
+// Warnings about part of the check. A cycle that read nothing takes over from
+// them (recordCheckOutcome), and the next pass puts back the one still true.
+const PARTIAL_WARNINGS = new Set([VIEWER_UNAVAILABLE, ABSENT_VERIFY_UNAVAILABLE, PROFILE_PAGINATION_UNAVAILABLE])
 
 // The warning a processed monitoring pass keeps, though a pass otherwise
 // clears error_status: the outage of a check a pass completes without, which
@@ -3080,14 +3066,12 @@ export const lookupItemsByID_withFallback = (
     search: string,
     auth: any,
     monitor_quarantined = false,
-    monitor_quarantined_remote = false,
     ids: string | string[] = '',
     username = '',
     authItemsMeta: AuthItemsMeta = {},
 ) => {
     const idsArray = (Array.isArray(ids) ? ids : String(ids).split(',')).filter(x => x)
-    const legacy = () =>
-        lookupItemsByID_legacy(path, search, auth, monitor_quarantined, monitor_quarantined_remote, ids, authItemsMeta)
+    const legacy = () => lookupItemsByID_legacy(path, search, auth, monitor_quarantined, ids, authItemsMeta)
     if (!idsArray.length) {
         if (username) {
             // None of the user's items left to check: nothing to ask reddit,
@@ -3287,9 +3271,11 @@ const withLoginExpiry = (c: StoredCookie): StoredCookie => {
 // put back, so the copy lapses with the browser session.
 const isOldDomainCopy = (c: { domain: string }) => /^\.[^.]+\.reddit\.com$/.test(c.domain)
 
-//monitor_quarantined -> when true, client sets cookie (used for every look up)
-//monitor_quarantined_remote -> when true, remote server sets cookie (used once in awhile)
-const fetch_forReddit = async (url: string, options?: any, monitor_quarantined = false) => {
+// A request with a real OAuth token: only the token paths get here. The cookie
+// that opts in to quarantined content is set every time. monitor_quarantined
+// also takes reddit_session out as the request starts and puts it back right
+// after, without waiting for the answer.
+const fetch_forReddit = async (pathAndSearch: string, auth: any, monitor_quarantined: boolean) => {
     let cookie_redditSession
     await browser.cookies.set({
         domain: 'reddit.com',
@@ -3303,17 +3289,10 @@ const fetch_forReddit = async (url: string, options?: any, monitor_quarantined =
             await browser.cookies.remove(cookieDetails_redditSession)
         }
     }
-    if (!options) {
-        options = { credentials: 'omit' }
-    }
-    options['cache'] = 'reload'
-    if (!options.headers) {
-        options.headers = {}
-    }
-    if (options.headers['Accept-Language'] !== 'en') {
-        options.headers['Accept-Language'] = 'en'
-    }
-    const result = fetch(url, options).then(handleFetchErrors).then(getRedditData).catch(console.log)
+    const result = fetch(oauth_reddit + pathAndSearch, { ...auth, cache: 'reload' })
+        .then(handleFetchErrors)
+        .then(getRedditData)
+        .catch(console.log)
     if (cookie_redditSession) {
         await browser.cookies.set(cookie_redditSession)
     }
@@ -3326,7 +3305,6 @@ export const lookupItemsByUser = (
     sort: string,
     timeSpan: string,
     monitor_quarantined: boolean,
-    monitor_quarantined_remote: boolean,
     auth: any,
 ) => {
     const params: Record<string, any> = { limit: 100, sort, raw_json: 1 }
@@ -3338,27 +3316,7 @@ export const lookupItemsByUser = (
         Object.keys(params)
             .map(k => `${k}=${params[k]}`)
             .join('&')
-    return fetch_forReddit(...getFetchParams(path, search, auth, monitor_quarantined_remote), monitor_quarantined)
-}
-
-export const lookupItemsByLoggedInUser = (
-    after: string,
-    sort: string,
-    timeSpan: string,
-    monitor_quarantined: boolean,
-    monitor_quarantined_remote: boolean,
-    auth: any,
-) => {
-    const params: Record<string, any> = { limit: 100, sort, raw_json: 1 }
-    if (after) params.after = after
-    if (timeSpan) params.t = timeSpan
-    const path = `user/me.json`
-    const search =
-        '?' +
-        Object.keys(params)
-            .map(k => `${k}=${params[k]}`)
-            .join('&')
-    return fetch_forReddit(...getFetchParams(path, search, auth, monitor_quarantined_remote), monitor_quarantined)
+    return fetch_forReddit(path + search, auth, monitor_quarantined)
 }
 
 // Alternative approach: use the same method as getLoggedinUser but with proper authentication
@@ -3367,7 +3325,6 @@ export const lookupItemsByLoggedInUserWithAuth = (
     sort: string,
     timeSpan: string,
     monitor_quarantined: boolean,
-    monitor_quarantined_remote: boolean,
     auth: any,
 ) => {
     const params: Record<string, any> = { limit: 100, sort, raw_json: 1 }
@@ -3405,15 +3362,7 @@ export const lookupItemsByLoggedInUserWithAuth = (
 
                 // Fall back to OAuth if www.reddit.com fails and auth is available
                 if (auth && auth !== 'none') {
-                    return lookupItemsByUser(
-                        'me',
-                        after,
-                        sort,
-                        timeSpan,
-                        monitor_quarantined,
-                        monitor_quarantined_remote,
-                        auth,
-                    )
+                    return lookupItemsByUser('me', after, sort, timeSpan, monitor_quarantined, auth)
                 } else {
                     console.log('No OAuth auth available for fallback')
                     flagIfRateLimited(error)
@@ -3431,10 +3380,6 @@ export const handleFetchErrors = (response: Response) => {
 }
 
 const getRedditData = (data: any) => {
-    if (data && data.user && data.user.items) {
-        // format from cred2.reveddit.com
-        return data
-    }
     if (!data || !data.data || !data.data.children) {
         throw Error('reddit data is not defined')
     }
@@ -3448,15 +3393,10 @@ export const getRedditToken = (data: any) => {
     return data.access_token
 }
 
-export const getAuth = (monitor_quarantined_remote = false) => {
+export const getAuth = () => {
     return getOptions((users: string[], others: string[], options: Record<string, any>) => {
-        let use_this_clientID = clientID
-        if (options.custom_clientid) {
-            use_this_clientID = options.custom_clientid
-            if (use_this_clientID === 'testing') {
-                return NO_AUTH
-            }
-        } else if (!monitor_quarantined_remote) {
+        const use_this_clientID = options.custom_clientid
+        if (!use_this_clientID || use_this_clientID === 'testing') {
             return NO_AUTH
         }
         const tokenInit = {
@@ -3523,31 +3463,6 @@ export const getCookie = ({ url, name }: { url: string; name: string }) => {
             .catch(() => null)
     } else {
         return browser.cookies.get({ url, name })
-    }
-}
-
-const getFetchParams = (
-    path: string,
-    search: string,
-    auth: any,
-    monitor_quarantined_remote: boolean,
-): [string, any?] => {
-    if (!auth || auth === NO_AUTH) {
-        let url = (monitor_quarantined_remote ? WWW_REVEDDIT : www_reddit) + path
-        if (path === 'api/info') {
-            url += '.json'
-        }
-        url += search
-        return [url]
-    } else {
-        let host = oauth_reddit
-        let path_and_search = path + search
-        if (monitor_quarantined_remote) {
-            host = OAUTH_REVEDDIT
-            path_and_search += '&give_it_to_me=1'
-        }
-        const url = host + path_and_search
-        return [url, auth]
     }
 }
 

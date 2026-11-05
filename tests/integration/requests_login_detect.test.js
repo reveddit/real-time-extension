@@ -278,6 +278,61 @@ describe('a check for a remembered user', () => {
             for (let i = 0; i < 6; i++) await check()
             expect(local().error_status).toBe('reddit_blocked')
         })
+
+        const takesOverFrom = async warning => {
+            local().error_status = warning
+            fetchMock.mockImplementation(async () => res(503, 'down'))
+            for (let i = 0; i < 5; i++) await check()
+            expect(local().error_status).toBe(CHECKS_FAILING)
+        }
+
+        it.each([
+            ['profile_pagination_unavailable', 'profile_pagination_consecutive_shortfalls'],
+            ['absent_verify_unavailable', 'absent_verify_consecutive_failures'],
+        ])('takes over from a warning about part of the check, %s, and a good pass puts that back', async (warning, failures) => {
+            local()[failures] = 5
+            await takesOverFrom(warning)
+            fetchMock.mockImplementation(listingIs(async () => LISTING))
+            await check()
+            await vi.waitFor(() => expect(local().error_status).toBe(warning))
+        })
+
+        // Not put back here: a pass with no items to check ends this warning
+        it('takes over from a warning about part of the check, viewer_unavailable', () =>
+            takesOverFrom('viewer_unavailable'))
+
+        const token = { ok: true, status: 200, json: async () => ({ access_token: 't' }) }
+
+        it('stays on reddit with a custom client id', async () => {
+            __getSyncStorage().options = { ...__getSyncStorage().options, custom_clientid: 'mine' }
+            fetchMock.mockImplementation(async url => {
+                if (String(url).includes('access_token')) return token
+                return String(url).includes('oauth.reddit.com') ? LISTING : res(503, 'down')
+            })
+            await check()
+            const urls = fetchMock.mock.calls.map(call => String(call[0]))
+            expect(urls.filter(url => url.startsWith('https://oauth.reddit.com/'))).not.toEqual([])
+            expect(urls.filter(url => !/^https:\/\/[a-z.]*reddit\.com\//.test(url))).toEqual([])
+            const [, init] = fetchMock.mock.calls.find(([url]) => String(url).startsWith('https://oauth.reddit.com/'))
+            expect(init.headers).toEqual({ Authorization: 'bearer t', 'Accept-Language': 'en' })
+        })
+
+        it("doesn't count a pass as checked when the OAuth fallback failed like the rest", async () => {
+            __getSyncStorage().options = { ...__getSyncStorage().options, custom_clientid: 'mine' }
+            const children = [{ kind: 't1', data: { name: 't1_a', author: 'alice', body: 'b' } }]
+            const listing = { ok: true, status: 200, json: async () => ({ data: { children } }) }
+            fetchMock.mockImplementation(async url => {
+                if (String(url).includes('access_token')) return token
+                return String(url).startsWith('https://oauth.reddit.com/user/') ? listing : res(503, 'down')
+            })
+            local().error_status = 'reddit_blocked'
+            local().check_consecutive_failures = 2
+            await check()
+            const urls = fetchMock.mock.calls.map(call => String(call[0]))
+            expect(urls.filter(url => url.startsWith('https://oauth.reddit.com/api/info'))).not.toEqual([])
+            expect(local().error_status).toBe('reddit_blocked')
+            expect(local().check_consecutive_failures).toBe(2)
+        })
     })
 
     it("takes a login check that names the user as the end of the refusals, whatever the listing does", async () => {
@@ -305,6 +360,25 @@ describe('a check for a remembered user', () => {
         fetchMock.mockImplementation(listing(listingBy('Alice')))
         await check()
         expect(local.check_consecutive_failures).toBe(1)
+    })
+
+    it('leaves the stored options alone, so a save during a cycle with a quarantined item stands', async () => {
+        const saved = { ...__getSyncStorage().options, interval: 9 }
+        const children = [{ kind: 't1', data: { name: 't1_q', author: 'alice', body: 'b', quarantine: true } }]
+        const quarantined = {
+            ok: true,
+            status: 200,
+            json: async () => {
+                // The options page saves while the cycle runs on its older copy
+                __getSyncStorage().options = saved
+                return { data: { children } }
+            },
+        }
+        fetchMock.mockImplementation(async url =>
+            String(url).includes('/user/me.json') ? quarantined : res(503, 'down'),
+        )
+        await check()
+        expect(__getSyncStorage().options).toEqual(saved)
     })
 
     describe('with a reddit tab open', () => {

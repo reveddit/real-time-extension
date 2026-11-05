@@ -4,8 +4,8 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeEach } from 'vitest'
-import { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import browserMock, { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
 import {
     REMOVED,
@@ -73,7 +73,6 @@ function makeStorageInit(overrides = {}) {
             monitor_quarantined: false,
         },
         last_check: null,
-        last_check_quarantined: null,
         // "other" tracking keys
         changes_other: [],
         removed_other: {},
@@ -209,6 +208,7 @@ describe('subscribeUser / unsubscribeUser', () => {
 
 describe('subscribeId / unsubscribeId / getSubscribedIds', () => {
     beforeEach(() => __resetStorage(makeStorageInit()))
+    afterEach(() => vi.restoreAllMocks())
 
     it('subscribes an item by ID', async () => {
         await subscribeIdP('t3_abc123')
@@ -226,6 +226,22 @@ describe('subscribeId / unsubscribeId / getSubscribedIds', () => {
         await unsubscribeIdP('t3_abc')
         const storage = __getSyncStorage()
         expect(storage.other_subscriptions['t3_abc']).toBeUndefined()
+    })
+
+    it('finishes unsubscribing on Firefox, where a promise-style chrome.runtime.sendMessage returns undefined', async () => {
+        __resetStorage(makeStorageInit({ other_subscriptions: { t3_abc: { t: 1000 } } }))
+        vi.spyOn(chrome.runtime, 'sendMessage').mockReturnValue(undefined)
+        const send = vi.spyOn(browserMock.runtime, 'sendMessage')
+        await unsubscribeIdP('t3_abc')
+        expect(__getSyncStorage().other_subscriptions['t3_abc']).toBeUndefined()
+        expect(send).toHaveBeenCalledWith({ action: 'update-badge' })
+    })
+
+    it('finishes unsubscribing when the badge message fails', async () => {
+        __resetStorage(makeStorageInit({ other_subscriptions: { t3_abc: { t: 1000 } } }))
+        vi.spyOn(browserMock.runtime, 'sendMessage').mockRejectedValue(new Error('Receiving end does not exist.'))
+        await unsubscribeIdP('t3_abc')
+        expect(__getSyncStorage().other_subscriptions['t3_abc']).toBeUndefined()
     })
 
     it('getSubscribedIds returns all subscribed IDs', async () => {

@@ -59,7 +59,6 @@ const lookup = async (results, thing, subscribedFrom, itemLookup) => {
         structuredClone(__getSyncStorage()),
         subscribedFrom,
         itemLookup,
-        [],
         results.map(result => ({ data: { ...result } })),
     )
     await new Promise(resolve => setImmediate(resolve))

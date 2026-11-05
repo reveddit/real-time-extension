@@ -4,10 +4,12 @@
 // Install chrome global BEFORE any source import that references __BUILT_FOR__
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import browserMock from '../mocks/webextension-polyfill.js'
 import {
     getFullIDsFromPath,
     getFullIDsFromURL,
+    showsWhatsNew,
     reformatRedditText,
     isRemovedItem,
     isRemovedComment,
@@ -21,6 +23,7 @@ import {
     ChangeForStorage,
     LocalStorageItem,
     getTestNotificationMessage,
+    updateBadgeUnseenCount,
 } from '../../src/src/common.ts'
 
 describe('getFullIDsFromPath', () => {
@@ -355,5 +358,32 @@ describe('getTestNotificationMessage', () => {
             lock_status: { track: false },
         })
         expect(msg).toContain('removed and locked content')
+    })
+})
+
+describe('showsWhatsNew', () => {
+    it('shows on an update from an older generation', () => {
+        expect(showsWhatsNew('0.0.4.9', '0.0.5.31')).toBe(true)
+    })
+    it("doesn't show within a generation", () => {
+        expect(showsWhatsNew('0.0.5.30', '0.0.5.31')).toBe(false)
+    })
+    it("doesn't show when there's no earlier version", () => {
+        expect(showsWhatsNew(undefined, '0.0.5.31')).toBe(false)
+    })
+})
+
+describe('updateBadgeUnseenCount', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals()
+        vi.restoreAllMocks()
+    })
+
+    it("asks the background from a content script on Firefox, where a promise-style chrome.runtime.sendMessage returns undefined", () => {
+        vi.stubGlobal('location', { protocol: 'https:' })
+        vi.spyOn(chrome.runtime, 'sendMessage').mockReturnValue(undefined)
+        const send = vi.spyOn(browserMock.runtime, 'sendMessage')
+        updateBadgeUnseenCount()
+        expect(send).toHaveBeenCalledWith({ action: 'update-badge' })
     })
 })

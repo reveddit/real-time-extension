@@ -18,8 +18,10 @@ export interface MarkupConfig {
     postIdAttributes: string[]
     // Slots inside <shreddit-post> that hold its held/removed/deleted banner
     postBannerSlots: string[]
-    // Slots of a comment's action row, the first of which takes the scan button
+    // Slots of a comment's action row, the first of which takes our buttons
     commentButtonSlots: string[]
+    // Slots inside <shreddit-post>, the first of which takes the subscribe button
+    postButtonSlots: string[]
 }
 
 export const DEFAULT_MARKUP_CONFIG: MarkupConfig = {
@@ -27,6 +29,7 @@ export const DEFAULT_MARKUP_CONFIG: MarkupConfig = {
     postIdAttributes: ['id'],
     postBannerSlots: ['post-removed-banner'],
     commentButtonSlots: ['comment-share'],
+    postButtonSlots: ['action-row-whitespace'],
 }
 
 const ATTRIBUTE_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/
@@ -36,6 +39,7 @@ let current: MarkupConfig = {
     postIdAttributes: [...DEFAULT_MARKUP_CONFIG.postIdAttributes],
     postBannerSlots: [...DEFAULT_MARKUP_CONFIG.postBannerSlots],
     commentButtonSlots: [...DEFAULT_MARKUP_CONFIG.commentButtonSlots],
+    postButtonSlots: [...DEFAULT_MARKUP_CONFIG.postButtonSlots],
 }
 
 export const getMarkupConfig = (): MarkupConfig => current
@@ -50,10 +54,12 @@ export const sanitizeMarkupConfig = (raw: any): Partial<MarkupConfig> => {
         const post = names(raw.post_id_attributes ?? raw.postIdAttributes)
         const banner = names(raw.post_banner_slots ?? raw.postBannerSlots)
         const button = names(raw.comment_button_slots ?? raw.commentButtonSlots)
+        const postButton = names(raw.post_button_slots ?? raw.postButtonSlots)
         if (comment.length) out.commentIdAttributes = comment
         if (post.length) out.postIdAttributes = post
         if (banner.length) out.postBannerSlots = banner
         if (button.length) out.commentButtonSlots = button
+        if (postButton.length) out.postButtonSlots = postButton
     }
     return out
 }
@@ -68,5 +74,6 @@ export const setMarkupConfig = (partial: Partial<MarkupConfig>) => {
         postIdAttributes: withDefaults(partial.postIdAttributes, DEFAULT_MARKUP_CONFIG.postIdAttributes),
         postBannerSlots: withDefaults(partial.postBannerSlots, DEFAULT_MARKUP_CONFIG.postBannerSlots),
         commentButtonSlots: withDefaults(partial.commentButtonSlots, DEFAULT_MARKUP_CONFIG.commentButtonSlots),
+        postButtonSlots: withDefaults(partial.postButtonSlots, DEFAULT_MARKUP_CONFIG.postButtonSlots),
     }
 }

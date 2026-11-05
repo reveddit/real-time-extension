@@ -661,7 +661,7 @@ describe('lookup failure reasons', () => {
     it('when the legacy fallback fails too, the error names both', async () => {
         blockAll()
         __getLocalStorage().dev_simulate_endpoint_deprecation = true
-        await expect(lookupItemsByID([GONE], 'none', false, false, [], USER, { [GONE]: meta(GONE) })).rejects.toThrow(
+        await expect(lookupItemsByID([GONE], 'none', false, USER, { [GONE]: meta(GONE) })).rejects.toThrow(
             /^www profile lookup invalid: www\.reddit\.com request failed: 403 \(refused: .*\); legacy fallback: legacy reddit HTML request failed: 403 \(legacy endpoints disabled\)$/,
         )
     })
@@ -684,7 +684,7 @@ describe('legacy refusal memory', () => {
             calls.push(String(url))
             return { ok: false, status: 403, text: async () => 'BLOCK' }
         }
-        const lookup = () => lookupItemsByID([GONE], 'none', false, false, [], USER, { [GONE]: meta(GONE) })
+        const lookup = () => lookupItemsByID([GONE], 'none', false, USER, { [GONE]: meta(GONE) })
         await expect(lookup()).rejects.toThrow(/legacy fallback: legacy reddit HTML request failed: 403$/)
         expect(await isLegacyResting('legacy_info')).toBe(true)
         // the legacy pages answer separately and keep going
@@ -980,7 +980,7 @@ describe('followed items while api/info is refused', () => {
             throw new Error(`unexpected url: ${u}`)
         }
     }
-    const lookupFollowed = ids => lookupItemsByID(ids, 'none', false, false, [], '', {})
+    const lookupFollowed = ids => lookupItemsByID(ids, 'none', false, '', {})
     // The followed list (storage.sync), which the rotation's maps are pruned to
     const following = ids => Object.fromEntries(ids.map(id => [id, { t: 1 }]))
     const savedCookies = browserMock.cookies
@@ -1253,7 +1253,7 @@ describe('0.0.5.27 release review fixes: rate limits, the legacy queue, the publ
             [GONE]: meta(GONE),
             ...Object.fromEntries(POSTS.map(id => [id, { locked: false, created_utc: now() - 3600 }])),
         }
-        const results = await lookupItemsByID([FEED_OK, GONE, ...POSTS], 'none', false, false, [], USER, authItemsMeta)
+        const results = await lookupItemsByID([FEED_OK, GONE, ...POSTS], 'none', false, USER, authItemsMeta)
         // the first post page's 429, then nothing more
         expect(pageCalls).toHaveLength(1)
         expect(__getLocalStorage().rate_limit_until).toBeGreaterThan(Date.now())
@@ -1269,7 +1269,7 @@ describe('0.0.5.27 release review fixes: rate limits, the legacy queue, the publ
             return { ok: false, status: 429, text: async () => '' }
         }
         await expect(
-            lookupItemsByID([GONE, 't3_q1'], 'none', false, false, [], USER, { [GONE]: meta(GONE) }),
+            lookupItemsByID([GONE, 't3_q1'], 'none', false, USER, { [GONE]: meta(GONE) }),
         ).rejects.toThrow(/429/)
         expect(__getLocalStorage().rate_limit_until).toBeGreaterThan(Date.now())
         // the chain would queue the post first, then ask the legacy hosts
@@ -1284,7 +1284,7 @@ describe('0.0.5.27 release review fixes: rate limits, the legacy queue, the publ
             legacy_info: { refusals: 1, until: Date.now() + 3600 * 1000, since: Date.now() },
         }
         await expect(
-            lookupItemsByID(['t3_queued1', 't3_private1', 't3_quar1', GONE], 'none', false, false, [], USER, {
+            lookupItemsByID(['t3_queued1', 't3_private1', 't3_quar1', GONE], 'none', false, USER, {
                 [GONE]: meta(GONE),
                 // their legacy pages answer 403 logged out, which reads like reddit refusing every page
                 t3_private1: { locked: false, subreddit_type: 'private' },

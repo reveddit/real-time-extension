@@ -128,10 +128,11 @@ function Welcome() {
           }, redirect)
         } else {
           if (result.indeterminate) {
-            // Reddit did not answer the probe (challenge page, block, 429).
-            // Signing in again would not help; a www.reddit.com tab usually does.
+            // The probe got no clear answer (challenge page, block, 429, no
+            // connection). Signing in again would not help; a www.reddit.com
+            // tab usually does.
             setStatusMessage(
-              `Reddit isn't answering the login check right now${result.reason ? ` (${result.reason})` : ''}. ` +
+              `Couldn't confirm your Reddit login right now${result.reason ? ` (${result.reason})` : ''}. ` +
                 "If you're already signed in, open www.reddit.com in a tab and try again. There's no need to sign in again.",
             )
           } else if (attemptCount.current === 1) {

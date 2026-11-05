@@ -1,5 +1,6 @@
 import { markIDsAsSeenIfSubscribed } from './storage'
 import { setTextAndFunction_subscribe, setTextAndFunction_unsubscribe } from './content-common'
+import { placeSubscribeLink } from './run-token'
 import { observe } from './dom-helpers'
 
 export const revdditModifications = (
@@ -76,23 +77,6 @@ const addSubscribeLinks_revddit_posts = (elements: HTMLElement[], subscriptions:
             placeSubscribeLink(links, setTextAndFunction_subscribe(id, a))
         }
     })
-}
-
-// A new run of this content script starts whenever the extension is reloaded or
-// updated while a reveddit tab is open, and the previous run's links stay in the
-// page with click handlers that no longer work. Each link carries its run's
-// token: a later run replaces the old link instead of adding a second one, and a
-// run that reaches the same item twice (the posts observer and the delayed pass
-// below can both see it) keeps the link it already placed.
-const RUN_TOKEN = Math.random().toString(36).slice(2)
-const RUN_ATTRIBUTE = 'data-rev-subscribe-run'
-
-export const placeSubscribeLink = (links: Element, link: HTMLElement, runToken = RUN_TOKEN) => {
-    const placed = Array.from(links.children).filter(el => el.hasAttribute(RUN_ATTRIBUTE))
-    if (placed.some(el => el.getAttribute(RUN_ATTRIBUTE) === runToken)) return
-    placed.forEach(el => el.remove())
-    link.setAttribute(RUN_ATTRIBUTE, runToken)
-    links.appendChild(link)
 }
 
 function waitForAddedNode_withMinAttValue(

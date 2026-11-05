@@ -7,6 +7,7 @@ import {
     createTab,
     setWarningBadge,
     isOtherIdentity,
+    showsWhatsNew,
 } from './src/common'
 import { checkForChanges } from './src/monitoring'
 import {
@@ -17,8 +18,6 @@ import {
     getAuth,
     storeRedditCookies,
     readWithLogin,
-    throwIfLegacyOff,
-    noteCapabilityRefused,
     lookupItemsByID_fromPublicProfile,
     getPublicViewUncheckedLine,
     getLoginWallLine,
@@ -38,7 +37,6 @@ import {
 } from './src/storage'
 import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
-import { getItems_fromOld } from './src/parse_html/old'
 import { handleBridgeFetch } from './src/bridge'
 import {
     applyRemoteConfig,
@@ -72,12 +70,6 @@ import { isLegacyPageUrl, LEGACY_PAGE_MARKER_PATTERN } from './src/parse_html/co
 
 // The background context is the diagnostic log's single writer — see diaglog.ts.
 initDiagPersistence()
-
-const WHATSNEW_SHOWN_KEY = 'whatsnew_shown_version'
-
-// Compare only the first 3 segments (e.g. "0.0.5") so that patch bumps like
-// 0.0.5.0 → 0.0.5.1 don't re-show the same what's-new page.
-const whatsnewGeneration = (version: string) => version.split('.').slice(0, 3).join('.')
 
 // Pages that may use the bridge: reveddit.com, and the local website in dev
 // and staging builds. Dev actions take the local website only.
@@ -168,7 +160,7 @@ if (__BUILT_FOR__ !== 'chrome') {
                     ? loadViewerForHeaders().then(withViewerCookies)
                     : withViewerCookies(viewerForHeaders)
             }
-            // Legacy user/post pages on www: background requests carrying the
+            // Legacy post pages on www: background requests carrying the
             // legacy marker get the redesign_optout cookie (see the DNR rule
             // below for Chrome/Edge and parse_html/common.ts legacyPageUrl).
             if (
@@ -226,7 +218,7 @@ if (__BUILT_FOR__ !== 'chrome') {
 // END webRequest API code
 
 // Strip the chrome-extension:// Origin header off the background's reddit
-// requests (legacy profile-scan fetches, www.reddit public-profile fetches):
+// requests (legacy page fetches, www.reddit public-profile fetches):
 // Reddit 403s requests carrying that Origin.
 //
 // The Sec-Fetch-* trio is deliberately LEFT INTACT. Earlier versions removed it
@@ -265,9 +257,12 @@ if (__BUILT_FOR__ !== 'chrome') {
             // normal browsing. Content-script fetches are same-origin and don't
             // carry a problematic Origin header, so they don't need the rule.
             tabIds: [-1],
+            // A site's own service worker is tabId -1 too, and reddit has one.
+            // This condition is why the manifest asks for Chrome 101.
+            initiatorDomains: [chrome.runtime.id],
         },
     })
-    // Legacy user/post pages on www render old markup only with the
+    // Legacy post pages on www render old markup only with the
     // redesign_optout cookie; without it the Shreddit challenge comes back.
     // fetch() cannot set Cookie, so set it here for background requests that
     // carry the legacy marker (parse_html/common.ts legacyPageUrl). Scoped to
@@ -283,6 +278,7 @@ if (__BUILT_FOR__ !== 'chrome') {
             regexFilter: '^https://www\\.reddit\\.com/.*' + LEGACY_PAGE_MARKER_PATTERN,
             resourceTypes: ['xmlhttprequest', 'other'],
             tabIds: [-1],
+            initiatorDomains: [chrome.runtime.id],
         },
     }
     try {
@@ -411,32 +407,24 @@ chrome.tabs.onRemoved.addListener(tabId => {
 })
 // A content script's item lookup (the subscribe button)
 const lookupItemsForContentScript = (request: any, sendResponse: (response: any) => void) => {
-    // Only get OAuth auth if user has provided a custom client ID
-    chrome.storage.sync.get(['options'], result => {
-        const needsOAuth = result.options && result.options.custom_clientid && result.options.custom_clientid !== ''
-        const authPromise = needsOAuth ? getAuth() : Promise.resolve('none')
-
-        authPromise
-            .then(auth => {
-                return lookupItemsByID(
-                    request.ids,
-                    auth,
-                    request.monitor_quarantined,
-                    false,
-                    [],
-                    request.username || '',
-                    request.authItemsMeta || {},
-                )
-            })
-            .then(items => {
-                // if request fails, items is null
-                sendResponse({ response: 'done', items })
-            })
-            .catch(error => {
-                console.log('Error in get-reddit-items-by-id:', error)
-                sendResponse({ response: 'done', items: null })
-            })
-    })
+    getAuth()
+        .then(auth => {
+            return lookupItemsByID(
+                request.ids,
+                auth,
+                request.monitor_quarantined,
+                request.username || '',
+                request.authItemsMeta || {},
+            )
+        })
+        .then(items => {
+            // if request fails, items is null
+            sendResponse({ response: 'done', items })
+        })
+        .catch(error => {
+            console.log('Error in get-reddit-items-by-id:', error)
+            sendResponse({ response: 'done', items: null })
+        })
 }
 
 chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
@@ -808,21 +796,6 @@ chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResp
         return true
     }
     switch (message.action) {
-        case 'fetch-old':
-            // Unauthenticated legacy user page HTML — dying endpoint, gated,
-            // and resting after a refusal
-            throwIfLegacyOff('legacy reddit HTML')
-                .then(() => getItems_fromOld(message.path))
-                .then(async (data: any) => {
-                    if (data?.refused) {
-                        await noteCapabilityRefused('legacy', 'challenge page')
-                    }
-                    sendResponse({ data })
-                })
-                .catch(err => {
-                    sendResponse({ data: { error: String(err?.message || err) } })
-                })
-            break
         case 'version':
             sendResponse({ version: chrome.runtime.getManifest().version, name: chrome.runtime.getManifest().name })
             break
@@ -870,16 +843,10 @@ chrome.runtime.onInstalled.addListener(function (details) {
     } else if (details.reason == 'update') {
         updateBadgeUnseenCount()
         markBacklogSummarySent()
-        // Open the what's new page once per version bump.
         try {
-            const currentVersion = chrome.runtime.getManifest().version
-            chrome.storage.local.get(WHATSNEW_SHOWN_KEY, res => {
-                if (res && whatsnewGeneration(res[WHATSNEW_SHOWN_KEY] || '') !== whatsnewGeneration(currentVersion)) {
-                    chrome.storage.local.set({ [WHATSNEW_SHOWN_KEY]: currentVersion }, () => {
-                        createTab(chrome.runtime.getURL('src/whatsnew.html'))
-                    })
-                }
-            })
+            if (showsWhatsNew(details.previousVersion, chrome.runtime.getManifest().version)) {
+                createTab(chrome.runtime.getURL('src/whatsnew.html'))
+            }
         } catch (e) {
             console.log('whatsnew open failed:', e)
         }

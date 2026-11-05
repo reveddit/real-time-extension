@@ -81,6 +81,7 @@ function modify(buffer) {
         )
         delete manifest.host_permissions
         delete manifest.externally_connectable
+        delete manifest.minimum_chrome_version
         manifest.manifest_version = 2
         manifest.background.scripts = [manifest.background.service_worker]
         manifest.background.persistent = true

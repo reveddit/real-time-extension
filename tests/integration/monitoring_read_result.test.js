@@ -107,7 +107,6 @@ describe('lookup results through whole checks', () => {
             structuredClone(__getSyncStorage()),
             SUBSCRIBED_FROM_NA,
             { [authItem.name]: authItem },
-            [],
             [{ data: { ...result } }],
         )
         for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 0))

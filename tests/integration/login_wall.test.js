@@ -267,7 +267,7 @@ describe('a profile lookup that meets the login wall', () => {
 
     it('raises login_required after five in a row, without trying the legacy pages; the first one sends the only request', async () => {
         globalThis.fetch = vi.fn(async () => res(200, 'LOGIN PAGE', LOGIN))
-        const lookup = () => lookupItemsByID_withFallback('api/info', '?id=t1_a', null, false, false, ['t1_a'], 'u', {})
+        const lookup = () => lookupItemsByID_withFallback('api/info', '?id=t1_a', null, false, ['t1_a'], 'u', {})
         for (let i = 1; i <= 5; i++) {
             const error = await lookup().catch(e => e)
             expect(isLoginWallMessage(error?.message)).toBe(true)
@@ -299,7 +299,7 @@ describe('a login wall on the pages a lookup reads after the profile', () => {
         })
         const meta = { [NEWEST]: { link_id: 't3_p', created_utc: 1 }, [OLDER]: { link_id: 't3_p', created_utc: 1 } }
         for (let i = 1; i <= 5; i++) {
-            await lookupItemsByID_withFallback('api/info', '', null, false, false, [NEWEST, OLDER], 'u', meta)
+            await lookupItemsByID_withFallback('api/info', '', null, false, [NEWEST, OLDER], 'u', meta)
             expect(__getLocalStorage().error_status).toBe(i < 5 ? undefined : LOGIN_REQUIRED)
         }
         expect(await lookupWarningToKeep('u')).toBe(LOGIN_REQUIRED)

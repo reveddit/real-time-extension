@@ -1,6 +1,7 @@
 import { getFullIDsFromPath, getPrettyDate, detectIsNewReddit } from './common'
 import { getObjectNamesForThing } from './storage'
 import { observe } from './dom-helpers'
+import { ofThisRun, markThisRun, orphaned } from './run-token'
 import { getMarkupConfig } from './markup-config'
 import {
     restoreComment,
@@ -60,9 +61,11 @@ function injectRestoreButton_oldReddit(commentEl: HTMLElement) {
     if (!id || injectedComments.has(id)) return
 
     const buttons = commentEl.querySelector(':scope > .entry > ul.buttons')
-    if (!buttons) return
+    if (!buttons || orphaned()) return
 
     injectedComments.add(id)
+    // The last run's, since this one only comes here once per comment
+    buttons.querySelector('.rev-scan-comment-btn')?.closest('li')?.remove()
 
     const li = document.createElement('li')
     const btn = document.createElement('a')
@@ -70,7 +73,7 @@ function injectRestoreButton_oldReddit(commentEl: HTMLElement) {
     btn.className = 'rev-scan-comment-btn rev-comment-action'
     btn.classList.toggle('rev-scan-disabled', !!activeScan)
     btn.textContent = 'scan-rev'
-    btn.title = 'Search for removed comments in this thread via reveddit'
+    btn.title = SCAN_TITLE
     btn.addEventListener('click', e => {
         e.preventDefault()
         e.stopPropagation()
@@ -84,7 +87,7 @@ function injectRestoreButton_oldReddit(commentEl: HTMLElement) {
 // --- Thread Restore: New Reddit ---
 
 // A comment's replies sit inside it, so a plain lookup can land on a reply's part
-function ownPart(comment: Element, selector: string): HTMLElement | undefined {
+export function ownPart(comment: Element, selector: string): HTMLElement | undefined {
     return Array.from(comment.querySelectorAll(selector)).find(el => el.closest('shreddit-comment') === comment) as
         | HTMLElement
         | undefined
@@ -125,13 +128,16 @@ function addUnderComment(comment: HTMLElement, ...els: HTMLElement[]) {
 function injectRestoreButton_newReddit(comment: HTMLElement) {
     const commentId = commentIdOf(comment)
     const textBlock = removedText_newReddit(comment)?.closest('div')
-    if (!commentId || !textBlock || !onSubredditThread()) return
-    if (textBlock.parentElement?.querySelector('.rev-restore-btn')) return
+    if (!commentId || !textBlock || !onSubredditThread() || orphaned()) return
+    const placed = textBlock.parentElement?.querySelector('.rev-restore-btn')
+    if (ofThisRun(placed)) return
+    placed?.closest('.rev-restore-wrap')?.remove()
 
     const wrap = document.createElement('div')
     wrap.className = 'rev-restore-wrap'
 
     const btn = document.createElement('a')
+    markThisRun(btn)
     btn.href = '#'
     btn.className = 'rev-restore-btn'
     btn.classList.toggle('rev-scan-disabled', !!activeScan)
@@ -143,6 +149,24 @@ function injectRestoreButton_newReddit(comment: HTMLElement) {
     })
     wrap.appendChild(btn)
     textBlock.after(wrap)
+}
+
+// New reddit's has an icon beside its label, which CSS hides where a row is short of room
+const setScanLabel = (btn: Element, text: string) => {
+    ;(btn.querySelector('span') || btn).textContent = text
+}
+const resetScanLabel = (btn: Element) => setScanLabel(btn, btn.querySelector('span') ? 'Scan-Rev' : 'scan-rev')
+
+const SCAN_TITLE = 'Search for removed comments in this thread'
+const markExhausted = (btn: Element) => {
+    resetScanLabel(btn)
+    btn.classList.add('rev-scan-exhausted')
+    ;(btn as HTMLElement).title = 'All visible authors searched — no more removed comments to find'
+}
+const showScanLeft = (btn: Element, left: number) => {
+    const base = (btn.textContent || '').replace(/\s*\(\d+\)\s*$/, '')
+    setScanLabel(btn, `${base} (${left})`)
+    ;(btn as HTMLElement).title = `${left} more to check — click to continue`
 }
 
 function newRedditScanBtnHTML(): string {
@@ -160,14 +184,17 @@ function newRedditScanBtnHTML(): string {
 function injectScanButton_newReddit(row: Element) {
     const comment = row.closest('shreddit-comment') as HTMLElement | null
     const thingid = commentIdOf(comment)
-    if (!comment || !thingid || !onSubredditThread()) return
-    if (row.querySelector('.rev-scan-comment-btn') || removedText_newReddit(comment)) return
+    if (!comment || !thingid || !onSubredditThread() || orphaned()) return
+    const placed = row.querySelector(':scope > .rev-scan-comment-btn')
+    if (ofThisRun(placed) || removedText_newReddit(comment)) return
+    placed?.remove()
 
     const btn = document.createElement('button')
+    markThisRun(btn)
     btn.slot = getMarkupConfig().commentButtonSlots[0]
-    btn.className = 'rev-scan-comment-btn rev-newreddit-action'
+    btn.className = 'rev-btn rev-scan-comment-btn rev-newreddit-action'
     btn.classList.toggle('rev-scan-disabled', !!activeScan)
-    btn.title = 'Search for removed comments in this thread via reveddit'
+    btn.title = SCAN_TITLE
     btn.innerHTML = newRedditScanBtnHTML()
     btn.addEventListener('click', e => {
         e.preventDefault()
@@ -230,6 +257,8 @@ function placeRecovered(inserter: RecoveredCommentInserter, rc: RecoveredComment
 }
 
 async function handleRestore(commentId: string, container: HTMLElement, isNewReddit: boolean, btn: HTMLElement) {
+    // Dimmed stops the mouse, not the keyboard
+    if (btn.classList.contains('rev-scan-disabled')) return
     const [postID, , , subreddit] = getFullIDsFromPath(window.location.pathname)
     if (!postID || !subreddit) return
 
@@ -315,30 +344,37 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
             // comment in this thread, so disable ALL remaining scan buttons
             // (per-comment and thread-level). A comment that needs another sort
             // of their feeds has its search still to come, so only this one goes.
-            const exhaustedTitle = 'All visible authors searched — no more removed comments to find'
             const scanBtns = Array.from(document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)'))
-            scanBtns
-                .filter(b => !result.otherSorts || b === btn)
-                .forEach(b => {
-                    b.textContent = 'scan-rev'
-                    ;(b as HTMLElement).classList.add('rev-scan-exhausted')
-                    ;(b as HTMLElement).title = exhaustedTitle
-                })
+            if (result.otherSorts) {
+                // The search may have come from a restore link, which stays one
+                if (btn.matches('.rev-scan-comment-btn')) markExhausted(btn)
+                for (const other of scanBtns.filter(b => b !== btn)) {
+                    resetScanLabel(other)
+                    ;(other as HTMLElement).title = SCAN_TITLE
+                }
+                return
+            }
+            scanBtns.forEach(markExhausted)
             const scanAllBtn = document.querySelector('.rev-scan-all-btn') as HTMLButtonElement | null
-            if (!result.otherSorts && scanAllBtn && !scanAllBtn.classList.contains('rev-scan-exhausted')) {
+            if (scanAllBtn && !scanAllBtn.classList.contains('rev-scan-exhausted')) {
+                if (scanAllBtn.textContent === 'Continue scan') {
+                    const onPage = recoveredOnPage()
+                    scanAllBtn.textContent = onPage > 0 ? `${onPage} comment(s) recovered` : SCAN_ALL_TEXT
+                    const note = document.querySelector('.rev-scan-all-progress')
+                    if (note) note.textContent = ''
+                }
                 scanAllBtn.classList.add('rev-scan-exhausted')
                 scanAllBtn.disabled = true
-                scanAllBtn.title = exhaustedTitle
+                scanAllBtn.title = 'All visible authors searched — no more removed comments to find'
             }
         } else {
             // More remains; show the count and let a re-click continue. Update
             // ALL non-exhausted scan buttons so every comment shows the same
             // remaining count.
-            document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(b => {
-                const base = (b.textContent || '').replace(/\s*\(\d+\)\s*$/, '')
-                b.textContent = `${base} (${result.remaining})`
-                ;(b as HTMLElement).title = `${result.remaining} more to check — click to continue`
-            })
+            const left = result.remaining ?? 0
+            document
+                .querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)')
+                .forEach(b => showScanLeft(b, left))
         }
     }
     // cancelled / rate_limited / error: leave the button clickable so the user can retry.
@@ -427,24 +463,29 @@ const SCAN_ALL_TEXT = 'Scan for removed comments'
 function injectScanAllButton(isNewReddit: boolean) {
     if (!isNewReddit) {
         const menuarea = document.querySelector('.commentarea .menuarea')
-        if (!menuarea || menuarea.querySelector('.rev-scan-all-btn')) return
+        const placed = menuarea?.querySelector('.rev-scan-all-btn')
+        if (!menuarea || ofThisRun(placed) || orphaned()) return
+        placed?.remove()
 
         const btn = document.createElement('button')
-        btn.className = 'rev-scan-all-btn'
+        markThisRun(btn)
+        btn.className = 'rev-btn rev-btn-solid rev-scan-all-btn'
         btn.textContent = SCAN_ALL_TEXT
-        btn.title = 'Search for removed comments in this thread'
+        btn.title = SCAN_TITLE
         btn.addEventListener('click', e => {
             e.preventDefault()
             handleScanAll(false)
         })
         menuarea.appendChild(btn)
     } else {
-        if (document.querySelector('.rev-scan-all-btn')) return
+        const placed = document.querySelector('.rev-scan-all-btn')
         const tree = document.querySelector('shreddit-comment-tree')
-        if (!tree) return
+        if (!tree || ofThisRun(placed) || orphaned()) return
+        placed?.remove()
 
         const btn = document.createElement('button')
-        btn.className = 'rev-scan-all-btn rev-profile-scan-btn'
+        markThisRun(btn)
+        btn.className = 'rev-btn rev-btn-solid rev-scan-all-btn'
         btn.textContent = SCAN_ALL_TEXT
         btn.addEventListener('click', e => {
             e.preventDefault()
@@ -459,7 +500,7 @@ async function handleScanAll(isNewReddit: boolean) {
     if (!postID || !subreddit) return
 
     const btn = document.querySelector('.rev-scan-all-btn') as HTMLButtonElement
-    if (!btn) return
+    if (!btn || btn.classList.contains('rev-scan-disabled')) return
     btn.textContent = 'Scanning...'
     btn.disabled = true
     btn.classList.add('rev-scan-all-loading')
@@ -520,15 +561,10 @@ async function handleScanAll(isNewReddit: boolean) {
     // itself. One that stopped (refused pages, rate limit, no comment tree, the
     // click's limit) leaves them for another try.
     if (finalStatus === 'found' || finalStatus === 'not_found') {
-        const exhaustedTitle = 'All visible authors searched — no more removed comments to find'
-        document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(b => {
-            b.textContent = 'scan-rev'
-            ;(b as HTMLElement).classList.add('rev-scan-exhausted')
-            ;(b as HTMLElement).title = exhaustedTitle
-        })
+        document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(markExhausted)
         btn.classList.add('rev-scan-exhausted')
         btn.disabled = true
-        btn.title = exhaustedTitle
+        btn.title = 'All visible authors searched — no more removed comments to find'
     }
 
     // Show the filter bar and auto-switch to "removed" view if any were found.
@@ -708,7 +744,7 @@ function injectThreadFilter(isNewReddit: boolean) {
 
     const mk = (text: string, f: ThreadFilter) => {
         const b = document.createElement('button')
-        b.className = 'rev-filter-btn rev-thread-filter-btn' + (f === 'all' ? ' rev-filter-active' : '')
+        b.className = 'rev-btn rev-filter-btn rev-thread-filter-btn' + (f === 'all' ? ' rev-filter-active' : '')
         b.textContent = text
         b.setAttribute('data-filter', f)
         b.addEventListener('click', () => applyThreadFilter(f, isNewReddit))
@@ -955,7 +991,7 @@ class RecoveredCommentInserter {
         desc.textContent =
             "Their parent comment isn't in the known part of the comment tree, so we couldn't determine where they belong."
         const placeBtn = document.createElement('button')
-        placeBtn.className = 'rev-place-unattached-btn'
+        placeBtn.className = 'rev-btn rev-btn-solid rev-place-unattached-btn'
         placeBtn.textContent = 'Place unattached comments'
         placeBtn.title = 'Look up the missing parent comments to nest these into the thread'
         placeBtn.classList.toggle('rev-scan-disabled', !!activeScan)
@@ -1150,7 +1186,7 @@ const firstOnPage = (kind: string) =>
         ?.getAttribute('data-fullname') || undefined
 
 function injectProfileScanButton_oldReddit(username: string) {
-    if (document.querySelector('.rev-profile-scan-container')) return
+    if (!clearLastRunsProfileScan()) return
 
     // Render in the main content column (not the sidebar) so the scan button,
     // filter controls, and any recovered comments appear with the user's listing.
@@ -1166,7 +1202,7 @@ function injectProfileScanButton_oldReddit(username: string) {
 
 function injectProfileScanButton_newReddit(username: string) {
     if (!window.location.pathname.match(/^\/(?:user|u)\/[^/]+/)) return
-    if (document.querySelector('.rev-profile-scan-container')) return
+    if (!clearLastRunsProfileScan()) return
 
     // Insert before the feed, after the sort controls
     const targets = [
@@ -1181,12 +1217,25 @@ function injectProfileScanButton_newReddit(username: string) {
     target.insertAdjacentElement('beforebegin', container)
 }
 
+// Whether the page needs a scan button: not with this run's already there
+function clearLastRunsProfileScan() {
+    const placed = document.querySelector('.rev-profile-scan-container')
+    if (ofThisRun(placed) || orphaned()) return false
+    if (placed) {
+        placed.remove()
+        // Its filter buttons go with it, so what they hid comes back
+        applyFilter('all')
+    }
+    return true
+}
+
 function createProfileScanContainer(username: string): HTMLElement {
     const container = document.createElement('div')
+    markThisRun(container)
     container.className = 'rev-profile-scan-container'
 
     const btn = document.createElement('button')
-    btn.className = 'rev-profile-scan-btn'
+    btn.className = 'rev-btn rev-btn-solid rev-profile-scan-btn'
     btn.textContent = 'Scan for removed content'
     btn.addEventListener('click', () => handleProfileScan(username, container))
     isViewer(username).then(own => {
@@ -1527,7 +1576,7 @@ function renderFilterControls(container: HTMLElement, results: ScanResult[]) {
 
     for (const { label, filter } of buttons) {
         const btn = document.createElement('button')
-        btn.className = 'rev-filter-btn'
+        btn.className = 'rev-btn rev-filter-btn'
         if (filter === currentFilter) btn.classList.add('rev-filter-active')
         btn.textContent = label
         btn.addEventListener('click', () => {
@@ -1916,7 +1965,7 @@ function injectOwnFilterBar(isNewReddit: boolean, hasRemoved: boolean, hasLocked
 
     const mk = (text: string, f: OwnFilter, active: boolean) => {
         const b = document.createElement('button')
-        b.className = 'rev-filter-btn' + (active ? ' rev-filter-active' : '')
+        b.className = 'rev-btn rev-filter-btn' + (active ? ' rev-filter-active' : '')
         b.textContent = text
         b.setAttribute('data-filter', f)
         b.addEventListener('click', () => {

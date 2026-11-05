@@ -4,15 +4,9 @@
 // Install chrome global BEFORE any source import that references __BUILT_FOR__
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { DOMParser } from 'linkedom'
-
-let placeSubscribeLink
-beforeAll(async () => {
-    // content-common reads location.hostname when it loads
-    globalThis.location.hostname = 'www.reveddit.com'
-    ;({ placeSubscribeLink } = await import('../../src/src/content-revddit.ts'))
-})
+import { placeSubscribeLink } from '../../src/src/run-token'
 
 const setup = () => {
     const doc = new DOMParser().parseFromString(

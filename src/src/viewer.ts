@@ -473,6 +473,7 @@ export const installViewerHeaderRule = async () => {
                                   regexFilter: viewerUrlPattern(viewer.token),
                                   resourceTypes: ['xmlhttprequest', 'other'],
                                   tabIds: [-1],
+                                  initiatorDomains: [chrome.runtime.id],
                                   requestMethods: ['get'],
                               },
                           },

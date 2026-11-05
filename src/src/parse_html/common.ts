@@ -24,7 +24,7 @@ export const newReddit = 'https://www.reddit.com'
 // so the legacy parsers keep working with just the host swapped. The host is
 // remotely adjustable via the news feed (news.ts legacy_host) so the next move
 // needs no store republish.
-// Legacy user and post pages on www need the redesign_optout cookie or the
+// Legacy post pages on www need the redesign_optout cookie or the
 // Shreddit challenge comes back instead. The extension can't set a Cookie
 // header from fetch(), so background.ts injects it (DNR on Chrome/Edge,
 // webRequest on Firefox) on background requests carrying this query marker.
@@ -82,24 +82,5 @@ export const fetchWithTimeout = async (
         return await fetch(url, { ...options, signal: controller.signal })
     } finally {
         clearTimeout(timer)
-    }
-}
-
-export class ErrorCollector {
-    errors: Record<string, number>
-    url: string
-    constructor(url: string) {
-        this.errors = {}
-        this.url = url
-    }
-    addError(error_name: string) {
-        this.errors[error_name] = (this.errors[error_name] || 0) + 1
-    }
-    printErrors() {
-        for (const [field, numErrors] of Object.entries(this.errors)) {
-            if (numErrors) {
-                console.error('ERROR:', '[' + field + ']', numErrors, 'times on', this.url)
-            }
-        }
     }
 }

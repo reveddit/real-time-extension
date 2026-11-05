@@ -18,7 +18,7 @@ const initialFilter: FilterValue = (() => {
 
 const getPinInstructions = (): string => {
   if (__BUILT_FOR__ === 'firefox') return 'Click the extensions puzzle icon in the toolbar, then pin reveddit real-time.'
-  if (__BUILT_FOR__ === 'edge') return 'Click the extensions icon in the toolbar, then pin reveddit real-time.'
+  if (navigator.userAgent.includes('Edg/')) return 'Click the extensions icon in the toolbar, then pin reveddit real-time.'
   return 'Click the puzzle piece icon in the toolbar, then pin reveddit real-time.'
 }
 

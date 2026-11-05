@@ -45,7 +45,7 @@ export interface RemoteOptions {
     // Host that serves reddit's legacy (pre-Shreddit) HTML logged out. Set to
     // www.reddit.com on 2026-08-31 when old.reddit.com began requiring login
     // while the same renderer stayed reachable on www for legacy-only routes
-    // (/api/info?id=, and user/post pages with the redesign_optout cookie).
+    // (/api/info?id=, and post pages with the redesign_optout cookie).
     // Allowlisted: only LEGACY_HOSTS values survive sanitization.
     legacy_host?: string
     // Solver inputs for the logged-out challenge page (challenge-config.ts):
@@ -64,8 +64,9 @@ export interface RemoteOptions {
     publicmodlogs_feed?: string
     // Extra names for the page classifiers (markup-config.ts):
     // { comment_id_attributes: string[], post_id_attributes: string[],
-    // post_banner_slots: string[], comment_button_slots: string[] }. Added to
-    // the built-in names; stored in camelCase.
+    // post_banner_slots: string[], comment_button_slots: string[],
+    // post_button_slots: string[] }. Added to the built-in names; stored in
+    // camelCase.
     markup?: Partial<MarkupConfig>
     // Names of reddit's login cookie, for the bridge's and grace mode's
     // logged-in check (viewer.ts hasRedditLoginCookie), in case reddit

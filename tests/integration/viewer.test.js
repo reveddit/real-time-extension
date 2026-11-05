@@ -434,7 +434,11 @@ describe('the header rule (Chrome and Edge)', () => {
         expect(addRules[0].action.requestHeaders).toEqual([
             { header: 'cookie', operation: 'set', value: 'reddit_session=B-SESSION; token_v2=B-TOKEN; loid=B-LOID' },
         ])
-        expect(addRules[0].condition).toMatchObject({ tabIds: [-1], requestMethods: ['get'] })
+        expect(addRules[0].condition).toMatchObject({
+            tabIds: [-1],
+            initiatorDomains: [chrome.runtime.id],
+            requestMethods: ['get'],
+        })
         expect(
             new RegExp(addRules[0].condition.regexFilter).test(viewerUrl('https://www.reddit.com/api/me.json', TOKEN)),
         ).toBe(true)
@@ -490,7 +494,7 @@ describe('checking the user’s items through the second account', () => {
             throw new Error(`unexpected request: ${url}`)
         }))
     const lookup = (ids, meta = {}) =>
-        lookupItemsByID_withFallback('api/info', '', null, false, false, ids, 'alice', meta)
+        lookupItemsByID_withFallback('api/info', '', null, false, ids, 'alice', meta)
     const meta = ids => Object.fromEntries(ids.map(id => [id, { link_id: 't3_post1', created_utc: 1 }]))
 
     it('makes the header rule again before each lookup, so a cookie that has expired since stays off', async () => {
@@ -782,14 +786,14 @@ describe('checking the user’s items through the second account', () => {
         globalThis.fetch = vi.fn(async () => {
             throw new TypeError('Failed to fetch')
         })
-        await lookupItemsByID_withFallback('api/info', '', null, false, false, ['t1_x'], 'alice', {
+        await lookupItemsByID_withFallback('api/info', '', null, false, ['t1_x'], 'alice', {
             t1_x: { author: 'Bob', link_id: 't3_post1' },
         }).catch(() => {})
         __getLocalStorage().viewer_thread_consecutive_failures = { token: TOKEN, failures: 5 }
         __getLocalStorage().absent_verify_consecutive_failures = 7
         expect(await lookupWarningToKeep('alice')).toBe(ABSENT_VERIFY_UNAVAILABLE)
         // A later pass with no items checks through neither view: the usual rule again
-        expect(await lookupItemsByID_withFallback('api/info', '', null, false, false, [], 'alice', {})).toEqual([])
+        expect(await lookupItemsByID_withFallback('api/info', '', null, false, [], 'alice', {})).toEqual([])
         expect(await lookupWarningToKeep('alice')).toBe(null)
     })
 
@@ -864,7 +868,7 @@ describe('checking the user’s items through the second account', () => {
         globalThis.fetch = vi.fn(async () => {
             throw new TypeError('Failed to fetch')
         })
-        const results = await lookupItemsByID_withFallback('api/info', '', null, false, false, ['t1_x'], 'Bob', {}).catch(
+        const results = await lookupItemsByID_withFallback('api/info', '', null, false, ['t1_x'], 'Bob', {}).catch(
             e => e,
         )
         expect(results).toBeInstanceOf(Error)
@@ -980,7 +984,7 @@ describe('checking the user’s items through the second account', () => {
         globalThis.fetch = vi.fn(async () => {
             throw new TypeError('Failed to fetch')
         })
-        await lookupItemsByID_withFallback('api/info', '', null, false, false, ['t1_x'], 'alice', {
+        await lookupItemsByID_withFallback('api/info', '', null, false, ['t1_x'], 'alice', {
             t1_x: { author: 'Bob', link_id: 't3_post1' },
         }).catch(() => {})
         const urls = globalThis.fetch.mock.calls.map(c => c[0])

@@ -6,7 +6,7 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
-import browserMock, { __resetStorage } from '../mocks/webextension-polyfill.js'
+import browserMock, { __resetStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
 import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
 
 const listeners = []
@@ -66,5 +66,34 @@ describe('a scan in Firefox', () => {
             expect(await send(tab(extra))).toEqual({ ok: false, status: 0, otherIdentity: true })
         }
         expect(fetch).not.toHaveBeenCalled()
+    })
+})
+
+describe("a content script's item lookup", () => {
+    const lookup = () =>
+        new Promise(resolve => {
+            for (const listener of listeners) {
+                if (listener({ action: 'get-reddit-items-by-id', ids: ['t1_a'] }, tab(), resolve)) return
+            }
+        })
+    const urls = () => fetch.mock.calls.map(([url]) => String(url))
+
+    beforeEach(() => {
+        const answer = JSON.stringify({ access_token: 't', data: { children: [] } })
+        fetch.mockImplementation(async () => new Response(answer, { status: 200 }))
+    })
+
+    it('reads with the login and asks for no token with no client id, even with no options stored', async () => {
+        expect(await lookup()).toEqual({ response: 'done', items: [] })
+        expect(urls()).toEqual(['https://www.reddit.com/api/info.json?id=t1_a&raw_json=1'])
+    })
+
+    it('reads through the API with a token with a client id', async () => {
+        __getSyncStorage().options = { custom_clientid: 'mine' }
+        expect(await lookup()).toEqual({ response: 'done', items: [] })
+        expect(urls()).toEqual([
+            'https://www.reddit.com/api/v1/access_token',
+            'https://oauth.reddit.com/api/info?id=t1_a&raw_json=1',
+        ])
     })
 })
