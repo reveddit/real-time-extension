@@ -44,10 +44,10 @@ async function createSourceZip() {
     // Remove old zip if exists
     if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-    // Zip command that excludes sensitive and ignored files
-    // -x matches relative paths. 
-    // We exclude: .env (CRITICAL), node_modules, .git, dist folders, artifacts, and any existing zips
-    const cmd = `zip -r "${zipName}" . -x "*.env*" "node_modules/*" ".git/*" "dist-*" "web-ext-artifacts/*" "*.zip" ".DS_Store"`;
+    // What git keeps, so nothing ignored reaches Mozilla's reviewers, less .env
+    // (CRITICAL), the dist folders they rebuild, and our own tooling notes. A run
+    // under PUBLISH_ALLOW_DIRTY builds from untracked files too, so they're included.
+    const cmd = `git ls-files --cached --others --exclude-standard -- . ":(exclude)*.env*" ":(exclude)dist-*" ":(exclude).claude" ":(exclude).claude-mcp" | zip "${zipName}" -@`;
     
     try {
         execSync(cmd, { stdio: 'inherit' });

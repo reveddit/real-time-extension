@@ -128,7 +128,7 @@ const STATUS_FILE = path.join(process.cwd(), '.publish-status.json');
 const NOT_BUILD_INPUTS = [
     'tests', 'scripts', '*.md', 'dist-*', '.claude', '.claude-mcp', '.github', '.husky', 'graphics', 'images',
     'test-results', 'LICENSE', 'renovate.json', 'eslint.config.js', '.prettierrc', '.prettierignore',
-    '.editorconfig', 'playwright.config.js', 'vitest.config.js', '.gitignore',
+    '.editorconfig', 'playwright.config.js', 'vitest.config.js', '.gitignore', 'STORE_PRIVACY.txt',
 ];
 const BUILD_INPUTS = ['.', ...NOT_BUILD_INPUTS.map(p => `:(exclude)${p}`)];
 
