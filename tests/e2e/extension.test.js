@@ -76,7 +76,7 @@ test.describe('Popup page', () => {
         const page = await context.newPage()
         await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
 
-        await expect(page.getByText("Reddit isn't answering")).toBeVisible()
+        await expect(page.getByText("Can't reach Reddit")).toBeVisible()
         await expect(page.getByRole('button', { name: 'Log in to Reddit' })).toHaveCount(0)
     })
 

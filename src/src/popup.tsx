@@ -769,7 +769,7 @@ function Popup() {
               </MessageBanner>
             ) : errorStatus === 'checks_failing' ? (
               <MessageBanner variant="warning">
-                ⚠ Reddit isn&apos;t answering, so your posts and comments aren&apos;t being checked right now. The
+                ⚠ Can&apos;t reach Reddit, so your posts and comments aren&apos;t being checked right now. The
                 extension keeps trying.
               </MessageBanner>
             ) : errorStatus === 'profile_publicly_empty' ? (
