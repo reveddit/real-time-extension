@@ -25,6 +25,7 @@ import browser from 'webextension-polyfill'
 import { dlogSummary } from './diaglog'
 import { isBlockPage, LOGGED_IN_CACHE_MODES } from './logged-in-fetch'
 import { getRemoteLoginCookies } from './news'
+import { withDeadline } from './parse_html/common'
 
 export const VIEWER_KEY = 'viewer_account'
 export const VIEWER_CONNECT_KEY = 'viewer_connect'
@@ -522,32 +523,29 @@ const requestKind = (url: string): string =>
 export const fetchJsonAsViewer = async (url: string, viewer: ViewerAccount): Promise<ViewerJson> => {
     // The body is read under the same deadline as the request, so an answer
     // that stalls partway can't hold up the monitoring cycle
-    const once = async (cache: RequestCache): Promise<ViewerJson> => {
-        const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), VIEWER_FETCH_TIMEOUT_MS)
-        try {
-            const response = await fetch(viewerUrl(url, viewer.token), {
-                credentials: 'omit',
-                cache,
-                headers: { 'Accept-Language': 'en' },
-                signal: controller.signal,
-            })
-            const blocked = isBlockPage(response)
-            if (blocked || !response.ok) {
-                return { ok: false, status: response.status, blocked }
-            }
+    const once = (cache: RequestCache): Promise<ViewerJson> =>
+        withDeadline(VIEWER_FETCH_TIMEOUT_MS, async signal => {
             try {
-                return { ok: true, status: response.status, blocked: false, json: await response.json() }
+                const response = await fetch(viewerUrl(url, viewer.token), {
+                    credentials: 'omit',
+                    cache,
+                    headers: { 'Accept-Language': 'en' },
+                    signal,
+                })
+                const blocked = isBlockPage(response)
+                if (blocked || !response.ok) {
+                    return { ok: false, status: response.status, blocked }
+                }
+                try {
+                    return { ok: true, status: response.status, blocked: false, json: await response.json() }
+                } catch {
+                    // not JSON (a challenge or some other page), or out of time
+                    return { ok: false, status: response.status, blocked: false }
+                }
             } catch {
-                // not JSON (a challenge or some other page), or out of time
-                return { ok: false, status: response.status, blocked: false }
+                return { ok: false, status: 0, blocked: false }
             }
-        } catch {
-            return { ok: false, status: 0, blocked: false }
-        } finally {
-            clearTimeout(timer)
-        }
-    }
+        })
     const kind = `${viewer.token}:${requestKind(url)}`
     // Past the edge, whatever the resource said: keep that mode. No answer at
     // all (status 0) says nothing about it.

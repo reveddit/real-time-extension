@@ -66,6 +66,7 @@ import { flagIfRateLimited, RECENT_RATE_LIMIT_WINDOW_MS } from './request-gates'
 import { isPublicProfileUnavailable } from './lookup-status'
 import { isCycleInFlight } from './monitoring'
 import { isRemovedInModView, isViewerBlockedItem } from './common'
+import { withDeadline } from './parse_html/common'
 import { dlog } from './diaglog'
 import { getPublicModlogsFeed } from './bridge-config'
 import { fetchLoggedIn } from './logged-in-fetch'
@@ -521,50 +522,48 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
         if (deadline - Date.now() < MIN_FETCH_MS) {
             return busy()
         }
-        const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), deadline - Date.now())
-        try {
-            const { response: r, blockPage } = await fetchLoggedIn(url, {
-                signal: controller.signal,
-                canRetry: () => deadline - Date.now() >= MIN_FETCH_MS,
-                // the retry is a request too
-                onRetry: () => recentTimes.push(Date.now()),
-                onSwitched: (blocked, answered, status) =>
+        return withDeadline(deadline - Date.now(), async signal => {
+            try {
+                const { response: r, blockPage } = await fetchLoggedIn(url, {
+                    signal,
+                    canRetry: () => deadline - Date.now() >= MIN_FETCH_MS,
+                    // the retry is a request too
+                    onRetry: () => recentTimes.push(Date.now()),
+                    onSwitched: (blocked, answered, status) =>
+                        dlog(
+                            'bridge',
+                            `[reveddit] bridge: block page in cache mode ${blocked}, ${answered} got through (${status})`,
+                        ),
+                })
+                if (!r.ok) {
                     dlog(
                         'bridge',
-                        `[reveddit] bridge: block page in cache mode ${blocked}, ${answered} got through (${status})`,
-                    ),
-            })
-            if (!r.ok) {
-                dlog(
-                    'bridge',
-                    `[reveddit] bridge: ${url.split('?')[0]} -> ${r.status}${blockPage ? ' (block page)' : ''}`,
-                )
-                // A bridge 429 must enter the shared backoff; monitoring's
-                // next cycle needs to know the IP is hot (message shape
-                // matters, see flagIfRateLimited). Other statuses are about
-                // one resource and leave the user's warning alone.
-                if (r.status === 429) {
-                    flagIfRateLimited(new Error(`www.reddit.com request failed: ${r.status}`))
+                        `[reveddit] bridge: ${url.split('?')[0]} -> ${r.status}${blockPage ? ' (block page)' : ''}`,
+                    )
+                    // A bridge 429 must enter the shared backoff; monitoring's
+                    // next cycle needs to know the IP is hot (message shape
+                    // matters, see flagIfRateLimited). Other statuses are about
+                    // one resource and leave the user's warning alone.
+                    if (r.status === 429) {
+                        flagIfRateLimited(new Error(`www.reddit.com request failed: ${r.status}`))
+                    }
+                    return { ok: false, status: r.status, data: null }
                 }
-                return { ok: false, status: r.status, data: null }
+                const json = await r.json()
+                if (isMembersOnlyAnswer(json)) {
+                    dlog('bridge', `[reveddit] bridge: ${url.split('?')[0]} -> members-only community, answered 403`)
+                    return { ok: false, status: 403, data: MEMBERS_ONLY_ANSWER }
+                }
+                return {
+                    ok: true,
+                    status: r.status,
+                    data: toPublicView(json, await getPublicViewContext(me)),
+                    view: 'logged_in',
+                }
+            } catch (err: any) {
+                return { ok: false, status: 0, error: signal.aborted ? 'timeout' : String(err?.message || err) }
             }
-            const json = await r.json()
-            if (isMembersOnlyAnswer(json)) {
-                dlog('bridge', `[reveddit] bridge: ${url.split('?')[0]} -> members-only community, answered 403`)
-                return { ok: false, status: 403, data: MEMBERS_ONLY_ANSWER }
-            }
-            return {
-                ok: true,
-                status: r.status,
-                data: toPublicView(json, await getPublicViewContext(me)),
-                view: 'logged_in',
-            }
-        } catch (err: any) {
-            return { ok: false, status: 0, error: controller.signal.aborted ? 'timeout' : String(err?.message || err) }
-        } finally {
-            clearTimeout(timer)
-        }
+        })
     })
     lane = run
         .then(

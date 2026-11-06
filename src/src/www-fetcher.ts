@@ -13,6 +13,7 @@ import { isCaptchaPage, solveChallenge, isSolvedChallengeUrl, FetchHtml } from '
 import { getRemoteWwwRouteOrder } from './news'
 import { dlog } from './diaglog'
 import { WWW_FETCH_TIMEOUT_MS } from './logged-in-fetch'
+import { withDeadline } from './parse_html/common'
 
 declare const content: { fetch?: typeof fetch } | undefined
 
@@ -74,13 +75,11 @@ const httpFailure = (status: number): Error => {
     return status === 403 ? new RouteError(message, 'refused', 403) : new Error(message)
 }
 
-const fetchWwwHtml_viaBackground = async (url: string, cache: WwwRouteCache): Promise<string> => {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
-    try {
+const fetchWwwHtml_viaBackground = (url: string, cache: WwwRouteCache): Promise<string> =>
+    withDeadline(WWW_FETCH_TIMEOUT_MS, async signal => {
         let response: Response
         try {
-            response = await fetch(url, { ...publicViewInit(cache), signal: controller.signal })
+            response = await fetch(url, { ...publicViewInit(cache), signal })
         } catch (err: any) {
             throw new RouteError(`www.reddit.com request error: ${String(err?.message || err)}`, 'network')
         }
@@ -93,10 +92,7 @@ const fetchWwwHtml_viaBackground = async (url: string, cache: WwwRouteCache): Pr
         } catch (err: any) {
             throw new RouteError(`www.reddit.com response error: ${String(err?.message || err)}`, 'network')
         }
-    } finally {
-        clearTimeout(timer)
-    }
-}
+    })
 
 // Fallback for a tab whose content script is orphaned (every extension update
 // or reinstall severs content scripts in already-open tabs — issue #14's log

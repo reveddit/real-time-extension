@@ -10,7 +10,7 @@ import {
 } from './storage'
 import { isRemovedItem, RedditItem } from './common'
 import { getViewer, isSignedInViewer, isViewerConnecting, hasRedditLoginCookie } from './viewer'
-import { isRateLimitError } from './parse_html/common'
+import { isRateLimitError, withDeadline } from './parse_html/common'
 import { isLoginWallMessage } from './login-wall-config'
 import { getRemoteMechanism, MECHANISM_SCAN_FEEDS } from './news'
 import { fetchForScan, WWW_FETCH_TIMEOUT_MS } from './logged-in-fetch'
@@ -468,11 +468,9 @@ export const readWithLogin = async (path: string, secondTryMode?: number) => {
     if (waitMs > 0) {
         return { ok: false, status: 0, waitMs }
     }
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
-    try {
+    return withDeadline(WWW_FETCH_TIMEOUT_MS, async signal => {
         const url = `https://www.reddit.com${path}`
-        const { response, blockPage, otherMode } = await fetchForScan(url, controller.signal, secondTryMode)
+        const { response, blockPage, otherMode } = await fetchForScan(url, signal, secondTryMode)
         // Reddit's logout leaves a short cookie of the login's name, so holding one
         // settles nothing, and no wait helps. Its answers to the login check do. A
         // block page with a second try to come says nothing yet.
@@ -490,7 +488,5 @@ export const readWithLogin = async (path: string, secondTryMode?: number) => {
             otherMode,
             text: response.ok ? await response.text() : '',
         }
-    } finally {
-        clearTimeout(timer)
-    }
+    })
 }

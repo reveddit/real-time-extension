@@ -70,16 +70,22 @@ const REDDIT_HTML_FETCH_TIMEOUT_MS = 15000
 // fetch() never times out on its own; a stalled old.reddit response would hang
 // the pending-post loop indefinitely (a "stuck scanning" cause). Abort after a
 // bounded time so the loop always makes progress.
-export const fetchWithTimeout = async (
-    url: string,
-    options: Parameters<typeof fetch>[1] = {},
-    timeoutMs: number = REDDIT_HTML_FETCH_TIMEOUT_MS,
-): Promise<Response> => {
+// Runs a request under a deadline: its signal aborts after ms, and the timer
+// ends when run does. Whatever run awaits is inside the deadline, so a caller
+// that reads the body in run has the body under it too; this one returns the
+// Response, so its deadline stops at the headers.
+export const withDeadline = async <T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const timer = setTimeout(() => controller.abort(), ms)
     try {
-        return await fetch(url, { ...options, signal: controller.signal })
+        return await run(controller.signal)
     } finally {
         clearTimeout(timer)
     }
 }
+
+export const fetchWithTimeout = (
+    url: string,
+    options: Parameters<typeof fetch>[1] = {},
+    timeoutMs: number = REDDIT_HTML_FETCH_TIMEOUT_MS,
+): Promise<Response> => withDeadline(timeoutMs, signal => fetch(url, { ...options, signal }))
