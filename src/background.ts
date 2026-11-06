@@ -331,17 +331,19 @@ async function recoverIfDegraded() {
             lastMeRecoverTs = Date.now()
         })
 }
-// Keep stored Reddit cookies up-to-date automatically
+// Keep stored Reddit cookies up-to-date automatically. If signed out or the
+// login check failed, try to recover by fetching the logged-in user (throttled).
+const storeCookiesThenRecover = () =>
+    storeRedditCookies().then(() => {
+        chrome.storage.local.get(['error_status'], result => {
+            if (result && isSettledByLogin(result.error_status)) {
+                recoverIfDegraded()
+            }
+        })
+    })
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === 'complete' && tab && tab.url && tab.url.match(/^https?:\/\/[^/]*\.reddit\.com\//)) {
-        storeRedditCookies().then(() => {
-            // If signed out or the login check failed, try to recover by fetching the logged-in user (throttled)
-            chrome.storage.local.get(['error_status'], result => {
-                if (result && isSettledByLogin(result.error_status)) {
-                    recoverIfDegraded()
-                }
-            })
-        })
+        storeCookiesThenRecover()
     }
 })
 
@@ -357,14 +359,7 @@ chrome.cookies.onChanged.addListener(changeInfo => {
                 }
                 return
             }
-            storeRedditCookies().then(() => {
-                // If signed out or the login check failed, try to recover as soon as cookies change (throttled)
-                chrome.storage.local.get(['error_status'], result => {
-                    if (result && isSettledByLogin(result.error_status)) {
-                        recoverIfDegraded()
-                    }
-                })
-            })
+            storeCookiesThenRecover()
         })
     }
 })
@@ -574,11 +569,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         }
         lastManualCheckTs = now
         dlog('ui', '[reveddit] manual check requested from options page')
-        try {
-            checkForChanges(false, { bypassBackoff: true })
-        } catch (e: any) {
-            dlog('ui', '[reveddit] manual check failed to start:', String(e?.message || e))
-        }
+        checkForChanges(false, { bypassBackoff: true })
         sendResponse({ started: true })
         return true
     } else if (request.action === 'try-reconnect') {
@@ -603,27 +594,17 @@ function tryReconnect(sendResponse: (response: any) => void) {
             const user = detail.user
             if (user) {
                 chrome.storage.local.set({ last_logged_in_user: user })
-                // Subscribe the user (if not already subscribed)
-                subscribeUser(
-                    user,
-                    () => {
-                        // Trigger immediate lookup (forced: the user clicked
-                        // Connect and expects a check now)
-                        triggerImmediateLookupOnce(user, true)
-                        chrome.storage.local.remove('error_status', () => {
-                            updateBadgeUnseenCount()
-                            sendResponse({ success: true, user })
-                        })
-                    },
-                    () => {
-                        // Already subscribed - still trigger lookup and clear error
-                        triggerImmediateLookupOnce(user, true)
-                        chrome.storage.local.remove('error_status', () => {
-                            updateBadgeUnseenCount()
-                            sendResponse({ success: true, user })
-                        })
-                    },
-                )
+                // Trigger immediate lookup (forced: the user clicked Connect and
+                // expects a check now) and clear the error, whether the user was
+                // just subscribed or already was
+                const done = () => {
+                    triggerImmediateLookupOnce(user, true)
+                    chrome.storage.local.remove('error_status', () => {
+                        updateBadgeUnseenCount()
+                        sendResponse({ success: true, user })
+                    })
+                }
+                subscribeUser(user, done, done)
             } else {
                 // indeterminate: reddit did not answer the probe (challenge,
                 // block, 429), which is not the same as being logged out.
@@ -882,15 +863,10 @@ chrome.runtime.onStartup.addListener(() => {
         if (!result.last_logged_in_user) {
             getLoggedinUser().then((user: any) => {
                 if (user) {
-                    subscribeUser(
-                        user,
-                        () => {
-                            chrome.storage.local.remove('error_status', () => updateBadgeUnseenCount())
-                        },
-                        () => {
-                            chrome.storage.local.remove('error_status', () => updateBadgeUnseenCount())
-                        },
-                    )
+                    const done = () => {
+                        chrome.storage.local.remove('error_status', () => updateBadgeUnseenCount())
+                    }
+                    subscribeUser(user, done, done)
                 } else {
                     setWarningBadge('needs_user')
                 }
@@ -966,11 +942,7 @@ function triggerImmediateLookupOnce(user: string, force = false) {
             lookupMap[user] = true
             chrome.storage.sync.set({ user_initial_lookup_done: lookupMap }, () => {
                 // Run a full check which includes logged-in user
-                try {
-                    checkForChanges()
-                } catch (e) {
-                    console.log('Immediate lookup failed to start:', e)
-                }
+                checkForChanges()
             })
         }
     })
