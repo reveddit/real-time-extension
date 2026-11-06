@@ -4,9 +4,10 @@ import styled from '@emotion/styled'
 import { getAllChanges, getItemFromLocalStorage, getPendingPostQueueSize, clearPendingPostQueue, getNotificationLog, NotificationLogEntry } from './storage'
 import { ChangeForStorage, LocalStorageItem, getPrettyDate, getPrettyTimeLength, isComment } from './common'
 import { AppGlobal } from './ui/global'
-import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueLink, MutedLink, Author, Subreddit, PostTitle, MdBody, MessageBanner, MiniSpinner } from './ui/components'
+import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueLink, MutedLink, Author, Subreddit, PostTitle, MdBody, MessageBanner, MiniSpinner, Page } from './ui/components'
 import { tokens } from './ui/tokens'
 import { markdownToHTML } from './ui/markdown'
+import { redditItemUrl } from './ui/links'
 
 const searchParams = new URLSearchParams(window.location.search)
 const VALID_FILTERS = ['removed', 'deleted', 'approved', 'locked', 'unlocked', 'edited'] as const
@@ -47,12 +48,6 @@ const BannerActions = styled.div`
   align-items: center;
   margin-top: ${tokens.space.md};
   flex-wrap: wrap;
-`
-
-const Page = styled.div`
-  max-width: 820px;
-  margin: 0 auto;
-  padding: ${tokens.space.xl} ${tokens.space.lg};
 `
 
 const PageHeader = styled.div`
@@ -332,15 +327,12 @@ function History() {
           let needsResolve = false
           if (isComment(id!)) {
             if (postId) {
-              const shortPost = postId.substring(3)
-              const shortComment = id!.substring(3)
-              href = `https://www.reddit.com/comments/${shortPost}/-/${shortComment}?context=3`
+              href = redditItemUrl(id!, postId)
             } else {
               needsResolve = true
             }
           } else {
-            const shortPost = id!.substring(3)
-            href = `https://www.reddit.com/comments/${shortPost}`
+            href = redditItemUrl(id!)
           }
 
           return {
@@ -428,9 +420,7 @@ function History() {
         }
         const linkId = data && (data.link_id || (data.parent_id?.substr(0, 3) === 't3_' ? data.parent_id : null))
         if (linkId?.substr(0, 3) === 't3_') {
-          const shortPost = linkId.substring(3)
-          const shortComment = id.substring(3)
-          window.open(`https://www.reddit.com/comments/${shortPost}/-/${shortComment}?context=3`, '_blank')
+          window.open(redditItemUrl(id, linkId), '_blank')
         } else {
           window.open(apiPageUrl, '_blank')
         }

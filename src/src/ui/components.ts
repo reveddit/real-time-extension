@@ -292,3 +292,9 @@ export const PostTitle = styled.h3`
 export const MdBody = styled.div`
     font-size: 0.95em;
 `
+
+export const Page = styled.div`
+    max-width: 820px;
+    margin: 0 auto;
+    padding: ${tokens.space.xl} ${tokens.space.lg};
+`

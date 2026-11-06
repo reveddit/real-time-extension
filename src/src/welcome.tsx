@@ -78,6 +78,13 @@ const Footer = styled.div`
   border-top: 1px solid var(--border);
 `
 
+function stopPolling(timer: { current: number | null }) {
+  if (timer.current !== null) {
+    window.clearInterval(timer.current)
+    timer.current = null
+  }
+}
+
 function Welcome() {
   const [statusMessage, setStatusMessage] = useState('Checking Reddit connection...')
   const [statusType, setStatusType] = useState<'checking' | 'success' | 'error'>('checking')
@@ -107,10 +114,7 @@ function Welcome() {
           setStatusMessage(`Connected as ${user}! Redirecting...`)
           setStatusType('success')
           setShowInstructions(false)
-          if (pollTimer.current !== null) {
-            window.clearInterval(pollTimer.current)
-            pollTimer.current = null
-          }
+          stopPolling(pollTimer)
 
           const redirect = () => {
             setTimeout(() => {
@@ -158,10 +162,7 @@ function Welcome() {
     const startedAt = Date.now()
     pollTimer.current = window.setInterval(() => {
       if (succeeded) {
-        if (pollTimer.current !== null) {
-          window.clearInterval(pollTimer.current)
-          pollTimer.current = null
-        }
+        stopPolling(pollTimer)
         return
       }
       const elapsed = Date.now() - startedAt
@@ -170,10 +171,7 @@ function Welcome() {
       checkConnection()
     }, 2000)
     return () => {
-      if (pollTimer.current !== null) {
-        window.clearInterval(pollTimer.current)
-        pollTimer.current = null
-      }
+      stopPolling(pollTimer)
     }
   }, [checkConnection, succeeded])
 

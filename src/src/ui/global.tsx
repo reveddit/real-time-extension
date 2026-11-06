@@ -5,14 +5,14 @@ import { globalTokens, globalBase, globalMarkdown } from './tokens'
 export const THEME_STORAGE_KEY = 'ui_theme'
 export type ThemeMode = 'auto' | 'light' | 'dark'
 
+export function resolveTheme(mode: ThemeMode): 'light' | 'dark' {
+  return mode === 'auto'
+    ? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    : mode
+}
+
 function applyTheme(mode: ThemeMode) {
-  const resolved =
-    mode === 'auto'
-      ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
-          ? 'light'
-          : 'dark')
-      : mode
-  document.documentElement.setAttribute('data-theme', resolved)
+  document.documentElement.setAttribute('data-theme', resolveTheme(mode))
 }
 
 export function AppGlobal() {

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification, getTestNotificationMessage } from './common'
-import { AppGlobal, setThemeMode, THEME_STORAGE_KEY } from './ui/global'
+import { AppGlobal, setThemeMode, resolveTheme, THEME_STORAGE_KEY } from './ui/global'
 import { ActionBtn, SecondaryActionBtn, MessageBanner, MiniSpinner, Card } from './ui/components'
 import { DiagStatus, formatDiagStatus } from './diag-status'
 import { tokens } from './ui/tokens'
@@ -507,11 +507,7 @@ function Popup() {
 
   useEffect(() => {
     chrome.storage.local.get([THEME_STORAGE_KEY], result => {
-      const mode = result[THEME_STORAGE_KEY] || 'auto'
-      const resolved = mode === 'auto'
-        ? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
-        : mode
-      setTheme(resolved)
+      setTheme(resolveTheme(result[THEME_STORAGE_KEY] || 'auto'))
     })
   }, [])
 

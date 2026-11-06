@@ -4,19 +4,14 @@ import styled from '@emotion/styled'
 import { getItemFromLocalStorage, unsubscribeId, getIDs_thing } from './storage'
 import { getPrettyDate, isComment, sortDict_by_numberValuedAttribute, LocalStorageItem } from './common'
 import { AppGlobal } from './ui/global'
+import { redditItemUrl } from './ui/links'
 import {
   Card, CardHeader, CardMeta, CardBody, CardActions,
   BlueLink, MutedLink, Button,
-  Subreddit, PostTitle, MdBody,
+  Subreddit, PostTitle, MdBody, Page,
 } from './ui/components'
 import { tokens } from './ui/tokens'
 import { markdownToHTML } from './ui/markdown'
-
-const Page = styled.div`
-  max-width: 820px;
-  margin: 0 auto;
-  padding: ${tokens.space.xl} ${tokens.space.lg};
-`
 
 const PageHeader = styled.div`
   margin-bottom: ${tokens.space.lg};
@@ -51,15 +46,9 @@ interface SubscriptionRow {
 
 function buildRedditHref(id: string, isCommentItem: boolean, postId?: string): string {
   if (isCommentItem) {
-    if (postId) {
-      const shortPost = postId.substring(3)
-      const shortComment = id.substring(3)
-      return `https://www.reddit.com/comments/${shortPost}/-/${shortComment}?context=3`
-    }
-    return `https://www.reveddit.com/info?id=${encodeURIComponent(id)}`
+    return postId ? redditItemUrl(id, postId) : `https://www.reveddit.com/info?id=${encodeURIComponent(id)}`
   }
-  const shortPost = id.substring(3)
-  return `https://www.reddit.com/comments/${shortPost}`
+  return redditItemUrl(id)
 }
 
 function Other() {
