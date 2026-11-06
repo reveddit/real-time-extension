@@ -108,3 +108,30 @@ export const wwwRouteOrder = (remote: WwwRouteOrderOption = {}): WwwRoute[] => {
     }
     return kept
 }
+
+// Options every public-view (logged-out) www fetch starts from, whichever
+// route makes it. credentials MUST be omitted: rehydrateStoredRedditCookies()
+// can put the user's real session in the browser jar, and sending it would turn
+// this "public" view into the authenticated view — removals would never be
+// detected.
+export const PUBLIC_VIEW_FETCH_INIT: RequestInit = {
+    credentials: 'omit',
+    headers: { 'Accept-Language': 'en' },
+}
+
+// A route's cache mode on top of the public-view options ('default' adds none)
+export const publicViewInit = (cache: WwwRouteCache = 'default'): RequestInit =>
+    cache === 'default' ? PUBLIC_VIEW_FETCH_INIT : { ...PUBLIC_VIEW_FETCH_INIT, cache }
+
+// Firefox's (MV2) content scripts get a privileged fetch(): reddit sees it as an
+// extension request, identical on the wire to a background fetch (tabId -1, no
+// Referer), so it gets the JS challenge too, and the solved request got the 403
+// block page. content.fetch is the page's own fetch, which acts like a Chrome
+// content script's: same-origin with the tab, Referer set, no challenge
+// (verified 2026-10-17). Chrome has no `content` global and keeps its fetch.
+declare const content: { fetch?: typeof fetch } | undefined
+
+export const pageContextFetch = (url: string, init: RequestInit): Promise<Response> => {
+    const page = typeof content !== 'undefined' && content && typeof content.fetch === 'function' ? content : null
+    return page ? page.fetch!(url, init) : fetch(url, init)
+}

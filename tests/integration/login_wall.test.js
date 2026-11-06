@@ -14,15 +14,14 @@ import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webexte
 import {
     getWwwHtmlFetcher,
     getLoginWallLine,
-    lookupItemsByID,
-    lookupWarningToKeep,
-    verifyFeedAbsentItems,
-    _legacyLookups,
     _wwwRouteTiming,
     WWW_ROUTE_STATE_KEY,
     LOGIN_WALL_REST_MS,
-    LOGIN_REQUIRED,
-} from '../../src/src/requests'
+} from '../../src/src/www-fetcher'
+import { lookupItemsByID } from '../../src/src/requests'
+import { lookupWarningToKeep, LOGIN_REQUIRED } from '../../src/src/lookup-status'
+import { verifyFeedAbsentItems } from '../../src/src/page-verify'
+import { _legacyLookups } from '../../src/src/legacy-lookup'
 import {
     loginWallLanding,
     sanitizeLoginWallConfig,

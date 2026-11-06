@@ -80,3 +80,39 @@ export const fetchForScan = async (url: string, signal: AbortSignal, secondTryMo
     const retry = blockPage && !isSecondTry && Date.now() >= _loggedInFetchState.doubleBlockUntil
     return { response, blockPage, otherMode: retry ? (mode + 1) % SCAN_CACHE_MODES.length : undefined }
 }
+
+// A fetch, tab message or injected script that never settles (a stalled
+// response, a frozen tab) is given up on, so one stall can't hang a lookup
+export const WWW_FETCH_TIMEOUT_MS = 20 * 1000
+
+// A JSON read with the user's login from the background, through the bridge's
+// fetch (logged-in-fetch.ts: the cache mode that gets past reddit's edge, one
+// retry in the other mode on its block page). Timed out like the public-view
+// fetches, since the monitoring cycle waits for it.
+interface LoggedInJson {
+    ok: boolean
+    status: number
+    // the answer was the edge's block page; refused: in both cache modes
+    blocked: boolean
+    refused: boolean
+    json?: any
+}
+
+export const fetchJsonLoggedIn = async (url: string): Promise<LoggedInJson> => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
+    try {
+        const { response, blockPage, retried } = await fetchLoggedIn(url, { signal: controller.signal })
+        if (blockPage) {
+            return { ok: false, status: 403, blocked: true, refused: retried }
+        }
+        if (!response.ok) {
+            return { ok: false, status: response.status, blocked: false, refused: false }
+        }
+        return { ok: true, status: response.status, blocked: false, refused: false, json: await response.json() }
+    } catch {
+        return { ok: false, status: 0, blocked: false, refused: false }
+    } finally {
+        clearTimeout(timer)
+    }
+}

@@ -9,27 +9,26 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
 
+import { lookupItemsByID, lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
+import { _legacyLookups, isLegacyResting, noteLegacyRefusal } from '../../src/src/legacy-lookup'
+import { _wwwRouteTiming } from '../../src/src/www-fetcher'
 import {
-    lookupItemsByID,
-    lookupItemsByID_fromPublicProfile,
-    _legacyLookups,
-    _wwwRouteTiming,
     isPublicProfileUnavailable,
-    isLegacyResting,
-    noteLegacyRefusal,
-    CAPABILITY_REST_KEY,
+    isProfilePaginationShort,
+    PUBLIC_VIEW_UNCHECKED_KEY,
+    formatPublicViewUnchecked,
+    getPublicViewUncheckedLine,
+} from '../../src/src/lookup-status'
+import { CAPABILITY_REST_KEY } from '../../src/src/news'
+import {
     CAPABILITY_MAX_REST_MS,
     CAPABILITY_FIRST_REST_MS,
     capabilityRestMs,
     isCapabilityResting,
     noteCapabilityRefused,
     noteCapabilityWorked,
-    _followedTiming,
-    isProfilePaginationShort,
-    PUBLIC_VIEW_UNCHECKED_KEY,
-    formatPublicViewUnchecked,
-    getPublicViewUncheckedLine,
-} from '../../src/src/requests'
+} from '../../src/src/request-gates'
+import { _followedTiming } from '../../src/src/followed-lookup'
 import { getDiagEntries } from '../mocks/diag-entries.js'
 import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
 

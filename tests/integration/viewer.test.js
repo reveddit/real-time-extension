@@ -36,16 +36,16 @@ import {
     VIEWER_LOGIN_URL,
     VIEWER_RULE_ID,
 } from '../../src/src/viewer'
+import { storeRedditCookies } from '../../src/src/reddit-cookies'
+import { lookupItemsByID } from '../../src/src/requests'
+import { _viewerTiming } from '../../src/src/viewer-lookup'
 import {
-    storeRedditCookies,
-    lookupItemsByID,
-    _viewerTiming,
     lookupWarningToKeep,
     ABSENT_VERIFY_UNAVAILABLE,
     VIEWER_SIGNED_OUT,
     VIEWER_UNAVAILABLE,
     PROFILE_PUBLICLY_EMPTY,
-} from '../../src/src/requests'
+} from '../../src/src/lookup-status'
 import { checkForChanges } from '../../src/src/monitoring'
 import { cookie, jar, cookieKey as key, fill, cookiesApi } from '../mocks/cookies.js'
 

@@ -62,18 +62,14 @@ import {
     getObjectNamesForThing,
     getPublicLiveKey,
 } from './storage'
-import {
-    flagIfRateLimited,
-    RECENT_RATE_LIMIT_WINDOW_MS,
-    hasRedditLoginCookie,
-    isPublicProfileUnavailable,
-} from './requests'
+import { flagIfRateLimited, RECENT_RATE_LIMIT_WINDOW_MS } from './request-gates'
+import { isPublicProfileUnavailable } from './lookup-status'
 import { isCycleInFlight } from './monitoring'
 import { isRemovedInModView, isViewerBlockedItem } from './common'
 import { dlog } from './diaglog'
 import { getPublicModlogsFeed } from './bridge-config'
 import { fetchLoggedIn } from './logged-in-fetch'
-import { isViewerConnecting } from './viewer'
+import { isViewerConnecting, hasRedditLoginCookie } from './viewer'
 
 const www_reddit = 'https://www.reddit.com'
 

@@ -11,23 +11,20 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
+import { verifyFeedAbsentItems } from '../../src/src/page-verify'
 import {
-    verifyFeedAbsentItems,
     getWwwHtmlFetcher,
     _fetchViaExecuteScript,
-    _legacyLookups,
-    ABSENT_VERIFY_UNAVAILABLE,
-    PUBLIC_VIEW_FETCH_INIT,
-    publicViewInit,
     WWW_ROUTE_STATE_KEY,
     WWW_HARD_REFUSAL_MS,
     WWW_SOFT_REFUSAL_MS,
-    WWW_FETCH_TIMEOUT_MS,
     _wwwRouteTiming,
     wwwPageKind,
-    pageContextFetch,
-    isLegacyResting,
-} from '../../src/src/requests'
+} from '../../src/src/www-fetcher'
+import { _legacyLookups, isLegacyResting } from '../../src/src/legacy-lookup'
+import { ABSENT_VERIFY_UNAVAILABLE } from '../../src/src/lookup-status'
+import { PUBLIC_VIEW_FETCH_INIT, publicViewInit, pageContextFetch } from '../../src/src/www-routes'
+import { WWW_FETCH_TIMEOUT_MS } from '../../src/src/logged-in-fetch'
 import { isLegacyPageUrl } from '../../src/src/parse_html/common'
 
 const CACHE_KEY = 'www_absent_item_verdicts'

@@ -9,19 +9,11 @@ import {
     showsWhatsNew,
 } from './src/common'
 import { checkForChanges } from './src/monitoring'
-import {
-    lookupItemsByID,
-    getLoggedinUser,
-    getLoggedinUserDetailed,
-    getAuth,
-    storeRedditCookies,
-    readWithLogin,
-    lookupItemsByID_fromPublicProfile,
-    getPublicViewUncheckedLine,
-    getLoginWallLine,
-    isSettledByLogin,
-    whoIsSignedIn,
-} from './src/requests'
+import { lookupItemsByID, readWithLogin, lookupItemsByID_fromPublicProfile } from './src/requests'
+import { getLoggedinUser, getLoggedinUserDetailed, getAuth, isSettledByLogin, whoIsSignedIn } from './src/reddit-auth'
+import { storeRedditCookies } from './src/reddit-cookies'
+import { getPublicViewUncheckedLine } from './src/lookup-status'
+import { getLoginWallLine } from './src/www-fetcher'
 import {
     initStorage,
     INTERVAL_DEFAULT,

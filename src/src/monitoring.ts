@@ -1,30 +1,32 @@
+import { lookupItemsByID } from './requests'
 import {
-    lookupItemsByID,
     lookupItemsByLoggedInUserWithAuth,
     getAuth,
     getLoggedinUserDetailed,
     recordLoginDetectOutcome,
-    recordCheckOutcome,
     isLoginRefusal,
     LoginDetectResult,
-    storeRedditCookies,
-    isLegacyOff,
+    whoIsSignedIn,
+} from './reddit-auth'
+import {
+    recordCheckOutcome,
+    lookupWarningToKeep,
+    publicViewUncheckedReason,
+    postRemovedByCategory,
+} from './lookup-status'
+import { storeRedditCookies } from './reddit-cookies'
+import { isLegacyOff } from './legacy-lookup'
+import {
     isCapabilityResting,
     noteCapabilityRefused,
     noteCapabilityWorked,
     noteRateLimited,
     isRateLimitedNow,
-    readThreadItemLoggedIn,
-    FOLLOWED_POST_IDS_KEY,
     flagIfRateLimited,
-    lookupWarningToKeep,
-    whoIsSignedIn,
-    hasRedditLoginCookie,
-    publicViewUncheckedReason,
-    postRemovedByCategory,
-} from './requests'
+} from './request-gates'
+import { readThreadItemLoggedIn, FOLLOWED_POST_IDS_KEY } from './followed-lookup'
 import { dlog } from './diaglog'
-import { isViewerConnecting, recoverViewerConnect } from './viewer'
+import { isViewerConnecting, recoverViewerConnect, hasRedditLoginCookie } from './viewer'
 import {
     addLocalStorageItems,
     getLocalStorageItems,

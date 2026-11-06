@@ -19,7 +19,8 @@ vi.mock('../../src/src/parse_html/old', () => ({
 }))
 
 import { _processPendingPosts, _pendingPostTiming } from '../../src/src/monitoring'
-import { isCapabilityResting, CAPABILITY_REST_KEY } from '../../src/src/requests'
+import { isCapabilityResting } from '../../src/src/request-gates'
+import { CAPABILITY_REST_KEY } from '../../src/src/news'
 import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
 import { getRateLimitBackoffRemainingMs } from '../../src/src/storage'
 

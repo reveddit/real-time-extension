@@ -12,7 +12,9 @@ vi.mock('@worker-tools/html-rewriter', () => import('@worker-tools/html-rewriter
 
 import { getItemsById_fromOldHTML, getPost_fromOld } from '../../src/src/parse_html/old'
 import { LEGACY_REFUSED_ERROR } from '../../src/src/parse_html/common'
-import { CAPABILITY_REST_KEY, isLegacyResting, lookupItemsByID, noteLegacyRefusal } from '../../src/src/requests'
+import { CAPABILITY_REST_KEY } from '../../src/src/news'
+import { isLegacyResting, noteLegacyRefusal } from '../../src/src/legacy-lookup'
+import { lookupItemsByID } from '../../src/src/requests'
 
 // The shape reddit answers every legacy page with since 2026-10-28 (trimmed)
 const challenge =

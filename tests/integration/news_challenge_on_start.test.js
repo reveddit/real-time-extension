@@ -6,7 +6,7 @@ import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfil
 
 import { applyRemoteConfig, NEWS_CACHE_KEY } from '../../src/src/news'
 import { getChallengeConfig, setChallengeConfig, DEFAULT_CHALLENGE_CONFIG } from '../../src/src/challenge-config'
-import { flagIfRateLimited } from '../../src/src/requests'
+import { flagIfRateLimited } from '../../src/src/request-gates'
 
 // The worker re-applies the cached feed's solver inputs on every start
 // (background.ts module scope), so a token rename fixed remotely survives the

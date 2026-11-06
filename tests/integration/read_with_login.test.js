@@ -13,7 +13,7 @@ import { readWithLogin, _scanTurn } from '../../src/src/requests'
 import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
 import { NEWS_CACHE_KEY, MECHANISM_SCAN_FEEDS } from '../../src/src/news'
-import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/requests'
+import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates'
 
 const PATH = '/user/alice/comments/.rss?sort=new&limit=100'
 const answer = (status, type = 'application/atom+xml', body = '<feed/>') =>

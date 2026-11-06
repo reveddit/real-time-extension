@@ -19,10 +19,10 @@ import {
     recordLoginDetectOutcome,
     isSettledByLogin,
     LOGGED_IN_VIEW_UNAVAILABLE,
-    CHECKS_FAILING,
-    computeAbsentVerifyBudget,
-    RECENT_RATE_LIMIT_WINDOW_MS,
-} from '../../src/src/requests'
+} from '../../src/src/reddit-auth'
+import { CHECKS_FAILING } from '../../src/src/lookup-status'
+import { computeAbsentVerifyBudget } from '../../src/src/page-verify'
+import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates'
 import { checkForChanges } from '../../src/src/monitoring'
 import { getUserInit } from '../../src/src/storage'
 

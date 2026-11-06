@@ -21,7 +21,8 @@ import {
     handleBridgeFetch,
 } from '../../src/src/bridge.ts'
 import { _loggedInFetchState } from '../../src/src/logged-in-fetch.ts'
-import { RECENT_RATE_LIMIT_WINDOW_MS, PUBLIC_PROFILE_UNAVAILABLE_KEY } from '../../src/src/requests.ts'
+import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates.ts'
+import { PUBLIC_PROFILE_UNAVAILABLE_KEY } from '../../src/src/lookup-status.ts'
 
 describe('validateBridgeUrl', () => {
     it('accepts the endpoints the website uses', () => {

@@ -1,7 +1,7 @@
 import { getSubscribedUsers_withSeenAndUnseenIDs } from './storage'
 import { redditModifications } from './content-reddit'
 import { revdditModifications } from './content-revddit'
-import { pageContextFetch, publicViewInit } from './requests'
+import { pageContextFetch, publicViewInit } from './www-routes'
 import { isWwwRouteCache } from './www-routes'
 import browser from 'webextension-polyfill'
 ;(function () {

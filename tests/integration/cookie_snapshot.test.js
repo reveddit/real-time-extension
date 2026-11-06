@@ -12,7 +12,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { cookie, jar, fill, find, cookiesApi, COOKIE_EXPIRES as EXPIRES } from '../mocks/cookies.js'
 
-import { storeRedditCookies, rehydrateStoredRedditCookies, lookupItemsByUser } from '../../src/src/requests'
+import { storeRedditCookies, rehydrateStoredRedditCookies } from '../../src/src/reddit-cookies'
+import { lookupItemsByUser } from '../../src/src/reddit-auth'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
 
 const CSRF = cookie('csrf_token', 'C1', {
