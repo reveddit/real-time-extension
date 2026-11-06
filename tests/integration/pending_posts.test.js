@@ -10,6 +10,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import { json } from '../mocks/responses.js'
 
 // The legacy page reader runs HTMLRewriter (WASM), which can't load here
 const legacyPages = {}
@@ -25,12 +26,6 @@ import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
 import { getRateLimitBackoffRemainingMs } from '../../src/src/storage'
 
 const page = id => `/comments/${id.slice(3)}/`
-const json = (status, data, type = 'application/json; charset=UTF-8') => ({
-    ok: status >= 200 && status < 300,
-    status,
-    headers: { get: name => (name.toLowerCase() === 'content-type' ? type : null) },
-    json: async () => data,
-})
 const blockPage = () => json(403, null, 'text/html; charset=utf-8')
 
 describe('the pending-post queue', () => {

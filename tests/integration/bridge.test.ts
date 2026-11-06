@@ -8,6 +8,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import { json } from '../mocks/responses.js'
 
 // A monitoring cycle in flight, as the bridge sees it
 let cycleBusy = false
@@ -261,12 +262,6 @@ describe('toPublicView', () => {
 describe('handleBridgeFetch', () => {
     const URL_INFO = 'https://www.reddit.com/api/info.json?id=t1_a,t1_b'
     const savedCookies = (browserMock as any).cookies
-    const json = (status: number, data: any, contentType = 'application/json; charset=UTF-8') => ({
-        ok: status >= 200 && status < 300,
-        status,
-        headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null) },
-        json: async () => data,
-    })
     const listingOf = (...items: any[]) => ({
         kind: 'Listing',
         data: { children: items.map(([name, author]) => ({ kind: 't1', data: { name, author, body: 'text' } })) },
@@ -416,12 +411,6 @@ describe('handleBridgeFetch', () => {
 // Fixes from the 0.0.5.27 review (2026-10-22), applied 2026-10-24
 describe('0.0.5.27 review fixes: the bridge', () => {
     const FEED = '7e9b27126097f51ae6c9cd5b049af34891da6ba6'
-    const json = (status: number, data: any, contentType = 'application/json; charset=UTF-8') => ({
-        ok: status >= 200 && status < 300,
-        status,
-        headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null) },
-        json: async () => data,
-    })
     const savedCookies = (browserMock as any).cookies
     beforeEach(() => {
         __resetStorage({}, { last_logged_in_user: 'alice' })

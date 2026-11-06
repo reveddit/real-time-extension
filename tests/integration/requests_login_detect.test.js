@@ -10,6 +10,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
+import { res } from '../mocks/responses.js'
 import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
 
 import {
@@ -25,12 +26,6 @@ import { computeAbsentVerifyBudget } from '../../src/src/page-verify'
 import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates'
 import { checkForChanges } from '../../src/src/monitoring'
 import { getUserInit } from '../../src/src/storage'
-
-const res = (status, body) => ({
-    ok: status >= 200 && status < 300,
-    status,
-    text: async () => body,
-})
 
 const USER_JSON = JSON.stringify({ data: { name: 'alice' } })
 

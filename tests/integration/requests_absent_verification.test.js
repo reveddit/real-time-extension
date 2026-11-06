@@ -8,6 +8,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
+import { json as jsonResponse } from '../mocks/responses.js'
 
 import { lookupItemsByID, lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
 import { _legacyLookups, isLegacyResting, noteLegacyRefusal } from '../../src/src/legacy-lookup'
@@ -39,6 +40,16 @@ const stubLegacy = (commentsById, postByPath) => {
     _legacyLookups.commentsById = commentsById || (async () => [])
     _legacyLookups.postByPath = postByPath || (async () => ({ error: 'stubbed' }))
 }
+
+beforeEach(() => {
+    __resetStorage()
+    stubLegacy()
+})
+const savedQuery = browserMock.tabs.query
+afterEach(() => {
+    Object.assign(_legacyLookups, originalLegacyLookups)
+    browserMock.tabs.query = savedQuery
+})
 
 const USER = 'testuser'
 
@@ -129,13 +140,6 @@ const defaultRoutes = () => [
 ]
 
 describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
-    beforeEach(() => {
-        __resetStorage()
-        stubLegacy()
-    })
-    afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
-    })
 
     it('keeps a profile-hidden comment live and flags a page-absent comment removed', async () => {
         installFetch(defaultRoutes())
@@ -495,10 +499,6 @@ describe('absentUnverifiedIsUnknown remote option', () => {
     const cacheWith = mechanisms => ({
         news_cache: { feed: { messages: [], options: { mechanisms } }, lastFetched: 1 },
     })
-    beforeEach(() => stubLegacy())
-    afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
-    })
 
     it('downgrades a scaffold-only page to unknown while a live page still counts', async () => {
         __resetStorage({}, cacheWith({ absentUnverifiedIsUnknown: 'on' }))
@@ -530,13 +530,6 @@ describe('publicly empty profile versus NSFW-only accounts', () => {
         [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
         [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
     ]
-    beforeEach(() => {
-        __resetStorage()
-        stubLegacy()
-    })
-    afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
-    })
 
     it('still flags a shadowban when an item could have been public', async () => {
         installFetch(emptyRoutes())
@@ -634,13 +627,6 @@ describe('lookup failure reasons', () => {
     const blockAll = () => {
         globalThis.fetch = async () => ({ ok: false, status: 403, text: async () => 'BLOCK' })
     }
-    beforeEach(() => {
-        __resetStorage()
-        stubLegacy()
-    })
-    afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
-    })
 
     it('the failure streak line says why the public view failed', async () => {
         blockAll()
@@ -669,13 +655,6 @@ describe('lookup failure reasons', () => {
 // Reddit refused the legacy endpoints in every cache mode on 2026-10-21, and
 // each failed public-view lookup still sent them two refused requests
 describe('legacy refusal memory', () => {
-    beforeEach(() => {
-        __resetStorage()
-        stubLegacy()
-    })
-    afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
-    })
 
     it('after a real 403, the legacy listing rests instead of being refused again each cycle', async () => {
         const calls = []
@@ -726,15 +705,6 @@ describe('feed-present post verification', () => {
         `<script>const solution = await(async e=>e+e)("ab");</script>` +
         `<form hidden method="GET"><input type="hidden" name="js_challenge" value="1"/>` +
         `<input type="hidden" name="jsc_token" value="tok1"/><input type="hidden" name="jsc_orig_r" value=""/></form>`
-    const savedQuery = browserMock.tabs.query
-    beforeEach(() => {
-        __resetStorage()
-        stubLegacy()
-    })
-    afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
-        browserMock.tabs.query = savedQuery
-    })
 
     it("reads a young post's page at its permalink and solves the challenge", async () => {
         browserMock.tabs.query = async () => [{ id: 7 }]
@@ -811,13 +781,6 @@ describe('feed-present post verification', () => {
 
 // Fixes from the 0.0.5.27 review (2026-10-22), applied 2026-10-24
 describe('0.0.5.27 review fixes: warning streaks and public-live hints', () => {
-    beforeEach(() => {
-        __resetStorage()
-        stubLegacy()
-    })
-    afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
-    })
 
     it('a lookup with nothing absent to verify clears the verification warning streak', async () => {
         __resetStorage({}, { absent_verify_consecutive_failures: 7 })
@@ -884,13 +847,6 @@ describe('0.0.5.27 review fixes: feed-present post verification', () => {
         }
         return pageCalls
     }
-    beforeEach(() => {
-        __resetStorage()
-        stubLegacy()
-    })
-    afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
-    })
 
     it('a 429 on a post page ends the verification loop', async () => {
         const pageCalls = servePosts(() => ({ ok: false, status: 429, text: async () => '' }))
@@ -913,8 +869,6 @@ describe('0.0.5.27 review fixes: feed-present post verification', () => {
 // Methods reddit refuses outright rest longer with each refusal in a row, up to
 // a week, and are tried again after every rest: none is given up for good.
 describe('the escalating rest after a refusal', () => {
-    beforeEach(() => __resetStorage())
-
     it('doubles from 6 hours to a weekly cap', () => {
         const hours = [1, 2, 3, 4, 5, 6, 7, 20].map(n => capabilityRestMs(n) / 3600000)
         expect(hours).toEqual([6, 12, 24, 48, 96, 168, 168, 168])
@@ -948,13 +902,7 @@ describe('followed items while api/info is refused', () => {
     const COMMENT2 = 't1_folc2'
     const NOPOST = 't1_folc3'
     const POSTF = 't3_folp1'
-    const json = (status, data, type = 'application/json; charset=UTF-8') => ({
-        ok: status >= 200 && status < 300,
-        status,
-        headers: { get: name => (name.toLowerCase() === 'content-type' ? type : null) },
-        json: async () => data,
-        text: async () => JSON.stringify(data),
-    })
+    const json = (status, data, type) => ({ ...jsonResponse(status, data, type), text: async () => JSON.stringify(data) })
     const blockPage = () => json(403, null, 'text/html; charset=utf-8')
     const thread = (post, comment) => [
         { kind: 'Listing', data: { children: [{ kind: 't3', data: post }] } },
@@ -989,7 +937,6 @@ describe('followed items while api/info is refused', () => {
             { other_subscriptions: following([COMMENT, COMMENT2, POSTF, NOPOST]) },
             { followed_post_ids: { [COMMENT]: 'p1', [COMMENT2]: 'p2' } },
         )
-        stubLegacy()
         _followedTiming.delayMs = 0
         _loggedInFetchState.preferredCacheMode = 0
         _loggedInFetchState.doubleBlockUntil = 0
@@ -997,7 +944,6 @@ describe('followed items while api/info is refused', () => {
         browserMock.cookies = { get: async ({ name }) => (loggedIn ? { name, value: 'x' } : null) }
     })
     afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
         _followedTiming.delayMs = 700
         browserMock.cookies = savedCookies
     })
@@ -1131,13 +1077,6 @@ describe('a profile that hides its comments from logged-out visitors', () => {
     const hiddenStatePage = type =>
         `<shreddit-feed navigation-session-id="x"><div class="text-body-1">u/${USER} likes to keep their ${type} ` +
         `hidden, but check out their stats to learn more about them.</div></shreddit-feed>`
-    beforeEach(() => {
-        __resetStorage()
-        stubLegacy()
-    })
-    afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
-    })
 
     it("checks each comment on its own page, and doesn't take the hidden tab for a shadowban", async () => {
         const calls = installFetch([
@@ -1226,15 +1165,6 @@ describe('a profile that hides its comments from logged-out visitors', () => {
 describe('0.0.5.27 release review fixes: rate limits, the legacy queue, the public-live set', () => {
     const POSTS = ['t3_young1', 't3_young2']
     const now = () => Math.floor(Date.now() / 1000)
-    const savedQuery = browserMock.tabs.query
-    beforeEach(() => {
-        __resetStorage()
-        stubLegacy()
-    })
-    afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
-        browserMock.tabs.query = savedQuery
-    })
 
     it("a post page's 429 keeps its backoff through the whole lookup, and the absent items wait for it", async () => {
         const pageCalls = []

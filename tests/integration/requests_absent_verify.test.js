@@ -10,6 +10,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import { res } from '../mocks/responses.js'
 
 import { verifyFeedAbsentItems } from '../../src/src/page-verify'
 import {
@@ -38,12 +39,6 @@ const livePage = id =>
     `<shreddit-comment thingId="${id}" author="alice"></shreddit-comment></body></html>`
 
 const meta = ids => Object.fromEntries(ids.map(id => [id, { permalink: `/r/sub/comments/abc/comment/${id}/` }]))
-
-const res = (status, body) => ({
-    ok: status >= 200 && status < 300,
-    status,
-    text: async () => body,
-})
 
 // The news feed's route order (options.www_route_order), ahead of the built-in one
 const routeOrder = routes => {
