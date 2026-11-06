@@ -39,74 +39,56 @@ const isOldDomainCopy = (c: { domain: string }) => /^\.[^.]+\.reddit\.com$/.test
 export const storeRedditCookies = (): Promise<unknown> =>
     isViewerConnecting().then(connecting => (connecting ? false : storeRedditCookiesNow()))
 
-const storeRedditCookiesNow = () => {
-    return new Promise(resolve => {
-        // Only run this in background script context, not in content scripts
-        if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.cookies) {
-            console.log('storeRedditCookies: Not available in this context (content script)')
-            resolve(false)
-            return
+const storeRedditCookiesNow = async () => {
+    // Only run this in background script context, not in content scripts
+    if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.cookies) {
+        console.log('storeRedditCookies: Not available in this context (content script)')
+        return false
+    }
+
+    const tabs = await new Promise<chrome.tabs.Tab[]>(resolve =>
+        chrome.tabs.query({ url: ['*://*.reddit.com/*'] }, resolve),
+    )
+    const hasSupportedTab = tabs.some(tab => {
+        try {
+            const hostname = new URL(tab.url!).hostname
+            return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
+        } catch {
+            return false
         }
-
-        chrome.tabs.query({ url: ['*://*.reddit.com/*'] }, tabs => {
-            const supportedTabs = tabs.filter(tab => {
-                try {
-                    const hostname = new URL(tab.url!).hostname
-                    return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
-                } catch {
-                    return false
-                }
-            })
-
-            if (supportedTabs.length > 0) {
-                const tab = supportedTabs[0]
-                try {
-                    new URL(tab.url!)
-                } catch {
-                    console.log('storeRedditCookies: invalid tab url', tab && tab.url)
-                    resolve(false)
-                    return
-                }
-
-                // Get cookies for the Reddit parent domain so we include domain-scoped and host-only cookies
-                chrome.cookies.getAll({ domain: 'reddit.com' }, cookies => {
-                    const cookieObjects: StoredCookie[] = []
-                    const repaired: StoredCookie[] = []
-                    ;(cookies || [])
-                        .filter(c => !isOldDomainCopy(c))
-                        .forEach(cookie => {
-                            // Save each cookie as it was, expiry and host-only flag
-                            // included, for rehydration. A login left session-only
-                            // gets the expiry its JWT carries, in the browser too
-                            // while that's still ahead.
-                            const stored = toStoredCookie(cookie)
-                            const saved = withLoginExpiry(stored)
-                            if (saved !== stored && !isExpired(saved)) {
-                                repaired.push(saved)
-                            }
-                            cookieObjects.push(saved)
-                        })
-
-                    if (cookieObjects.length > 0) {
-                        repairLogins(repaired).then(() =>
-                            chrome.storage.local.set(
-                                {
-                                    stored_reddit_cookie_objects: cookieObjects,
-                                },
-                                () => {
-                                    resolve(true)
-                                },
-                            ),
-                        )
-                    } else {
-                        resolve(false)
-                    }
-                })
-            } else {
-                resolve(false)
-            }
-        })
     })
+    if (!hasSupportedTab) {
+        return false
+    }
+
+    // Get cookies for the Reddit parent domain so we include domain-scoped and host-only cookies
+    const cookies = await new Promise<chrome.cookies.Cookie[] | undefined>(resolve =>
+        chrome.cookies.getAll({ domain: 'reddit.com' }, resolve),
+    )
+    const cookieObjects: StoredCookie[] = []
+    const repaired: StoredCookie[] = []
+    ;(cookies || [])
+        .filter(c => !isOldDomainCopy(c))
+        .forEach(cookie => {
+            // Save each cookie as it was, expiry and host-only flag
+            // included, for rehydration. A login left session-only
+            // gets the expiry its JWT carries, in the browser too
+            // while that's still ahead.
+            const stored = toStoredCookie(cookie)
+            const saved = withLoginExpiry(stored)
+            if (saved !== stored && !isExpired(saved)) {
+                repaired.push(saved)
+            }
+            cookieObjects.push(saved)
+        })
+
+    if (!cookieObjects.length) {
+        return false
+    }
+    await repairLogins(repaired)
+    return new Promise<boolean>(resolve =>
+        chrome.storage.local.set({ stored_reddit_cookie_objects: cookieObjects }, () => resolve(true)),
+    )
 }
 
 // Puts logins back with the expiry their JWT carries (storeRedditCookiesNow).
@@ -140,35 +122,30 @@ const fromSnapshot = (c: any): StoredCookie =>
         typeof c.hostOnly === 'boolean' ? c : { ...toStoredCookie(c), hostOnly: !String(c.domain).startsWith('.') },
     )
 
-const rehydrateStoredRedditCookiesNow = () => {
-    return new Promise(resolve => {
-        chrome.storage.local.get(['stored_reddit_cookie_objects'], result => {
-            const cookieObjects = result.stored_reddit_cookie_objects
-            if (!Array.isArray(cookieObjects) || !cookieObjects.length) {
-                resolve(false)
-                return
+const rehydrateStoredRedditCookiesNow = async () => {
+    const result: any = await new Promise(resolve =>
+        chrome.storage.local.get(['stored_reddit_cookie_objects'], resolve),
+    )
+    const cookieObjects = result.stored_reddit_cookie_objects
+    if (!Array.isArray(cookieObjects) || !cookieObjects.length) {
+        return false
+    }
+    return browser.cookies
+        .getAll({ domain: 'reddit.com' })
+        .then(async jar => {
+            const held = new Set(jar.map(c => `${c.domain}|${c.path}|${c.name}`))
+            const missing = cookieObjects
+                .filter(c => c && typeof c.name === 'string' && typeof c.domain === 'string')
+                .map(fromSnapshot)
+                .filter(
+                    c => !isOldDomainCopy(c) && !isExpired(c) && !held.has(`${c.domain}|${c.path || '/'}|${c.name}`),
+                )
+            // A sign-in that started since owns the jar
+            if (!missing.length || (await isViewerConnecting())) {
+                return false
             }
-            browser.cookies
-                .getAll({ domain: 'reddit.com' })
-                .then(async jar => {
-                    const held = new Set(jar.map(c => `${c.domain}|${c.path}|${c.name}`))
-                    const missing = cookieObjects
-                        .filter(c => c && typeof c.name === 'string' && typeof c.domain === 'string')
-                        .map(fromSnapshot)
-                        .filter(
-                            c =>
-                                !isOldDomainCopy(c) &&
-                                !isExpired(c) &&
-                                !held.has(`${c.domain}|${c.path || '/'}|${c.name}`),
-                        )
-                    // A sign-in that started since owns the jar
-                    if (!missing.length || (await isViewerConnecting())) {
-                        return false
-                    }
-                    await restoreCookies(missing)
-                    return true
-                })
-                .then(resolve, () => resolve(false))
+            await restoreCookies(missing)
+            return true
         })
-    })
+        .catch(() => false)
 }
