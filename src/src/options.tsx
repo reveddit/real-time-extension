@@ -64,6 +64,17 @@ const Field = styled.div`
 
 const FieldStack = styled.div``
 
+const CheckField = ({ label, checked, onChange }: {
+  label: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) => (
+  <Field>
+    <label>{label}</label>
+    <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} />
+  </Field>
+)
+
 const Hint = styled.div`
   font-size: 0.8em;
   font-weight: normal;
@@ -391,42 +402,14 @@ function Options() {
             <input type="text" value={seenCount} onChange={e => setSeenCount(e.target.value)} />
           </Field>
           {hasClientId && (
-            <Field>
-              <label>monitor quarantined content</label>
-              <input type="checkbox" checked={monitorQuarantined}
-                onChange={e => setMonitorQuarantined(e.target.checked)} />
-            </Field>
+            <CheckField label="monitor quarantined content" checked={monitorQuarantined} onChange={setMonitorQuarantined} />
           )}
-          <Field>
-            <label>hide subscribe button</label>
-            <input type="checkbox" checked={hideSubscribe}
-              onChange={e => setHideSubscribe(e.target.checked)} />
-          </Field>
-          <Field>
-            <label>show removed-content scan on other profiles</label>
-            <input type="checkbox" checked={showScanOnOtherProfiles}
-              onChange={e => setShowScanOnOtherProfiles(e.target.checked)} />
-          </Field>
-          <Field>
-            <label>show removed-content scan on your own profile</label>
-            <input type="checkbox" checked={showScanOnOwnProfile}
-              onChange={e => setShowScanOnOwnProfile(e.target.checked)} />
-          </Field>
-          <Field>
-            <label>show "scan for removed comments" buttons on threads</label>
-            <input type="checkbox" checked={showThreadScanButtons}
-              onChange={e => setShowThreadScanButtons(e.target.checked)} />
-          </Field>
-          <Field>
-            <label>flag your removed/locked content on your own profile</label>
-            <input type="checkbox" checked={highlightOwnProfileStatus}
-              onChange={e => setHighlightOwnProfileStatus(e.target.checked)} />
-          </Field>
-          <Field>
-            <label>auto-filter to show only removed comments after thread scan</label>
-            <input type="checkbox" checked={autoFilterRemovedThreads}
-              onChange={e => setAutoFilterRemovedThreads(e.target.checked)} />
-          </Field>
+          <CheckField label="hide subscribe button" checked={hideSubscribe} onChange={setHideSubscribe} />
+          <CheckField label="show removed-content scan on other profiles" checked={showScanOnOtherProfiles} onChange={setShowScanOnOtherProfiles} />
+          <CheckField label="show removed-content scan on your own profile" checked={showScanOnOwnProfile} onChange={setShowScanOnOwnProfile} />
+          <CheckField label={'show "scan for removed comments" buttons on threads'} checked={showThreadScanButtons} onChange={setShowThreadScanButtons} />
+          <CheckField label="flag your removed/locked content on your own profile" checked={highlightOwnProfileStatus} onChange={setHighlightOwnProfileStatus} />
+          <CheckField label="auto-filter to show only removed comments after thread scan" checked={autoFilterRemovedThreads} onChange={setAutoFilterRemovedThreads} />
         </FieldStack>
         {hasClientId && monitorQuarantined && (
           <Note>
@@ -475,16 +458,8 @@ function Options() {
           a stand-in that can&apos;t be traced back, as long as your username stays out too.
         </Note>
         <FieldStack>
-          <Field>
-            <label>include username in copied log</label>
-            <input type="checkbox" checked={diagIncludeUser}
-              onChange={e => setDiagIncludeUser(e.target.checked)} />
-          </Field>
-          <Field>
-            <label>hide post and comment ids</label>
-            <input type="checkbox" checked={diagHideIds}
-              onChange={e => setDiagHideIds(e.target.checked)} />
-          </Field>
+          <CheckField label="include username in copied log" checked={diagIncludeUser} onChange={setDiagIncludeUser} />
+          <CheckField label="hide post and comment ids" checked={diagHideIds} onChange={setDiagHideIds} />
         </FieldStack>
         <DiagActions>
           <Button onClick={runCheckNow}>check now</Button>
