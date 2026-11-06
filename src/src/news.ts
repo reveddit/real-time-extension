@@ -133,42 +133,35 @@ interface NewsCache {
     lastFetched: number
 }
 
-const emptyFeed = (): NewsFeed => ({ messages: [] })
+const isLegacyHost = (value: unknown): value is string => (LEGACY_HOSTS as readonly unknown[]).includes(value)
 
-export const getCachedNews = (): Promise<NewsCache | null> =>
+// Nothing stored and nothing readable (no chrome in tests, a content script
+// orphaned by an update) both read as {}
+const readLocal = (...keys: string[]): Promise<Record<string, any>> =>
     new Promise(resolve => {
         try {
-            chrome.storage.local.get([NEWS_CACHE_KEY], res => {
-                resolve((res && res[NEWS_CACHE_KEY]) || null)
-            })
-        } catch {
-            resolve(null)
-        }
-    })
-
-const getReadIds = (): Promise<Record<string, true>> =>
-    new Promise(resolve => {
-        try {
-            chrome.storage.local.get([NEWS_READ_IDS_KEY], res => {
-                resolve((res && res[NEWS_READ_IDS_KEY]) || {})
-            })
+            chrome.storage.local.get(keys, res => resolve(res || {}))
         } catch {
             resolve({})
         }
     })
 
-export const markNewsRead = (id: string): Promise<void> =>
-    new Promise(resolve => {
-        try {
-            chrome.storage.local.get([NEWS_READ_IDS_KEY], res => {
-                const readIds = (res && res[NEWS_READ_IDS_KEY]) || {}
-                readIds[id] = true
-                chrome.storage.local.set({ [NEWS_READ_IDS_KEY]: readIds }, () => resolve())
-            })
-        } catch {
-            resolve()
-        }
-    })
+const writeLocal = (items: Record<string, any>): Promise<void> =>
+    new Promise(resolve => chrome.storage.local.set(items, () => resolve()))
+
+export const getCachedNews = async (): Promise<NewsCache | null> =>
+    (await readLocal(NEWS_CACHE_KEY))[NEWS_CACHE_KEY] || null
+
+const cachedOptions = async (): Promise<Partial<RemoteOptions>> => (await getCachedNews())?.feed?.options || {}
+
+const getReadIds = async (): Promise<Record<string, true>> =>
+    (await readLocal(NEWS_READ_IDS_KEY))[NEWS_READ_IDS_KEY] || {}
+
+export const markNewsRead = async (id: string): Promise<void> => {
+    const readIds = await getReadIds()
+    readIds[id] = true
+    await writeLocal({ [NEWS_READ_IDS_KEY]: readIds }).catch(() => {})
+}
 
 const VERSION_RE = /^\d+(\.\d+){0,3}$/
 
@@ -275,19 +268,10 @@ export const storeUpdateToRequest = (
     return storeVersion
 }
 
-const getRequested = (): Promise<{ version: unknown; askedAt: number }> =>
-    new Promise(resolve => {
-        try {
-            chrome.storage.local.get([UPDATE_CHECK_REQUESTED_KEY, UPDATE_CHECK_ASKED_AT_KEY], res => {
-                resolve({
-                    version: res && res[UPDATE_CHECK_REQUESTED_KEY],
-                    askedAt: Number(res && res[UPDATE_CHECK_ASKED_AT_KEY]) || 0,
-                })
-            })
-        } catch {
-            resolve({ version: undefined, askedAt: 0 })
-        }
-    })
+const getRequested = async (): Promise<{ version: unknown; askedAt: number }> => {
+    const res = await readLocal(UPDATE_CHECK_REQUESTED_KEY, UPDATE_CHECK_ASKED_AT_KEY)
+    return { version: res[UPDATE_CHECK_REQUESTED_KEY], askedAt: Number(res[UPDATE_CHECK_ASKED_AT_KEY]) || 0 }
+}
 
 // When the cached feed shows a newer version in this build's store, ask the
 // browser to check for updates now instead of on its own schedule (about every
@@ -313,12 +297,7 @@ export const requestStoreUpdateIfBehind = async (): Promise<void> => {
             return
         }
         // Remembered before asking, so a worker that stops mid-check doesn't ask again
-        await new Promise<void>(resolve =>
-            chrome.storage.local.set(
-                { [UPDATE_CHECK_REQUESTED_KEY]: target, [UPDATE_CHECK_ASKED_AT_KEY]: Date.now() },
-                () => resolve(),
-            ),
-        )
+        await writeLocal({ [UPDATE_CHECK_REQUESTED_KEY]: target, [UPDATE_CHECK_ASKED_AT_KEY]: Date.now() })
         const result: any = await chrome.runtime.requestUpdateCheck()
         dlog(
             'news',
@@ -333,7 +312,7 @@ export const requestStoreUpdateIfBehind = async (): Promise<void> => {
 
 export const getUnreadMessages = async (): Promise<NewsMessage[]> => {
     const [cache, readIds] = await Promise.all([getCachedNews(), getReadIds()])
-    const feed = cache?.feed || emptyFeed()
+    const feed = cache?.feed || { messages: [] }
     let ownVersion = ''
     try {
         ownVersion = chrome.runtime.getManifest().version
@@ -347,8 +326,7 @@ export const getUnreadMessages = async (): Promise<NewsMessage[]> => {
 // Current remote state of a mechanism switch, from the cached feed. 'auto' when
 // unset, unfetched, or unreadable — the caller falls back to its compiled default.
 export const getRemoteMechanism = async (name: string): Promise<RemoteMechanismState> => {
-    const cache = await getCachedNews()
-    const value = cache?.feed?.options?.mechanisms?.[name]
+    const value = (await cachedOptions()).mechanisms?.[name]
     return value === 'on' || value === 'off' ? value : 'auto'
 }
 
@@ -357,8 +335,9 @@ export const getRemoteMechanism = async (name: string): Promise<RemoteMechanismS
 // guard). Called on service-worker start: the cache outlives the worker, the
 // modules don't. The markup names are sanitized again, since any version's
 // cache can be read here.
-export const applyRemoteConfig = async (): Promise<void> => {
-    const options: any = (await getCachedNews())?.feed?.options || {}
+export const applyRemoteConfig = async (): Promise<void> => applyOptions(await cachedOptions())
+
+const applyOptions = (options: any) => {
     setChallengeConfig(options.challenge || {})
     setMarkupConfig(sanitizeMarkupConfig(options.markup))
     setLoginWallConfig(sanitizeLoginWallConfig(options.login_wall))
@@ -368,17 +347,14 @@ export const applyRemoteConfig = async (): Promise<void> => {
 // Legacy-HTML host from the cached feed, else the compiled default. Lets the
 // host move again without a store republish.
 export const getRemoteLegacyHost = async (): Promise<string> => {
-    const cache = await getCachedNews()
-    const value = cache?.feed?.options?.legacy_host
-    return (LEGACY_HOSTS as readonly string[]).includes(value || '') ? (value as string) : LEGACY_HOST_DEFAULT
+    const value = (await cachedOptions()).legacy_host
+    return isLegacyHost(value) ? value : LEGACY_HOST_DEFAULT
 }
 
 // Public-view fetch route order from the cached feed, per engine; empty when
 // unset, and the caller keeps its built-in order. Sanitized again on read.
-export const getRemoteWwwRouteOrder = async (): Promise<WwwRouteOrderOption> => {
-    const cache = await getCachedNews()
-    return sanitizeWwwRouteOrder(cache?.feed?.options?.www_route_order)
-}
+export const getRemoteWwwRouteOrder = async (): Promise<WwwRouteOrderOption> =>
+    sanitizeWwwRouteOrder((await cachedOptions()).www_route_order)
 
 const COOKIE_NAME = /^[A-Za-z0-9_.-]{1,64}$/
 const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList(raw, COOKIE_NAME, 4)
@@ -402,13 +378,11 @@ const sanitizeScanLimits = (raw: any): ScanLimits => ({
 })
 
 // The feed's limits on scans (storage.ts getScanSettings)
-export const getRemoteScanLimits = async (): Promise<ScanLimits> =>
-    (await getCachedNews())?.feed?.options?.scan_limits ?? {}
+export const getRemoteScanLimits = async (): Promise<ScanLimits> => (await cachedOptions()).scan_limits ?? {}
 
 // The login cookie names (viewer.ts hasRedditLoginCookie): the feed's, else reddit_session
 export const getRemoteLoginCookies = async (): Promise<string[]> => {
-    const cache = await getCachedNews()
-    const names = sanitizeLoginCookies(cache?.feed?.options?.login_cookies)
+    const names = sanitizeLoginCookies((await cachedOptions()).login_cookies)
     return names.length ? names : ['reddit_session']
 }
 
@@ -426,6 +400,79 @@ export const resolveMechanismDisabled = (
     return buildDefaultDisabled
 }
 
+// Only recognized mechanism values survive sanitization; anything else is
+// dropped so a typo in the served JSON degrades to 'auto', never to a flip.
+const sanitizeMechanisms = (raw: any) => {
+    const mechanisms: Record<string, RemoteMechanismState> = {}
+    if (raw && typeof raw === 'object') {
+        for (const [name, value] of Object.entries(raw)) {
+            if (value === 'auto' || value === 'on' || value === 'off') {
+                mechanisms[name] = value
+            }
+        }
+    }
+    return mechanisms
+}
+
+const sanitizeStoreVersions = (raw: any) => {
+    const storeVersions: StoreVersions = {}
+    if (raw && typeof raw === 'object') {
+        for (const store of STORES) {
+            if (isValidVersion(raw[store])) {
+                storeVersions[store] = raw[store]
+            }
+        }
+    }
+    return storeVersions
+}
+
+// The fields that hold something: not '', 0, or an empty list or object
+const nonEmpty = <T extends Record<string, any>>(fields: T): Partial<T> =>
+    Object.fromEntries(
+        Object.entries(fields).filter(([, value]) =>
+            value && typeof value === 'object' ? Object.keys(value).length : value,
+        ),
+    ) as Partial<T>
+
+// What the cache keeps of a served feed: the known fields, each sanitized
+const sanitizeFeed = (feed: NewsFeed): NewsFeed => {
+    const options = (feed.options || {}) as any
+    return {
+        messages: feed.messages
+            .filter(
+                m =>
+                    m && typeof m.id === 'string' && typeof m.title === 'string' && typeof m.body_markdown === 'string',
+            )
+            .map(m => ({
+                id: m.id,
+                published_utc: Number(m.published_utc) || 0,
+                title: m.title,
+                body_markdown: m.body_markdown,
+                severity: m.severity,
+                ...(isValidVersion(m.min_version) ? { min_version: m.min_version } : {}),
+                ...(isValidVersion(m.max_version) ? { max_version: m.max_version } : {}),
+            })),
+        options: {
+            mechanisms: sanitizeMechanisms(options.mechanisms),
+            ...nonEmpty({
+                legacy_host: isLegacyHost(options.legacy_host) ? options.legacy_host : '',
+                challenge: sanitizeChallengeConfig(options.challenge),
+                www_route_order: sanitizeWwwRouteOrder(options.www_route_order),
+                markup: sanitizeMarkupConfig(options.markup),
+                login_cookies: sanitizeLoginCookies(options.login_cookies),
+                login_wall: sanitizeLoginWallConfig(options.login_wall),
+                scan_limits: sanitizeScanLimits(options.scan_limits),
+                publicmodlogs_feed: sanitizePublicModlogsFeed(options.publicmodlogs_feed),
+            }),
+        },
+        ...nonEmpty({
+            latest_version: isValidVersion(feed.latest_version) ? feed.latest_version : '',
+            latest_version_published_utc: Math.max(Number(feed.latest_version_published_utc) || 0, 0),
+            store_versions: sanitizeStoreVersions((feed as any).store_versions),
+        }),
+    }
+}
+
 // Fetch the feed with the hourly throttle. Silent on failure — missing/404 feed
 // simply leaves the cache untouched so the popup shows no banner.
 export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> => {
@@ -437,15 +484,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
     }
     const noteFailure = () => chrome.storage.local.set({ [NEWS_FETCH_FAILED_AT_KEY]: now })
     if (!opts.force) {
-        const failedAt = await new Promise<number>(resolve => {
-            try {
-                chrome.storage.local.get([NEWS_FETCH_FAILED_AT_KEY], res =>
-                    resolve(Number(res?.[NEWS_FETCH_FAILED_AT_KEY]) || 0),
-                )
-            } catch {
-                resolve(0)
-            }
-        })
+        const failedAt = Number((await readLocal(NEWS_FETCH_FAILED_AT_KEY))[NEWS_FETCH_FAILED_AT_KEY]) || 0
         if (now - failedAt >= 0 && now - failedAt < FAILED_FETCH_RETRY_MS) {
             return
         }
@@ -459,82 +498,17 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
         }
         const feed = (await res.json()) as NewsFeed
         if (!feed || !Array.isArray(feed.messages)) return
-        // Only recognized mechanism values survive sanitization; anything else is
-        // dropped so a typo in the served JSON degrades to 'auto', never to a flip.
-        const mechanisms: Record<string, RemoteMechanismState> = {}
-        const rawMechanisms = (feed.options as any)?.mechanisms
-        if (rawMechanisms && typeof rawMechanisms === 'object') {
-            for (const [name, value] of Object.entries(rawMechanisms)) {
-                if (value === 'auto' || value === 'on' || value === 'off') {
-                    mechanisms[name] = value
-                }
-            }
-        }
-        const challenge = sanitizeChallengeConfig((feed.options as any)?.challenge)
-        const wwwRouteOrder = sanitizeWwwRouteOrder((feed.options as any)?.www_route_order)
-        const markup = sanitizeMarkupConfig((feed.options as any)?.markup)
-        const loginCookies = sanitizeLoginCookies((feed.options as any)?.login_cookies)
-        const loginWall = sanitizeLoginWallConfig((feed.options as any)?.login_wall)
-        const scanLimits = sanitizeScanLimits((feed.options as any)?.scan_limits)
-        const publicModlogsFeed = sanitizePublicModlogsFeed((feed.options as any)?.publicmodlogs_feed)
-        const storeVersions: StoreVersions = {}
-        const rawStoreVersions = (feed as any).store_versions
-        if (rawStoreVersions && typeof rawStoreVersions === 'object') {
-            for (const store of STORES) {
-                if (isValidVersion(rawStoreVersions[store])) {
-                    storeVersions[store] = rawStoreVersions[store]
-                }
-            }
-        }
-        const sanitized: NewsFeed = {
-            messages: feed.messages
-                .filter(
-                    m =>
-                        m &&
-                        typeof m.id === 'string' &&
-                        typeof m.title === 'string' &&
-                        typeof m.body_markdown === 'string',
-                )
-                .map(m => ({
-                    id: m.id,
-                    published_utc: Number(m.published_utc) || 0,
-                    title: m.title,
-                    body_markdown: m.body_markdown,
-                    severity: m.severity,
-                    ...(isValidVersion(m.min_version) ? { min_version: m.min_version } : {}),
-                    ...(isValidVersion(m.max_version) ? { max_version: m.max_version } : {}),
-                })),
-            options: {
-                mechanisms,
-                ...((LEGACY_HOSTS as readonly string[]).includes((feed.options as any)?.legacy_host)
-                    ? { legacy_host: (feed.options as any).legacy_host }
-                    : {}),
-                ...(Object.keys(challenge).length ? { challenge } : {}),
-                ...(Object.keys(wwwRouteOrder).length ? { www_route_order: wwwRouteOrder } : {}),
-                ...(Object.keys(markup).length ? { markup } : {}),
-                ...(loginCookies.length ? { login_cookies: loginCookies } : {}),
-                ...(Object.keys(loginWall).length ? { login_wall: loginWall } : {}),
-                ...(Object.keys(scanLimits).length ? { scan_limits: scanLimits } : {}),
-                ...(publicModlogsFeed ? { publicmodlogs_feed: publicModlogsFeed } : {}),
-            },
-            ...(isValidVersion(feed.latest_version) ? { latest_version: feed.latest_version } : {}),
-            ...(Number(feed.latest_version_published_utc) > 0
-                ? { latest_version_published_utc: Number(feed.latest_version_published_utc) }
-                : {}),
-            ...(Object.keys(storeVersions).length ? { store_versions: storeVersions } : {}),
-        }
+        const sanitized = sanitizeFeed(feed)
+        const options = sanitized.options as RemoteOptions
         const newCache: NewsCache = { feed: sanitized, lastFetched: now }
         chrome.storage.local.set({ [NEWS_CACHE_KEY]: newCache })
-        setChallengeConfig(challenge)
-        setMarkupConfig(markup)
-        setLoginWallConfig(loginWall)
-        setPublicModlogsFeed(publicModlogsFeed)
+        applyOptions(options)
         // A new legacy host or switch ends a refusal rest at once
         const before = cache?.feed?.options
         if (
             cache &&
-            (before?.legacy_host !== sanitized.options?.legacy_host ||
-                before?.mechanisms?.[MECHANISM_LEGACY] !== mechanisms[MECHANISM_LEGACY])
+            (before?.legacy_host !== options.legacy_host ||
+                before?.mechanisms?.[MECHANISM_LEGACY] !== options.mechanisms[MECHANISM_LEGACY])
         ) {
             chrome.storage.local.get([CAPABILITY_REST_KEY], res => {
                 const rests = { ...(res?.[CAPABILITY_REST_KEY] || {}) }
@@ -547,12 +521,12 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
         }
         dlog(
             'news',
-            `[reveddit] news fetch ok: ${sanitized.messages.length} messages, mechanisms=${JSON.stringify(mechanisms)}` +
-                (Object.keys(wwwRouteOrder).length ? `, www_route_order=${JSON.stringify(wwwRouteOrder)}` : '') +
-                (Object.keys(markup).length ? `, markup=${JSON.stringify(markup)}` : '') +
-                (Object.keys(loginWall).length ? `, login_wall=${JSON.stringify(loginWall)}` : '') +
-                (Object.keys(scanLimits).length ? `, scan_limits=${JSON.stringify(scanLimits)}` : '') +
-                (publicModlogsFeed ? ', publicmodlogs_feed set' : ''),
+            `[reveddit] news fetch ok: ${sanitized.messages.length} messages, mechanisms=${JSON.stringify(options.mechanisms)}` +
+                (options.www_route_order ? `, www_route_order=${JSON.stringify(options.www_route_order)}` : '') +
+                (options.markup ? `, markup=${JSON.stringify(options.markup)}` : '') +
+                (options.login_wall ? `, login_wall=${JSON.stringify(options.login_wall)}` : '') +
+                (options.scan_limits ? `, scan_limits=${JSON.stringify(options.scan_limits)}` : '') +
+                (options.publicmodlogs_feed ? ', publicmodlogs_feed set' : ''),
         )
     } catch (err: any) {
         // Network failures are expected and the cached feed keeps working, but
