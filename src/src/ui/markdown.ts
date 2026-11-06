@@ -2,7 +2,7 @@
 // website/src/utils.tsx markdownToHTML so the extension renders Reddit
 // markdown identically to revddit.com.
 
-import SnuOwnd from './snuownd'
+import SnuOwnd from '../../../lib/snuownd'
 
 const parser = (SnuOwnd as any).getParser()
 
