@@ -1,7 +1,6 @@
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
-import FormData from 'form-data';
 import open from 'open';
 import dotenv from 'dotenv';
 import { getManifest, readDescription, copyToClipboard, setupAbortHandler, prompt, buildFresh, markPublished } from './common.js';

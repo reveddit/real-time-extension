@@ -3,7 +3,6 @@ import { distPath, __filename, __dirname } from './common.js'
 import webpack from "webpack"
 import path from "path"
 import CopyWebpackPlugin from "copy-webpack-plugin"
-import babel_preset from "@babel/preset-env"
 import TerserPlugin from 'terser-webpack-plugin'
 import ExtReloader from 'webpack-ext-reloader'
 import AfterEmitPlugin from './AfterEmitPlugin.js'
@@ -224,16 +223,6 @@ export default {
                 use: {
                     loader: 'ts-loader',
                     options: { transpileOnly: true }
-                }
-            },
-            {
-                test: /\.js?$/,
-                exclude: /node_modules/,
-                use: {
-                    loader: "babel-loader",
-                    options: {
-                        presets: [babel_preset]
-                    }
                 }
             }
         ]
