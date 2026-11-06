@@ -353,39 +353,26 @@ function displayRestoredComment(
 const SCAN_ALL_TEXT = 'Scan for removed comments'
 
 export function injectScanAllButton(isNewReddit: boolean) {
-    if (!isNewReddit) {
-        const menuarea = document.querySelector('.commentarea .menuarea')
-        const placed = menuarea?.querySelector('.rev-scan-all-btn')
-        if (!menuarea || ofThisRun(placed) || orphaned()) return
-        placed?.remove()
+    const host = document.querySelector(isNewReddit ? 'shreddit-comment-tree' : '.commentarea .menuarea')
+    const placed = (isNewReddit ? document : host)?.querySelector('.rev-scan-all-btn')
+    if (isNewReddit && placed && ofThisRun(placed)) readsGoWith(placed)
+    if (!host || ofThisRun(placed) || orphaned()) return
+    placed?.remove()
 
-        const btn = document.createElement('button')
-        markThisRun(btn)
-        btn.className = 'rev-btn rev-btn-solid rev-scan-all-btn'
-        btn.textContent = SCAN_ALL_TEXT
-        btn.title = SCAN_TITLE
-        btn.addEventListener('click', e => {
-            e.preventDefault()
-            handleScanAll(false)
-        })
-        menuarea.appendChild(btn)
-    } else {
-        const placed = document.querySelector('.rev-scan-all-btn')
-        const tree = document.querySelector('shreddit-comment-tree')
-        if (placed && ofThisRun(placed)) readsGoWith(placed)
-        if (!tree || ofThisRun(placed) || orphaned()) return
-        placed?.remove()
-
-        const btn = document.createElement('button')
-        markThisRun(btn)
-        btn.className = 'rev-btn rev-btn-solid rev-scan-all-btn'
-        btn.textContent = SCAN_ALL_TEXT
-        btn.addEventListener('click', e => {
-            e.preventDefault()
-            handleScanAll(true)
-        })
+    const btn = document.createElement('button')
+    markThisRun(btn)
+    btn.className = 'rev-btn rev-btn-solid rev-scan-all-btn'
+    btn.textContent = SCAN_ALL_TEXT
+    if (!isNewReddit) btn.title = SCAN_TITLE
+    btn.addEventListener('click', e => {
+        e.preventDefault()
+        handleScanAll(isNewReddit)
+    })
+    if (isNewReddit) {
         readsGoWith(btn)
-        tree.prepend(btn)
+        host.prepend(btn)
+    } else {
+        host.appendChild(btn)
     }
 }
 
