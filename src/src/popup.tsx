@@ -4,21 +4,21 @@ import styled from '@emotion/styled'
 import { css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification } from './common'
 import { AppGlobal, setThemeMode, resolveTheme, THEME_STORAGE_KEY } from './ui/global'
-import { ActionBtn, SecondaryActionBtn, MessageBanner, MiniSpinner, Card } from './ui/components'
+import { MessageBanner, MiniSpinner, Card } from './ui/components'
 import { DiagStatus, formatDiagStatus } from './diag-status'
 import { tokens } from './ui/tokens'
 import {
   getSubscribedUsers_withSeenAndUnseenIDs,
   subscribeId, unsubscribeId,
-  markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen, clearPendingNotification,
+  markEverythingAsSeen,
   getPendingPostQueueSize, getTestNotificationMessage,
 } from './storage'
 import { setCurrentStateForId } from './monitoring'
 import { fetchNews, getUnreadMessages, getPendingUpdateVersion, markNewsRead, NewsMessage } from './news'
-import { markdownToHTML } from './ui/markdown'
-import { browserOfUserAgent } from './diaglog'
-import { newIssueUrl, LOGIN_WALL_INFO_URL, REPORT_LOG_MAX_CHARS } from './report'
-import { VIEWER_KEY, isSignedInViewer } from './viewer'
+import { VIEWER_KEY } from './viewer'
+import { UnseenRow, ToggleSwitch, CurrentUserSection } from './popup-rows'
+import { NewsBanner, UpdateNotice, ReleaseNotice, ErrorNotice } from './popup-notices'
+import { reportProblem } from './popup-report'
 
 declare const __LATEST_RELEASE__: { version: string; description: string } | null
 
@@ -55,152 +55,6 @@ const StatusLine = styled.div`
 const SubsCard = styled(Card)`
   padding: ${tokens.space.xs} ${tokens.space.md};
   margin: ${tokens.space.sm} 0;
-`
-
-const SubRow = styled.a`
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 10px 10px 12px;
-  margin: 0 -10px;
-  min-height: 36px;
-  border-radius: ${tokens.radius.md};
-  text-decoration: none;
-  color: var(--link);
-  cursor: pointer;
-  transition: background-color 0.12s ease;
-
-  & + & {
-    border-top: 1px solid var(--border);
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
-  }
-
-  &:hover {
-    background: var(--bg-surface-hover);
-    text-decoration: none;
-    & .sub-chev { color: var(--text-secondary); }
-  }
-  &:active {
-    background: var(--bg-surface-hover);
-    filter: brightness(0.95);
-  }
-  &:focus-visible {
-    outline: 2px solid var(--input-focus);
-    outline-offset: -2px;
-  }
-`
-
-const SubRowText = styled.span`
-  flex: 1;
-  min-width: 0;
-  font-size: 0.95em;
-  color: var(--link);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-`
-
-const SubRowChev = styled.span`
-  flex-shrink: 0;
-  font-size: 18px;
-  line-height: 1;
-  margin-left: 2px;
-  color: var(--text-muted);
-  transition: color 0.12s ease;
-`
-
-const UnseenPill = styled.span`
-  min-width: 2em;
-  text-align: center;
-  padding: 2px 8px;
-  border-radius: ${tokens.radius.pill};
-  background: var(--bg-surface-hover);
-  color: var(--text-secondary);
-  font-size: 0.82em;
-  font-weight: 600;
-`
-
-const UnseenPillActive = styled(UnseenPill)`
-  background: var(--accent);
-  color: var(--text-on-accent);
-`
-
-
-const SwitchRow = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 0;
-`
-
-const SwitchLabel = styled.span<{ active: boolean }>`
-  color: ${p => (p.active ? 'var(--text-primary)' : 'var(--text-secondary)')};
-  cursor: pointer;
-  font-size: 0.92em;
-`
-
-const SwitchWrapper = styled.label`
-  position: relative;
-  display: inline-block;
-  width: 42px;
-  height: 22px;
-  & input { opacity: 0; width: 0; height: 0; }
-  & .slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: var(--button-bg);
-    border: 1px solid var(--border);
-    border-radius: ${tokens.radius.pill};
-    transition: 0.2s;
-  }
-  & .slider::before {
-    position: absolute;
-    content: '';
-    height: 16px;
-    width: 16px;
-    left: 2px;
-    top: 2px;
-    background: var(--text-primary);
-    border-radius: 50%;
-    transition: 0.2s;
-  }
-  & input:checked + .slider {
-    background: var(--accent);
-    border-color: var(--accent);
-  }
-  & input:checked + .slider::before {
-    transform: translateX(20px);
-    background: var(--text-on-accent);
-  }
-`
-
-
-const NewsCard = styled(Card)`
-  padding: ${tokens.space.sm} ${tokens.space.md};
-  background: var(--note-bg);
-  border-color: var(--border-light);
-  position: relative;
-  & h4 {
-    margin: 0 0 4px 0;
-    font-size: 0.92em;
-    color: var(--text-primary);
-  }
-  & .md-body { font-size: 0.85em; color: var(--text-primary); }
-  & .dismiss {
-    position: absolute;
-    top: 6px;
-    right: 8px;
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-size: 16px;
-    line-height: 1;
-    padding: 2px 6px;
-    &:hover { color: var(--text-primary); }
-  }
 `
 
 const ThemeToggleBtn = styled.button`
@@ -285,71 +139,6 @@ const FooterLink = styled.a`
     text-decoration: underline;
   }
 `
-
-function ToggleSwitch({ type, checked, onToggle }: {
-  type: string
-  checked: boolean
-  onToggle: (checked: boolean) => void
-}) {
-  return (
-    <SwitchRow>
-      <SwitchLabel active={checked} onClick={() => onToggle(!checked)}>
-        {checked ? 'subscribed' : 'subscribe'} to {type}
-      </SwitchLabel>
-      <SwitchWrapper>
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={e => onToggle(e.target.checked)}
-        />
-        <span className="slider" />
-      </SwitchWrapper>
-    </SwitchRow>
-  )
-}
-
-function UnseenRow({ thing, isUser, unseenCount, totalStr, url }: {
-  thing: string
-  isUser: boolean
-  unseenCount: number
-  totalStr?: string
-  url: string
-}) {
-  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    e.preventDefault()
-    chrome.storage.sync.get(undefined, storage => {
-      markThingAsSeen(storage, thing, isUser)
-      clearPendingNotification(thing).catch(() => {})
-      setStorageUpdateBadge(storage).then(() => {
-        chrome.tabs.create({ url })
-        window.close()
-      })
-    })
-  }
-
-  const Pill = unseenCount > 0 ? UnseenPillActive : UnseenPill
-
-  return (
-    <SubRow href={url} target="_blank" onClick={handleClick}>
-      <SubRowText>{thing}</SubRowText>
-      <Pill>{totalStr ?? unseenCount}</Pill>
-      <SubRowChev className="sub-chev" aria-hidden="true">›</SubRowChev>
-    </SubRow>
-  )
-}
-
-function NewsBanner({ message, onDismiss }: { message: NewsMessage; onDismiss: () => void }) {
-  return (
-    <NewsCard>
-      <button className="dismiss" onClick={onDismiss} aria-label="Dismiss">×</button>
-      <h4>{message.title}</h4>
-      <div
-        className="md-body"
-        dangerouslySetInnerHTML={{ __html: markdownToHTML(message.body_markdown) }}
-      />
-    </NewsCard>
-  )
-}
 
 function Popup() {
   const [errorStatus, setErrorStatus] = useState<string | null>(null)
@@ -611,42 +400,6 @@ function Popup() {
     })
   }
 
-  // The options page's second-account section (viewer.ts), where its sign-in starts
-  const openSecondAccount = () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL('src/options.html#second-account') })
-    window.close()
-  }
-
-  // Copies the diagnostic log (the options page's default copy, without the
-  // username) and opens a new GitHub issue form that asks for it. The copy
-  // comes first: the new tab takes focus and closes the popup.
-  const handleReport = () => {
-    const open = (logCopied: boolean) => {
-      let version = ''
-      try {
-        version = chrome.runtime.getManifest().version
-      } catch {
-        /* ignored */
-      }
-      const runningOn = [version, browserOfUserAgent(navigator.userAgent)].filter(Boolean).join(', ')
-      chrome.tabs.create({ url: newIssueUrl({ runningOn, logCopied }) })
-      window.close()
-    }
-    runtimeAny.sendMessage(
-      { action: 'get-diag-log', includeUsername: false, maxChars: REPORT_LOG_MAX_CHARS },
-      (resp: { text?: string; error?: string }) => {
-        if (runtimeAny.lastError || !resp || typeof resp.text !== 'string') {
-          open(false)
-          return
-        }
-        navigator.clipboard.writeText(resp.text).then(
-          () => open(true),
-          () => open(false),
-        )
-      },
-    )
-  }
-
   const switches: { id: string; type: string; subscribed: boolean }[] = []
   if (syncStorage && activeTab) {
     if (activeTab.commentID) {
@@ -676,43 +429,6 @@ function Popup() {
     otherUrl = `https://www.reveddit.com/info?id=${userData.otherUnseen.join(',')}&removal_status=all`
   }
 
-  // Current user section
-  let currentUserSection: React.ReactNode = null
-  if (currentUser !== undefined && userData) {
-    if (currentUser) {
-      const userInfo = userData.users[currentUser]
-      const unseenIDs = userInfo ? userInfo.unseen : []
-      currentUserSection = (
-        <UnseenRow
-          thing={currentUser}
-          isUser={true}
-          unseenCount={unseenIDs.length}
-          url={historyUrl}
-        />
-      )
-    } else {
-      currentUserSection = (
-        <div>
-          {connectResult?.success ? (
-            <MessageBanner variant="success">✓ Connected as {connectResult.user}!</MessageBanner>
-          ) : (
-            <>
-              <MessageBanner variant="info">
-                {connectMessage || 'Log in to www.reddit.com or old.reddit.com to get started.'}
-              </MessageBanner>
-              {/* Connect is tab-independent (direct cookie-authenticated fetch),
-                  so always offer it — the old tab gate left users with no
-                  button and no path forward when no Reddit tab was open. */}
-              <ActionBtn onClick={handleConnect} disabled={connecting}>
-                {connecting ? 'Connecting...' : 'Connect'}
-              </ActionBtn>
-            </>
-          )}
-        </div>
-      )
-    }
-  }
-
   return (
     <>
       <AppGlobal />
@@ -725,146 +441,24 @@ function Popup() {
         </TopRow>
         {diagStatus && <StatusLine>{diagStatus}</StatusLine>}
 
-        {pendingUpdate && (
-          <NewsCard>
-            <button className="dismiss" onClick={handleDismissUpdateNotice} aria-label="Dismiss">&times;</button>
-            <h4>Update available: v{pendingUpdate}</h4>
-            <div className="md-body">
-              Your browser hasn't installed it yet. Open chrome://extensions, turn on
-              Developer mode (top right), and press Update.{' '}
-              <a href="https://www.reveddit.com/update-help" target="_blank" rel="noopener noreferrer">
-                Still stuck?
-              </a>
-            </div>
-          </NewsCard>
-        )}
+        {pendingUpdate && <UpdateNotice version={pendingUpdate} onDismiss={handleDismissUpdateNotice} />}
 
         {showRelease && __LATEST_RELEASE__ && (
-          <NewsCard>
-            <button className="dismiss" onClick={handleDismissRelease} aria-label="Dismiss">&times;</button>
-            <h4>v{__LATEST_RELEASE__.version} released</h4>
-            <div className="md-body">{__LATEST_RELEASE__.description}</div>
-          </NewsCard>
+          <ReleaseNotice release={__LATEST_RELEASE__} onDismiss={handleDismissRelease} />
         )}
 
         {newsMessage && <NewsBanner message={newsMessage} onDismiss={handleDismissNews} />}
 
         {errorStatus &&
           (currentUser || errorStatus === 'logged_in_view_unavailable' || errorStatus === 'checks_failing') && (
-          <div>
-            {reconnectSuccess ? (
-              <MessageBanner variant="success">✓ Connected!</MessageBanner>
-            ) : errorStatus === 'rate_limited' ? (
-              <MessageBanner variant="warning">
-                ⚠ Reddit is rate-limiting requests. Monitoring will resume automatically.
-              </MessageBanner>
-            ) : errorStatus === 'reddit_blocked' ? (
-              <MessageBanner variant="warning">
-                ⚠ Reddit blocked the extension&apos;s last request (HTTP 403). It keeps retrying; opening a
-                www.reddit.com tab usually clears this.
-              </MessageBanner>
-            ) : errorStatus === 'checks_failing' ? (
-              <MessageBanner variant="warning">
-                ⚠ Your posts and comments aren&apos;t being checked right now. Reddit or your connection may be
-                down. The extension keeps trying.
-              </MessageBanner>
-            ) : errorStatus === 'profile_publicly_empty' ? (
-              <MessageBanner variant="warning">
-                ⚠ Your profile appears empty to logged-out users — possibly a shadowban. Removal alerts are
-                paused. You can appeal at reddit.com/appeals.
-              </MessageBanner>
-            ) : (errorStatus === 'login_required' || errorStatus === 'public_view_unavailable') &&
-              isSignedInViewer(viewerName, currentUser || '') ? (
-              <>
-                <MessageBanner variant="warning">
-                  ⚠ You&apos;re signed in to Reddit with your second account, which can&apos;t check its own posts and
-                  comments. To keep checking them, connect a different account.{' '}
-                  <a href={LOGIN_WALL_INFO_URL} target="_blank" rel="noopener noreferrer">
-                    Why?
-                  </a>
-                </MessageBanner>
-                <ActionBtn onClick={openSecondAccount}>Connect a different account</ActionBtn>
-              </>
-            ) : errorStatus === 'login_required' ? (
-              <>
-                <MessageBanner variant="warning">
-                  ⚠ Reddit now asks for a login before it shows profiles. To keep checking your posts and
-                  comments, connect a second Reddit account.{' '}
-                  <a href={LOGIN_WALL_INFO_URL} target="_blank" rel="noopener noreferrer">
-                    Why?
-                  </a>
-                </MessageBanner>
-                <ActionBtn onClick={openSecondAccount}>Connect a second account</ActionBtn>
-              </>
-            ) : errorStatus === 'viewer_signed_out' ? (
-              <>
-                <MessageBanner variant="warning">
-                  ⚠ Your second Reddit account was signed out, so your posts and comments aren&apos;t being
-                  checked. Connect it again to pick up where it left off.
-                </MessageBanner>
-                <ActionBtn onClick={openSecondAccount}>Connect it again</ActionBtn>
-              </>
-            ) : errorStatus === 'viewer_unavailable' ? (
-              <>
-                <MessageBanner variant="warning">
-                  ⚠ Reddit isn&apos;t answering checks through your second account right now. They keep retrying.
-                  If this keeps up, connect the account again, or use &ldquo;report a problem&rdquo; below.
-                </MessageBanner>
-                <ActionBtn onClick={openSecondAccount}>Second account settings</ActionBtn>
-              </>
-            ) : errorStatus === 'public_view_unavailable' ? (
-              // Also how a login wall shows up when it doesn't redirect to the
-              // login page (login-wall-config.ts), so the second account is here too
-              <>
-                <MessageBanner variant="warning">
-                  ⚠ Removal monitoring is paused — Reddit&apos;s public view isn&apos;t loading. Opening a
-                  www.reddit.com tab usually restores it. If it keeps up, connect a second Reddit account.
-                </MessageBanner>
-                <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
-                  Open www.reddit.com
-                </ActionBtn>
-                <SecondaryActionBtn onClick={openSecondAccount}>Connect a second account</SecondaryActionBtn>
-              </>
-            ) : errorStatus === 'absent_verify_unavailable' ? (
-              <>
-                <MessageBanner variant="warning">
-                  ⚠ Reddit isn&apos;t letting the extension confirm whether missing content was removed, so
-                  some removals can&apos;t be detected. Keeping a www.reddit.com tab open usually restores
-                  this. If it keeps up, use &ldquo;report a problem&rdquo; below.
-                </MessageBanner>
-                <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
-                  Open www.reddit.com
-                </ActionBtn>
-              </>
-            ) : errorStatus === 'profile_pagination_unavailable' ? (
-              <>
-                <MessageBanner variant="warning">
-                  ⚠ Reddit stopped loading the older pages of your public profile, so removals of your older
-                  posts and comments can&apos;t be checked right now. Keeping a www.reddit.com tab open usually
-                  restores this.
-                </MessageBanner>
-                <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
-                  Open www.reddit.com
-                </ActionBtn>
-              </>
-            ) : (
-              <>
-                <MessageBanner variant="warning">
-                  {reconnectSuccess === false
-                    ? "⚠ Reddit still isn't showing you as logged in."
-                    : errorStatus === 'logged_in_view_unavailable'
-                      ? "⚠ Reddit isn't accepting your login, so your posts and comments aren't being checked."
-                      : "⚠ You don't seem to be logged in to Reddit, so your posts and comments aren't being checked."}
-                </MessageBanner>
-                <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/login', active: true })}>
-                  Log in to Reddit
-                </ActionBtn>
-                <SecondaryActionBtn onClick={handleReconnect} disabled={reconnecting}>
-                  {reconnecting ? 'Checking...' : 'Check again'}
-                </SecondaryActionBtn>
-              </>
-            )}
-          </div>
+          <ErrorNotice
+            errorStatus={errorStatus}
+            viewerName={viewerName}
+            currentUser={currentUser}
+            reconnectSuccess={reconnectSuccess}
+            reconnecting={reconnecting}
+            onReconnect={handleReconnect}
+          />
         )}
 
         {switches.length > 0 && (
@@ -891,7 +485,17 @@ function Popup() {
         )}
 
         <SubsCard>
-          {currentUserSection}
+          {currentUser !== undefined && userData && (
+            <CurrentUserSection
+              currentUser={currentUser}
+              users={userData.users}
+              historyUrl={historyUrl}
+              connectResult={connectResult}
+              connectMessage={connectMessage}
+              connecting={connecting}
+              onConnect={handleConnect}
+            />
+          )}
           {userData && (
             <UnseenRow
               thing="other"
@@ -929,7 +533,7 @@ function Popup() {
           <FooterLink href="#" onClick={e => { e.preventDefault(); handleTestNotification() }}>
             send a test notification
           </FooterLink>
-          <FooterLink href="#" onClick={e => { e.preventDefault(); handleReport() }}>
+          <FooterLink href="#" onClick={e => { e.preventDefault(); reportProblem() }}>
             report a problem
           </FooterLink>
         </FooterRow>
