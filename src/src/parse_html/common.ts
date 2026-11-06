@@ -18,9 +18,10 @@ export const newReddit = 'https://www.reddit.com'
 
 // Base URL for reddit's legacy (pre-Shreddit) HTML, fetched logged out. On
 // 2026-08-31 old.reddit.com started 302ing logged-out requests to /login
-// (reason=lor2), but www.reddit.com still runs the same renderer for
+// (reason=lor2), but www.reddit.com still ran the same renderer for
 // legacy-only routes such as /api/info?id= with no login and no JS challenge,
-// so the legacy parsers keep working with just the host swapped. The host is
+// so the legacy parsers kept working with just the host swapped (until
+// 2026-10-28, see LEGACY_CHALLENGE_SELECTOR below). The host is
 // remotely adjustable via the news feed (news.ts legacy_host) so the next move
 // needs no store republish.
 // Legacy post pages on www need the redesign_optout cookie or the

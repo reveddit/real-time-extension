@@ -12,15 +12,12 @@
 // those fields must never break detection. String/regex extraction (rather than
 // HTMLRewriter) keeps this module free of WASM so it runs in vitest as-is.
 //
-// Page structure (verified live 2026-07-01):
+// Page structure (verified live 2026-07-01; reddit.md, Logged-out views, has
+// the paging and the empty state):
 // - items carry thing-id="t1_xxx" / thing-id="t3_xxx" attributes
 // - <shreddit-comment-action-row comment-id="t1_xxx" score="91" permalink="...">
 // - <shreddit-feed-load-more-observer cursor="base64(lastThingId)">
-// - the initial SSR page holds only ~8 items; further pages come from partial
-//   endpoints returning ~25 items each with the next cursor embedded:
-//     /svc/shreddit/profiles/profile_comments-more-posts/new/?sort=new&after=<cursor>&name=<user>&feedLength=8
-//     /svc/shreddit/profiles/profile_posts-more-posts/new/?sort=new&after=...
-// - empty profiles show "u/<name> doesn't have any posts/comments yet"
+// - further pages come from the partial endpoints in buildPartialUrl
 
 import { newReddit, isRateLimitError } from './common'
 import { getChallengeConfig } from '../challenge-config'
@@ -62,10 +59,9 @@ export interface PublicProfileData {
     hidden?: { t1: boolean; t3: boolean }
 }
 
-// Fetching is delegated so requests.ts can route through a www.reddit.com tab's
-// content script (same-origin, no challenge) or the background worker
-// (host_permissions CORS bypass; may hit the challenge). Must resolve to the
-// response body text; must reject or throw on network/HTTP failure. accept
+// Fetching is delegated so requests.ts can choose the route, a www.reddit.com
+// tab's content script or the background worker (reddit.md, Fetch paths). Must
+// resolve to the response body text; must reject or throw on network/HTTP failure. accept
 // says whether a page is one the caller can read: the fetcher counts any other
 // page (the front page served in place of a permalink, a shell, a challenge
 // shape the solver doesn't know) as its route being refused, and tries the
@@ -191,18 +187,13 @@ export const parseProfileHtml = (html: string, typePrefix: string): ParsedPage =
 // Individual post-page classification.
 //
 // "Present in the profile feed" is NOT a reliable liveness signal for posts the
-// way it is for comments: held ("awaiting moderator approval") and spam-removed
-// posts linger in the author's public feed for a grace period (verified live
-// with a held post). The post's own logged-out page tells the truth via banner
-// text inside the <shreddit-post> element — also verified: the held post's page
-// shows "Post is awaiting moderator approval." even to logged-out visitors.
+// way it is for comments: held and spam-removed posts linger in the author's
+// public feed. The post's own logged-out page tells the truth via banner text
+// inside the <shreddit-post> element (reddit.md, Logged-out views and Item pages).
 //
 // Only the requested post's own element decides. Reddit has served its front
-// page in place of a permalink (issue #14's 2026-08-17 log), and the logged-out
-// front page lists other posts as <shreddit-post> feed items, which read as
-// 'live' (verified 2026-10-17). That page names itself with <link
-// rel="canonical" href="https://www.reddit.com/">, but thread pages carry no
-// such link to compare, so the element's id is the check.
+// page in place of a permalink, and its feed items would read as 'live'. Thread
+// pages carry no canonical link to compare, so the element's id is the check.
 // ---------------------------------------------------------------------------
 
 export type PostPageStatus = 'live' | 'held' | 'removed' | 'unknown'
@@ -297,16 +288,12 @@ const elementInner = (html: string, from: number, tag: string): string => {
 // ---------------------------------------------------------------------------
 // Individual comment-page classification.
 //
-// Since ~2026-07, the public profile feed also omits items from subreddits the
-// user has hidden from their profile ("curate your profile") — for every
-// viewer, not just profile visitors. Feed absence therefore no longer proves a
-// comment was removed. The comment's own logged-out permalink page is
-// authoritative (verified live 2026-07-20):
-// - a live comment renders as <shreddit-comment ... thingId="t1_x"> with the
-//   real author name, including comments from profile-hidden subreddits
-// - a removed/deleted comment without replies is absent from its own page
-// - a removed/deleted comment kept for its reply tree renders a placeholder
-//   element with author="[deleted]"
+// The public profile feed omits items from subreddits the user hid from their
+// profile, so feed absence no longer proves a comment was removed. The
+// comment's own logged-out permalink page is authoritative: a live comment is a
+// <shreddit-comment thingId= author=>, a removed one without replies is absent,
+// and one kept for its replies has author="[deleted]" (reddit.md, Item pages,
+// verified 2026-07-20).
 // ---------------------------------------------------------------------------
 
 type CommentPageStatus = 'live' | 'removed' | 'unknown'
@@ -327,13 +314,9 @@ export const sitePermalink = (permalink: string): string => permalink.replace(/^
 // (/r/<sub>/comments/<post>/comment/<comment>/)
 const THREAD_PERMALINK_REGEX = /^\/r\/([^/]+)\/comments\/([^/]+)\//
 
-// The comment's own page in the form the site links to. The API's permalink
-// form now comes back as a shell that only redirects here in the browser, with
-// no comment tree and no post (3 of 3 samples, live and removed, 2026-10-17).
-// buildCommentPageUrl's form 301s here instead, and a cookie-less background
-// fetch can't follow that: the redirect drops the solved challenge and lands
-// on a new one (2026-10-17). This form gets neither. On a profile post it's
-// the /user/ form (sitePermalink).
+// The comment's own page in the form the site links to, which gets neither the
+// API form's redirect-only shell nor buildCommentPageUrl's 301 (reddit.md, Item
+// pages, 2026-10-17). On a profile post it's the /user/ form (sitePermalink).
 export const buildCommentThreadUrl = (permalink: string, commentId: string): string | null => {
     const m = permalink.match(THREAD_PERMALINK_REGEX)
     if (!m) {
@@ -364,10 +347,9 @@ export const buildCommentPartialUrl = (permalink: string, commentId: string): st
 const COMMENT_TAG_REGEX = /<shreddit-comment(?![\w-])([^>]*)>/g
 // That thingId is what says a page or /svc partial was served for the
 // requested comment (partial verified 2026-10-17), so a missing comment
-// counts only where it matches. The front page, served in place of
-// permalinks in issue #14, has <shreddit-post> feed items but no comment tree
-// (verified 2026-10-17), and neither thread pages nor the partial carry a
-// <link rel="canonical"> to compare instead.
+// counts only where it matches. The front page has no comment tree, and no
+// thread page or partial carries a canonical link to compare (reddit.md, Item
+// pages, 2026-10-17).
 const COMMENT_TREE_TAG_REGEX = /<shreddit-comment-tree(?![\w-])([^>]*)>/g
 // Whether any thread scaffolding rendered, for the diagnostic line. It doesn't
 // say which page: the front page's feed items match it too.
@@ -406,15 +388,15 @@ export const classifyCommentPage = (
 
 // The challenge is a string-doubling puzzle served instead of the real page:
 // solution string in await(async e=>e+e)("..."), token in a hidden input.
-// Best-effort fallback for background-worker fetches — the primary content
-// script path is verified to never receive it.
+// Best-effort fallback for the fetches that meet it: the background's and a
+// Firefox content script's, not a page's own fetch (reddit.md, Fetch paths).
 //
 // Two page shapes exist. The original form carried the token as
-// name="token". Since 2026-08-31 reddit serves a hidden GET form with
-// name="jsc_token" plus a "jsc_orig_r" field (empty in the wild); the solved
-// request must echo each field under its own name or reddit re-serves the
-// challenge. Verified live 2026-09-03: the jsc_token shape solved this way
-// returns the real profile page (thing-ids + cursors) from a challenged IP.
+// name="token". Since 2026-08-31 the form is a hidden GET one with
+// name="jsc_token" plus a "jsc_orig_r" field (empty in the wild), and the
+// solved request must echo each under its own name (reddit.md, Fetch paths).
+// Verified live 2026-09-03: the jsc_token shape solved this way returns the
+// real profile page (thing-ids + cursors) from a challenged IP.
 // Field names and the puzzle regex come from challenge-config.ts (defaults
 // there; overridable from the news feed).
 // A URL solveChallenge produced: the same challenge in answer to one means the
