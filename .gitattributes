@@ -1,0 +1,4 @@
+# Minified bundles, kept so people can sideload: list them in diffs, don't print them
+dist-chrome/** -diff linguist-generated
+dist-edge/** -diff linguist-generated
+dist-firefox/** -diff linguist-generated

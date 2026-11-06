@@ -4,6 +4,8 @@ export default defineConfig({
     testDir: './tests/e2e',
     timeout: 30000,
     retries: 0,
+    fullyParallel: true,
+    workers: 4,
     use: {
         // No default browser — tests launch with extension context
     },
