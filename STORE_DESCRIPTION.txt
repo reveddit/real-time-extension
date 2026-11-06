@@ -23,6 +23,9 @@ Note, the extension can't check your own comments in private, quarantined or 18+
 
 VERSION HISTORY:
 
+2026/11/06 - 0.0.5.32
+- the popup and options page open right away, showing a loading note until they're ready
+
 2026/11/06 - 0.0.5.31
 - scans for removed comments work again while signed in to reddit, gently by default, with their pace in options; the removed post note is back on new reddit, and subscribing is back as a bell
 

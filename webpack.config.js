@@ -114,6 +114,7 @@ const contentScripts = {
 const extensionPages = {
     options: './src/src/options.tsx',
     popup: './src/src/popup.tsx',
+    'page-boot': './src/src/page-boot.ts',
     history: './src/src/history.tsx',
     other: './src/src/other.tsx',
     welcome: './src/src/welcome.tsx',
