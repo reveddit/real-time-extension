@@ -1,7 +1,6 @@
 // What every scan's read goes through in the background (requests.ts
-// readWithLogin and takeScanTurn): one pace and one backoff across tabs, never
-// the browser's cache, and the switches that turn scans away before anything is
-// sent.
+// readWithLogin): one pace and one backoff across tabs, never the browser's
+// cache, and the switches that turn scans away before anything is sent.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
@@ -10,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
 import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
 
-import { readWithLogin, takeScanTurn, _scanTurn } from '../../src/src/requests'
+import { readWithLogin, _scanTurn } from '../../src/src/requests'
 import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
 import { NEWS_CACHE_KEY, MECHANISM_SCAN_FEEDS } from '../../src/src/news'
@@ -46,18 +45,24 @@ describe('a read for a scan', () => {
         expect(fetchMock.mock.calls[0][1]).toMatchObject({ credentials: 'include', cache: 'no-store' })
     })
 
-    it("a block page gets its retry, and doesn't cost other requests theirs", async () => {
+    it("leaves a block page's second try to the page, in the other mode, at no cost to other requests", async () => {
         fetchMock.mockImplementation(async () => blockPage())
         expect(await readWithLogin(PATH)).toMatchObject({ ok: false, status: 403, blockPage: true })
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        _scanTurn.next = 0
+        expect(await readWithLogin(PATH, true)).toMatchObject({ ok: false, status: 403, blockPage: true })
         expect(fetchMock.mock.calls.map(call => call[1].cache)).toEqual(['no-store', 'no-cache'])
         expect(_loggedInFetchState.doubleBlockUntil).toBe(0)
     })
 
-    it('says a block page was tried twice, so the click can count both', async () => {
-        fetchMock.mockImplementation(async () => blockPage())
-        expect(await readWithLogin(PATH)).toMatchObject({ retried: true })
-        fetchMock.mockImplementation(async () => answer(200))
-        expect(await readWithLogin(PATH)).toMatchObject({ ok: true, retried: false })
+    it('keeps the mode a second try got past the edge in', async () => {
+        fetchMock.mockImplementation(async (url, { cache }) => (cache === 'no-cache' ? answer(200) : blockPage()))
+        await readWithLogin(PATH)
+        _scanTurn.next = 0
+        expect(await readWithLogin(PATH, true)).toMatchObject({ ok: true })
+        _scanTurn.next = 0
+        await readWithLogin(PATH)
+        expect(fetchMock.mock.calls.at(-1)[1].cache).toBe('no-cache')
     })
 
     it('a 429 enters the backoff that monitoring and the bridge honor, once', async () => {
@@ -81,82 +86,40 @@ describe('a read for a scan', () => {
         expect(await reading).toBe('aborted')
     })
 
-    // A block page, then whatever the second try does
-    const blockedThen = secondTry =>
-        fetchMock.mockImplementation((url, init) =>
-            fetchMock.mock.calls.length === 1 ? Promise.resolve(blockPage()) : secondTry(init),
-        )
-    const atSlowestPaceAfterA429 = async () => {
-        vi.useFakeTimers()
-        __getSyncStorage().options = { scan_seconds_between_reads: 10 }
-        __getLocalStorage().rate_limit_last_hit = Date.now() - RECENT_RATE_LIMIT_WINDOW_MS / 2
-        await takeScanTurn()
-    }
-
-    it("doesn't run out of time waiting to retry, however slow the pace", async () => {
-        await atSlowestPaceAfterA429()
-        blockedThen(({ signal }) =>
-            signal.aborted ? Promise.reject(new Error('aborted')) : Promise.resolve(answer(200)),
-        )
-        const reading = readWithLogin(PATH)
-        await vi.advanceTimersByTimeAsync(21000)
-        expect(await reading).toMatchObject({ ok: true, retried: true })
-    })
-
-    it('gets no answer past its deadline on a retry either', async () => {
-        await atSlowestPaceAfterA429()
-        blockedThen(
-            ({ signal }) =>
-                new Promise((resolve, reject) => {
-                    signal.addEventListener('abort', () => reject(new Error('aborted')))
-                }),
-        )
-        const reading = readWithLogin(PATH).catch(err => err.message)
-        await vi.advanceTimersByTimeAsync(41000)
-        expect(await reading).toBe('aborted')
-    })
 })
 
 describe('scans in several tabs', () => {
-    it("doesn't send a retry that its wait has made wrong", async () => {
-        for (const meanwhile of [
-            () => (__getLocalStorage().rate_limit_until = Date.now() + 60000),
-            () => (__getLocalStorage()[VIEWER_CONNECT_KEY] = { started: Date.now(), mainUser: 'alice', main: [] }),
-        ]) {
-            vi.useFakeTimers()
-            _scanTurn.next = Date.now() + 3000
-            fetchMock.mockClear()
-            fetchMock.mockImplementation(async () => blockPage())
-            const reading = readWithLogin(PATH)
-            await vi.advanceTimersByTimeAsync(100)
-            meanwhile()
-            await vi.advanceTimersByTimeAsync(4000)
-            expect(await reading).toMatchObject({ ok: false, status: 403, blockPage: true, retried: false })
-            expect(fetchMock).toHaveBeenCalledTimes(1)
-            __resetStorage()
-            vi.useRealTimers()
-        }
+    it('hear how long until their turn, and nothing goes out', async () => {
+        vi.useFakeTimers()
+        const [first, second] = await Promise.all([readWithLogin(PATH), readWithLogin(PATH)])
+        expect(first).toMatchObject({ ok: true })
+        expect(second).toEqual({ ok: false, status: 0, waitMs: 3000 })
+        expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 
-    it('take a turn for a retry too', async () => {
+    it("take a turn for a block page's second try too", async () => {
+        vi.useFakeTimers()
+        fetchMock.mockImplementation(async () => blockPage())
+        await readWithLogin(PATH)
+        expect(await readWithLogin(PATH, true)).toEqual({ ok: false, status: 0, waitMs: 3000 })
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    // Each read sent as soon as it may go, and when each went out
+    const paceOf = async count => {
         vi.useFakeTimers()
         const sent = []
         fetchMock.mockImplementation(async () => {
             sent.push(Date.now())
-            return sent.length === 1 ? blockPage() : answer(200)
+            return answer(200)
         })
-        await takeScanTurn()
-        const reading = readWithLogin(PATH)
-        await vi.advanceTimersByTimeAsync(4000)
-        await reading
-        expect(sent.map(at => at - sent[0])).toEqual([0, 3000])
-    })
-
-    const paceOf = async count => {
-        vi.useFakeTimers()
-        const turns = []
-        for (let i = 0; i < count; i++) turns.push(await takeScanTurn())
-        return turns
+        for (let i = 0; i < count; i++) {
+            const { waitMs } = await readWithLogin(PATH)
+            if (!waitMs) continue
+            await vi.advanceTimersByTimeAsync(waitMs)
+            await readWithLogin(PATH)
+        }
+        return sent.map(at => at - sent[0])
     }
 
     it('take turns, every 3 seconds unless the options say otherwise', async () => {
@@ -171,22 +134,38 @@ describe('scans in several tabs', () => {
         expect(await paceOf(2)).toEqual([0, 3000])
     })
 
-    it("don't run out of time waiting to retry, at the slowest pace after a 429", async () => {
-        vi.useFakeTimers()
-        __getSyncStorage().options = { scan_seconds_between_reads: 10 }
-        __getLocalStorage().rate_limit_last_hit = Date.now() - RECENT_RATE_LIMIT_WINDOW_MS / 2
-        fetchMock.mockImplementation((url, { signal }) => {
-            if (fetchMock.mock.calls.length === 1) return Promise.resolve(blockPage())
-            return signal.aborted ? Promise.reject(new Error('aborted')) : Promise.resolve(answer(200))
-        })
-        const reading = readWithLogin(PATH)
-        await vi.advanceTimersByTimeAsync(21000)
-        expect(await reading).toMatchObject({ ok: true, retried: true })
-    })
-
-    it('go at half that for a while after a 429', async () => {
+    it('go at half that for an hour after a 429', async () => {
         __getLocalStorage().rate_limit_last_hit = Date.now() - RECENT_RATE_LIMIT_WINDOW_MS / 2
         expect(await paceOf(2)).toEqual([0, 6000])
+        _scanTurn.next = 0
+        __getLocalStorage().rate_limit_last_hit = Date.now() - RECENT_RATE_LIMIT_WINDOW_MS - 1000
+        expect(await paceOf(2)).toEqual([0, 3000])
+    })
+
+    it("keep to the website's limit where that's slower than the options", async () => {
+        __getLocalStorage()[NEWS_CACHE_KEY] = { feed: { options: { scan_limits: { seconds_between_reads: 5 } } } }
+        expect(await paceOf(2)).toEqual([0, 5000])
+    })
+
+    it('count the gap from when a read really went out, however late it was', async () => {
+        vi.useFakeTimers()
+        await readWithLogin(PATH)
+        await vi.advanceTimersByTimeAsync(10000)
+        await readWithLogin(PATH)
+        expect(await readWithLogin(PATH)).toEqual({ ok: false, status: 0, waitMs: 3000 })
+    })
+
+    it('give up on a turn further off than a gap can be, as a clock set back leaves', async () => {
+        _scanTurn.next = Date.now() + 2 * 3600 * 1000
+        expect(await readWithLogin(PATH)).toMatchObject({ ok: true })
+    })
+
+    it('spend no turn on a read turned away', async () => {
+        vi.useFakeTimers()
+        fill([])
+        expect(await readWithLogin(PATH)).toMatchObject({ needsLogin: true })
+        fill([cookie('reddit_session', 'S1')])
+        expect(await readWithLogin(PATH)).toMatchObject({ ok: true })
     })
 })
 

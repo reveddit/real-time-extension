@@ -28,6 +28,7 @@
 // need the Bash sandbox off.
 
 const fs = require('fs')
+const { pageComplaints } = require('./signin-page-text.cjs')
 const path = require('path')
 const { chromium } = require('playwright')
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
@@ -239,9 +240,7 @@ const signIn = async (page, account, label) => {
             if (i === 10) {
                 log('Still signing in. If Reddit asks for a code or a check, finish it in the window.')
                 const said = await loginTab.evaluate(() => document.body.innerText).catch(() => '')
-                for (const line of said.split('\n').filter(l => /error|try again|whoa|wrong|invalid/i.test(l)).slice(0, 3)) {
-                    log(hide(`  the page says: ${line.trim().slice(0, 120)}`))
-                }
+                for (const line of pageComplaints(said)) log(`  the page says: ${line}`)
             }
             const l = await local(['viewer_connect', 'viewer_connect_result', 'viewer_account'])
             if (!l.viewer_connect) done = l

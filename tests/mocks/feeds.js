@@ -1,5 +1,16 @@
 // Reddit's feeds as a scan reads them, in the shapes of 2026-11-04.
 
+import { vi } from 'vitest'
+
+// Runs a scan under fake timers, as long as its waits take
+export const withTimers = async run => {
+    vi.useFakeTimers()
+    let done = false
+    const running = run().finally(() => (done = true))
+    for (let i = 0; i < 100 && !done; i++) await vi.advanceTimersByTimeAsync(2000)
+    return running
+}
+
 export const POST = 't3_post'
 // A thread's age picks the sort, so these stay young
 export const NOW = new Date().toISOString()

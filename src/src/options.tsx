@@ -13,6 +13,7 @@ import {
   SCAN_SECONDS_MAX,
   isScanReads,
   isScanSeconds,
+  scanSettingsFrom,
   saveOptions,
 } from './storage'
 import { DiagStatus, formatDiagStatus } from './diag-status'
@@ -402,8 +403,9 @@ function Options() {
         const lock = opts.lock_status || {}
         setInterval_(String(opts.interval ?? INTERVAL_DEFAULT))
         setSeenCount(String(opts.seen_count || SEEN_COUNT_DEFAULT))
-        setScanReads(String(isScanReads(opts.scan_reads_per_click) ? opts.scan_reads_per_click : SCAN_READS_DEFAULT))
-        setScanSeconds(String(isScanSeconds(opts.scan_seconds_between_reads) ? opts.scan_seconds_between_reads : SCAN_SECONDS_DEFAULT))
+        const scan = scanSettingsFrom(opts)
+        setScanReads(String(scan.readsPerClick))
+        setScanSeconds(String(scan.seconds))
         setClientId(opts.custom_clientid || '')
         setRemovedMode(modeFromStatus(removal))
         setLockedMode(modeFromStatus(lock))
@@ -505,25 +507,21 @@ function Options() {
     const seenCountNum = Number(seenCount)
     const customClientId = (clientId || '').trim()
 
-    if (!(Number.isInteger(intervalNum) && intervalNum > 0)) {
-      setError('"minutes between Reddit checks" must be a positive integer')
+    const refuse = (message: string) => {
+      setError(message)
       setTimeout(() => setError(''), 2800)
-      return
+    }
+    if (!(Number.isInteger(intervalNum) && intervalNum > 0)) {
+      return refuse('"minutes between Reddit checks" must be a positive integer')
     }
     if (!(Number.isInteger(seenCountNum) && seenCountNum > 0)) {
-      setError('"same-status count before alert" must be a positive integer')
-      setTimeout(() => setError(''), 2800)
-      return
+      return refuse('"same-status count before alert" must be a positive integer')
     }
     if (!isScanReads(scanReads)) {
-      setError(`"most Reddit reads per scan click" must be a whole number from ${SCAN_READS_MIN} to ${SCAN_READS_MAX}`)
-      setTimeout(() => setError(''), 2800)
-      return
+      return refuse(`"most Reddit reads per scan click" must be a whole number from ${SCAN_READS_MIN} to ${SCAN_READS_MAX}`)
     }
     if (!isScanSeconds(scanSeconds)) {
-      setError(`"seconds between scan reads" must be from ${SCAN_SECONDS_MIN} to ${SCAN_SECONDS_MAX}`)
-      setTimeout(() => setError(''), 2800)
-      return
+      return refuse(`"seconds between scan reads" must be from ${SCAN_SECONDS_MIN} to ${SCAN_SECONDS_MAX}`)
     }
 
     setError('')

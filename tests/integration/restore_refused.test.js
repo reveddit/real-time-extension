@@ -8,6 +8,7 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import browserMock, { __resetStorage } from '../mocks/webextension-polyfill.js'
 import { parseHTML, DOMParser } from 'linkedom'
+import { withTimers } from '../mocks/feeds.js'
 
 const AUTHORS = 30
 let restoreComment
@@ -55,15 +56,6 @@ const refuseUserPages = () => {
     return asked
 }
 
-// Every read waits for its turn on a timer
-const withTimers = async run => {
-    vi.useFakeTimers()
-    let done = false
-    const running = run().finally(() => (done = true))
-    for (let i = 0; i < 100 && !done; i++) await vi.advanceTimersByTimeAsync(2000)
-    return running
-}
-
 describe("restore and the thread scan when reddit refuses authors' feeds", () => {
     it('restore stops after three refused feeds and leaves the thread unsearched', async () => {
         __resetStorage()
@@ -72,7 +64,7 @@ describe("restore and the thread scan when reddit refuses authors' feeds", () =>
         const result = await withTimers(() =>
             restoreComment('t1_target', 't3_post', 'sub', false, p => progress.push(p), new Map()),
         )
-        expect(asked).toHaveLength(3)
+        expect(new Set(asked).size).toBe(3)
         expect(result.found).toBe(false)
         // exhausted would disable every scan button in the thread
         expect(result.exhausted).toBeFalsy()
@@ -89,9 +81,23 @@ describe("restore and the thread scan when reddit refuses authors' feeds", () =>
         const recovered = await withTimers(() =>
             scanThreadForRemovedComments('t3_post', 'sub', false, new Map(), p => progress.push(p)),
         )
-        expect(asked).toHaveLength(3)
+        expect(new Set(asked).size).toBe(3)
         expect(recovered).toEqual([])
         expect(progress.at(-1)).toMatchObject({ status: 'error' })
         expect(progress.at(-1).message).toMatch(/^Reddit is refusing the feeds a scan reads/)
+    })
+
+    it('never calls the scan finished, however many clicks reddit refuses', async () => {
+        __resetStorage()
+        refuseUserPages()
+        const pageReads = new Map()
+        const statuses = []
+        for (let click = 0; click < 7; click++) {
+            await withTimers(() =>
+                scanThreadForRemovedComments('t3_post', 'sub', false, pageReads, p => statuses.push(p.status)),
+            )
+        }
+        expect(statuses).not.toContain('not_found')
+        expect(statuses).not.toContain('found')
     })
 })

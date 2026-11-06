@@ -18,7 +18,6 @@ import {
     getAuth,
     storeRedditCookies,
     readWithLogin,
-    takeScanTurn,
     lookupItemsByID_fromPublicProfile,
     getPublicViewUncheckedLine,
     getLoginWallLine,
@@ -505,15 +504,12 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     } else if (request.action == 'get-logged-in-user-items') {
         // This will be handled by content script, just pass it through
         return true
-    } else if (request.action === 'scan-turn') {
-        takeScanTurn().then(sendResponse)
-        return true
     } else if (request.action === 'fetch-with-login') {
         if (isOtherIdentity(sender?.tab)) {
             sendResponse({ ok: false, status: 0, otherIdentity: true })
             return true
         }
-        readWithLogin(String(request.path))
+        readWithLogin(String(request.path), Boolean(request.secondTry))
             .then(sendResponse)
             .catch(err => sendResponse({ ok: false, status: 0, error: String(err?.message || err) }))
         return true

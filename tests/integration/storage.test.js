@@ -6,6 +6,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import { fetchNews, NEWS_CACHE_KEY } from '../../src/src/news'
 
 import {
     REMOVED,
@@ -466,11 +467,54 @@ describe('getScanSettings', () => {
         }
     })
 
-    it('uses the defaults when storage can\'t be read', async () => {
-        const get = browserMock.storage.sync.get
-        browserMock.storage.sync.get = () => Promise.reject(new Error('Extension context invalidated.'))
+    it("uses the defaults when storage can't be read", async () => {
+        vi.spyOn(browserMock.storage.sync, 'get').mockRejectedValueOnce(new Error('Extension context invalidated.'))
         expect(await getScanSettings()).toEqual({ readsPerClick: 20, gapMs: 3000 })
-        browserMock.storage.sync.get = get
+    })
+
+    it("holds the user's choice to the website's limits, and only ever slower", async () => {
+        const limits = scan_limits => (__getLocalStorage()[NEWS_CACHE_KEY] = { feed: { options: { scan_limits } } })
+        __resetStorage({ options: { scan_reads_per_click: 50, scan_seconds_between_reads: 2 } })
+        limits({ reads_per_click: 12, seconds_between_reads: 5 })
+        expect(await getScanSettings()).toEqual({ readsPerClick: 12, gapMs: 5000 })
+        limits({ reads_per_click: 80, seconds_between_reads: 1 })
+        expect(await getScanSettings()).toEqual({ readsPerClick: 50, gapMs: 2000 })
+    })
+
+    it("ignores website limits outside the options' ranges", async () => {
+        __resetStorage({}, { [NEWS_CACHE_KEY]: { feed: { options: { scan_limits: { reads_per_click: 2, seconds_between_reads: 99 } } } } })
+        expect(await getScanSettings()).toEqual({ readsPerClick: 20, gapMs: 3000 })
+    })
+
+    it('takes limits from the news feed, numbers only', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => ({
+                ok: true,
+                json: async () => ({
+                    messages: [],
+                    options: { scan_limits: { reads_per_click: 12, seconds_between_reads: 'slow', other: 1 } },
+                }),
+            })),
+        )
+        __resetStorage()
+        await fetchNews({ force: true })
+        vi.unstubAllGlobals()
+        expect(__getLocalStorage()[NEWS_CACHE_KEY].feed.options.scan_limits).toEqual({ reads_per_click: 12 })
+        expect(await getScanSettings()).toEqual({ readsPerClick: 12, gapMs: 3000 })
+    })
+
+    it('leaves the defaults unset, so a gentler one later reaches those who never chose', async () => {
+        __resetStorage()
+        const save = (reads, seconds) =>
+            new Promise(resolve =>
+                saveOptions(2, 1, '', true, true, true, true, false, false, false, true, true, true, true, reads, seconds, resolve),
+            )
+        await save(20, 3)
+        expect(__getSyncStorage().options).not.toHaveProperty('scan_reads_per_click')
+        expect(__getSyncStorage().options).not.toHaveProperty('scan_seconds_between_reads')
+        await save(30, 3)
+        expect(__getSyncStorage().options.scan_reads_per_click).toBe(30)
     })
 })
 

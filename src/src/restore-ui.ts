@@ -15,6 +15,7 @@ import {
     recoveredOnPage,
     scanFailure,
     COULD_NOT_READ,
+    RELOAD_TO_RETRY,
     RateLimiter,
     ScanReads,
     type RestoreProgress,
@@ -29,8 +30,15 @@ import {
 const injectedComments = new Set<string>()
 // The scan running now, on this tab: one at a time
 let activeScan: RateLimiter | null = null
-// The feeds this page's scans have read, so the next click goes on from there
-const pageReads = new Map<string, any[]>()
+// The feeds this page's scans have read, so the next click goes on from there.
+// They go with the thread's scan button, as Back can bring it back reading
+// "Continue scan".
+let pageReads = new Map<string, any[]>()
+const readsOfButton = new WeakMap<Element, Map<string, any[]>>()
+const readsGoWith = (btn: Element) => {
+    pageReads = readsOfButton.get(btn) ?? new Map()
+    readsOfButton.set(btn, pageReads)
+}
 // Whether the profile scan on this page saw everything, so a rescan starts over
 let profileScanFinished = false
 // Pages this script has seen arrive
@@ -43,11 +51,15 @@ const inserterForPage = (isNewReddit: boolean) => (pageInserter ||= new Recovere
 // and forward can bring a page back with its buttons as they were when it left.
 export function resetScansForPage() {
     arrivals++
-    pageReads.clear()
+    pageReads = new Map()
     profileScanFinished = false
     pageInserter = null
-    // A scan of the page that left may be waiting for its turn to notice
-    if (activeScan?.isCancelled()) activeScan.cancel()
+    // A scan of the page that left may be waiting for its turn or a read to end.
+    // It's nothing to this page, and it's over.
+    if (activeScan?.isCancelled()) {
+        activeScan.cancel()
+        activeScan = null
+    }
     setScanButtonsEnabled(!activeScan)
 }
 let currentFilter: 'all' | 'removed' | 'visible' = 'removed'
@@ -160,11 +172,18 @@ const setScanLabel = (btn: Element, text: string) => {
 const resetScanLabel = (btn: Element) => setScanLabel(btn, btn.querySelector('span') ? 'Scan-Rev' : 'scan-rev')
 
 const SCAN_TITLE = 'Search for removed comments in this thread'
+const NOTHING_LEFT_TITLE = 'No more removed comments to find'
 const markExhausted = (btn: Element) => {
     resetScanLabel(btn)
     btn.classList.add('rev-scan-exhausted')
-    ;(btn as HTMLElement).title = 'All visible authors searched — no more removed comments to find'
+    ;(btn as HTMLElement).title = NOTHING_LEFT_TITLE
 }
+// With no number on it, for a scan button with no more to say about what's left
+const resetScanBtn = (btn: Element) => {
+    resetScanLabel(btn)
+    ;(btn as HTMLElement).title = SCAN_TITLE
+}
+
 const showScanLeft = (btn: Element, left: number) => {
     const base = (btn.textContent || '').replace(/\s*\(\d+\)\s*$/, '')
     setScanLabel(btn, `${base} (${left})`)
@@ -235,6 +254,12 @@ function endScan(limiter: RateLimiter) {
     setScanButtonsEnabled(true)
 }
 
+// Not a failed read, which a scan reports itself, but the buttons still come back
+function scanStopped(err: unknown, note: HTMLElement) {
+    console.log('[reveddit scan] stopped:', err)
+    note.textContent = COULD_NOT_READ
+}
+
 function addCancelLink(host: HTMLElement, limiter: RateLimiter): HTMLElement {
     const cancelBtn = document.createElement('a')
     cancelBtn.href = '#'
@@ -246,6 +271,16 @@ function addCancelLink(host: HTMLElement, limiter: RateLimiter): HTMLElement {
     }
     host.appendChild(cancelBtn)
     return cancelBtn
+}
+
+// Cancel goes first (left) so it stays put as the text changes width
+function showProgress(host: HTMLElement, limiter: RateLimiter, textHost = host) {
+    const cancelBtn = addCancelLink(host, limiter)
+    const spinner = document.createElement('span')
+    spinner.className = 'rev-spinner'
+    const progressText = document.createElement('span')
+    textHost.append(spinner, progressText)
+    return { cancelBtn, spinner, progressText }
 }
 
 // Place a recovered comment and retire the buttons that would search for it
@@ -276,16 +311,10 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
     host.querySelector(':scope > .rev-restore-progress')?.remove()
     host.querySelector(':scope > .rev-restore-cancel')?.remove()
 
-    // Cancel goes first (left) so it stays put as the progress text changes width.
-    const cancelBtn = addCancelLink(host, limiter)
-
     const progressEl = document.createElement('span')
     progressEl.className = 'rev-restore-progress'
-    const spinner = document.createElement('span')
-    spinner.className = 'rev-spinner'
-    const progressText = document.createElement('span')
+    const { cancelBtn, spinner, progressText } = showProgress(host, limiter, progressEl)
     progressText.className = 'rev-restore-progress-text'
-    progressEl.append(spinner, progressText)
     host.appendChild(progressEl)
 
     // Reuse the inserter from the thread-scan so other-found comments (tombstones
@@ -294,7 +323,7 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
     const inserter = inserterForPage(isNewReddit)
 
     const placedBefore = inserter.placedCount
-    let result: RestoreResult
+    let result: RestoreResult = { found: false }
     let lastStatus = ''
     try {
         result = await restoreComment(
@@ -315,6 +344,8 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
             },
             limiter,
         )
+    } catch (err) {
+        scanStopped(err, progressText)
     } finally {
         endScan(limiter)
     }
@@ -350,10 +381,7 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
             if (result.otherSorts) {
                 // The search may have come from a restore link, which stays one
                 if (btn.matches('.rev-scan-comment-btn')) markExhausted(btn)
-                for (const other of scanBtns.filter(b => b !== btn)) {
-                    resetScanLabel(other)
-                    ;(other as HTMLElement).title = SCAN_TITLE
-                }
+                scanBtns.filter(b => b !== btn).forEach(resetScanBtn)
                 return
             }
             scanBtns.forEach(markExhausted)
@@ -367,7 +395,7 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
                 }
                 scanAllBtn.classList.add('rev-scan-exhausted')
                 scanAllBtn.disabled = true
-                scanAllBtn.title = 'All visible authors searched — no more removed comments to find'
+                scanAllBtn.title = NOTHING_LEFT_TITLE
             }
         } else {
             // More remains; show the count and let a re-click continue. Update
@@ -378,6 +406,10 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
                 .querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)')
                 .forEach(b => showScanLeft(b, left))
         }
+    }
+    // Another click reads nothing more, so they promise nothing
+    if (lastStatus === 'noted') {
+        document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(resetScanBtn)
     }
     // cancelled / rate_limited / error: leave the button clickable so the user can retry.
 }
@@ -482,6 +514,7 @@ function injectScanAllButton(isNewReddit: boolean) {
     } else {
         const placed = document.querySelector('.rev-scan-all-btn')
         const tree = document.querySelector('shreddit-comment-tree')
+        if (placed && ofThisRun(placed)) readsGoWith(placed)
         if (!tree || ofThisRun(placed) || orphaned()) return
         placed?.remove()
 
@@ -493,6 +526,7 @@ function injectScanAllButton(isNewReddit: boolean) {
             e.preventDefault()
             handleScanAll(true)
         })
+        readsGoWith(btn)
         tree.prepend(btn)
     }
 }
@@ -518,11 +552,7 @@ async function handleScanAll(isNewReddit: boolean) {
         btn.after(progressEl)
     }
     progressEl.textContent = ''
-    const cancelBtn = addCancelLink(progressEl, limiter)
-    const spinner = document.createElement('span')
-    spinner.className = 'rev-spinner'
-    const progressText = document.createElement('span')
-    progressEl.append(spinner, progressText)
+    const { cancelBtn, spinner, progressText } = showProgress(progressEl, limiter)
 
     // Place each recovered comment the moment it's found: under its parent if
     // present, otherwise parked in the "unattached" area and relocated later if
@@ -530,20 +560,27 @@ async function handleScanAll(isNewReddit: boolean) {
     const inserter = inserterForPage(isNewReddit)
 
     let finalStatus = ''
-    const recovered = await scanThreadForRemovedComments(
-        postID,
-        subreddit,
-        isNewReddit,
-        pageReads,
-        progress => {
-            progressText.textContent = progress.message
-            finalStatus = progress.status
-        },
-        rc => {
-            if (btn.isConnected) placeRecovered(inserter, rc, isNewReddit)
-        },
-        limiter,
-    )
+    let otherSorts = false
+    let recovered: RecoveredComment[] = []
+    try {
+        recovered = await scanThreadForRemovedComments(
+            postID,
+            subreddit,
+            isNewReddit,
+            pageReads,
+            progress => {
+                progressText.textContent = progress.message
+                finalStatus = progress.status
+                otherSorts ||= !!progress.otherSorts
+            },
+            rc => {
+                if (btn.isConnected) placeRecovered(inserter, rc, isNewReddit)
+            },
+            limiter,
+        )
+    } catch (err) {
+        scanStopped(err, progressText)
+    }
 
     const onPage = recoveredOnPage()
     btn.textContent = onPage > 0 ? `${onPage} comment(s) recovered` : SCAN_ALL_TEXT
@@ -562,11 +599,14 @@ async function handleScanAll(isNewReddit: boolean) {
     // exhausted: disable all per-comment scan buttons + the thread button
     // itself. One that stopped (refused pages, rate limit, no comment tree, the
     // click's limit) leaves them for another try.
+    const scanBtns = document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)')
+    if (finalStatus === 'noted') scanBtns.forEach(resetScanBtn)
     if (finalStatus === 'found' || finalStatus === 'not_found') {
-        document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(markExhausted)
+        // A comment that needs another sort of feeds has its own search still to come
+        if (!otherSorts) scanBtns.forEach(markExhausted)
         btn.classList.add('rev-scan-exhausted')
         btn.disabled = true
-        btn.title = 'All visible authors searched — no more removed comments to find'
+        btn.title = NOTHING_LEFT_TITLE
     }
 
     // Show the filter bar and auto-switch to "removed" view if any were found.
@@ -906,6 +946,9 @@ class RecoveredCommentInserter {
                     })
                 }
             }
+        } catch (err) {
+            console.log('[reveddit scan] stopped:', err)
+            reads.failure = err
         } finally {
             this.placing = false
             endScan(limiter)
@@ -913,7 +956,7 @@ class RecoveredCommentInserter {
         if (this.placed.size > placedBefore) refreshThreadFilter(this.isNewReddit)
         if (this.orphans.size === 0) return // orphan area auto-removed when empty
         const left = unchecked + reads.unread
-        if (!left && !reads.failure) reads.retryGivenUp()
+        const retrying = !left && !reads.failure && !limiter.isCancelled() ? reads.retryGivenUp() : 0
         note.textContent = limiter.isCancelled()
             ? ''
             : reads.failure
@@ -921,7 +964,7 @@ class RecoveredCommentInserter {
               : left
                 ? `${left} left to read. Click again to continue.`
                 : reads.gaveUp
-                  ? `${reads.gaveUp} couldn't be read. Click again to try them.`
+                  ? `${reads.gaveUp} couldn't be read. ${retrying ? 'Click again to try them.' : RELOAD_TO_RETRY}`
                   : ''
         btn.disabled = false
         btn.textContent = `Place unattached comments (${this.orphans.size} left)`
@@ -1276,29 +1319,36 @@ async function handleProfileScan(username: string, container: HTMLElement) {
     if (profileScanFinished) pageReads.clear()
     const limiter = startScan(container)
     progressEl.textContent = ''
-    const cancelBtn = addCancelLink(progressEl, limiter)
-    const progressText = document.createElement('span')
-    progressEl.append(progressText)
+    const { cancelBtn, spinner, progressText } = showProgress(progressEl, limiter)
     // Only the scanned account's own session sees its removed content as live,
     // so the jump badge next to links is shown only to that account. The stored
     // name may be out of date, and the scan can find out better.
     let isOwnProfile = await isViewer(username)
     let lastStatus = ''
-    const results = await scanUserProfile(
-        username,
-        (progress: RestoreProgress) => {
-            progressText.textContent = progress.message
-            lastStatus = progress.status
-            isOwnProfile ||= !!progress.own
-        },
-        { ...getProfileURLParams(), ownProfile: isOwnProfile },
-        limiter,
-        pageReads,
-    )
+    let results: ScanResult[] = []
+    try {
+        results = await scanUserProfile(
+            username,
+            (progress: RestoreProgress) => {
+                progressText.textContent = progress.message
+                lastStatus = progress.status
+                isOwnProfile ||= !!progress.own
+            },
+            { ...getProfileURLParams(), ownProfile: isOwnProfile },
+            limiter,
+            pageReads,
+        )
+    } catch (err) {
+        scanStopped(err, progressText)
+    }
 
     endScan(limiter)
+    spinner.remove()
     cancelBtn.remove()
-    profileScanFinished = lastStatus === 'found' || lastStatus === 'not_found' || lastStatus === 'noted'
+    // Left the page: this says nothing about the page showing now
+    if (container.isConnected) {
+        profileScanFinished = lastStatus === 'found' || lastStatus === 'not_found' || lastStatus === 'noted'
+    }
     btn.disabled = false
     btn.textContent = 'Rescan'
 
@@ -1375,7 +1425,10 @@ function highlightVisibleRemovedComments(results: ScanResult[], isNewReddit: boo
             const scanResult = resultMap.get(postId)
             if (scanResult) {
                 matched.add(postId)
-                highlightComment_newReddit(el as HTMLElement, scanResult)
+                // One inserted by an earlier click shows its text already
+                if (!el.classList.contains('rev-inserted-comment')) {
+                    highlightComment_newReddit(el as HTMLElement, scanResult)
+                }
             }
         }
     }
@@ -1443,7 +1496,7 @@ function getVisibleItemPositions(isNewReddit: boolean): VisibleItem[] {
     const items: VisibleItem[] = []
 
     if (!isNewReddit) {
-        const things = document.querySelectorAll('#siteTable > .thing[data-fullname]')
+        const things = document.querySelectorAll('#siteTable > .thing[data-fullname]:not(.rev-inserted-comment)')
         for (const el of Array.from(things)) {
             const timeEl = el.querySelector('time[datetime]')
             const datetime = timeEl?.getAttribute('datetime')
@@ -1452,7 +1505,7 @@ function getVisibleItemPositions(isNewReddit: boolean): VisibleItem[] {
         }
     } else {
         // New reddit profile: articles containing shreddit-post elements
-        const articles = document.querySelectorAll('article[data-post-id]')
+        const articles = document.querySelectorAll('article[data-post-id]:not(.rev-inserted-comment)')
         for (const el of Array.from(articles)) {
             const shredditPost = el.querySelector('shreddit-post')
             const ts = shredditPost?.getAttribute('created-timestamp')

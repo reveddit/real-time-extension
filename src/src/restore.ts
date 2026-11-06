@@ -33,15 +33,14 @@ export interface RestoreResult {
 }
 
 export interface RestoreProgress {
-    current: number
-    total: number
-    currentAuthor: string
     // partial: it stopped short of everything, and another click goes on.
     // noted: it read all it could, and its message says what that leaves out.
     status: 'searching' | 'found' | 'not_found' | 'partial' | 'noted' | 'cancelled' | 'rate_limited' | 'error'
     message: string
     // A profile scan found this is the viewer's own profile
     own?: boolean
+    // Comments on the page that need another sort, as on RestoreResult
+    otherSorts?: boolean
 }
 
 export type ProgressCallback = (progress: RestoreProgress) => void
@@ -76,10 +75,8 @@ export interface ProfileScanOptions {
 
 // --- Constants ---
 
-const MAX_RESTORE_LOOKUPS = 20
-// One refused read may be about that author (a suspended account's feed isn't
-// measured, and a feed's own 403 looks like the edge's block page), and one
-// failure may be a blip. A few in a row aren't.
+// One refused read may be about that author, and one failure may be a blip. A few
+// in a row aren't.
 const MAX_FAILED_READS_IN_A_ROW = 3
 // The most a thread's feed holds, the post included, whatever a request asks for
 const THREAD_FEED_LIMIT = 500
@@ -92,7 +89,7 @@ const ONE_YEAR_SECONDS = 365 * 60 * 60 * 24
 export class RateLimiter {
     private stillWanted: () => boolean
     private cancelled = false
-    private endWait = () => {}
+    private endWait: () => void = () => {}
 
     // stillWanted: whether the page the scan belongs to is still showing
     constructor(stillWanted: () => boolean = () => true) {
@@ -108,21 +105,16 @@ export class RateLimiter {
         return this.cancelled || !this.stillWanted()
     }
 
-    // The background gives out the turns (requests.ts takeScanTurn). The wait is
-    // here so that a cancel ends it and takes the read back.
-    async schedule<T>(fn: () => Promise<T>): Promise<T> {
+    // Throws when cancelled. A cancel ends the wait, so it takes the next read back
+    // at once.
+    async wait(ms = 0) {
+        if (ms > 0 && !this.isCancelled()) {
+            await new Promise<void>(resolve => {
+                this.endWait = resolve
+                setTimeout(resolve, ms)
+            })
+        }
         if (this.isCancelled()) throw new Error('Cancelled')
-        const waitMs = (await browser.runtime.sendMessage({ action: 'scan-turn' })) as number
-        await new Promise<void>(resolve => {
-            // Cancelled while asking: no wait, as nothing would end it
-            const timer = setTimeout(resolve, this.isCancelled() ? 0 : waitMs)
-            this.endWait = () => {
-                clearTimeout(timer)
-                resolve()
-            }
-        })
-        if (this.isCancelled()) throw new Error('Cancelled')
-        return fn()
     }
 }
 
@@ -287,7 +279,6 @@ export function getCandidateAuthors(
     targetId: string,
     treeMap: Map<string, CommentTreeNode>,
     postAuthor: string,
-    maxAuthors: number = MAX_RESTORE_LOOKUPS,
 ): string[] {
     const target = treeMap.get(targetId)
     if (!target) return []
@@ -336,7 +327,7 @@ export function getCandidateAuthors(
     tryAddAuthor(postAuthor)
 
     // 4-6. Paired ancestor/descendant expanding outward (3,4,5...)
-    for (let dist = 3; result.length < maxAuthors; dist++) {
+    for (let dist = 3; ; dist++) {
         const ancestor = getAncestor(dist)
         const descendant = getDescendant(target, dist)
         if (!ancestor && !descendant) break
@@ -353,7 +344,6 @@ export function getCandidateAuthors(
         for (const sibling of parentNode.children) {
             if (sibling.id === targetId) continue
             tryAdd(sibling)
-            if (result.length >= maxAuthors) break
         }
     }
 
@@ -365,14 +355,12 @@ export function getCandidateAuthors(
     if (sortedByTime.length > 1) {
         const targetIndex = sortedByTime.findIndex(c => c.id === targetId)
         if (targetIndex >= 0) {
-            let offset = 1
-            while (result.length < maxAuthors) {
+            for (let offset = 1; ; offset++) {
                 const before = sortedByTime[targetIndex - offset]
                 const after = sortedByTime[targetIndex + offset]
                 if (!before && !after) break
                 tryAdd(before)
-                if (result.length < maxAuthors) tryAdd(after)
-                offset++
+                tryAdd(after)
             }
         }
     }
@@ -381,6 +369,12 @@ export function getCandidateAuthors(
 }
 
 // --- Which sort finds an old comment ---
+
+const someNeedOtherSorts = (tree: Map<string, CommentTreeNode>, sort: string, t: string): boolean =>
+    Array.from(tree.values()).some(({ created_utc }) => {
+        const other = getUserPageSort(created_utc)
+        return created_utc > 0 && (other.sort !== sort || other.t !== t)
+    })
 
 function getUserPageSort(
     created_utc: number,
@@ -414,10 +408,13 @@ function getUserPageSort(
 // leaves it out the same way. No page or JSON listing shows a removed comment's
 // text any more (verified 2026-11-04). Logged out, reddit allows one feed a
 // minute, so these go through the background with the user's login.
-async function fetchWithLogin(path: string, onRetried?: () => void): Promise<string> {
-    const res = (await browser.runtime.sendMessage({ action: 'fetch-with-login', path })) as any
+async function fetchWithLogin(path: string, limiter: RateLimiter, secondTry = false): Promise<string> {
+    let res: any
+    do {
+        await limiter.wait(res?.waitMs)
+        res = await browser.runtime.sendMessage({ action: 'fetch-with-login', path, secondTry })
+    } while (res?.waitMs)
     console.log(`[reveddit scan] ${path} -> status ${res?.status ?? 'none'}`)
-    if (res?.retried) onRetried?.()
     if (res?.ok) return res.text
     throw Object.assign(new Error(`reddit request failed: ${res?.status ?? 'none'}`), {
         status: res?.status,
@@ -428,9 +425,6 @@ async function fetchWithLogin(path: string, onRetried?: () => void): Promise<str
         otherIdentity: res?.otherIdentity,
     })
 }
-
-const fetchFeed = async (path: string, onRetried?: () => void): Promise<any[]> =>
-    parseFeed(await fetchWithLogin(path, onRetried))
 
 // The removed comments a scan looks for are in here, and it's why a scan goes
 // author by author. Comments only, so posts don't dilute the 100 per request.
@@ -485,7 +479,7 @@ const RATE_LIMITED =
 // While monitoring's rate-limit backoff is active, scans decline to run (the
 // popup badge is already explaining the pause). A read that goes out after one
 // starts is turned away in the background, which also doubles the spacing for
-// a while after the last recorded 429 (requests.ts scanDelayMs).
+// a while after the last recorded 429 (requests.ts scanTurnIn).
 export async function monitoringBackoffGate(onProgress: ProgressCallback): Promise<boolean> {
     let backoffMs = 0
     try {
@@ -495,9 +489,6 @@ export async function monitoringBackoffGate(onProgress: ProgressCallback): Promi
     }
     if (backoffMs > 0) {
         onProgress({
-            current: 0,
-            total: 0,
-            currentAuthor: '',
             status: 'rate_limited',
             message: RATE_LIMITED,
         })
@@ -521,21 +512,21 @@ const GAVE_UP: any[] = []
 // it all and found nothing" from "couldn't read it". Feeds it has read are kept
 // in pageReads, if given, so the next click goes on from there. A read with no
 // answer gets one more try on the next click, then the scan moves past it, so
-// no click is promised work it can't do. Once nothing else is left, each further
-// click tries those again: a scan that couldn't read something hasn't finished.
+// no click is promised work it can't do. Once nothing else is left it gets a last
+// try, so a feed that never answers can't keep clicks reading it, and the scan says
+// what it couldn't read. That isn't finished, so the buttons stay.
 export class ScanReads {
     // Left for the next click
     unread = 0
-    // Tried on two clicks, with no answer
-    gaveUp = 0
     failure: any
     private left: number
     private failedInARow = 0
+    // Tried on two clicks, with no answer, among those this click came to
+    private givenUp = new Set<string>()
     private limiter: RateLimiter
     private pageReads?: Map<string, any[]>
 
-    // budget: the requests this click may send (options), counting a block page's
-    // retry, though not on the few reads that open a scan. The next click goes on.
+    // budget: the requests this click may send (options). The next click goes on.
     constructor(limiter: RateLimiter, budget: number, pageReads?: Map<string, any[]>) {
         this.limiter = limiter
         this.left = budget
@@ -546,19 +537,24 @@ export class ScanReads {
         return Boolean(this.failure) || this.limiter.isCancelled()
     }
 
+    get gaveUp(): number {
+        return this.givenUp.size
+    }
+
     has(path: string): boolean {
         return this.pageReads?.has(path) ?? false
     }
 
-    canRead(path: string): boolean {
-        return this.left > 0 || this.has(path)
+    // keep: how many of the click's reads to leave for later
+    canRead(path: string, keep = 0): boolean {
+        return this.left > keep || this.has(path)
     }
 
     noAnswer(path: string) {
         const tried = `tried ${path}`
         if (this.pageReads?.has(tried)) {
             this.pageReads.set(path, GAVE_UP)
-            this.gaveUp++
+            this.givenUp.add(path)
         } else {
             this.pageReads?.set(tried, NO_FEED)
             this.pageReads?.delete(path)
@@ -566,24 +562,50 @@ export class ScanReads {
         }
     }
 
-    retryGivenUp() {
-        for (const [path, kept] of this.pageReads || []) {
-            if (kept === GAVE_UP) this.pageReads?.delete(path)
+    // How many get their last try on the next click
+    retryGivenUp(): number {
+        let retrying = 0
+        for (const path of this.givenUp) {
+            const retried = `retried ${path}`
+            if (this.pageReads?.has(retried)) continue
+            this.pageReads?.delete(path)
+            this.pageReads?.set(retried, NO_FEED)
+            retrying++
+        }
+        return retrying
+    }
+
+    // One request, and after a block page a second try if the click has room
+    async text(path: string): Promise<string> {
+        this.left--
+        try {
+            return await fetchWithLogin(path, this.limiter)
+        } catch (err: any) {
+            if (!err.refused || !err.status || this.left <= 0) throw err
+            this.left--
+            return fetchWithLogin(path, this.limiter, true)
         }
     }
 
-    // Undefined when there's nothing to go on: it wasn't read, or a 404 said
+    // What a scan can't go on without: kept like the rest, but a failure is thrown
+    // for the scan to report
+    async needed(path: string, itemsOf: (text: string) => any[] = parseFeed): Promise<any[]> {
+        const items = this.pageReads?.get(path) ?? itemsOf(await this.text(path))
+        this.pageReads?.set(path, items)
+        return items
+    }
+
+    // Undefined when there's nothing to go on: it wasn't read, or reddit said
     // there's no such feed, which is an answer and isn't counted as unread
     async feed(path: string): Promise<any[] | undefined> {
         const kept = this.pageReads?.get(path)
         if (kept) {
             this.failedInARow = 0
-            if (kept === GAVE_UP) this.gaveUp++
+            if (kept === GAVE_UP) this.givenUp.add(path)
             return kept === NO_FEED || kept === GAVE_UP ? undefined : kept
         }
-        this.left--
         try {
-            const items = await this.limiter.schedule(() => fetchFeed(path, () => this.left--))
+            const items = parseFeed(await this.text(path))
             this.failedInARow = 0
             this.pageReads?.set(path, items)
             return items
@@ -610,15 +632,17 @@ export class ScanReads {
 
 // The feed has the thread's comments and says which are gone. The page has who
 // replied to whom, for the comments it shows.
-async function readThread(threadPostId: string, subreddit: string, isNewReddit: boolean, limiter: RateLimiter) {
+async function readThread(threadPostId: string, subreddit: string, isNewReddit: boolean, reads: ScanReads) {
     const shortId = threadPostId.replace(/^t3_/, '')
-    const items = await limiter.schedule(() =>
-        fetchFeed(`/r/${encodeURIComponent(subreddit)}/comments/${shortId}/.rss?limit=${THREAD_FEED_LIMIT}`),
+    const items = await reads.needed(
+        `/r/${encodeURIComponent(subreddit)}/comments/${shortId}/.rss?limit=${THREAD_FEED_LIMIT}`,
+        text => {
+            const read = parseFeed(text)
+            if (!read.some(item => item.kind === 't3')) throw new Error('thread feed unreadable (no post)')
+            return read
+        },
     )
-    const post = items.find(item => item.kind === 't3')?.data
-    if (!post) {
-        throw new Error('thread feed unreadable (no post)')
-    }
+    const post = items.find(item => item.kind === 't3')!.data
     const tree = isNewReddit ? extractCommentTree_newReddit(threadPostId) : extractCommentTree_oldReddit(threadPostId)
     for (const { kind, data } of items) {
         if (kind !== 't1') continue
@@ -633,6 +657,30 @@ async function readThread(threadPostId: string, subreddit: string, isNewReddit: 
     return { tree, postAuthor: post.author as string, postCreatedUtc: post.created_utc as number }
 }
 
+// The thread, or undefined once it has said why there's none
+async function openThread(
+    threadPostId: string,
+    subreddit: string,
+    isNewReddit: boolean,
+    reads: ScanReads,
+    limiter: RateLimiter,
+    onProgress: ProgressCallback,
+    cancelled: string,
+) {
+    try {
+        const thread = await readThread(threadPostId, subreddit, isNewReddit, reads)
+        // Reading the page now would read the next one
+        if (!limiter.isCancelled()) return thread
+    } catch (err: any) {
+        if (!limiter.isCancelled()) {
+            onProgress({ status: 'error', message: scanFailure(err, 'Could not load comment tree.') })
+            return undefined
+        }
+    }
+    onProgress({ status: 'cancelled', message: cancelled })
+    return undefined
+}
+
 export const scanFailure = (err: any, otherwise: string): string => {
     if (err.needsLogin) return 'Sign in to Reddit to scan. Logged out, it allows one request a minute.'
     if (err.busy) return 'A second account is signing in. Try again in a moment.'
@@ -642,6 +690,7 @@ export const scanFailure = (err: any, otherwise: string): string => {
     return otherwise
 }
 export const COULD_NOT_READ = "Couldn't read reddit's feeds. Try again."
+export const RELOAD_TO_RETRY = 'Reload the page to try them again.'
 
 // Comments a scan put on this page and needn't look for again. A live one placed
 // for context stays, but one placed without its text still needs it.
@@ -694,28 +743,18 @@ export async function restoreComment(
         return { found: false }
     }
 
-    let thread: Awaited<ReturnType<typeof readThread>> | undefined
-    let failure: any
-    try {
-        thread = await readThread(threadPostId, subreddit, isNewReddit, limiter)
-    } catch (err: any) {
-        failure = err
-    }
-    // Reading the page now would read the next one
-    if (limiter.isCancelled()) {
-        onProgress({ current: 0, total: 0, currentAuthor: '', status: 'cancelled', message: 'Search cancelled.' })
-        return { found: false }
-    }
-    if (!thread) {
-        onProgress({
-            current: 0,
-            total: 0,
-            currentAuthor: '',
-            status: 'error',
-            message: scanFailure(failure, 'Could not load comment tree.'),
-        })
-        return { found: false }
-    }
+    const { readsPerClick } = await getScanSettings()
+    const reads = new ScanReads(limiter, readsPerClick, pageReads)
+    const thread = await openThread(
+        threadPostId,
+        subreddit,
+        isNewReddit,
+        reads,
+        limiter,
+        onProgress,
+        'Search cancelled.',
+    )
+    if (!thread) return { found: false }
 
     const { tree: treeMap, postAuthor } = thread
     const { candidateAuthors, visibleRealIds, tombstoneIds } = summarizeThreadTree(treeMap)
@@ -727,15 +766,12 @@ export async function restoreComment(
     // Search EVERY visible author, nearest-first for the target. We usually
     // find it in a few fetches and stop early, but only conclude "not found"
     // once ALL visible authors are exhausted.
-    const proximityOrdered = getCandidateAuthors(targetCommentId, treeMap, postAuthor, Number.MAX_SAFE_INTEGER)
+    const proximityOrdered = getCandidateAuthors(targetCommentId, treeMap, postAuthor)
     const seenAuthors = new Set(proximityOrdered)
     const candidates = proximityOrdered.concat(candidateAuthors.filter(a => !seenAuthors.has(a)))
 
     if (candidates.length === 0) {
         onProgress({
-            current: 0,
-            total: 0,
-            currentAuthor: '',
             status: 'not_found',
             message: 'No candidate authors found to search.',
         })
@@ -745,9 +781,6 @@ export async function restoreComment(
     const target = treeMap.get(targetCommentId)
     if (!target) {
         onProgress({
-            current: 0,
-            total: 0,
-            currentAuthor: '',
             status: 'error',
             message: 'Target comment not found in tree.',
         })
@@ -755,13 +788,6 @@ export async function restoreComment(
     }
 
     const { sort, t } = getUserPageSort(target.created_utc)
-    // The thread's own feed was the first read. Half the click's reads may go to
-    // authors, and the rest to comments.
-    const { readsPerClick } = await getScanSettings()
-    const authorsPerClick = Math.ceil(readsPerClick / 2)
-    const reads = new ScanReads(limiter, readsPerClick - 1, pageReads)
-    // Cap NEW network lookups per click; cached authors are checked for free.
-    let newFetches = 0
     let unsearched = 0
     let targetResult: RestoreResult | null = null
 
@@ -771,6 +797,8 @@ export async function restoreComment(
     //   3. Anything else that isn't live here might be a removed comment with no
     //      replies, or one the thread's feed cut off. Its own feed tells.
     const pendingVerify: any[] = []
+    // Half a click stays for those. What's read already is free.
+    const heldBack = () => (pendingVerify.length > 0 ? Math.floor(readsPerClick / 2) : 0)
 
     const crossCheck = (items: any[], _sourceAuthor: string) => {
         for (const item of items) {
@@ -800,17 +828,12 @@ export async function restoreComment(
     for (let i = 0; i < candidates.length && !targetResult && !reads.stopped; i++) {
         const author = candidates[i]
         const path = authorFeedPath(author, sort, t)
-        const kept = reads.has(path)
-        if (!reads.canRead(path) || (!kept && newFetches >= authorsPerClick)) {
+        if (!reads.canRead(path, heldBack())) {
             unsearched++
             continue
         }
-        if (!kept) newFetches++
 
         onProgress({
-            current: i + 1,
-            total: candidates.length,
-            currentAuthor: author,
             status: 'searching',
             message: `Searching u/${author}…`,
         })
@@ -838,9 +861,6 @@ export async function restoreComment(
     if (targetResult) {
         const r = targetResult as RestoreResult
         onProgress({
-            current: candidates.length,
-            total: candidates.length,
-            currentAuthor: r.author || '',
             status: 'found',
             message: `Found comment by u/${r.author}`,
         })
@@ -849,9 +869,6 @@ export async function restoreComment(
 
     if (limiter.isCancelled()) {
         onProgress({
-            current: candidates.length,
-            total: candidates.length,
-            currentAuthor: '',
             status: 'cancelled',
             message: 'Search cancelled.',
         })
@@ -861,9 +878,6 @@ export async function restoreComment(
     if (reads.failure) {
         // Not "searched all": something wasn't read, and the buttons stay
         onProgress({
-            current: candidates.length,
-            total: candidates.length,
-            currentAuthor: '',
             status: 'error',
             message: scanFailure(reads.failure, COULD_NOT_READ),
         })
@@ -871,25 +885,26 @@ export async function restoreComment(
     }
 
     const remaining = unsearched + reads.unread + unchecked
-    if (!remaining) reads.retryGivenUp()
-    const couldntRead = `Not found — searched ${candidates.length} visible author(s), but ${reads.gaveUp} feed(s) couldn't be read. Click again to try them.`
+    const retrying = remaining ? 0 : reads.retryGivenUp()
+    const couldntRead = `Not found — ${reads.gaveUp} feed(s) couldn't be read.`
+    const stuck = !remaining && !retrying && reads.gaveUp > 0
     onProgress({
-        current: candidates.length,
-        total: candidates.length,
-        currentAuthor: '',
-        status: 'not_found',
+        status: stuck ? 'noted' : 'not_found',
         message: remaining
             ? `No match yet — ${remaining} left to check; click again to continue.`
-            : reads.gaveUp
-              ? couldntRead
-              : `Not found — searched all ${candidates.length} visible author(s).`,
+            : retrying
+              ? `${couldntRead} Click again to try them.`
+              : stuck
+                ? `${couldntRead} ${RELOAD_TO_RETRY}`
+                : `Not found — searched all ${candidates.length} visible author(s).`,
     })
-    const otherSorts = Array.from(treeMap.values()).some(({ created_utc }) => {
-        const other = getUserPageSort(created_utc)
-        return created_utc > 0 && (other.sort !== sort || other.t !== t)
-    })
-    const left = remaining + reads.gaveUp
-    return { found: false, exhausted: left === 0, remaining: left, otherSorts }
+    const left = remaining + retrying
+    return {
+        found: false,
+        exhausted: left === 0 && !stuck,
+        remaining: left,
+        otherSorts: someNeedOtherSorts(treeMap, sort, t),
+    }
 }
 
 // --- Profile Scan ---
@@ -905,13 +920,12 @@ export async function scanUserProfile(
         return []
     }
     onProgress({
-        current: 0,
-        total: 0,
-        currentAuthor: username,
         status: 'searching',
         message: 'Fetching user profile...',
     })
 
+    const { readsPerClick } = await getScanSettings()
+    const reads = new ScanReads(limiter, readsPerClick, pageReads)
     const user = encodeURIComponent(username)
     // The page's own list. Feeds take these as listings do, but a tab ignores an
     // anchor that's the other tab's (reddit.md), so that tab goes from the page's
@@ -926,7 +940,7 @@ export async function scanUserProfile(
         if (!first) return {}
         // after leaves its anchor out, and the first may be the one that's removed
         const query = queryWith({ limit: '1', before: first })
-        const [above] = await limiter.schedule(() => fetchFeed(`/user/${user}/${tab}/.rss?${query}`))
+        const [above] = await reads.needed(`/user/${user}/${tab}/.rss?${query}`)
         return above ? { after: above.data.name } : {}
     }
     const cachedItems: any[] = []
@@ -939,20 +953,18 @@ export async function scanUserProfile(
             ['submitted', 't3'],
         ] as const) {
             const query = queryWith(await startOf(tab, kind))
-            cachedItems.push(...(await limiter.schedule(() => fetchFeed(`/user/${user}/${tab}/.rss?${query}`))))
-            const listing = JSON.parse(
-                await limiter.schedule(() => fetchWithLogin(`/user/${user}/${tab}.json?${query}`)),
+            cachedItems.push(...(await reads.needed(`/user/${user}/${tab}/.rss?${query}`)))
+            const children = await reads.needed(
+                `/user/${user}/${tab}.json?${query}`,
+                text => JSON.parse(text)?.data?.children || [],
             )
-            for (const child of listing?.data?.children || []) {
+            for (const child of children) {
                 liveItems.set(child.data.name, child.data)
             }
         }
     } catch (err: any) {
         const stopped = limiter.isCancelled()
         onProgress({
-            current: 0,
-            total: 0,
-            currentAuthor: username,
             status: stopped ? 'cancelled' : 'error',
             message: stopped
                 ? 'Scan cancelled.'
@@ -965,9 +977,6 @@ export async function scanUserProfile(
 
     if (cachedItems.length === 0) {
         onProgress({
-            current: 0,
-            total: 0,
-            currentAuthor: username,
             status: 'not_found',
             message: 'No items found on user profile.',
         })
@@ -977,9 +986,6 @@ export async function scanUserProfile(
     console.log(`[reveddit scan] read ${cachedItems.length} items from u/${username}'s feeds`)
 
     onProgress({
-        current: 0,
-        total: cachedItems.length,
-        currentAuthor: username,
         status: 'searching',
         message: `Checking removal status of ${cachedItems.length} items...`,
     })
@@ -987,9 +993,6 @@ export async function scanUserProfile(
     // A comment the listing leaves out may only be in a subreddit they hid. An
     // author's own listing and feeds show their removed comments as live.
     const unlisted = cachedItems.filter(item => item.kind === 't1' && !liveItems.has(item.data.name))
-    // The four reads above, and one more: the one above the page, or who's signed in
-    const { readsPerClick } = await getScanSettings()
-    const reads = new ScanReads(limiter, readsPerClick - 5, pageReads)
     const { looked, unchecked } = await lookupCommentsByIds(
         unlisted.map(item => item.data),
         reads,
@@ -1029,17 +1032,16 @@ export async function scanUserProfile(
     console.log(`[reveddit scan] done: ${results.length} removed of ${cachedItems.length} items`)
 
     const found = results.length > 0 ? `Found ${results.length} removed item(s).` : ''
-    const progress = { current: cachedItems.length, total: cachedItems.length, currentAuthor: username }
     // Every comment listed is how a profile looks to its own author, and the
     // stored name may be empty or out of date. Undefined: reddit didn't say.
-    const own = options?.ownProfile || (unlisted.length === 0 ? await isSignedInAs(username, limiter) : false)
+    const own = options?.ownProfile || (unlisted.length === 0 ? await isSignedInAs(username, reads) : false)
     if (limiter.isCancelled()) {
-        onProgress({ ...progress, status: 'cancelled', message: `Scan cancelled. ${found}`.trim() })
+        onProgress({ status: 'cancelled', message: `Scan cancelled. ${found}`.trim() })
         return results
     }
     if (reads.failure) {
         const why = scanFailure(reads.failure, 'Could not check removal status.')
-        onProgress({ ...progress, status: 'error', message: `${why} ${found}`.trim() })
+        onProgress({ status: 'error', message: `${why} ${found}`.trim() })
         return results
     }
     const unread = unchecked + reads.unread
@@ -1052,7 +1054,6 @@ export async function scanUserProfile(
     ].filter(Boolean)
     const nothing = own ? 'No removed posts found.' : `No removed items found${unread ? ' so far' : ''}.`
     onProgress({
-        ...progress,
         own: Boolean(own),
         status: unread > 0 ? 'partial' : notes.length ? 'noted' : results.length > 0 ? 'found' : 'not_found',
         message: [found || nothing, ...notes].join(' '),
@@ -1061,9 +1062,9 @@ export async function scanUserProfile(
 }
 
 // Not getLoggedinUserDetailed: this read takes its turn with the scan's others
-const isSignedInAs = async (username: string, limiter: RateLimiter): Promise<boolean | undefined> => {
+const isSignedInAs = async (username: string, reads: ScanReads): Promise<boolean | undefined> => {
     try {
-        const me = JSON.parse(await limiter.schedule(() => fetchWithLogin('/api/me.json')))
+        const me = JSON.parse(await reads.text('/api/me.json'))
         return String(me?.data?.name).toLowerCase() === username.toLowerCase()
     } catch {
         return undefined
@@ -1229,29 +1230,18 @@ export async function scanThreadForRemovedComments(
     if (!(await monitoringBackoffGate(onProgress))) {
         return []
     }
-    let thread: Awaited<ReturnType<typeof readThread>> | undefined
-    let failure: any
-    try {
-        thread = await readThread(threadPostId, subreddit, isNewReddit, limiter)
-    } catch (err: any) {
-        failure = err
-    }
-    // Reading the page now would read the next one
-    if (limiter.isCancelled()) {
-        const message = `Scan cancelled. ${recoveredOnPage()} recovered.`
-        onProgress({ current: 0, total: 0, currentAuthor: '', status: 'cancelled', message })
-        return []
-    }
-    if (!thread) {
-        onProgress({
-            current: 0,
-            total: 0,
-            currentAuthor: '',
-            status: 'error',
-            message: scanFailure(failure, 'Could not load comment tree.'),
-        })
-        return []
-    }
+    const { readsPerClick } = await getScanSettings()
+    const reads = new ScanReads(limiter, readsPerClick, pageReads)
+    const thread = await openThread(
+        threadPostId,
+        subreddit,
+        isNewReddit,
+        reads,
+        limiter,
+        onProgress,
+        `Scan cancelled. ${recoveredOnPage()} recovered.`,
+    )
+    if (!thread) return []
 
     const { tree, postAuthor, postCreatedUtc } = thread
     const { candidateAuthors, visibleRealIds, tombstoneIds } = summarizeThreadTree(tree)
@@ -1272,9 +1262,6 @@ export async function scanThreadForRemovedComments(
     const counted = Number.isFinite(missingCount)
     if (missingCount === 0) {
         onProgress({
-            current: 0,
-            total: 0,
-            currentAuthor: '',
             status: 'not_found',
             message: 'All comments are visible — nothing removed.',
         })
@@ -1287,9 +1274,6 @@ export async function scanThreadForRemovedComments(
 
     if (candidates.length === 0) {
         onProgress({
-            current: 0,
-            total: 0,
-            currentAuthor: '',
             status: 'not_found',
             message: `${counted ? `${missingCount} comment(s) removed, but no` : 'No'} visible authors to search.`,
         })
@@ -1297,9 +1281,6 @@ export async function scanThreadForRemovedComments(
     }
 
     const { sort, t } = getUserPageSort(postCreatedUtc || Math.floor(Date.now() / 1000))
-    // The thread's own feed was the first read
-    const { readsPerClick } = await getScanSettings()
-    const reads = new ScanReads(limiter, readsPerClick - 1, pageReads)
     const recovered: RecoveredComment[] = []
     const recoveredIds = placedOnPage()
     const alreadyRecovered = recoveredOnPage()
@@ -1333,9 +1314,6 @@ export async function scanThreadForRemovedComments(
 
         searched++
         onProgress({
-            current: searched,
-            total: candidates.length,
-            currentAuthor: author,
             status: 'searching',
             message: `Searching u/${author}… — ${candidates.length - searched} author(s) left, ${recoveredCount()}${counted ? `/${missingCount}` : ''} recovered`,
         })
@@ -1368,34 +1346,36 @@ export async function scanThreadForRemovedComments(
         }
     }
 
-    const progress = { current: searched, total: candidates.length, currentAuthor: '' }
     if (limiter.isCancelled()) {
-        onProgress({ ...progress, status: 'cancelled', message: `Scan cancelled. ${recoveredCount()} recovered.` })
+        onProgress({ status: 'cancelled', message: `Scan cancelled. ${recoveredCount()} recovered.` })
         return recovered
     }
     if (reads.failure) {
         const why = scanFailure(reads.failure, COULD_NOT_READ)
-        onProgress({ ...progress, status: 'error', message: `${why} ${recoveredCount()} recovered.` })
+        onProgress({ status: 'error', message: `${why} ${recoveredCount()} recovered.` })
         return recovered
     }
+    // With nothing missing any more, what it couldn't read has nothing to give
+    const stillMissing = recoveredInCount() < missingCount
     const left = unsearched + unchecked + reads.unread
-    if (left > 0) {
+    if (left > 0 && stillMissing) {
         const message = `${recoveredCount()} recovered so far, ${left} left to check. Click again to continue.`
-        onProgress({ ...progress, status: 'partial', message })
+        onProgress({ status: 'partial', message })
         return recovered
     }
-    if (reads.gaveUp) {
-        reads.retryGivenUp()
-        const message = `${recoveredCount()} recovered. ${reads.gaveUp} feed(s) couldn't be read. Click again to try them.`
-        onProgress({ ...progress, status: 'partial', message })
+    if (reads.gaveUp && stillMissing) {
+        const retrying = reads.retryGivenUp()
+        const next = retrying ? 'Click again to try them.' : RELOAD_TO_RETRY
+        const message = `${recoveredCount()} recovered. ${reads.gaveUp} feed(s) couldn't be read. ${next}`
+        onProgress({ status: retrying ? 'partial' : 'noted', message })
         return recovered
     }
     onProgress({
-        ...progress,
         status: recovered.length > 0 ? 'found' : 'not_found',
         message:
             `Scan complete: ${recoveredCount()} recovered` +
-            (counted && recoveredInCount() < missingCount ? ` (${missingCount - recoveredInCount()} not found)` : ''),
+            (counted && stillMissing ? ` (${missingCount - recoveredInCount()} not found)` : ''),
+        otherSorts: someNeedOtherSorts(tree, sort, t),
     })
 
     return recovered

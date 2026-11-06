@@ -40,7 +40,7 @@ import {
     isUserDeletedComment,
     RedditItem,
 } from './common'
-import { fetchLoggedIn } from './logged-in-fetch'
+import { fetchForScan, fetchLoggedIn } from './logged-in-fetch'
 import {
     getRemoteMechanism,
     resolveMechanismDisabled,
@@ -3166,32 +3166,31 @@ const lookupItemsByID_publicThenLegacy = (
 // bridge, which import it from here
 export { hasRedditLoginCookie }
 
-// The user's pace (options), and half that for a while after a 429, mirroring
-// monitoring's own gentle resume (computeAbsentVerifyBudget)
-export const scanDelayMs = async (): Promise<number> => {
-    const { gapMs } = await getScanSettings()
-    const sinceHit = await getMsSinceLastRateLimitHit().catch(() => null)
-    return sinceHit !== null && sinceHit < RECENT_RATE_LIMIT_WINDOW_MS ? gapMs * 2 : gapMs
-}
-
-// Every tab's scans take turns, so more of them don't mean a faster pace. This
-// says how long until the caller's turn. A page waits it out where cancelling or
-// leaving takes the read back (restore.ts RateLimiter).
+// Every tab's scans take turns, so more of them don't mean a faster pace. The turn
+// is taken when a read goes out, so its spacing is between real requests.
 // Mutable for tests, like _wwwRouteTiming.
 export const _scanTurn = { next: 0 }
-export const takeScanTurn = async (): Promise<number> => {
-    const gap = await scanDelayMs()
+
+// 0 once the turn is taken, or how long until it comes. The pace is the user's
+// (options), and half that for a while after a 429, mirroring monitoring's own
+// gentle resume (computeAbsentVerifyBudget).
+const scanTurnIn = async (): Promise<number> => {
+    const { gapMs } = await getScanSettings()
+    const sinceHit = await getMsSinceLastRateLimitHit().catch(() => null)
+    const gap = sinceHit !== null && sinceHit < RECENT_RATE_LIMIT_WINDOW_MS ? gapMs * 2 : gapMs
     const now = Date.now()
-    const turn = Math.max(now, _scanTurn.next)
-    _scanTurn.next = turn + gap
-    return turn - now
+    // Further off than a gap, the clock went back
+    if (_scanTurn.next > now && _scanTurn.next - now <= gap) return _scanTurn.next - now
+    _scanTurn.next = now + gap
+    return 0
 }
 
-// For a scan the user started (restore.ts), on its turn. A login reads reddit's
-// feeds at a scan's pace, where a logged-out browser gets one a minute (verified
-// 2026-11-04). Every scan comes through here, so they share the backoff that
-// monitoring and the bridge honor, whichever tab they run in.
-export const readWithLogin = async (path: string) => {
+// For a scan the user started (restore.ts). A login reads reddit's feeds at a
+// scan's pace, where a logged-out browser gets one a minute (verified 2026-11-04).
+// Every scan comes through here, so they share one pace and the backoff that
+// monitoring and the bridge honor, whichever tab they run in. Too soon, it answers
+// with waitMs: the page waits and asks again, where a cancel can take the read back.
+export const readWithLogin = async (path: string, secondTry = false) => {
     if ((await getRemoteMechanism(MECHANISM_SCAN_FEEDS)) === 'off') {
         return { ok: false, status: 0, blockPage: true }
     }
@@ -3205,27 +3204,19 @@ export const readWithLogin = async (path: string) => {
     if (await isRateLimitedNow()) {
         return { ok: false, status: 0, resting: true }
     }
+    const waitMs = await scanTurnIn()
+    if (waitMs > 0) {
+        return { ok: false, status: 0, waitMs }
+    }
     const controller = new AbortController()
-    const startDeadline = () => setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
-    let timer = startDeadline()
+    const timer = setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
     try {
         const url = `https://www.reddit.com${path}`
-        const { response, blockPage, retried } = await fetchLoggedIn(url, {
-            scan: true,
-            signal: controller.signal,
-            onRetry: async () => {
-                // The wait can be as long as the deadline
-                clearTimeout(timer)
-                const waitMs = await takeScanTurn()
-                await new Promise(resolve => setTimeout(resolve, waitMs))
-                timer = startDeadline()
-                return !(await isRateLimitedNow()) && !(await isViewerConnecting())
-            },
-        })
+        const { response, blockPage } = await fetchForScan(url, controller.signal, secondTry)
         // Reddit's logout leaves a short cookie of the login's name, so holding one
         // settles nothing, and no wait helps. Its answers to the login check do.
         if ((response.status === 429 || blockPage) && (await isLoginKeptOut())) {
-            return { ok: false, status: 0, retried, needsLogin: true }
+            return { ok: false, status: 0, needsLogin: true }
         }
         if (response.status === 429) {
             noteRateLimited(new Error('www.reddit.com request failed: 429'))
@@ -3234,7 +3225,6 @@ export const readWithLogin = async (path: string) => {
             ok: response.ok,
             status: response.status,
             blockPage,
-            retried,
             text: response.ok ? await response.text() : '',
         }
     } finally {

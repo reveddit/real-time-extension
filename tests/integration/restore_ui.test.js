@@ -61,8 +61,12 @@ const load = async (html, path = '/r/sub/comments/post/a_title/') => {
     mock.__resetStorage({ options: { scan_reads_per_click: 50 } })
     const fresh = mock.default
     // A second between reads, as the fastest options have it
-    fresh.runtime.sendMessage = async message =>
-        message.action === 'fetch-with-login' ? answer(message.path) : message.action === 'scan-turn' ? 1000 : undefined
+    let waited = false
+    fresh.runtime.sendMessage = async message => {
+        if (message.action !== 'fetch-with-login') return undefined
+        waited = !waited
+        return waited ? { ok: false, status: 0, waitMs: 1000 } : answer(message.path)
+    }
     ui = await import('../../src/src/restore-ui.ts')
 }
 const loadThread = async (html, isNewReddit = true) => {
@@ -313,12 +317,14 @@ describe('Place unattached', () => {
         expect(document.querySelector('.rev-unattached-note .rev-restore-cancel')).toBeNull()
     })
 
-    it('frees the buttons of a new page at once, from a scan of the old one waiting its turn', async () => {
+    it.each([
+        ['waiting its turn', async () => ({ ok: false, status: 0, waitMs: 20000 })],
+        ['with a read out', () => new Promise(() => {})],
+    ])('frees the buttons of a new page at once, from a scan of the old one %s', async (_, sendMessage) => {
         await loadThread(threadPage(9, comment('t1_a', 'a')))
         pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'))
         const mock = (await import('../mocks/webextension-polyfill.js')).default
-        const send = mock.runtime.sendMessage
-        mock.runtime.sendMessage = async message => (message.action === 'scan-turn' ? 20000 : send(message))
+        mock.runtime.sendMessage = sendMessage
         click(scanBtn())
         await vi.advanceTimersByTimeAsync(0)
         const onNewPage = document.querySelector('.rev-scan-comment-btn')
@@ -328,6 +334,52 @@ describe('Place unattached', () => {
         await vi.advanceTimersByTimeAsync(0)
         expect(onNewPage.classList.contains('rev-scan-disabled')).toBe(false)
         expect(asked).toEqual([])
+    })
+
+    it('keeps what it read through Back, which can bring "Continue scan" back with it', async () => {
+        const authors = Array.from({ length: 15 }, (_, i) => `author${i}`)
+        await loadThread(threadPage(30, authors.map(name => comment(`t1_${name}`, name)).join('')))
+        pages[threadPath] = feed(postEntry())
+        for (const name of authors) pages[authorPath(name)] = feed()
+        const mock = await import('../mocks/webextension-polyfill.js')
+        mock.__getSyncStorage().options = { scan_reads_per_click: 10 }
+        await scanThread()
+        expect(scanBtn().textContent).toBe('Continue scan')
+        const read = [...asked]
+
+        ui.resetScansForPage()
+        ui.initRestoreOnThread(true)
+        await vi.advanceTimersByTimeAsync(0)
+        asked.length = 0
+        await scanThread()
+        expect(asked.filter(path => read.includes(path))).toEqual([])
+    })
+
+    it('gives the buttons back if a scan breaks, and says it stopped', async () => {
+        await loadThread(threadPage(9, comment('t1_a', 'a')))
+        pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'))
+        const querySelector = document.querySelector.bind(document)
+        document.querySelector = selector => {
+            if (selector.startsWith('shreddit-post')) throw new Error('broken')
+            return querySelector(selector)
+        }
+        await scanThread()
+        expect(threadNote()).toContain("Couldn't read reddit's feeds")
+        expect(scanBtn().disabled).toBe(false)
+        expect(document.querySelector('.rev-restore-cancel')).toBeNull()
+        expect(document.querySelector('.rev-scan-comment-btn').classList.contains('rev-scan-disabled')).toBe(false)
+    })
+
+    it('gives its button back if it breaks, and says it stopped', async () => {
+        await withOrphans(1, 1)
+        const btn = placeBtn()
+        click(btn)
+        document.createElement = () => {
+            throw new Error('broken')
+        }
+        await settle(() => btn.disabled)
+        expect(placeNote()).toContain("Couldn't read reddit's feeds")
+        expect(btn.textContent).toBe('Place unattached comments (1 left)')
     })
 
     it("can't be pressed during a scan, and can be cancelled like one", async () => {
@@ -358,6 +410,42 @@ describe('Place unattached', () => {
     })
 })
 
+describe("when a scan ends, the page's Scan-Rev buttons", () => {
+    const twoAuthors = async () => {
+        await loadThread(threadPage(9, comment('t1_a', 'a') + comment('t1_b', 'b')))
+        pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_b', 'b', 'live words'))
+        pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'))
+        pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'))
+    }
+    const scanRev = () => document.querySelector('.rev-scan-comment-btn')
+
+    it('lose their number once another click would read nothing', async () => {
+        await twoAuthors()
+        pages[authorPath('b')] = { ok: false, status: 500 }
+        for (let click_ = 0; click_ < 3; click_++) {
+            click(scanRev())
+            await settle(() => document.querySelector('.rev-spinner'))
+        }
+        expect(scanRev().textContent).toBe('Scan-Rev')
+        expect(scanRev().title).not.toContain('click to continue')
+    })
+
+    it('stay for a comment that needs another sort of feeds', async () => {
+        await twoAuthors()
+        const eightMonthsAgo = new Date(Date.now() - 240 * 24 * 3600 * 1000).toISOString()
+        document.querySelector('[thingid="t1_b"]').setAttribute('created', eightMonthsAgo)
+        await scanThread()
+        expect(scanBtn().classList.contains('rev-scan-exhausted')).toBe(true)
+        expect(document.querySelector('.rev-scan-comment-btn.rev-scan-exhausted')).toBeNull()
+    })
+
+    it('all go when every comment was read the same way', async () => {
+        await twoAuthors()
+        await scanThread()
+        expect(document.querySelector('.rev-scan-comment-btn:not(.rev-scan-exhausted)')).toBeNull()
+    })
+})
+
 describe("a feed that couldn't be read", () => {
     it('leaves the buttons, with no word of everything being searched, and a later click reads it', async () => {
         await loadThread(threadPage(4, comment('t1_a', 'a') + comment('t1_b', 'b')))
@@ -369,7 +457,7 @@ describe("a feed that couldn't be read", () => {
         await scanThread()
         expect(threadNote()).toContain("1 feed(s) couldn't be read. Click again to try them.")
         expect(scanBtn().disabled).toBe(false)
-        expect(scanBtn().title).not.toContain('All visible authors searched')
+        expect(scanBtn().title).not.toContain('No more removed comments')
         expect(button.classList.contains('rev-scan-exhausted')).toBe(false)
 
         pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'), entry('t1_gone', 'b', 'words'))
@@ -633,6 +721,64 @@ describe('the profile scan', () => {
         pages[`/user/someone/comments.json?${query}`] = listing({ data: { name: 't1_live' } })
         pages[`/user/someone/submitted.json?${query}`] = listing()
         pages[commentPath('t1_gone')] = feed(postEntry())
+    })
+
+    it("places a later click's item among the page's own rows, whatever an earlier click inserted", async () => {
+        const secondsAgo = seconds => new Date(Date.now() - seconds * 1000).toISOString()
+        const row = (id, seconds) =>
+            `<div class="thing" data-fullname="${id}"><time datetime="${secondsAgo(seconds)}"></time></div>`
+        await loadProfile(
+            `<html><body><div class="content" role="main"><div id="siteTable">${row('t1_a', 100)}` +
+                `<div class="thing rev-inserted-comment" data-fullname="t1_x"></div>${row('t1_b', 300)}` +
+                `</div></div></body></html>`,
+        )
+        pages[`/user/someone/comments/.rss?${query}`] = feed(
+            entry('t1_a', 'someone', 'live'),
+            entry('t1_y', 'someone', 'the removed text').replace(NOW, secondsAgo(200)),
+            entry('t1_b', 'someone', 'live'),
+        )
+        pages[`/user/someone/comments.json?${query}`] = listing({ data: { name: 't1_a' } }, { data: { name: 't1_b' } })
+        pages[commentPath('t1_y')] = feed(postEntry())
+        await scanProfile()
+        const rows = Array.from(document.querySelectorAll('#siteTable > [data-fullname]'))
+        expect(rows.map(el => el.getAttribute('data-fullname'))).toEqual(['t1_a', 't1_x', 't1_y', 't1_b'])
+    })
+
+    it('leaves the text of a row an earlier click inserted as it is', async () => {
+        await loadProfile(
+            `<html device="desktop"><body><div class="content" role="main"></div>` +
+                `<article data-post-id="t1_gone" class="rev-inserted-comment"><p>the removed text</p></article>` +
+                `</body></html>`,
+        )
+        await scanProfile()
+        expect(document.querySelector('.rev-restored-inline')).toBeNull()
+    })
+
+    it("keeps a new page's rescan its own, whatever a scan of the last page does as it ends", async () => {
+        await loadProfile(profilePage)
+        let answered
+        pages[`/user/someone/comments/.rss?${query}`] = new Promise(resolve => (answered = resolve))
+        click(profileBtn())
+        await vi.advanceTimersByTimeAsync(1000)
+        document.querySelector('.rev-profile-scan-container').remove()
+        ui.resetScansForPage()
+        pages[`/user/someone/comments/.rss?${query}`] = feed(entry('t1_live', 'someone', 'live'))
+        ui.initProfileScan('someone', false)
+        await vi.advanceTimersByTimeAsync(0)
+        await scanProfile()
+        answered({ ok: false, status: 500 })
+        await vi.advanceTimersByTimeAsync(2000)
+        asked.length = 0
+        await scanProfile()
+        expect(asked).toContain(`/user/someone/comments/.rss?${query}`)
+    })
+
+    it('gives the button back if it breaks, and says it stopped', async () => {
+        await loadProfile(profilePage)
+        globalThis.window = {}
+        await scanProfile()
+        expect(progress()).toBe("Couldn't read reddit's feeds. Try again.")
+        expect(profileBtn().textContent).toBe('Rescan')
     })
 
     it('can be cancelled, and leaves only its last word', async () => {

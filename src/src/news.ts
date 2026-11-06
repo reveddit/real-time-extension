@@ -76,6 +76,14 @@ export interface RemoteOptions {
     // (login-wall-config.ts): { paths: string[], markers: string[] }, added to
     // the built-in login paths.
     login_wall?: Partial<LoginWallConfig>
+    // Holds every install to this pace or slower, whatever its options say, so
+    // scans can slow down without a release: { reads_per_click?: number,
+    // seconds_between_reads?: number }. Outside the options' ranges, ignored.
+    scan_limits?: ScanLimits
+}
+export interface ScanLimits {
+    reads_per_click?: number
+    seconds_between_reads?: number
 }
 export const LEGACY_HOSTS = ['www.reddit.com', 'old.reddit.com'] as const
 export const LEGACY_HOST_DEFAULT = 'www.reddit.com'
@@ -381,6 +389,15 @@ export const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList
 // the legacy rest at once: the new setting deserves a try.
 export const CAPABILITY_REST_KEY = 'capability_rest'
 
+const sanitizeScanLimits = (raw: any): ScanLimits => ({
+    ...(typeof raw?.reads_per_click === 'number' ? { reads_per_click: raw.reads_per_click } : {}),
+    ...(typeof raw?.seconds_between_reads === 'number' ? { seconds_between_reads: raw.seconds_between_reads } : {}),
+})
+
+// The feed's limits on scans (storage.ts getScanSettings)
+export const getRemoteScanLimits = async (): Promise<ScanLimits> =>
+    (await getCachedNews())?.feed?.options?.scan_limits ?? {}
+
 // The login cookie names (viewer.ts hasRedditLoginCookie): the feed's, else reddit_session
 export const getRemoteLoginCookies = async (): Promise<string[]> => {
     const cache = await getCachedNews()
@@ -451,6 +468,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
         const markup = sanitizeMarkupConfig((feed.options as any)?.markup)
         const loginCookies = sanitizeLoginCookies((feed.options as any)?.login_cookies)
         const loginWall = sanitizeLoginWallConfig((feed.options as any)?.login_wall)
+        const scanLimits = sanitizeScanLimits((feed.options as any)?.scan_limits)
         const publicModlogsFeed = sanitizePublicModlogsFeed((feed.options as any)?.publicmodlogs_feed)
         const storeVersions: StoreVersions = {}
         const rawStoreVersions = (feed as any).store_versions
@@ -489,6 +507,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
                 ...(Object.keys(markup).length ? { markup } : {}),
                 ...(loginCookies.length ? { login_cookies: loginCookies } : {}),
                 ...(Object.keys(loginWall).length ? { login_wall: loginWall } : {}),
+                ...(Object.keys(scanLimits).length ? { scan_limits: scanLimits } : {}),
                 ...(publicModlogsFeed ? { publicmodlogs_feed: publicModlogsFeed } : {}),
             },
             ...(isValidVersion(feed.latest_version) ? { latest_version: feed.latest_version } : {}),
@@ -525,6 +544,7 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
                 (Object.keys(wwwRouteOrder).length ? `, www_route_order=${JSON.stringify(wwwRouteOrder)}` : '') +
                 (Object.keys(markup).length ? `, markup=${JSON.stringify(markup)}` : '') +
                 (Object.keys(loginWall).length ? `, login_wall=${JSON.stringify(loginWall)}` : '') +
+                (Object.keys(scanLimits).length ? `, scan_limits=${JSON.stringify(scanLimits)}` : '') +
                 (publicModlogsFeed ? ', publicmodlogs_feed set' : ''),
         )
     } catch (err: any) {

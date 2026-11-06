@@ -31,6 +31,7 @@
 // that way cost the launching session its ~/Desktop access.
 
 const fs = require('fs')
+const { pageComplaints } = require('./signin-page-text.cjs')
 const os = require('os')
 const http = require('http')
 const path = require('path')
@@ -272,7 +273,12 @@ const relayServer = async () => {
         let done = null
         for (let i = 0; i < 150 && !done; i++) {
             await sleep(2000)
-            if (i === 10) log('Still signing in. If Reddit asks for a code or a check, finish it in Firefox.')
+            if (i === 10) {
+                log('Still signing in. If Reddit asks for a code or a check, finish it in Firefox.')
+                // Without the POST answers the Chrome test logs: this client takes no network events
+                const said = await evalIn(loginTab, 'document.body.innerText').catch(() => '')
+                for (const line of pageComplaints(said)) log(`  the page says: ${line}`)
+            }
             const l = await local()
             if (!l.viewer_connect) done = l
         }

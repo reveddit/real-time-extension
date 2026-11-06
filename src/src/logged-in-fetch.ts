@@ -27,15 +27,14 @@ export interface LoggedInFetchOptions {
     signal?: AbortSignal
     // Whether the retry may still go out (the bridge's deadline)
     canRetry?: () => boolean
-    // Just before the retry goes out, which waits for it and stays home on false:
-    // the bridge counts it as a request, and a scan's read takes another turn
+    // Just before the retry goes out: the bridge counts it as a request
     onRetry?: () => unknown
     // The other mode got past the edge after a block page
     onSwitched?: (blocked: RequestCache, answered: RequestCache, status: number) => void
-    // A scan's read. A feed's own 403 isn't JSON either, so both modes refusing
-    // one says nothing about other requests, whose retry stays.
-    scan?: boolean
 }
+
+const fetchInMode = (url: string, cache: RequestCache, signal?: AbortSignal) =>
+    fetch(url, { credentials: 'include', cache, headers: { 'Accept-Language': 'en' }, signal })
 
 // blockPage: the answer is still the edge's block page. retried: both modes
 // got it in this request (rather than the retry being skipped), which is what
@@ -44,14 +43,8 @@ export const fetchLoggedIn = async (
     url: string,
     opts: LoggedInFetchOptions = {},
 ): Promise<{ response: Response; blockPage: boolean; retried: boolean }> => {
-    const modes = opts.scan ? SCAN_CACHE_MODES : LOGGED_IN_CACHE_MODES
-    const fetchIn = (mode: number) =>
-        fetch(url, {
-            credentials: 'include',
-            cache: modes[mode],
-            headers: { 'Accept-Language': 'en' },
-            signal: opts.signal,
-        })
+    const modes = LOGGED_IN_CACHE_MODES
+    const fetchIn = (mode: number) => fetchInMode(url, modes[mode], opts.signal)
     let mode = _loggedInFetchState.preferredCacheMode
     let response = await fetchIn(mode)
     let blockPage = isBlockPage(response)
@@ -59,7 +52,7 @@ export const fetchLoggedIn = async (
     if (blockPage && Date.now() >= _loggedInFetchState.doubleBlockUntil && (opts.canRetry?.() ?? true)) {
         const blockedMode = mode
         mode = (mode + 1) % modes.length
-        if ((await opts.onRetry?.()) === false) return { response, blockPage, retried }
+        opts.onRetry?.()
         retried = true
         response = await fetchIn(mode)
         blockPage = isBlockPage(response)
@@ -67,9 +60,21 @@ export const fetchLoggedIn = async (
             // Past the edge, whatever the resource said: keep this mode
             _loggedInFetchState.preferredCacheMode = mode
             opts.onSwitched?.(modes[blockedMode], modes[mode], response.status)
-        } else if (!opts.scan) {
+        } else {
             _loggedInFetchState.doubleBlockUntil = Date.now() + DOUBLE_BLOCK_MEMORY_MS
         }
     }
     return { response, blockPage, retried }
+}
+
+// A scan's read: one request. After a block page, the page sends a second try on
+// a turn of its own, in the other mode, and a cancel can stop it. A block page may
+// be about that one feed, so unlike above it says nothing about other requests.
+export const fetchForScan = async (url: string, signal: AbortSignal, secondTry: boolean) => {
+    const mode = (_loggedInFetchState.preferredCacheMode + (secondTry ? 1 : 0)) % SCAN_CACHE_MODES.length
+    const response = await fetchInMode(url, SCAN_CACHE_MODES[mode], signal)
+    const blockPage = isBlockPage(response)
+    // Past the edge, whatever the resource said: keep this mode
+    if (secondTry && !blockPage) _loggedInFetchState.preferredCacheMode = mode
+    return { response, blockPage }
 }

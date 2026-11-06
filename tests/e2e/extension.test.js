@@ -904,12 +904,7 @@ test.describe("Scans on new reddit's comments", () => {
     // A login, and reddit's answers in the background, which sends everything else away
     const answerAs = async (context, answers) => {
         await context.addCookies([{ name: 'reddit_session', value: 'x', domain: '.reddit.com', path: '/' }])
-        await context
-            .serviceWorkers()[0]
-            .evaluate(
-                options => chrome.storage.sync.set({ options: { ...options, scan_seconds_between_reads: 1, scan_reads_per_click: 50 } }),
-                await installed(context),
-            )
+        await setOptions(context, { scan_seconds_between_reads: 1, scan_reads_per_click: 50 })
         await context.serviceWorkers()[0].evaluate(answers => {
             self.asked = []
             self.feedsAt = []
@@ -1041,9 +1036,13 @@ test.describe("Scans on new reddit's comments", () => {
             context
                 .serviceWorkers()[0]
                 .evaluate(() => chrome.storage.sync.get(['options']).then(sync => sync.options))
-        await expect.poll(options).toBeTruthy()
+        await expect.poll(options, { timeout: 15000 }).toBeTruthy()
         return options()
     }
+    const setOptions = async (context, changes) =>
+        context
+            .serviceWorkers()[0]
+            .evaluate(options => chrome.storage.sync.set({ options }), { ...(await installed(context)), ...changes })
 
     const followed = async context => {
         const worker = context.serviceWorkers()[0]
@@ -1235,12 +1234,7 @@ test.describe("Scans on new reddit's comments", () => {
         context,
         extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
     }) => {
-        await context
-            .serviceWorkers()[0]
-            .evaluate(
-                options => chrome.storage.sync.set({ options: { ...options, hide_subscribe: true } }),
-                await installed(context),
-            )
+        await setOptions(context, { hide_subscribe: true })
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
         await stampRows(page)
@@ -1360,6 +1354,27 @@ test.describe("Scans on new reddit's comments", () => {
         const feedsAt = await context.serviceWorkers()[0].evaluate(() => self.feedsAt)
         const gaps = feedsAt.slice(1).map((at, i) => at - feedsAt[i])
         expect(Math.min(...gaps)).toBeGreaterThan(900)
+    })
+
+    test("a block page's second try goes out in the other mode", async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, THE_REMOVED_WORDS)
+        await context.serviceWorkers()[0].evaluate(path => {
+            const answered = self.fetch
+            self.modes = []
+            self.fetch = (url, init) => {
+                if (!String(url).endsWith(path)) return answered(url)
+                self.modes.push(init.cache)
+                if (init.cache === 'no-cache') return answered(url)
+                return new Response('blocked', { status: 403, headers: { 'content-type': 'text/html' } })
+            }
+        }, userFeed('someone'))
+        const page = await openNewReddit(context, THREAD, thread(removedAtTop))
+        await page.locator('.rev-scan-all-btn').click()
+        await expect(page.locator(RECOVERED)).toHaveCount(1)
+        expect(await context.serviceWorkers()[0].evaluate(() => self.modes)).toEqual(['no-store', 'no-cache'])
     })
 
     test('the thread scan places what it finds, and the filter keeps those branches', async ({
@@ -1775,18 +1790,10 @@ test.describe("Scans on new reddit's comments", () => {
         context,
         extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
     }) => {
-        const [worker] = context.serviceWorkers()
-        // The install writes the default options
-        const options = () => worker.evaluate(() => chrome.storage.sync.get(['options']).then(sync => sync.options))
-        await expect.poll(options).toBeTruthy()
-        await worker.evaluate(
-            options =>
-                Promise.all([
-                    chrome.storage.local.set({ last_logged_in_user: 'someone' }),
-                    chrome.storage.sync.set({ options: { ...options, show_scan_on_own_profile: true } }),
-                ]),
-            await options(),
-        )
+        await setOptions(context, { show_scan_on_own_profile: true })
+        await context
+            .serviceWorkers()[0]
+            .evaluate(() => chrome.storage.local.set({ last_logged_in_user: 'someone' }))
         const page = await openNewReddit(context, '/user/someone/', '<shreddit-feed></shreddit-feed>')
         await expect(page.locator('.rev-profile-scan-btn')).toHaveText('Scan for removed posts')
     })

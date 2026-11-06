@@ -1,7 +1,7 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import browserMock, { __resetStorage } from '../mocks/webextension-polyfill.js'
+import { __resetStorage } from '../mocks/webextension-polyfill.js'
 import {
     getCandidateAuthors,
     extractCommentTree_fromJSON,
@@ -9,7 +9,6 @@ import {
     RateLimiter,
     monitoringBackoffGate,
 } from '../../src/src/restore.ts'
-import { scanDelayMs } from '../../src/src/requests'
 
 // Helper to build a CommentTreeNode
 function node(id, author, parent_id, created_utc = 0) {
@@ -129,19 +128,6 @@ describe('getCandidateAuthors', () => {
         // Near should come before far in timestamp ordering
         expect(nearBeforeIdx).toBeLessThan(farBeforeIdx)
         expect(nearAfterIdx).toBeLessThan(farAfterIdx)
-    })
-
-    it('respects maxAuthors limit', () => {
-        const nodes = []
-        for (let i = 0; i < 30; i++) {
-            nodes.push(node(`t1_c${i}`, `user${i}`, 't3_post1', i * 100))
-        }
-        // Make t1_c15 the target
-        nodes[15] = node('t1_c15', '[removed]', 't3_post1', 1500)
-        const map = buildTreeMap(nodes)
-        const result = getCandidateAuthors('t1_c15', map, 'op_user', 5)
-
-        expect(result.length).toBeLessThanOrEqual(5)
     })
 
     it('handles target with no tree context', () => {
@@ -286,79 +272,46 @@ describe('commentFullnameFromPermalink', () => {
 })
 
 describe('RateLimiter', () => {
-    const savedSendMessage = browserMock.runtime.sendMessage
-    afterEach(() => {
-        browserMock.runtime.sendMessage = savedSendMessage
-        vi.useRealTimers()
-    })
-    // Asks for a turn the background puts this far off, and starts waiting
-    const waitingForTurn = async (limiter, ms) => {
+    afterEach(() => vi.useRealTimers())
+
+    // Starts a wait of this long, on a limiter that says how it ended
+    const waiting = (limiter, ms) => {
         vi.useFakeTimers()
-        browserMock.runtime.sendMessage = async message => (message.action === 'scan-turn' ? ms : undefined)
-        const read = vi.fn(async () => 42)
-        const scheduled = limiter.schedule(read).catch(err => err.message)
-        await vi.advanceTimersByTimeAsync(0)
-        return { read, scheduled }
+        const ended = vi.fn()
+        limiter.wait(ms).then(() => ended('waited'), err => ended(err.message))
+        return ended
     }
 
-    it('executes functions', async () => {
-        const limiter = new RateLimiter()
-        const result = await limiter.schedule(() => Promise.resolve(42))
-        expect(result).toBe(42)
-    })
-
-    it('waits out the turn the background gives, however short', async () => {
-        const { read, scheduled } = await waitingForTurn(new RateLimiter(), 1000)
+    it('waits as long as it is told, however short', async () => {
+        const ended = waiting(new RateLimiter(), 1000)
         await vi.advanceTimersByTimeAsync(999)
-        expect(read).not.toHaveBeenCalled()
+        expect(ended).not.toHaveBeenCalled()
         await vi.advanceTimersByTimeAsync(1)
-        expect(await scheduled).toBe(42)
+        expect(ended).toHaveBeenCalledWith('waited')
     })
 
-    it('takes the read back at once when cancelled during the wait', async () => {
+    it('ends the wait at once when cancelled', async () => {
         const limiter = new RateLimiter()
-        const { read, scheduled } = await waitingForTurn(limiter, 20000)
+        const ended = waiting(limiter, 20000)
+        await vi.advanceTimersByTimeAsync(100)
         limiter.cancel()
         await vi.advanceTimersByTimeAsync(0)
-        expect(await scheduled).toBe('Cancelled')
-        expect(read).not.toHaveBeenCalled()
+        expect(ended).toHaveBeenCalledWith('Cancelled')
     })
 
-    it('takes the read back at once when cancelled while asking for a turn', async () => {
-        vi.useFakeTimers()
-        const limiter = new RateLimiter()
-        browserMock.runtime.sendMessage = async () => {
-            limiter.cancel()
-            return 20000
-        }
-        const read = vi.fn()
-        const scheduled = limiter.schedule(read).catch(err => err.message)
-        await vi.advanceTimersByTimeAsync(0)
-        expect(await scheduled).toBe('Cancelled')
-        expect(read).not.toHaveBeenCalled()
-    })
-
-    it('takes the read back when its page went during the wait', async () => {
+    it('says so when its page went during the wait', async () => {
         let showing = true
-        const { read, scheduled } = await waitingForTurn(new RateLimiter(() => showing), 20000)
+        const ended = waiting(new RateLimiter(() => showing), 20000)
         showing = false
         await vi.advanceTimersByTimeAsync(20000)
-        expect(await scheduled).toBe('Cancelled')
-        expect(read).not.toHaveBeenCalled()
+        expect(ended).toHaveBeenCalledWith('Cancelled')
     })
 
-    it('can be cancelled', async () => {
+    it("doesn't wait once cancelled", async () => {
         const limiter = new RateLimiter()
         limiter.cancel()
         expect(limiter.isCancelled()).toBe(true)
-        await expect(limiter.schedule(() => Promise.resolve())).rejects.toThrow('Cancelled')
-    })
-
-    it('propagates errors from scheduled function', async () => {
-        const limiter = new RateLimiter()
-        await expect(
-            limiter.schedule(() => Promise.reject(new Error('test error')))
-        ).rejects.toThrow('test error')
+        await expect(limiter.wait(20000)).rejects.toThrow('Cancelled')
     })
 })
 
@@ -377,14 +330,5 @@ describe('scans defer to monitoring rate-limit state', () => {
         const onProgress = vi.fn()
         expect(await monitoringBackoffGate(onProgress)).toBe(true)
         expect(onProgress).not.toHaveBeenCalled()
-    })
-
-    it('scanDelayMs halves scan speed within the recent-429 window and not after', async () => {
-        __resetStorage({}, { rate_limit_last_hit: Date.now() - 1000 })
-        expect(await scanDelayMs()).toBe(6000)
-        __resetStorage({}, { rate_limit_last_hit: Date.now() - 61 * 60 * 1000 })
-        expect(await scanDelayMs()).toBe(3000)
-        __resetStorage({}, {})
-        expect(await scanDelayMs()).toBe(3000)
     })
 })

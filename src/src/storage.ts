@@ -4,6 +4,7 @@ import {
     sortDict_by_numberValuedAttribute,
     trimDict_by_numberValuedAttribute,
 } from './common'
+import { getRemoteScanLimits } from './news'
 import browser from 'webextension-polyfill'
 
 export const INTERVAL_DEFAULT = 1
@@ -164,36 +165,41 @@ export const getOldestDateKey = (thing: string, isUser: boolean): string => {
 // it's human after a lot of automated activity, as it did a test account in 2026-11.
 // So scans start gentle, and people can speed them up in options at their own risk.
 export const SCAN_READS_DEFAULT = 20
-// Below this, the reads that open a profile scan would be over the limit (restore.ts)
+// The reads that open a profile scan can take 6 of these (restore.ts)
 export const SCAN_READS_MIN = 10
 export const SCAN_READS_MAX = 100
 export const SCAN_SECONDS_DEFAULT = 3
 export const SCAN_SECONDS_MIN = 1
-// Chrome stops an idle service worker after 30 seconds, and a block page's retry
-// waits its turn there, doubled for a while after a 429 (requests.ts)
+// The next turn is in the service worker's memory, which an idle 30 seconds ends,
+// and a 429 doubles the gap for a while (requests.ts)
 export const SCAN_SECONDS_MAX = 10
-const isNumberBetween = (value: unknown, min: number, max: number) =>
-    (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) &&
-    Number(value) >= min &&
-    Number(value) <= max
+const isNumberBetween = (value: unknown, min: number, max: number) => Number(value) >= min && Number(value) <= max
 export const isScanReads = (value: unknown) =>
     isNumberBetween(value, SCAN_READS_MIN, SCAN_READS_MAX) && Number.isInteger(Number(value))
 export const isScanSeconds = (value: unknown) => isNumberBetween(value, SCAN_SECONDS_MIN, SCAN_SECONDS_MAX)
+// What the options say, or otherwise in place of what can't be used
+export const scanSettingsFrom = (
+    options: any,
+    otherwise = { readsPerClick: SCAN_READS_DEFAULT, seconds: SCAN_SECONDS_DEFAULT },
+) => ({
+    readsPerClick: isScanReads(options?.scan_reads_per_click)
+        ? Number(options.scan_reads_per_click)
+        : otherwise.readsPerClick,
+    seconds: isScanSeconds(options?.scan_seconds_between_reads)
+        ? Number(options.scan_seconds_between_reads)
+        : otherwise.seconds,
+})
+// The user's choice, held to the website's limits
 export const getScanSettings = async () => {
-    // Storage that can't be read leaves the defaults
-    const options: any = await browser.storage.sync
-        .get({ options: {} })
-        .then(result => result.options)
-        .catch(() => undefined)
+    const chosen = scanSettingsFrom(await getOptions((_users, _others, options) => options))
+    const { reads_per_click, seconds_between_reads } = await getRemoteScanLimits()
+    const limit = scanSettingsFrom(
+        { scan_reads_per_click: reads_per_click, scan_seconds_between_reads: seconds_between_reads },
+        { readsPerClick: SCAN_READS_MAX, seconds: SCAN_SECONDS_MIN },
+    )
     return {
-        readsPerClick: isScanReads(options?.scan_reads_per_click)
-            ? Number(options.scan_reads_per_click)
-            : SCAN_READS_DEFAULT,
-        gapMs:
-            1000 *
-            (isScanSeconds(options?.scan_seconds_between_reads)
-                ? Number(options.scan_seconds_between_reads)
-                : SCAN_SECONDS_DEFAULT),
+        readsPerClick: Math.min(chosen.readsPerClick, limit.readsPerClick),
+        gapMs: 1000 * Math.max(chosen.seconds, limit.seconds),
     }
 }
 
@@ -221,8 +227,6 @@ const getStorageInit = () => {
             show_thread_scan_buttons: true,
             highlight_own_profile_status: true,
             auto_filter_removed_threads: true,
-            scan_reads_per_click: SCAN_READS_DEFAULT,
-            scan_seconds_between_reads: SCAN_SECONDS_DEFAULT,
         },
         last_check: null,
     }
@@ -701,8 +705,9 @@ export const saveOptions = (
                 show_thread_scan_buttons,
                 highlight_own_profile_status,
                 auto_filter_removed_threads,
-                scan_reads_per_click,
-                scan_seconds_between_reads,
+                // Left out at the default, so a later, gentler one reaches them
+                ...(scan_reads_per_click !== SCAN_READS_DEFAULT && { scan_reads_per_click }),
+                ...(scan_seconds_between_reads !== SCAN_SECONDS_DEFAULT && { scan_seconds_between_reads }),
             },
         },
         callback,
