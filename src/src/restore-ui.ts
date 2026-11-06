@@ -1,5 +1,5 @@
 import { getFullIDsFromPath, getPrettyDate, detectIsNewReddit } from './common'
-import { getObjectNamesForThing } from './storage'
+import { getObjectNamesForThing, getScanSettings } from './storage'
 import { observe } from './dom-helpers'
 import { ofThisRun, markThisRun, orphaned } from './run-token'
 import { getMarkupConfig } from './markup-config'
@@ -46,6 +46,8 @@ export function resetScansForPage() {
     pageReads.clear()
     profileScanFinished = false
     pageInserter = null
+    // A scan of the page that left may be waiting for its turn to notice
+    if (activeScan?.isCancelled()) activeScan.cancel()
     setScanButtonsEnabled(!activeScan)
 }
 let currentFilter: 'all' | 'removed' | 'visible' = 'removed'
@@ -221,7 +223,7 @@ function setScanButtonsEnabled(enabled: boolean) {
 // replaces it on leaving, which stops the scan, and nothing it finds is shown.
 function startScan(pageEl: HTMLElement): RateLimiter {
     activeScan?.cancel()
-    const limiter = new RateLimiter(undefined, () => pageEl.isConnected)
+    const limiter = new RateLimiter(() => pageEl.isConnected)
     activeScan = limiter
     setScanButtonsEnabled(false)
     return limiter
@@ -876,7 +878,8 @@ class RecoveredCommentInserter {
         btn.classList.remove('rev-scan-disabled')
         note.textContent = ''
         addCancelLink(note, limiter)
-        const reads = new ScanReads(limiter, undefined, pageReads)
+        const { readsPerClick } = await getScanSettings()
+        const reads = new ScanReads(limiter, readsPerClick, pageReads)
         const tried = new Set<string>()
         let unchecked = 0
         try {
@@ -1272,6 +1275,10 @@ async function handleProfileScan(username: string, container: HTMLElement) {
 
     if (profileScanFinished) pageReads.clear()
     const limiter = startScan(container)
+    progressEl.textContent = ''
+    const cancelBtn = addCancelLink(progressEl, limiter)
+    const progressText = document.createElement('span')
+    progressEl.append(progressText)
     // Only the scanned account's own session sees its removed content as live,
     // so the jump badge next to links is shown only to that account. The stored
     // name may be out of date, and the scan can find out better.
@@ -1280,7 +1287,7 @@ async function handleProfileScan(username: string, container: HTMLElement) {
     const results = await scanUserProfile(
         username,
         (progress: RestoreProgress) => {
-            progressEl.textContent = progress.message
+            progressText.textContent = progress.message
             lastStatus = progress.status
             isOwnProfile ||= !!progress.own
         },
@@ -1290,6 +1297,7 @@ async function handleProfileScan(username: string, container: HTMLElement) {
     )
 
     endScan(limiter)
+    cancelBtn.remove()
     profileScanFinished = lastStatus === 'found' || lastStatus === 'not_found' || lastStatus === 'noted'
     btn.disabled = false
     btn.textContent = 'Rescan'

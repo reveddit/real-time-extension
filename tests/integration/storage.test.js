@@ -28,6 +28,7 @@ import {
     getIDs_thing,
     getUnseenIDs_thing,
     getOptions,
+    getScanSettings,
     saveOptions,
     addToPendingPostQueue,
     getNextPendingPost,
@@ -436,6 +437,43 @@ describe('rate-limit backoff', () => {
     })
 })
 
+describe('getScanSettings', () => {
+    it('is gentle with nothing saved', async () => {
+        __resetStorage()
+        expect(await getScanSettings()).toEqual({ readsPerClick: 20, gapMs: 3000 })
+    })
+
+    it('uses what was saved, the ends of the range included', async () => {
+        for (const [reads, seconds] of [
+            [10, 1],
+            [100, 10],
+            [35, 2.5],
+        ]) {
+            __resetStorage({ options: { scan_reads_per_click: reads, scan_seconds_between_reads: seconds } })
+            expect(await getScanSettings()).toEqual({ readsPerClick: reads, gapMs: seconds * 1000 })
+        }
+    })
+
+    it("uses the default for what it can't use, which a limit of 5 would be on a profile", async () => {
+        for (const [reads, seconds] of [
+            [9, 0.5],
+            [101, 11],
+            [20.5, 'fast'],
+            [null, null],
+        ]) {
+            __resetStorage({ options: { scan_reads_per_click: reads, scan_seconds_between_reads: seconds } })
+            expect(await getScanSettings()).toEqual({ readsPerClick: 20, gapMs: 3000 })
+        }
+    })
+
+    it('uses the defaults when storage can\'t be read', async () => {
+        const get = browserMock.storage.sync.get
+        browserMock.storage.sync.get = () => Promise.reject(new Error('Extension context invalidated.'))
+        expect(await getScanSettings()).toEqual({ readsPerClick: 20, gapMs: 3000 })
+        browserMock.storage.sync.get = get
+    })
+})
+
 describe('getOptions / saveOptions', () => {
     beforeEach(() => __resetStorage(makeStorageInit()))
 
@@ -448,10 +486,12 @@ describe('getOptions / saveOptions', () => {
     })
 
     it('saves options and persists', async () => {
-        await saveOptionsP(3, 5, 'my_client', true, false, false, true, true, false, true, false, false, true, false)
+        await saveOptionsP(3, 5, 'my_client', true, false, false, true, true, false, true, false, false, true, false, 30, 2.5)
         const storage = __getSyncStorage()
         expect(storage.options.seen_count).toBe(3)
         expect(storage.options.interval).toBe(5)
+        expect(storage.options.scan_reads_per_click).toBe(30)
+        expect(storage.options.scan_seconds_between_reads).toBe(2.5)
         expect(storage.options.custom_clientid).toBe('my_client')
         expect(storage.options.removal_status.track).toBe(true)
         expect(storage.options.removal_status.notify).toBe(false)

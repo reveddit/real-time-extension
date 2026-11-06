@@ -55,7 +55,7 @@ const refuseUserPages = () => {
     return asked
 }
 
-// The lookups are spaced 1.5 s apart
+// Every read waits for its turn on a timer
 const withTimers = async run => {
     vi.useFakeTimers()
     let done = false

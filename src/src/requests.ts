@@ -7,6 +7,7 @@ import {
     recordRateLimitHit,
     clearRateLimitBackoff,
     getMsSinceLastRateLimitHit,
+    getScanSettings,
     getRateLimitBackoffRemainingMs,
 } from './storage'
 import browser from 'webextension-polyfill'
@@ -3165,28 +3166,30 @@ const lookupItemsByID_publicThenLegacy = (
 // bridge, which import it from here
 export { hasRedditLoginCookie }
 
-// The pace measured on feeds, and half that for a while after a 429, mirroring
+// The user's pace (options), and half that for a while after a 429, mirroring
 // monitoring's own gentle resume (computeAbsentVerifyBudget)
-const SCAN_READ_GAP_MS = 1500
 export const scanDelayMs = async (): Promise<number> => {
+    const { gapMs } = await getScanSettings()
     const sinceHit = await getMsSinceLastRateLimitHit().catch(() => null)
-    return sinceHit !== null && sinceHit < RECENT_RATE_LIMIT_WINDOW_MS ? SCAN_READ_GAP_MS * 2 : SCAN_READ_GAP_MS
+    return sinceHit !== null && sinceHit < RECENT_RATE_LIMIT_WINDOW_MS ? gapMs * 2 : gapMs
 }
 
-// Every tab's scans take turns, so more of them don't mean a faster pace.
+// Every tab's scans take turns, so more of them don't mean a faster pace. This
+// says how long until the caller's turn. A page waits it out where cancelling or
+// leaving takes the read back (restore.ts RateLimiter).
 // Mutable for tests, like _wwwRouteTiming.
 export const _scanTurn = { next: 0 }
-const waitForScanTurn = async () => {
+export const takeScanTurn = async (): Promise<number> => {
     const gap = await scanDelayMs()
     const now = Date.now()
     const turn = Math.max(now, _scanTurn.next)
     _scanTurn.next = turn + gap
-    if (turn > now) await new Promise(resolve => setTimeout(resolve, turn - now))
+    return turn - now
 }
 
-// For a scan the user started (restore.ts). A login reads reddit's feeds at a
-// scan's pace, where a logged-out browser gets one a minute (verified 2026-11-04).
-// Every scan comes through here, so they share one pace and the backoff that
+// For a scan the user started (restore.ts), on its turn. A login reads reddit's
+// feeds at a scan's pace, where a logged-out browser gets one a minute (verified
+// 2026-11-04). Every scan comes through here, so they share the backoff that
 // monitoring and the bridge honor, whichever tab they run in.
 export const readWithLogin = async (path: string) => {
     if ((await getRemoteMechanism(MECHANISM_SCAN_FEEDS)) === 'off') {
@@ -3199,19 +3202,23 @@ export const readWithLogin = async (path: string) => {
     if (!(await hasRedditLoginCookie())) {
         return { ok: false, status: 0, needsLogin: true }
     }
-    await waitForScanTurn()
     if (await isRateLimitedNow()) {
         return { ok: false, status: 0, resting: true }
     }
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
+    const startDeadline = () => setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
+    let timer = startDeadline()
     try {
         const url = `https://www.reddit.com${path}`
         const { response, blockPage, retried } = await fetchLoggedIn(url, {
             scan: true,
             signal: controller.signal,
             onRetry: async () => {
-                await waitForScanTurn()
+                // The wait can be as long as the deadline
+                clearTimeout(timer)
+                const waitMs = await takeScanTurn()
+                await new Promise(resolve => setTimeout(resolve, waitMs))
+                timer = startDeadline()
                 return !(await isRateLimitedNow()) && !(await isViewerConnecting())
             },
         })

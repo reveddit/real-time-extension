@@ -1,15 +1,16 @@
 // What every scan's read goes through in the background (requests.ts
-// readWithLogin): one pace and one backoff across tabs, never the browser's
-// cache, and the switches that turn scans away before anything is sent.
+// readWithLogin and takeScanTurn): one pace and one backoff across tabs, never
+// the browser's cache, and the switches that turn scans away before anything is
+// sent.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
 import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
 
-import { readWithLogin, _scanTurn } from '../../src/src/requests'
+import { readWithLogin, takeScanTurn, _scanTurn } from '../../src/src/requests'
 import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
 import { NEWS_CACHE_KEY, MECHANISM_SCAN_FEEDS } from '../../src/src/news'
@@ -79,6 +80,41 @@ describe('a read for a scan', () => {
         await vi.advanceTimersByTimeAsync(21000)
         expect(await reading).toBe('aborted')
     })
+
+    // A block page, then whatever the second try does
+    const blockedThen = secondTry =>
+        fetchMock.mockImplementation((url, init) =>
+            fetchMock.mock.calls.length === 1 ? Promise.resolve(blockPage()) : secondTry(init),
+        )
+    const atSlowestPaceAfterA429 = async () => {
+        vi.useFakeTimers()
+        __getSyncStorage().options = { scan_seconds_between_reads: 10 }
+        __getLocalStorage().rate_limit_last_hit = Date.now() - RECENT_RATE_LIMIT_WINDOW_MS / 2
+        await takeScanTurn()
+    }
+
+    it("doesn't run out of time waiting to retry, however slow the pace", async () => {
+        await atSlowestPaceAfterA429()
+        blockedThen(({ signal }) =>
+            signal.aborted ? Promise.reject(new Error('aborted')) : Promise.resolve(answer(200)),
+        )
+        const reading = readWithLogin(PATH)
+        await vi.advanceTimersByTimeAsync(21000)
+        expect(await reading).toMatchObject({ ok: true, retried: true })
+    })
+
+    it('gets no answer past its deadline on a retry either', async () => {
+        await atSlowestPaceAfterA429()
+        blockedThen(
+            ({ signal }) =>
+                new Promise((resolve, reject) => {
+                    signal.addEventListener('abort', () => reject(new Error('aborted')))
+                }),
+        )
+        const reading = readWithLogin(PATH).catch(err => err.message)
+        await vi.advanceTimersByTimeAsync(41000)
+        expect(await reading).toBe('aborted')
+    })
 })
 
 describe('scans in several tabs', () => {
@@ -88,13 +124,13 @@ describe('scans in several tabs', () => {
             () => (__getLocalStorage()[VIEWER_CONNECT_KEY] = { started: Date.now(), mainUser: 'alice', main: [] }),
         ]) {
             vi.useFakeTimers()
-            _scanTurn.next = 0
+            _scanTurn.next = Date.now() + 3000
             fetchMock.mockClear()
             fetchMock.mockImplementation(async () => blockPage())
             const reading = readWithLogin(PATH)
             await vi.advanceTimersByTimeAsync(100)
             meanwhile()
-            await vi.advanceTimersByTimeAsync(2000)
+            await vi.advanceTimersByTimeAsync(4000)
             expect(await reading).toMatchObject({ ok: false, status: 403, blockPage: true, retried: false })
             expect(fetchMock).toHaveBeenCalledTimes(1)
             __resetStorage()
@@ -102,44 +138,55 @@ describe('scans in several tabs', () => {
         }
     })
 
-    it('take turns for a retry too', async () => {
+    it('take a turn for a retry too', async () => {
         vi.useFakeTimers()
         const sent = []
         fetchMock.mockImplementation(async () => {
             sent.push(Date.now())
             return sent.length === 1 ? blockPage() : answer(200)
         })
-        const reads = [readWithLogin(PATH), readWithLogin(PATH)]
+        await takeScanTurn()
+        const reading = readWithLogin(PATH)
         await vi.advanceTimersByTimeAsync(4000)
-        await Promise.all(reads)
-        expect(sent.map(at => at - sent[0])).toEqual([0, 1500, 3000])
+        await reading
+        expect(sent.map(at => at - sent[0])).toEqual([0, 3000])
     })
 
-    it('take turns at the pace measured', async () => {
+    const paceOf = async count => {
         vi.useFakeTimers()
-        const sent = []
-        fetchMock.mockImplementation(async () => {
-            sent.push(Date.now())
-            return answer(200)
+        const turns = []
+        for (let i = 0; i < count; i++) turns.push(await takeScanTurn())
+        return turns
+    }
+
+    it('take turns, every 3 seconds unless the options say otherwise', async () => {
+        expect(await paceOf(3)).toEqual([0, 3000, 6000])
+    })
+
+    it("take the pace from the options, and ignore one they can't use", async () => {
+        __getSyncStorage().options = { scan_seconds_between_reads: 1.5 }
+        expect(await paceOf(3)).toEqual([0, 1500, 3000])
+        _scanTurn.next = 0
+        __getSyncStorage().options = { scan_seconds_between_reads: 0 }
+        expect(await paceOf(2)).toEqual([0, 3000])
+    })
+
+    it("don't run out of time waiting to retry, at the slowest pace after a 429", async () => {
+        vi.useFakeTimers()
+        __getSyncStorage().options = { scan_seconds_between_reads: 10 }
+        __getLocalStorage().rate_limit_last_hit = Date.now() - RECENT_RATE_LIMIT_WINDOW_MS / 2
+        fetchMock.mockImplementation((url, { signal }) => {
+            if (fetchMock.mock.calls.length === 1) return Promise.resolve(blockPage())
+            return signal.aborted ? Promise.reject(new Error('aborted')) : Promise.resolve(answer(200))
         })
-        const reads = [readWithLogin(PATH), readWithLogin(PATH), readWithLogin(PATH)]
-        await vi.advanceTimersByTimeAsync(4000)
-        await Promise.all(reads)
-        expect(sent.map(at => at - sent[0])).toEqual([0, 1500, 3000])
+        const reading = readWithLogin(PATH)
+        await vi.advanceTimersByTimeAsync(21000)
+        expect(await reading).toMatchObject({ ok: true, retried: true })
     })
 
     it('go at half that for a while after a 429', async () => {
-        vi.useFakeTimers()
         __getLocalStorage().rate_limit_last_hit = Date.now() - RECENT_RATE_LIMIT_WINDOW_MS / 2
-        const sent = []
-        fetchMock.mockImplementation(async () => {
-            sent.push(Date.now())
-            return answer(200)
-        })
-        const reads = [readWithLogin(PATH), readWithLogin(PATH)]
-        await vi.advanceTimersByTimeAsync(4000)
-        await Promise.all(reads)
-        expect(sent[1] - sent[0]).toBe(3000)
+        expect(await paceOf(2)).toEqual([0, 6000])
     })
 })
 
@@ -172,19 +219,6 @@ describe('turned away before anything is sent', () => {
         __getLocalStorage().rate_limit_until = Date.now() + 60000
         expect(await readWithLogin(PATH)).toEqual({ ok: false, status: 0, resting: true })
         expect(fetchMock).not.toHaveBeenCalled()
-    })
-
-    it('when a backoff starts while it waits its turn', async () => {
-        vi.useFakeTimers()
-        const first = readWithLogin(PATH)
-        const second = readWithLogin(PATH)
-        await vi.advanceTimersByTimeAsync(100)
-        expect(fetchMock).toHaveBeenCalledTimes(1)
-        __getLocalStorage().rate_limit_until = Date.now() + 60000
-        await vi.advanceTimersByTimeAsync(2000)
-        await first
-        expect(await second).toEqual({ ok: false, status: 0, resting: true })
-        expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 
     it('with no login', async () => {

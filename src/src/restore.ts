@@ -1,7 +1,7 @@
 import { isRemovedInModView, isRemovedPost, isViewerBlockedItem, VIEWER_BLOCKED } from './common'
 import { isRateLimitError } from './parse_html/common'
 import { getMarkupConfig } from './markup-config'
-import { getRateLimitBackoffRemainingMs } from './storage'
+import { getRateLimitBackoffRemainingMs, getScanSettings } from './storage'
 import browser from 'webextension-polyfill'
 
 // --- Interfaces ---
@@ -76,12 +76,7 @@ export interface ProfileScanOptions {
 
 // --- Constants ---
 
-const RESTORE_DELAY_MS = 1500
 const MAX_RESTORE_LOOKUPS = 20
-// The requests one click may send, counting a block page's retry, though not on
-// the few reads that open a scan. They carry the user's login, and 50 in a row is
-// the longest run measured at this pace (reddit.md). The next click goes on.
-const MAX_SCAN_READS = 50
 // One refused read may be about that author (a suspended account's feed isn't
 // measured, and a feed's own 403 looks like the edge's block page), and one
 // failure may be a blip. A few in a row aren't.
@@ -95,34 +90,38 @@ const ONE_YEAR_SECONDS = 365 * 60 * 60 * 24
 // --- Rate Limiter ---
 
 export class RateLimiter {
-    private delayMs: number
     private stillWanted: () => boolean
     private cancelled = false
-    private lastFetchTime = 0
+    private endWait = () => {}
 
     // stillWanted: whether the page the scan belongs to is still showing
-    constructor(delayMs: number = RESTORE_DELAY_MS, stillWanted: () => boolean = () => true) {
-        this.delayMs = delayMs
+    constructor(stillWanted: () => boolean = () => true) {
         this.stillWanted = stillWanted
     }
 
     cancel() {
         this.cancelled = true
+        this.endWait()
     }
 
     isCancelled() {
         return this.cancelled || !this.stillWanted()
     }
 
+    // The background gives out the turns (requests.ts takeScanTurn). The wait is
+    // here so that a cancel ends it and takes the read back.
     async schedule<T>(fn: () => Promise<T>): Promise<T> {
         if (this.isCancelled()) throw new Error('Cancelled')
-        const now = Date.now()
-        const elapsed = now - this.lastFetchTime
-        if (elapsed < this.delayMs && this.lastFetchTime > 0) {
-            await new Promise(r => setTimeout(r, this.delayMs - elapsed))
-        }
+        const waitMs = (await browser.runtime.sendMessage({ action: 'scan-turn' })) as number
+        await new Promise<void>(resolve => {
+            // Cancelled while asking: no wait, as nothing would end it
+            const timer = setTimeout(resolve, this.isCancelled() ? 0 : waitMs)
+            this.endWait = () => {
+                clearTimeout(timer)
+                resolve()
+            }
+        })
         if (this.isCancelled()) throw new Error('Cancelled')
-        this.lastFetchTime = Date.now()
         return fn()
     }
 }
@@ -486,7 +485,7 @@ const RATE_LIMITED =
 // While monitoring's rate-limit backoff is active, scans decline to run (the
 // popup badge is already explaining the pause). A read that goes out after one
 // starts is turned away in the background, which also doubles the spacing for
-// a while after the last recorded 429 (requests.ts readWithLogin).
+// a while after the last recorded 429 (requests.ts scanDelayMs).
 export async function monitoringBackoffGate(onProgress: ProgressCallback): Promise<boolean> {
     let backoffMs = 0
     try {
@@ -535,7 +534,9 @@ export class ScanReads {
     private limiter: RateLimiter
     private pageReads?: Map<string, any[]>
 
-    constructor(limiter: RateLimiter, budget: number = MAX_SCAN_READS, pageReads?: Map<string, any[]>) {
+    // budget: the requests this click may send (options), counting a block page's
+    // retry, though not on the few reads that open a scan. The next click goes on.
+    constructor(limiter: RateLimiter, budget: number, pageReads?: Map<string, any[]>) {
         this.limiter = limiter
         this.left = budget
         this.pageReads = pageReads
@@ -609,10 +610,10 @@ export class ScanReads {
 
 // The feed has the thread's comments and says which are gone. The page has who
 // replied to whom, for the comments it shows.
-async function readThread(threadPostId: string, subreddit: string, isNewReddit: boolean) {
+async function readThread(threadPostId: string, subreddit: string, isNewReddit: boolean, limiter: RateLimiter) {
     const shortId = threadPostId.replace(/^t3_/, '')
-    const items = await fetchFeed(
-        `/r/${encodeURIComponent(subreddit)}/comments/${shortId}/.rss?limit=${THREAD_FEED_LIMIT}`,
+    const items = await limiter.schedule(() =>
+        fetchFeed(`/r/${encodeURIComponent(subreddit)}/comments/${shortId}/.rss?limit=${THREAD_FEED_LIMIT}`),
     )
     const post = items.find(item => item.kind === 't3')?.data
     if (!post) {
@@ -693,22 +694,26 @@ export async function restoreComment(
         return { found: false }
     }
 
-    let thread: Awaited<ReturnType<typeof readThread>>
+    let thread: Awaited<ReturnType<typeof readThread>> | undefined
+    let failure: any
     try {
-        thread = await readThread(threadPostId, subreddit, isNewReddit)
+        thread = await readThread(threadPostId, subreddit, isNewReddit, limiter)
     } catch (err: any) {
+        failure = err
+    }
+    // Reading the page now would read the next one
+    if (limiter.isCancelled()) {
+        onProgress({ current: 0, total: 0, currentAuthor: '', status: 'cancelled', message: 'Search cancelled.' })
+        return { found: false }
+    }
+    if (!thread) {
         onProgress({
             current: 0,
             total: 0,
             currentAuthor: '',
             status: 'error',
-            message: scanFailure(err, 'Could not load comment tree.'),
+            message: scanFailure(failure, 'Could not load comment tree.'),
         })
-        return { found: false }
-    }
-    // Reading the page now would read the next one
-    if (limiter.isCancelled()) {
-        onProgress({ current: 0, total: 0, currentAuthor: '', status: 'cancelled', message: 'Search cancelled.' })
         return { found: false }
     }
 
@@ -750,8 +755,11 @@ export async function restoreComment(
     }
 
     const { sort, t } = getUserPageSort(target.created_utc)
-    // 20 authors and 20 comments a click, on top of the thread's own feed
-    const reads = new ScanReads(limiter, 2 * MAX_RESTORE_LOOKUPS, pageReads)
+    // The thread's own feed was the first read. Half the click's reads may go to
+    // authors, and the rest to comments.
+    const { readsPerClick } = await getScanSettings()
+    const authorsPerClick = Math.ceil(readsPerClick / 2)
+    const reads = new ScanReads(limiter, readsPerClick - 1, pageReads)
     // Cap NEW network lookups per click; cached authors are checked for free.
     let newFetches = 0
     let unsearched = 0
@@ -793,7 +801,7 @@ export async function restoreComment(
         const author = candidates[i]
         const path = authorFeedPath(author, sort, t)
         const kept = reads.has(path)
-        if (!kept && newFetches >= MAX_RESTORE_LOOKUPS) {
+        if (!reads.canRead(path) || (!kept && newFetches >= authorsPerClick)) {
             unsearched++
             continue
         }
@@ -980,7 +988,8 @@ export async function scanUserProfile(
     // author's own listing and feeds show their removed comments as live.
     const unlisted = cachedItems.filter(item => item.kind === 't1' && !liveItems.has(item.data.name))
     // The four reads above, and one more: the one above the page, or who's signed in
-    const reads = new ScanReads(limiter, MAX_SCAN_READS - 5, pageReads)
+    const { readsPerClick } = await getScanSettings()
+    const reads = new ScanReads(limiter, readsPerClick - 5, pageReads)
     const { looked, unchecked } = await lookupCommentsByIds(
         unlisted.map(item => item.data),
         reads,
@@ -1021,6 +1030,9 @@ export async function scanUserProfile(
 
     const found = results.length > 0 ? `Found ${results.length} removed item(s).` : ''
     const progress = { current: cachedItems.length, total: cachedItems.length, currentAuthor: username }
+    // Every comment listed is how a profile looks to its own author, and the
+    // stored name may be empty or out of date. Undefined: reddit didn't say.
+    const own = options?.ownProfile || (unlisted.length === 0 ? await isSignedInAs(username, limiter) : false)
     if (limiter.isCancelled()) {
         onProgress({ ...progress, status: 'cancelled', message: `Scan cancelled. ${found}`.trim() })
         return results
@@ -1031,9 +1043,6 @@ export async function scanUserProfile(
         return results
     }
     const unread = unchecked + reads.unread
-    // Every comment listed is how a profile looks to its own author, and the
-    // stored name may be empty or out of date. Undefined: reddit didn't say.
-    const own = options?.ownProfile || (unlisted.length === 0 ? await isSignedInAs(username, limiter) : false)
     const notes = [
         unread > 0 && `${unread} comment(s) not checked yet; scan again to go on.`,
         reads.gaveUp > 0 && `${reads.gaveUp} comment(s) couldn't be checked.`,
@@ -1220,23 +1229,27 @@ export async function scanThreadForRemovedComments(
     if (!(await monitoringBackoffGate(onProgress))) {
         return []
     }
-    let thread: Awaited<ReturnType<typeof readThread>>
+    let thread: Awaited<ReturnType<typeof readThread>> | undefined
+    let failure: any
     try {
-        thread = await readThread(threadPostId, subreddit, isNewReddit)
+        thread = await readThread(threadPostId, subreddit, isNewReddit, limiter)
     } catch (err: any) {
+        failure = err
+    }
+    // Reading the page now would read the next one
+    if (limiter.isCancelled()) {
+        const message = `Scan cancelled. ${recoveredOnPage()} recovered.`
+        onProgress({ current: 0, total: 0, currentAuthor: '', status: 'cancelled', message })
+        return []
+    }
+    if (!thread) {
         onProgress({
             current: 0,
             total: 0,
             currentAuthor: '',
             status: 'error',
-            message: scanFailure(err, 'Could not load comment tree.'),
+            message: scanFailure(failure, 'Could not load comment tree.'),
         })
-        return []
-    }
-    // Reading the page now would read the next one
-    if (limiter.isCancelled()) {
-        const message = 'Scan cancelled. 0 recovered.'
-        onProgress({ current: 0, total: 0, currentAuthor: '', status: 'cancelled', message })
         return []
     }
 
@@ -1285,7 +1298,8 @@ export async function scanThreadForRemovedComments(
 
     const { sort, t } = getUserPageSort(postCreatedUtc || Math.floor(Date.now() / 1000))
     // The thread's own feed was the first read
-    const reads = new ScanReads(limiter, MAX_SCAN_READS - 1, pageReads)
+    const { readsPerClick } = await getScanSettings()
+    const reads = new ScanReads(limiter, readsPerClick - 1, pageReads)
     const recovered: RecoveredComment[] = []
     const recoveredIds = placedOnPage()
     const alreadyRecovered = recoveredOnPage()

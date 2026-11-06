@@ -45,8 +45,9 @@ Testing subreddit: **r/CantSayAnything** (auto-removes all posts/comments).
 - [ ] "hide subscribe" toggle works
 - [ ] "monitor quarantined" toggle works; it shows only when a custom client ID is set
 - [ ] "advanced" section reveals client ID field
-- [ ] "reset to defaults" restores only "minutes between Reddit checks", "same-status count before alert" and the client ID
+- [ ] "reset to defaults" restores only "minutes between Reddit checks", "same-status count before alert", the two scan settings and the client ID
 - [ ] Invalid interval value shows error
+- [ ] Scans: set "most Reddit reads per scan click" and "seconds between scan reads" → save → reopen → values persist; a thread scan's network log shows that many reads per click at that pace
 
 ---
 

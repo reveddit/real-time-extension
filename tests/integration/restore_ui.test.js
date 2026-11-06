@@ -56,9 +56,13 @@ const load = async (html, path = '/r/sub/comments/post/a_title/') => {
     globalThis.DOMParser = DOMParser
     vi.resetModules()
     // restore.ts gets the fresh instance of the mock
-    const fresh = (await import('../mocks/webextension-polyfill.js')).default
+    const mock = await import('../mocks/webextension-polyfill.js')
+    // More than the default, so the scans here have room
+    mock.__resetStorage({ options: { scan_reads_per_click: 50 } })
+    const fresh = mock.default
+    // A second between reads, as the fastest options have it
     fresh.runtime.sendMessage = async message =>
-        message.action === 'fetch-with-login' ? answer(message.path) : undefined
+        message.action === 'fetch-with-login' ? answer(message.path) : message.action === 'scan-turn' ? 1000 : undefined
     ui = await import('../../src/src/restore-ui.ts')
 }
 const loadThread = async (html, isNewReddit = true) => {
@@ -219,6 +223,12 @@ describe('Place unattached', () => {
         expect(placeBtn()).toBeNull()
     })
 
+    it('reads 20 a click unless the options say otherwise', async () => {
+        await withOrphans(25, 3)
+        ;(await import('../mocks/webextension-polyfill.js')).__resetStorage()
+        expect(await place()).toHaveLength(20)
+    })
+
     it('says why it stopped', async () => {
         await withOrphans(1, 1)
         for (const [answered, words] of [
@@ -293,7 +303,7 @@ describe('Place unattached', () => {
         let answered
         pages[commentPath('t1_p0x1')] = new Promise(resolve => (answered = resolve))
         click(btn)
-        await vi.advanceTimersByTimeAsync(0)
+        await vi.advanceTimersByTimeAsync(1000)
         box.remove()
         answered({ ok: false, status: 500 })
         await vi.advanceTimersByTimeAsync(0)
@@ -301,6 +311,23 @@ describe('Place unattached', () => {
         expect(btn.disabled).toBe(false)
         expect(btn.textContent).toBe('Place unattached comments (1 left)')
         expect(document.querySelector('.rev-unattached-note .rev-restore-cancel')).toBeNull()
+    })
+
+    it('frees the buttons of a new page at once, from a scan of the old one waiting its turn', async () => {
+        await loadThread(threadPage(9, comment('t1_a', 'a')))
+        pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'))
+        const mock = (await import('../mocks/webextension-polyfill.js')).default
+        const send = mock.runtime.sendMessage
+        mock.runtime.sendMessage = async message => (message.action === 'scan-turn' ? 20000 : send(message))
+        click(scanBtn())
+        await vi.advanceTimersByTimeAsync(0)
+        const onNewPage = document.querySelector('.rev-scan-comment-btn')
+        expect(onNewPage.classList.contains('rev-scan-disabled')).toBe(true)
+        scanBtn().remove()
+        ui.resetScansForPage()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(onNewPage.classList.contains('rev-scan-disabled')).toBe(false)
+        expect(asked).toEqual([])
     })
 
     it("can't be pressed during a scan, and can be cancelled like one", async () => {
@@ -606,6 +633,21 @@ describe('the profile scan', () => {
         pages[`/user/someone/comments.json?${query}`] = listing({ data: { name: 't1_live' } })
         pages[`/user/someone/submitted.json?${query}`] = listing()
         pages[commentPath('t1_gone')] = feed(postEntry())
+    })
+
+    it('can be cancelled, and leaves only its last word', async () => {
+        await loadProfile(profilePage)
+        let answered
+        pages[`/user/someone/comments/.rss?${query}`] = new Promise(resolve => (answered = resolve))
+        click(profileBtn())
+        await vi.advanceTimersByTimeAsync(0)
+        click(document.querySelector('.rev-profile-scan-progress .rev-restore-cancel'))
+        answered({ ok: false, status: 500 })
+        await settle(() => profileBtn().disabled)
+        expect(progress()).toBe('Scan cancelled.')
+        click(profileBtn())
+        await settle(() => profileBtn().disabled)
+        expect(progress()).not.toContain('Scan cancelled.')
     })
 
     it('reads again on a rescan once it has read all it could, though it left a note', async () => {

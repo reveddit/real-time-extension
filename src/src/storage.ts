@@ -160,6 +160,43 @@ export const getOldestDateKey = (thing: string, isUser: boolean): string => {
     }
 }
 
+// A scan reads feeds with the user's login, and Reddit can ask an account to verify
+// it's human after a lot of automated activity, as it did a test account in 2026-11.
+// So scans start gentle, and people can speed them up in options at their own risk.
+export const SCAN_READS_DEFAULT = 20
+// Below this, the reads that open a profile scan would be over the limit (restore.ts)
+export const SCAN_READS_MIN = 10
+export const SCAN_READS_MAX = 100
+export const SCAN_SECONDS_DEFAULT = 3
+export const SCAN_SECONDS_MIN = 1
+// Chrome stops an idle service worker after 30 seconds, and a block page's retry
+// waits its turn there, doubled for a while after a 429 (requests.ts)
+export const SCAN_SECONDS_MAX = 10
+const isNumberBetween = (value: unknown, min: number, max: number) =>
+    (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) &&
+    Number(value) >= min &&
+    Number(value) <= max
+export const isScanReads = (value: unknown) =>
+    isNumberBetween(value, SCAN_READS_MIN, SCAN_READS_MAX) && Number.isInteger(Number(value))
+export const isScanSeconds = (value: unknown) => isNumberBetween(value, SCAN_SECONDS_MIN, SCAN_SECONDS_MAX)
+export const getScanSettings = async () => {
+    // Storage that can't be read leaves the defaults
+    const options: any = await browser.storage.sync
+        .get({ options: {} })
+        .then(result => result.options)
+        .catch(() => undefined)
+    return {
+        readsPerClick: isScanReads(options?.scan_reads_per_click)
+            ? Number(options.scan_reads_per_click)
+            : SCAN_READS_DEFAULT,
+        gapMs:
+            1000 *
+            (isScanSeconds(options?.scan_seconds_between_reads)
+                ? Number(options.scan_seconds_between_reads)
+                : SCAN_SECONDS_DEFAULT),
+    }
+}
+
 export const getUserInit = (user: string): Record<string, any> => {
     const result = {}
     addTrackTypes(result, user, true)
@@ -184,6 +221,8 @@ const getStorageInit = () => {
             show_thread_scan_buttons: true,
             highlight_own_profile_status: true,
             auto_filter_removed_threads: true,
+            scan_reads_per_click: SCAN_READS_DEFAULT,
+            scan_seconds_between_reads: SCAN_SECONDS_DEFAULT,
         },
         last_check: null,
     }
@@ -643,6 +682,8 @@ export const saveOptions = (
     show_thread_scan_buttons: boolean,
     highlight_own_profile_status: boolean,
     auto_filter_removed_threads: boolean,
+    scan_reads_per_click: number,
+    scan_seconds_between_reads: number,
     callback: () => void,
 ) => {
     chrome.storage.sync.set(
@@ -660,6 +701,8 @@ export const saveOptions = (
                 show_thread_scan_buttons,
                 highlight_own_profile_status,
                 auto_filter_removed_threads,
+                scan_reads_per_click,
+                scan_seconds_between_reads,
             },
         },
         callback,

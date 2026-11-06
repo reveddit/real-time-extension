@@ -904,11 +904,19 @@ test.describe("Scans on new reddit's comments", () => {
     // A login, and reddit's answers in the background, which sends everything else away
     const answerAs = async (context, answers) => {
         await context.addCookies([{ name: 'reddit_session', value: 'x', domain: '.reddit.com', path: '/' }])
+        await context
+            .serviceWorkers()[0]
+            .evaluate(
+                options => chrome.storage.sync.set({ options: { ...options, scan_seconds_between_reads: 1, scan_reads_per_click: 50 } }),
+                await installed(context),
+            )
         await context.serviceWorkers()[0].evaluate(answers => {
             self.asked = []
+            self.feedsAt = []
             self.fetch = async url => {
                 const path = String(url).replace('https://www.reddit.com', '')
                 self.asked.push(path)
+                if (path.includes('.rss')) self.feedsAt.push(Date.now())
                 const answer = answers[path]
                 return new Response(answer ?? '', { status: answer === undefined ? 404 : 200 })
             }
@@ -1341,6 +1349,19 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(rowOf(page, FIRST).locator(SCAN)).toBeVisible()
     })
 
+    test('a scan keeps to the pace the options set', async ({
+        context,
+        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+    }) => {
+        await answerAs(context, THE_REMOVED_WORDS)
+        const page = await openNewReddit(context, THREAD, thread(removedAtTop))
+        await page.locator('.rev-scan-all-btn').click()
+        await expect.poll(() => askedFor(context).then(asked => asked.length)).toBeGreaterThan(2)
+        const feedsAt = await context.serviceWorkers()[0].evaluate(() => self.feedsAt)
+        const gaps = feedsAt.slice(1).map((at, i) => at - feedsAt[i])
+        expect(Math.min(...gaps)).toBeGreaterThan(900)
+    })
+
     test('the thread scan places what it finds, and the filter keeps those branches', async ({
         context,
         extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
@@ -1426,6 +1447,7 @@ test.describe("Scans on new reddit's comments", () => {
         extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
     }) => {
         const OTHER = 't1_other'
+        await installed(context)
         await seedOwnRemoved(context, OTHER)
         await answerAs(context, THE_REMOVED_WORDS)
         const page = await openNewReddit(
@@ -1507,9 +1529,13 @@ test.describe("Scans on new reddit's comments", () => {
         await worker.evaluate(() => {
             const answered = self.fetch
             const held = new Promise(resolve => (self.answerNow = resolve))
-            self.fetch = url => held.then(() => answered(url))
+            self.fetch = url => {
+                self.readIsOut = true
+                return held.then(() => answered(url))
+            }
         })
         await page.locator('.rev-scan-all-btn').click()
+        await expect.poll(() => worker.evaluate(() => self.readIsOut)).toBe(true)
         await visit(page, NEXT_THREAD, ...nextThread())
         await expect(page.locator('[thingid="t1_next"]')).toBeVisible()
         await stampRows(page)

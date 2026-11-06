@@ -24,15 +24,25 @@ const open = async stored => {
     await import('../../src/src/options.tsx')
     const text = () => document.body.textContent
     await vi.waitFor(() => expect(text()).toContain('Polling'))
+    const type = (input, value) => {
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value)
+        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    }
     return {
         text,
         sync: __getSyncStorage(),
         // react tracks the input's value, so a change has to go round it
-        typeClientId: value => {
-            const input = document.querySelector('input[placeholder="<default is blank>"]')
-            Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value)
-            input.dispatchEvent(new window.Event('input', { bubbles: true }))
-        },
+        typeClientId: value => type(document.querySelector('input[placeholder="<default is blank>"]'), value),
+        type,
+        inputLabelled: name =>
+            Array.from(document.querySelectorAll('label'))
+                .find(label => label.textContent.includes(name))
+                .parentElement.querySelector('input'),
+        clickSave: () => document.querySelector('button').click(),
+        resetDefaults: () =>
+            Array.from(document.querySelectorAll('a, button'))
+                .find(el => el.textContent.includes('reset to defaults'))
+                .click(),
         save: async () => {
             document.querySelector('button').click()
             await vi.waitFor(() => expect(window.close).toHaveBeenCalled())
@@ -79,5 +89,50 @@ describe('custom client id', () => {
         expect(text()).toContain('"installed app" client id from reddit > preferences > apps')
         expect(text()).toContain("Checks then also use Reddit's API with it.")
         expect(text()).not.toContain('overrides')
+    })
+})
+
+describe('the scan settings', () => {
+    const field = (page, name) => page.inputLabelled(name)
+    const READS = 'most Reddit reads per scan click'
+    const SECONDS = 'seconds between scan reads'
+
+    it('start gentle, and a save keeps what the user chose', async () => {
+        const page = await open({ custom_clientid: '' })
+        expect(field(page, READS).value).toBe('20')
+        expect(field(page, SECONDS).value).toBe('3')
+        page.type(field(page, READS), '50')
+        page.type(field(page, SECONDS), '1.5')
+        await page.save()
+        expect(page.sync.options).toMatchObject({ scan_reads_per_click: 50, scan_seconds_between_reads: 1.5 })
+    })
+
+    it('show what was saved, or the default in place of what the extension can\'t use', async () => {
+        const page = await open({ scan_reads_per_click: 35, scan_seconds_between_reads: 0 })
+        expect(field(page, READS).value).toBe('35')
+        expect(field(page, SECONDS).value).toBe('3')
+    })
+
+    it('go back to gentle with "reset to defaults"', async () => {
+        const page = await open({ scan_reads_per_click: 80, scan_seconds_between_reads: 1 })
+        page.resetDefaults()
+        await vi.waitFor(() => expect(field(page, READS).value).toBe('20'))
+        expect(field(page, SECONDS).value).toBe('3')
+    })
+
+    it.each([
+        [READS, '9', 'from 10 to 100'],
+        [READS, '101', 'from 10 to 100'],
+        [READS, '10.5', 'from 10 to 100'],
+        [READS, '', 'from 10 to 100'],
+        [SECONDS, '0.5', 'from 1 to 10'],
+        [SECONDS, '11', 'from 1 to 10'],
+        [SECONDS, 'fast', 'from 1 to 10'],
+    ])('won\'t save %s as "%s"', async (name, value, message) => {
+        const page = await open({ custom_clientid: '' })
+        page.type(field(page, name), value)
+        page.clickSave()
+        await vi.waitFor(() => expect(page.text()).toContain(message))
+        expect(page.sync.options.scan_reads_per_click).toBeUndefined()
     })
 })

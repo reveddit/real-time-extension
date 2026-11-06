@@ -1,7 +1,7 @@
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, vi } from 'vitest'
-import { __resetStorage } from '../mocks/webextension-polyfill.js'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import browserMock, { __resetStorage } from '../mocks/webextension-polyfill.js'
 import {
     getCandidateAuthors,
     extractCommentTree_fromJSON,
@@ -286,21 +286,76 @@ describe('commentFullnameFromPermalink', () => {
 })
 
 describe('RateLimiter', () => {
+    const savedSendMessage = browserMock.runtime.sendMessage
+    afterEach(() => {
+        browserMock.runtime.sendMessage = savedSendMessage
+        vi.useRealTimers()
+    })
+    // Asks for a turn the background puts this far off, and starts waiting
+    const waitingForTurn = async (limiter, ms) => {
+        vi.useFakeTimers()
+        browserMock.runtime.sendMessage = async message => (message.action === 'scan-turn' ? ms : undefined)
+        const read = vi.fn(async () => 42)
+        const scheduled = limiter.schedule(read).catch(err => err.message)
+        await vi.advanceTimersByTimeAsync(0)
+        return { read, scheduled }
+    }
+
     it('executes functions', async () => {
-        const limiter = new RateLimiter(10)
+        const limiter = new RateLimiter()
         const result = await limiter.schedule(() => Promise.resolve(42))
         expect(result).toBe(42)
     })
 
+    it('waits out the turn the background gives, however short', async () => {
+        const { read, scheduled } = await waitingForTurn(new RateLimiter(), 1000)
+        await vi.advanceTimersByTimeAsync(999)
+        expect(read).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+        expect(await scheduled).toBe(42)
+    })
+
+    it('takes the read back at once when cancelled during the wait', async () => {
+        const limiter = new RateLimiter()
+        const { read, scheduled } = await waitingForTurn(limiter, 20000)
+        limiter.cancel()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(await scheduled).toBe('Cancelled')
+        expect(read).not.toHaveBeenCalled()
+    })
+
+    it('takes the read back at once when cancelled while asking for a turn', async () => {
+        vi.useFakeTimers()
+        const limiter = new RateLimiter()
+        browserMock.runtime.sendMessage = async () => {
+            limiter.cancel()
+            return 20000
+        }
+        const read = vi.fn()
+        const scheduled = limiter.schedule(read).catch(err => err.message)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(await scheduled).toBe('Cancelled')
+        expect(read).not.toHaveBeenCalled()
+    })
+
+    it('takes the read back when its page went during the wait', async () => {
+        let showing = true
+        const { read, scheduled } = await waitingForTurn(new RateLimiter(() => showing), 20000)
+        showing = false
+        await vi.advanceTimersByTimeAsync(20000)
+        expect(await scheduled).toBe('Cancelled')
+        expect(read).not.toHaveBeenCalled()
+    })
+
     it('can be cancelled', async () => {
-        const limiter = new RateLimiter(10)
+        const limiter = new RateLimiter()
         limiter.cancel()
         expect(limiter.isCancelled()).toBe(true)
         await expect(limiter.schedule(() => Promise.resolve())).rejects.toThrow('Cancelled')
     })
 
     it('propagates errors from scheduled function', async () => {
-        const limiter = new RateLimiter(10)
+        const limiter = new RateLimiter()
         await expect(
             limiter.schedule(() => Promise.reject(new Error('test error')))
         ).rejects.toThrow('test error')
@@ -326,10 +381,10 @@ describe('scans defer to monitoring rate-limit state', () => {
 
     it('scanDelayMs halves scan speed within the recent-429 window and not after', async () => {
         __resetStorage({}, { rate_limit_last_hit: Date.now() - 1000 })
-        expect(await scanDelayMs()).toBe(3000)
+        expect(await scanDelayMs()).toBe(6000)
         __resetStorage({}, { rate_limit_last_hit: Date.now() - 61 * 60 * 1000 })
-        expect(await scanDelayMs()).toBe(1500)
+        expect(await scanDelayMs()).toBe(3000)
         __resetStorage({}, {})
-        expect(await scanDelayMs()).toBe(1500)
+        expect(await scanDelayMs()).toBe(3000)
     })
 })

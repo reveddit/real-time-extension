@@ -1,7 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
-import { getOptions, INTERVAL_DEFAULT, SEEN_COUNT_DEFAULT, saveOptions } from './storage'
+import {
+  getOptions,
+  INTERVAL_DEFAULT,
+  SEEN_COUNT_DEFAULT,
+  SCAN_READS_DEFAULT,
+  SCAN_READS_MIN,
+  SCAN_READS_MAX,
+  SCAN_SECONDS_DEFAULT,
+  SCAN_SECONDS_MIN,
+  SCAN_SECONDS_MAX,
+  isScanReads,
+  isScanSeconds,
+  saveOptions,
+} from './storage'
 import { DiagStatus, formatDiagStatus } from './diag-status'
 import { setAlarm } from './common'
 import { AppGlobal, setThemeMode, THEME_STORAGE_KEY, ThemeMode } from './ui/global'
@@ -347,6 +360,8 @@ const MODE_OPTIONS: { value: TrackMode; label: string }[] = [
 function Options() {
   const [interval, setInterval_] = useState('')
   const [seenCount, setSeenCount] = useState('')
+  const [scanReads, setScanReads] = useState('')
+  const [scanSeconds, setScanSeconds] = useState('')
   const [clientId, setClientId] = useState('')
   const [removedMode, setRemovedMode] = useState<TrackMode>('off')
   const [lockedMode, setLockedMode] = useState<TrackMode>('off')
@@ -387,6 +402,8 @@ function Options() {
         const lock = opts.lock_status || {}
         setInterval_(String(opts.interval ?? INTERVAL_DEFAULT))
         setSeenCount(String(opts.seen_count || SEEN_COUNT_DEFAULT))
+        setScanReads(String(isScanReads(opts.scan_reads_per_click) ? opts.scan_reads_per_click : SCAN_READS_DEFAULT))
+        setScanSeconds(String(isScanSeconds(opts.scan_seconds_between_reads) ? opts.scan_seconds_between_reads : SCAN_SECONDS_DEFAULT))
         setClientId(opts.custom_clientid || '')
         setRemovedMode(modeFromStatus(removal))
         setLockedMode(modeFromStatus(lock))
@@ -478,6 +495,8 @@ function Options() {
   const resetDefaults = () => {
     setInterval_(String(INTERVAL_DEFAULT))
     setSeenCount(String(SEEN_COUNT_DEFAULT))
+    setScanReads(String(SCAN_READS_DEFAULT))
+    setScanSeconds(String(SCAN_SECONDS_DEFAULT))
     setClientId('')
   }
 
@@ -496,10 +515,20 @@ function Options() {
       setTimeout(() => setError(''), 2800)
       return
     }
+    if (!isScanReads(scanReads)) {
+      setError(`"most Reddit reads per scan click" must be a whole number from ${SCAN_READS_MIN} to ${SCAN_READS_MAX}`)
+      setTimeout(() => setError(''), 2800)
+      return
+    }
+    if (!isScanSeconds(scanSeconds)) {
+      setError(`"seconds between scan reads" must be from ${SCAN_SECONDS_MIN} to ${SCAN_SECONDS_MAX}`)
+      setTimeout(() => setError(''), 2800)
+      return
+    }
 
     setError('')
     saveOptions(seenCountNum, intervalNum, customClientId, removedMode !== 'off', removedMode === 'notify',
-                lockedMode !== 'off', lockedMode === 'notify', hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, showThreadScanButtons, highlightOwnProfileStatus, autoFilterRemovedThreads, () => {
+                lockedMode !== 'off', lockedMode === 'notify', hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, showThreadScanButtons, highlightOwnProfileStatus, autoFilterRemovedThreads, Number(scanReads), Number(scanSeconds), () => {
       setAlarm(intervalNum)
       chrome.runtime.sendMessage({ action: 'update-badge' })
       window.close()
@@ -627,6 +656,23 @@ function Options() {
             Reddit checks" to 5 or more to reduce this occurrence.
           </Note>
         )}
+
+        <SectionHeader>Scans</SectionHeader>
+        <FieldStack>
+          <Field>
+            <label>most Reddit reads per scan click</label>
+            <input type="text" value={scanReads} onChange={e => setScanReads(e.target.value)} />
+          </Field>
+          <Field>
+            <label>seconds between scan reads</label>
+            <input type="text" value={scanSeconds} onChange={e => setScanSeconds(e.target.value)} />
+          </Field>
+        </FieldStack>
+        <Note>
+          Scans read Reddit with your login. More reads or a shorter wait get through big threads
+          sooner, but Reddit may ask you to verify you&apos;re human if it sees what looks like
+          automated activity.
+        </Note>
 
         <SectionHeader>Appearance</SectionHeader>
         <FieldStack>
