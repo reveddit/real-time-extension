@@ -81,7 +81,7 @@ export interface RemoteOptions {
     // seconds_between_reads?: number }. Outside the options' ranges, ignored.
     scan_limits?: ScanLimits
 }
-export interface ScanLimits {
+interface ScanLimits {
     reads_per_click?: number
     seconds_between_reads?: number
 }

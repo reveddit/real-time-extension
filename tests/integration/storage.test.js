@@ -507,9 +507,7 @@ describe('getScanSettings', () => {
     it('leaves the defaults unset, so a gentler one later reaches those who never chose', async () => {
         __resetStorage()
         const save = (reads, seconds) =>
-            new Promise(resolve =>
-                saveOptions(2, 1, '', true, true, true, true, false, false, false, true, true, true, true, reads, seconds, resolve),
-            )
+            saveOptionsP(2, 1, '', true, true, true, true, false, false, false, true, true, true, true, reads, seconds)
         await save(20, 3)
         expect(__getSyncStorage().options).not.toHaveProperty('scan_reads_per_click')
         expect(__getSyncStorage().options).not.toHaveProperty('scan_seconds_between_reads')

@@ -21,7 +21,6 @@ export interface RestoreResult {
     author?: string
     body?: string
     body_html?: string
-    sourceAuthor?: string
     // Per-comment scan batching: exhausted = every visible author has now been
     // searched (so the button can be disabled); remaining = what's still to check
     // after this batch (shown as "scan-rev (N)").
@@ -519,18 +518,25 @@ export class ScanReads {
     // Left for the next click
     unread = 0
     failure: any
+    // The requests this click may send (options). The next click goes on.
+    readonly budget: number
     private left: number
     private failedInARow = 0
     // Tried on two clicks, with no answer, among those this click came to
     private givenUp = new Set<string>()
     private limiter: RateLimiter
-    private pageReads?: Map<string, any[]>
+    private pageReads: Map<string, any[]>
 
-    // budget: the requests this click may send (options). The next click goes on.
-    constructor(limiter: RateLimiter, budget: number, pageReads?: Map<string, any[]>) {
+    constructor(limiter: RateLimiter, budget: number, pageReads = new Map<string, any[]>()) {
         this.limiter = limiter
+        this.budget = budget
         this.left = budget
         this.pageReads = pageReads
+    }
+
+    static async forClick(limiter: RateLimiter, pageReads?: Map<string, any[]>) {
+        const { readsPerClick } = await getScanSettings()
+        return new ScanReads(limiter, readsPerClick, pageReads)
     }
 
     get stopped(): boolean {
@@ -541,23 +547,19 @@ export class ScanReads {
         return this.givenUp.size
     }
 
-    has(path: string): boolean {
-        return this.pageReads?.has(path) ?? false
-    }
-
     // keep: how many of the click's reads to leave for later
     canRead(path: string, keep = 0): boolean {
-        return this.left > keep || this.has(path)
+        return this.left > keep || this.pageReads.has(path)
     }
 
     noAnswer(path: string) {
         const tried = `tried ${path}`
-        if (this.pageReads?.has(tried)) {
+        if (this.pageReads.has(tried)) {
             this.pageReads.set(path, GAVE_UP)
             this.givenUp.add(path)
         } else {
-            this.pageReads?.set(tried, NO_FEED)
-            this.pageReads?.delete(path)
+            this.pageReads.set(tried, NO_FEED)
+            this.pageReads.delete(path)
             this.unread++
         }
     }
@@ -567,9 +569,9 @@ export class ScanReads {
         let retrying = 0
         for (const path of this.givenUp) {
             const retried = `retried ${path}`
-            if (this.pageReads?.has(retried)) continue
-            this.pageReads?.delete(path)
-            this.pageReads?.set(retried, NO_FEED)
+            if (this.pageReads.has(retried)) continue
+            this.pageReads.delete(path)
+            this.pageReads.set(retried, NO_FEED)
             retrying++
         }
         return retrying
@@ -590,30 +592,29 @@ export class ScanReads {
     // What a scan can't go on without: kept like the rest, but a failure is thrown
     // for the scan to report
     async needed(path: string, itemsOf: (text: string) => any[] = parseFeed): Promise<any[]> {
-        const items = this.pageReads?.get(path) ?? itemsOf(await this.text(path))
-        this.pageReads?.set(path, items)
+        const items = this.pageReads.get(path) ?? itemsOf(await this.text(path))
+        this.pageReads.set(path, items)
         return items
     }
 
     // Undefined when there's nothing to go on: it wasn't read, or reddit said
     // there's no such feed, which is an answer and isn't counted as unread
     async feed(path: string): Promise<any[] | undefined> {
-        const kept = this.pageReads?.get(path)
-        if (kept) {
+        const kept = this.pageReads.get(path)
+        if (kept === GAVE_UP) this.givenUp.add(path)
+        if (kept === GAVE_UP || kept === NO_FEED) {
             this.failedInARow = 0
-            if (kept === GAVE_UP) this.givenUp.add(path)
-            return kept === NO_FEED || kept === GAVE_UP ? undefined : kept
+            return undefined
         }
         try {
-            const items = parseFeed(await this.text(path))
+            const items = await this.needed(path)
             this.failedInARow = 0
-            this.pageReads?.set(path, items)
             return items
         } catch (err: any) {
             if (this.limiter.isCancelled()) return undefined
             if (err.status === 404) {
                 this.failedInARow = 0
-                this.pageReads?.set(path, NO_FEED)
+                this.pageReads.set(path, NO_FEED)
                 return undefined
             }
             if (endsScan(err)) {
@@ -663,16 +664,15 @@ async function openThread(
     subreddit: string,
     isNewReddit: boolean,
     reads: ScanReads,
-    limiter: RateLimiter,
     onProgress: ProgressCallback,
     cancelled: string,
 ) {
     try {
         const thread = await readThread(threadPostId, subreddit, isNewReddit, reads)
         // Reading the page now would read the next one
-        if (!limiter.isCancelled()) return thread
+        if (!reads.stopped) return thread
     } catch (err: any) {
-        if (!limiter.isCancelled()) {
+        if (!reads.stopped) {
             onProgress({ status: 'error', message: scanFailure(err, 'Could not load comment tree.') })
             return undefined
         }
@@ -743,17 +743,8 @@ export async function restoreComment(
         return { found: false }
     }
 
-    const { readsPerClick } = await getScanSettings()
-    const reads = new ScanReads(limiter, readsPerClick, pageReads)
-    const thread = await openThread(
-        threadPostId,
-        subreddit,
-        isNewReddit,
-        reads,
-        limiter,
-        onProgress,
-        'Search cancelled.',
-    )
+    const reads = await ScanReads.forClick(limiter, pageReads)
+    const thread = await openThread(threadPostId, subreddit, isNewReddit, reads, onProgress, 'Search cancelled.')
     if (!thread) return { found: false }
 
     const { tree: treeMap, postAuthor } = thread
@@ -788,7 +779,6 @@ export async function restoreComment(
     }
 
     const { sort, t } = getUserPageSort(target.created_utc)
-    let unsearched = 0
     let targetResult: RestoreResult | null = null
 
     // Cross-check an author's feed against this thread. Three cases:
@@ -798,9 +788,9 @@ export async function restoreComment(
     //      replies, or one the thread's feed cut off. Its own feed tells.
     const pendingVerify: any[] = []
     // Half a click stays for those. What's read already is free.
-    const heldBack = () => (pendingVerify.length > 0 ? Math.floor(readsPerClick / 2) : 0)
+    const heldBack = () => (pendingVerify.length > 0 ? Math.floor(reads.budget / 2) : 0)
 
-    const crossCheck = (items: any[], _sourceAuthor: string) => {
+    const crossCheck = (items: any[]) => {
         for (const item of items) {
             const d = item?.data
             if (!d || item.kind !== 't1') continue
@@ -814,7 +804,6 @@ export async function restoreComment(
                     author: d.author,
                     body: d.body,
                     body_html: d.body_html,
-                    sourceAuthor: _sourceAuthor,
                 }
             } else if (tombstoneIds.has(d.name) && treeMap.get(d.name)?.parent_id) {
                 alreadyResolved.add(d.name)
@@ -829,7 +818,7 @@ export async function restoreComment(
         const author = candidates[i]
         const path = authorFeedPath(author, sort, t)
         if (!reads.canRead(path, heldBack())) {
-            unsearched++
+            reads.unread++
             continue
         }
 
@@ -839,19 +828,17 @@ export async function restoreComment(
         })
 
         const items = await reads.feed(path)
-        if (items) crossCheck(items, author)
+        if (items) crossCheck(items)
     }
 
     // Verify the rest through their own feeds before reporting them: a live
     // comment the thread's feed cut off stays out, and the feed names the parent.
     // The answer isn't held up for this: they keep for the next click.
-    let unchecked = 0
     if (!targetResult && !reads.stopped) {
         const unverified = pendingVerify.filter(d => !alreadyResolved.has(d.name))
-        const lookup = await lookupCommentsByIds(unverified, reads)
-        unchecked = lookup.unchecked
+        const looked = await lookupCommentsByIds(unverified, reads)
         for (const d of unverified) {
-            const info = lookup.looked.get(d.name)
+            const info = looked.get(d.name)
             if (!info?.removed) continue
             alreadyResolved.add(d.name)
             onOtherFound?.(toRecovered({ ...d, parent_id: info.parent_id }, treeMap, threadPostId, subreddit))
@@ -884,7 +871,7 @@ export async function restoreComment(
         return { found: false }
     }
 
-    const remaining = unsearched + reads.unread + unchecked
+    const remaining = reads.unread
     const retrying = remaining ? 0 : reads.retryGivenUp()
     const couldntRead = `Not found — ${reads.gaveUp} feed(s) couldn't be read.`
     const stuck = !remaining && !retrying && reads.gaveUp > 0
@@ -924,8 +911,7 @@ export async function scanUserProfile(
         message: 'Fetching user profile...',
     })
 
-    const { readsPerClick } = await getScanSettings()
-    const reads = new ScanReads(limiter, readsPerClick, pageReads)
+    const reads = await ScanReads.forClick(limiter, pageReads)
     const user = encodeURIComponent(username)
     // The page's own list. Feeds take these as listings do, but a tab ignores an
     // anchor that's the other tab's (reddit.md), so that tab goes from the page's
@@ -993,7 +979,7 @@ export async function scanUserProfile(
     // A comment the listing leaves out may only be in a subreddit they hid. An
     // author's own listing and feeds show their removed comments as live.
     const unlisted = cachedItems.filter(item => item.kind === 't1' && !liveItems.has(item.data.name))
-    const { looked, unchecked } = await lookupCommentsByIds(
+    const looked = await lookupCommentsByIds(
         unlisted.map(item => item.data),
         reads,
     )
@@ -1044,7 +1030,7 @@ export async function scanUserProfile(
         onProgress({ status: 'error', message: `${why} ${found}`.trim() })
         return results
     }
-    const unread = unchecked + reads.unread
+    const unread = reads.unread
     const notes = [
         unread > 0 && `${unread} comment(s) not checked yet; scan again to go on.`,
         reads.gaveUp > 0 && `${reads.gaveUp} comment(s) couldn't be checked.`,
@@ -1122,20 +1108,19 @@ export interface LookedUpComment {
     removed: boolean
 }
 
-// One request per comment, as far as the click's reads go. unchecked: how many
-// that left out. A failed read leaves its comment out of looked, and reads says
-// why, so a comment that wasn't read can't pass for one that's live.
+// One request per comment, as far as the click's reads go, and the rest count as
+// unread. A failed read leaves its comment out, and reads says why, so a comment
+// that wasn't read can't pass for one that's live.
 export async function lookupCommentsByIds(
     comments: { name: string; link_id: string }[],
     reads: ScanReads,
-): Promise<{ looked: Map<string, LookedUpComment>; unchecked: number }> {
+): Promise<Map<string, LookedUpComment>> {
     const looked = new Map<string, LookedUpComment>()
-    let unchecked = 0
     for (const { name, link_id } of comments) {
         if (reads.stopped) break
         const path = `/comments/${link_id.replace(/^t3_/, '')}/_/${name.replace(/^t1_/, '')}/.rss?context=1`
         if (!reads.canRead(path)) {
-            unchecked++
+            reads.unread++
             continue
         }
         const items = await reads.feed(path)
@@ -1163,7 +1148,7 @@ export async function lookupCommentsByIds(
             removed: !d || (d.author === '[deleted]' && (d.body === '[removed]' || d.body === '[deleted]')),
         })
     }
-    return { looked, unchecked }
+    return looked
 }
 
 function summarizeThreadTree(map: Map<string, CommentTreeNode>): {
@@ -1230,17 +1215,9 @@ export async function scanThreadForRemovedComments(
     if (!(await monitoringBackoffGate(onProgress))) {
         return []
     }
-    const { readsPerClick } = await getScanSettings()
-    const reads = new ScanReads(limiter, readsPerClick, pageReads)
-    const thread = await openThread(
-        threadPostId,
-        subreddit,
-        isNewReddit,
-        reads,
-        limiter,
-        onProgress,
-        `Scan cancelled. ${recoveredOnPage()} recovered.`,
-    )
+    const reads = await ScanReads.forClick(limiter, pageReads)
+    const cancelled = `Scan cancelled. ${recoveredOnPage()} recovered.`
+    const thread = await openThread(threadPostId, subreddit, isNewReddit, reads, onProgress, cancelled)
     if (!thread) return []
 
     const { tree, postAuthor, postCreatedUtc } = thread
@@ -1293,8 +1270,6 @@ export async function scanThreadForRemovedComments(
     ).length
     const recoveredInCount = () => alreadyInCount + recovered.filter(rc => answersMissing(rc.id, rc.created_utc)).length
     let searched = 0
-    let unsearched = 0
-    let unchecked = 0
 
     const recordRecovery = (d: any) => {
         const rc = toRecovered(d, tree, threadPostId, subreddit)
@@ -1308,7 +1283,7 @@ export async function scanThreadForRemovedComments(
 
         const path = authorFeedPath(author, sort, t)
         if (!reads.canRead(path)) {
-            unsearched++
+            reads.unread++
             continue
         }
 
@@ -1337,10 +1312,9 @@ export async function scanThreadForRemovedComments(
             }
         }
         if (uncertain.length) {
-            const lookup = await lookupCommentsByIds(uncertain, reads)
-            unchecked += lookup.unchecked
+            const looked = await lookupCommentsByIds(uncertain, reads)
             for (const d of uncertain) {
-                const info = lookup.looked.get(d.name)
+                const info = looked.get(d.name)
                 if (info?.removed) recordRecovery({ ...d, parent_id: info.parent_id })
             }
         }
@@ -1357,9 +1331,8 @@ export async function scanThreadForRemovedComments(
     }
     // With nothing missing any more, what it couldn't read has nothing to give
     const stillMissing = recoveredInCount() < missingCount
-    const left = unsearched + unchecked + reads.unread
-    if (left > 0 && stillMissing) {
-        const message = `${recoveredCount()} recovered so far, ${left} left to check. Click again to continue.`
+    if (reads.unread > 0 && stillMissing) {
+        const message = `${recoveredCount()} recovered so far, ${reads.unread} left to check. Click again to continue.`
         onProgress({ status: 'partial', message })
         return recovered
     }

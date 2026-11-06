@@ -14,7 +14,7 @@
 export const LOGGED_IN_CACHE_MODES: RequestCache[] = ['default', 'no-cache']
 // Feeds send max-age=3600, so a scan's read must never come from the browser's
 // cache. On Chrome's wire no-store is the same as default (reddit.md).
-export const SCAN_CACHE_MODES: RequestCache[] = ['no-store', 'no-cache']
+const SCAN_CACHE_MODES: RequestCache[] = ['no-store', 'no-cache']
 const DOUBLE_BLOCK_MEMORY_MS = 5 * 60 * 1000
 // Mutable for tests, like _wwwRouteTiming
 export const _loggedInFetchState = { preferredCacheMode: 0, doubleBlockUntil: 0 }
@@ -23,12 +23,12 @@ export const _loggedInFetchState = { preferredCacheMode: 0, doubleBlockUntil: 0 
 export const isBlockPage = (res: Response): boolean =>
     res.status === 403 && !/json/i.test(res.headers.get('content-type') || '')
 
-export interface LoggedInFetchOptions {
+interface LoggedInFetchOptions {
     signal?: AbortSignal
     // Whether the retry may still go out (the bridge's deadline)
     canRetry?: () => boolean
     // Just before the retry goes out: the bridge counts it as a request
-    onRetry?: () => unknown
+    onRetry?: () => void
     // The other mode got past the edge after a block page
     onSwitched?: (blocked: RequestCache, answered: RequestCache, status: number) => void
 }
@@ -43,15 +43,14 @@ export const fetchLoggedIn = async (
     url: string,
     opts: LoggedInFetchOptions = {},
 ): Promise<{ response: Response; blockPage: boolean; retried: boolean }> => {
-    const modes = LOGGED_IN_CACHE_MODES
-    const fetchIn = (mode: number) => fetchInMode(url, modes[mode], opts.signal)
+    const fetchIn = (mode: number) => fetchInMode(url, LOGGED_IN_CACHE_MODES[mode], opts.signal)
     let mode = _loggedInFetchState.preferredCacheMode
     let response = await fetchIn(mode)
     let blockPage = isBlockPage(response)
     let retried = false
     if (blockPage && Date.now() >= _loggedInFetchState.doubleBlockUntil && (opts.canRetry?.() ?? true)) {
         const blockedMode = mode
-        mode = (mode + 1) % modes.length
+        mode = (mode + 1) % LOGGED_IN_CACHE_MODES.length
         opts.onRetry?.()
         retried = true
         response = await fetchIn(mode)
@@ -59,7 +58,7 @@ export const fetchLoggedIn = async (
         if (!blockPage) {
             // Past the edge, whatever the resource said: keep this mode
             _loggedInFetchState.preferredCacheMode = mode
-            opts.onSwitched?.(modes[blockedMode], modes[mode], response.status)
+            opts.onSwitched?.(LOGGED_IN_CACHE_MODES[blockedMode], LOGGED_IN_CACHE_MODES[mode], response.status)
         } else {
             _loggedInFetchState.doubleBlockUntil = Date.now() + DOUBLE_BLOCK_MEMORY_MS
         }

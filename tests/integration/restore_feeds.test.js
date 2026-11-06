@@ -535,7 +535,7 @@ describe('restoring one comment', () => {
 describe("a comment's own feed", () => {
     const lookup = async (name = 't1_x', link_id = POST) => {
         const reads = new restore.ScanReads(new restore.RateLimiter(), 50)
-        const { looked } = await restore.lookupCommentsByIds([{ name, link_id }], reads)
+        const looked = await restore.lookupCommentsByIds([{ name, link_id }], reads)
         return { info: looked.get(name), reads }
     }
 

@@ -5,7 +5,7 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import browserMock, { __resetStorage } from '../mocks/webextension-polyfill.js'
+import { __resetStorage } from '../mocks/webextension-polyfill.js'
 import { parseHTML, DOMParser } from 'linkedom'
 import { POST, NOW, entry, postEntry, feed, listing } from '../mocks/feeds.js'
 
