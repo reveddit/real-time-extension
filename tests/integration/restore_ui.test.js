@@ -66,9 +66,9 @@ const loadThread = async (html, isNewReddit = true) => {
     ui.initRestoreOnThread(isNewReddit)
     await vi.advanceTimersByTimeAsync(0)
 }
-const loadProfile = async (html, user = 'someone', path = `/user/${user}/`) => {
+const loadProfile = async (html, user = 'someone', path = `/user/${user}/`, isNewReddit = false) => {
     await load(html, path)
-    ui.initProfileScan(user, false)
+    ui.initProfileScan(user, isNewReddit)
     await vi.advanceTimersByTimeAsync(0)
 }
 
@@ -972,5 +972,397 @@ describe('the profile scan', () => {
         await scanProfile()
         expect(document.querySelector('.rev-scan-note')?.textContent).toContain('your own removed content')
         expect(document.querySelector('.rev-scan-item-link').title).toContain('Shows your own view')
+    })
+})
+
+// What fills a removed comment reddit left a tombstone for, on old reddit
+describe('an old reddit tombstone', () => {
+    const tomb = (id, state = 'deleted') =>
+        `<div class="thing comment ${state}" data-author="" data-permalink="/r/sub/comments/post/a_title/${id.slice(3)}/">` +
+        `<div class="entry"><p class="tagline"><a class="author">[deleted]</a><time datetime="${NOW}"></time></p>` +
+        `<div class="usertext-body"><div class="md"><p>[removed]</p></div></div><ul class="buttons"></ul></div>` +
+        `<div class="child"></div></div>`
+    const tombEl = () => document.querySelector('[data-permalink$="/tomb/"]')
+    const seed = () => {
+        pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_tomb', null, '[deleted]'))
+        pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), entry('t1_tomb', 'a', 'the words'))
+    }
+
+    it('is filled in place by a thread scan', async () => {
+        await loadThread(oldThreadPage(4, oldComment('t1_a', 'a') + tomb('t1_tomb')), false)
+        seed()
+        await scanThread()
+        const el = tombEl()
+        expect(document.querySelectorAll('[data-rev-id="t1_tomb"]')).toHaveLength(1)
+        expect(revEl('t1_tomb')).toBe(el)
+        expect(el.classList.contains('deleted')).toBe(false)
+        expect(el.classList.contains('rev-inserted-comment')).toBe(false)
+        expect(el.classList.contains('rev-removed-highlight')).toBe(false)
+        expect(el.querySelector(':scope > .entry').classList.contains('rev-removed-highlight')).toBe(true)
+        expect(el.querySelector('.usertext-body .md').textContent).toContain('the words')
+        const author = el.querySelector('.tagline .author')
+        expect(author.localName).toBe('a')
+        expect(author.getAttribute('href')).toBe('/user/a')
+        expect(author.textContent).toBe('a')
+        expect(el.parentElement.classList.contains('nestedlisting')).toBe(true)
+    })
+
+    it('is opened if reddit left it collapsed, and the thread filter counts it as removed', async () => {
+        await loadThread(oldThreadPage(4, oldComment('t1_a', 'a') + tomb('t1_tomb', 'deleted collapsed')), false)
+        seed()
+        await scanThread()
+        const el = tombEl()
+        expect(el.classList.contains('collapsed')).toBe(false)
+        expect(el.classList.contains('noncollapsed')).toBe(true)
+        const a = document.querySelector('[data-fullname="t1_a"]')
+        expect(a.classList.contains('collapsed')).toBe(true)
+        expect(a.getAttribute('data-rev-filter-collapsed')).toBe('1')
+    })
+
+    it("is filled by its own scan, which adds who restored it", async () => {
+        await loadThread(oldThreadPage(4, oldComment('t1_a', 'a') + tomb('t1_tomb')), false)
+        seed()
+        chrome.storage.sync.set({ options: { auto_filter_removed_threads: false } })
+        click(tombEl().querySelector('.rev-scan-comment-btn'))
+        await settle(() => document.querySelector('.rev-spinner'))
+        const el = tombEl()
+        expect(revEl('t1_tomb')).toBe(el)
+        expect(el.classList.contains('deleted')).toBe(false)
+        expect(el.querySelector(':scope > .entry').classList.contains('rev-removed-highlight')).toBe(true)
+        expect(el.querySelector('.usertext-body .md').textContent).toContain('the words')
+        expect(el.querySelector('.tagline a.author').getAttribute('href')).toBe('/user/a')
+        expect(el.querySelector(':scope > .entry > .rev-restore-attribution').textContent).toBe('Restored by Reveddit')
+        expect(document.querySelector('.rev-restore-progress')).toBeNull()
+    })
+})
+
+describe('the profile scan, on the rows of a profile', () => {
+    const query = 'sort=new&limit=100'
+    const secondsAgo = seconds => new Date(Date.now() - seconds * 1000).toISOString()
+    const profileBtn = () => document.querySelector('.rev-profile-scan-btn')
+    const scanProfile = async () => {
+        click(profileBtn())
+        await settle(() => profileBtn().disabled)
+    }
+    const feeds = (...gone) => {
+        pages[`/user/someone/comments/.rss?${query}`] = feed(
+            entry('t1_live', 'someone', 'live'),
+            ...gone.map(([id, seconds]) => entry(id, 'someone', 'the removed text').replace(NOW, secondsAgo(seconds))),
+        )
+        pages[`/user/someone/submitted/.rss?${query}`] = feed()
+        pages[`/user/someone/comments.json?${query}`] = listing({ data: { name: 't1_live' } })
+        pages[`/user/someone/submitted.json?${query}`] = listing()
+        for (const [id] of gone) pages[commentPath(id)] = feed(postEntry())
+    }
+
+    describe('on old reddit', () => {
+        const row = (id, seconds, inner = '') =>
+            `<div class="thing" data-fullname="${id}"><div class="entry"><p class="tagline"><time datetime="${secondsAgo(seconds)}"></time></p>` +
+            `<div class="usertext-body"><div class="md"><p>[removed]</p></div></div></div>${inner}</div>`
+        const page = rows =>
+            `<html><body><div class="content" role="main"><div id="siteTable">${rows}</div></div></body></html>`
+
+        it('highlights a removed row, shows its text and badges it once', async () => {
+            feeds(['t1_gone', 200])
+            await loadProfile(page(row('t1_live', 100) + row('t1_gone', 200)))
+            await scanProfile()
+            const gone = document.querySelector('[data-fullname="t1_gone"]')
+            expect(gone.classList.contains('rev-removed-highlight')).toBe(true)
+            expect(gone.querySelector('.usertext-body .md').textContent).toContain('the removed text')
+            expect(gone.querySelectorAll('.tagline .rev-scan-badge-removed')).toHaveLength(1)
+            expect(gone.querySelector('.tagline .rev-inline-badge').textContent).toBe('removed')
+            const live = document.querySelector('[data-fullname="t1_live"]')
+            expect(live.classList.contains('rev-removed-highlight')).toBe(false)
+            expect(live.querySelector('.md').textContent).toBe('[removed]')
+            expect(document.querySelectorAll('.rev-inserted-comment')).toHaveLength(0)
+
+            await scanProfile()
+            expect(gone.querySelectorAll('.tagline .rev-inline-badge')).toHaveLength(1)
+        })
+
+        it('puts back the row by its tagline when the row has no .entry of its own', async () => {
+            feeds(['t1_gone', 200])
+            await loadProfile(
+                page(
+                    '<div class="thing" data-fullname="t1_gone"><div class="usertext-body"><div class="md"><p>[removed]</p></div></div>' +
+                        `<p class="tagline"></p><time datetime="${secondsAgo(200)}"></time></div>`,
+                ),
+            )
+            await scanProfile()
+            const gone = document.querySelector('[data-fullname="t1_gone"]')
+            expect(gone.querySelector('.md').textContent).toContain('the removed text')
+            expect(gone.querySelectorAll('.tagline .rev-inline-badge')).toHaveLength(1)
+        })
+
+        it('leaves a row an earlier click inserted as it is', async () => {
+            feeds(['t1_gone', 200])
+            await loadProfile(page(row('t1_live', 100)))
+            await scanProfile()
+            const inserted = document.querySelector('[data-rev-id="t1_gone"]')
+            expect(inserted.classList.contains('thing')).toBe(true)
+            const text = inserted.textContent
+            await scanProfile()
+            expect(document.querySelectorAll('[data-rev-id="t1_gone"]')).toHaveLength(1)
+            expect(inserted.textContent).toBe(text)
+        })
+
+        it('inserts a row older than the page by date, with the item as old reddit builds it', async () => {
+            feeds(['t1_mid', 200], ['t1_old', 900])
+            await loadProfile(page(row('t1_live', 100) + row('t1_late', 300)))
+            await scanProfile()
+            const rows = Array.from(document.querySelectorAll('#siteTable > [data-fullname]'))
+            expect(rows.map(el => el.getAttribute('data-fullname'))).toEqual(['t1_live', 't1_mid', 't1_late', 't1_old'])
+            const mid = rows[1]
+            expect(mid.localName).toBe('div')
+            expect(mid.className).toBe('rev-inserted-comment rev-removed-highlight thing')
+            expect(mid.getAttribute('data-rev-id')).toBe('t1_mid')
+            expect(mid.querySelector('.rev-scan-item-body').textContent.trim()).toBe('the removed text')
+            expect(mid.querySelector('.rev-scan-item-link').getAttribute('href')).toMatch(/^https:\/\/www\.reddit\.com\/.*\?context=3$/)
+        })
+    })
+
+    describe('on new reddit', () => {
+        const row = (id, seconds, inner = '<div id="feed-post-credit-bar-1"></div>') =>
+            `<article data-post-id="${id}"><shreddit-post created-timestamp="${secondsAgo(seconds)}">${inner}</shreddit-post></article>`
+        const page = rows =>
+            `<html device="desktop"><body><shreddit-feed>${rows}</shreddit-feed></body></html>`
+        const load_ = (rows, path) => loadProfile(page(rows), 'someone', path, true)
+
+        it('highlights a removed row, badges its credit bar and shows its text once', async () => {
+            feeds(['t1_gone', 200])
+            await load_(row('t1_live', 100) + row('t1_gone', 200))
+            await scanProfile()
+            const gone = document.querySelector('article[data-post-id="t1_gone"]')
+            expect(gone.classList.contains('rev-removed-highlight')).toBe(true)
+            expect(gone.querySelectorAll('#feed-post-credit-bar-1 .rev-inline-badge')).toHaveLength(1)
+            expect(gone.querySelector('shreddit-post > .rev-restored-inline').textContent.trim()).toBe('the removed text')
+            const live = document.querySelector('article[data-post-id="t1_live"]')
+            expect(live.classList.contains('rev-removed-highlight')).toBe(false)
+            expect(live.querySelector('.rev-restored-inline')).toBeNull()
+            expect(document.querySelectorAll('.rev-inserted-comment')).toHaveLength(0)
+
+            await scanProfile()
+            expect(gone.querySelectorAll('.rev-inline-badge')).toHaveLength(1)
+            expect(gone.querySelectorAll('.rev-restored-inline')).toHaveLength(1)
+        })
+
+        it('badges the post itself when its credit bar is not on the page', async () => {
+            feeds(['t1_gone', 200])
+            await load_(row('t1_live', 100) + row('t1_gone', 200, ''))
+            await scanProfile()
+            const post = document.querySelector('article[data-post-id="t1_gone"] shreddit-post')
+            expect(post.querySelectorAll(':scope > .rev-inline-badge')).toHaveLength(1)
+            expect(post.querySelector(':scope > .rev-restored-inline').textContent.trim()).toBe('the removed text')
+        })
+
+        it('inserts a row among the page by date, as an article', async () => {
+            feeds(['t1_mid', 200], ['t1_old', 900])
+            await load_(row('t1_live', 100) + row('t1_late', 300))
+            await scanProfile()
+            const rows = Array.from(document.querySelectorAll('shreddit-feed > article'))
+            expect(rows.map(el => el.getAttribute('data-post-id'))).toEqual(['t1_live', 't1_mid', 't1_late', 't1_old'])
+            const mid = rows[1]
+            expect(mid.className).toBe('rev-inserted-comment rev-removed-highlight')
+            expect(mid.getAttribute('data-rev-id')).toBe('t1_mid')
+            expect(mid.hasAttribute('data-fullname')).toBe(false)
+            expect(mid.querySelector('.rev-scan-item-body').textContent.trim()).toBe('the removed text')
+        })
+
+        it("doesn't count what an earlier click inserted among the rows it places by", async () => {
+            feeds(['t1_a', 200])
+            await load_(row('t1_live', 100) + row('t1_late', 300))
+            await scanProfile()
+            feeds(['t1_a', 200], ['t1_b', 400])
+            await scanProfile()
+            const rows = Array.from(document.querySelectorAll('shreddit-feed > article'))
+            expect(rows.map(el => el.getAttribute('data-post-id'))).toEqual(['t1_live', 't1_a', 't1_late', 't1_b'])
+        })
+    })
+
+    describe('on a listing it cannot place an item in', () => {
+        const page = '<html><body><div class="content" role="main"><div id="siteTable"></div></div></body></html>'
+
+        it('lists a removed comment with its thread title and links', async () => {
+            feeds(['t1_gone', 200])
+            await loadProfile(page)
+            await scanProfile()
+            const item = document.querySelector('.rev-profile-scan-results .rev-scan-item')
+            expect(item.className).toBe('rev-scan-item rev-removed-highlight')
+            expect(item.querySelector('.rev-scan-item-title').getAttribute('href')).toMatch(/^https:\/\/old\.reddit\.com\//)
+            expect(item.querySelector('.rev-scan-item-title').textContent).toBe('A title')
+            expect(item.querySelector('.rev-scan-item-title').rel).toBe('noreferrer')
+            expect(item.querySelector('.rev-scan-item-meta').textContent).toMatch(/^r\/sub . .+ removed$/)
+            expect(item.querySelector('.rev-scan-item-meta .rev-scan-badge-removed').textContent).toBe('removed')
+            expect(item.querySelector('.rev-scan-item-body').textContent.trim()).toBe('the removed text')
+            const links = item.querySelector('.rev-scan-item-links')
+            expect(links.children).toHaveLength(1)
+            const link = links.firstElementChild
+            expect(link.textContent).toBe('context')
+            expect(link.getAttribute('href')).toMatch(/^https:\/\/old\.reddit\.com\/.*\?context=3$/)
+            expect(link.getAttribute('target')).toBe('_blank')
+            expect(link.rel).toBe('noreferrer')
+            expect(document.querySelector('.rev-scan-header').textContent).toBe('1 removed item(s) from other pages:')
+        })
+
+        it("lists a removed post by its own title, and marks the link on the viewer's own profile", async () => {
+            chrome.storage.local.set({ last_logged_in_user: 'someone' })
+            chrome.storage.sync.set({ options: { show_scan_on_own_profile: true } })
+            feeds()
+            pages[`/user/someone/submitted/.rss?${query}`] = feed(postEntry('t3_gone', 'someone', 'a post'))
+            pages[`/user/someone/submitted.json?${query}`] = listing({ data: { name: 't3_gone', removed_by_category: 'moderator' } })
+            await loadProfile(page)
+            await scanProfile()
+            const item = document.querySelector('.rev-profile-scan-results .rev-scan-item')
+            expect(item.querySelector('.rev-scan-item-title')).not.toBeNull()
+            expect(item.querySelector('.rev-scan-item-links .rev-note-mark-jump')).not.toBeNull()
+        })
+    })
+})
+
+describe('the thread scan button', () => {
+    it('ends the menu bar of an old reddit thread, with a title, once', async () => {
+        await loadThread(oldThreadPage(3, oldComment('t1_a', 'a')), false)
+        ui.initRestoreOnThread(false)
+        await vi.advanceTimersByTimeAsync(0)
+        const buttons = document.querySelectorAll('.rev-scan-all-btn')
+        expect(buttons).toHaveLength(1)
+        expect(buttons[0].parentElement.classList.contains('menuarea')).toBe(true)
+        expect(buttons[0].textContent).toBe('Scan for removed comments')
+        expect(buttons[0].className).toBe('rev-btn rev-btn-solid rev-scan-all-btn')
+        expect(buttons[0].title).toBe('Search for removed comments in this thread')
+    })
+
+    it('leads the comment tree of a new reddit thread, with no title, once', async () => {
+        await loadThread(threadPage(3, comment('t1_a', 'a')))
+        ui.initRestoreOnThread(true)
+        await vi.advanceTimersByTimeAsync(0)
+        const buttons = document.querySelectorAll('.rev-scan-all-btn')
+        expect(buttons).toHaveLength(1)
+        expect(document.querySelector('shreddit-comment-tree').firstElementChild).toBe(buttons[0])
+        expect(buttons[0].textContent).toBe('Scan for removed comments')
+        expect(buttons[0].className).toBe('rev-btn rev-btn-solid rev-scan-all-btn')
+        expect(buttons[0].hasAttribute('title')).toBe(false)
+    })
+
+    it("is replaced by a later run's when the page still has an earlier run's", async () => {
+        await loadThread(threadPage(3, comment('t1_a', 'a')))
+        scanBtn().remove()
+        const stale = document.createElement('button')
+        stale.className = 'rev-scan-all-btn'
+        document.querySelector('shreddit-comment-tree').prepend(stale)
+        ui.initRestoreOnThread(true)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(document.querySelectorAll('.rev-scan-all-btn')).toHaveLength(1)
+        expect(scanBtn()).not.toBe(stale)
+    })
+})
+
+describe('the thread filter bar', () => {
+    const filterBtn = f => document.querySelector(`.rev-thread-filter-btn[data-filter="${f}"]`)
+    const activeFilter = () => document.querySelector('.rev-thread-filter-btn.rev-filter-active').getAttribute('data-filter')
+    const unattached = () => document.querySelector('.rev-unattached-area')
+    const gone = entry('t1_gone1', 'a', 'first words')
+
+    it('old reddit: collapses what has nothing removed, and "all" opens it again', async () => {
+        const tomb =
+            `<div class="thing comment deleted" data-permalink="/r/sub/comments/post/a_title/tomb/"><div class="entry">` +
+            `<p class="tagline"><a class="author">[deleted]</a></p><div class="usertext-body"><div class="md"><p>[removed]</p></div></div>` +
+            `<ul class="buttons"></ul></div><div class="child"></div></div>`
+        await loadThread(oldThreadPage(5, oldComment('t1_a', 'a') + oldComment('t1_b', 'b', oldComment('t1_c', 'c')) + tomb), false)
+        pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_b', 'b', 'live words'), entry('t1_c', 'c', 'live words'), entry('t1_tomb', null, '[deleted]'))
+        pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), entry('t1_tomb', 'a', 'the words'))
+        pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'))
+        pages[authorPath('c')] = feed(entry('t1_c', 'c', 'live words'))
+        await scanThread()
+        const el = id => document.querySelector(`[data-fullname="${id}"]`)
+        const tombEl = document.querySelector('[data-rev-id="t1_tomb"]')
+        expect(activeFilter()).toBe('removed')
+        expect(['t1_a', 't1_b'].map(id => el(id).classList.contains('collapsed'))).toEqual([true, true])
+        expect(el('t1_b').getAttribute('data-rev-filter-collapsed')).toBe('1')
+        // collapsed at its highest level, so what it holds is left alone
+        expect(el('t1_c').hasAttribute('data-rev-filter-collapsed')).toBe(false)
+        expect(el('t1_b').querySelector(':scope > .entry .expand')).toBeNull()
+        expect(tombEl.classList.contains('collapsed')).toBe(false)
+
+        click(filterBtn('all'))
+        expect(activeFilter()).toBe('all')
+        expect(['t1_a', 't1_b'].map(id => el(id).classList.contains('collapsed'))).toEqual([false, false])
+        expect(el('t1_b').hasAttribute('data-rev-filter-collapsed')).toBe(false)
+        click(filterBtn('removed'))
+        expect(el('t1_b').classList.contains('collapsed')).toBe(true)
+    })
+
+    it('old reddit: leaves open a comment the viewer opened, and one with a removed reply', async () => {
+        await loadThread(oldThreadPage(5, oldComment('t1_a', 'a') + oldComment('t1_b', 'b', '', 'collapsed')), false)
+        pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_b', 'b', 'live words'))
+        pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), gone)
+        pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'))
+        pages[commentPath('t1_gone1')] = feed(postEntry(), entry('t1_a', 'a', 'live words'))
+        await scanThread()
+        const a = document.querySelector('[data-fullname="t1_a"]')
+        expect(a.classList.contains('collapsed')).toBe(false)
+        expect(a.contains(revEl('t1_gone1'))).toBe(true)
+        const b = document.querySelector('[data-fullname="t1_b"]')
+        expect(b.classList.contains('collapsed')).toBe(true)
+        expect(b.hasAttribute('data-rev-filter-collapsed')).toBe(false)
+    })
+
+    it('new reddit: hides what has nothing removed, and "all" shows it again', async () => {
+        await loadThread(threadPage(5, comment('t1_a', 'a') + comment('t1_b', 'b', '', comment('t1_c', 'c')) + tombstone('t1_tomb')))
+        pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_b', 'b', 'live words'), entry('t1_c', 'c', 'live words'), entry('t1_tomb', null, '[deleted]'))
+        pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), entry('t1_tomb', 'a', 'the words'))
+        pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'))
+        pages[authorPath('c')] = feed(entry('t1_c', 'c', 'live words'))
+        await scanThread()
+        const el = id => document.querySelector(`[thingid="${id}"]`)
+        expect(activeFilter()).toBe('removed')
+        expect(['t1_a', 't1_b'].map(id => el(id).style.display)).toEqual(['none', 'none'])
+        expect(el('t1_b').getAttribute('data-rev-filter-hidden')).toBe('1')
+        expect(el('t1_tomb').style.display).not.toBe('none')
+
+        click(filterBtn('all'))
+        expect(['t1_a', 't1_b'].map(id => el(id).style.display)).toEqual(['', ''])
+        expect(el('t1_c').style.display).not.toBe('none')
+        expect(el('t1_a').hasAttribute('data-rev-filter-hidden')).toBe(false)
+        click(filterBtn('removed'))
+        expect(el('t1_a').style.display).toBe('none')
+    })
+
+    it('shows the unattached area only while it holds something removed, on either reddit', async () => {
+        for (const isNew of [true, false]) {
+            await loadThread(
+                isNew ? threadPage(4, comment('t1_a', 'a') + comment('t1_b', 'b')) : oldThreadPage(4, oldComment('t1_a', 'a') + oldComment('t1_b', 'b')),
+                isNew,
+            )
+            pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_b', 'b', 'live words'))
+            pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), gone)
+            pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'))
+            orphanAndParent()
+            await scanThread()
+            expect(unattached().style.display).toBe('')
+            click(filterBtn('all'))
+            expect(unattached().style.display).toBe('')
+            unattached().classList.remove('rev-removed-highlight')
+            unattached().querySelector('.rev-removed-highlight').classList.remove('rev-removed-highlight')
+            unattached().querySelector('.rev-inserted-comment')?.classList.remove('rev-inserted-comment')
+            click(filterBtn('removed'))
+            expect(unattached().style.display).toBe('none')
+            click(filterBtn('all'))
+            expect(unattached().style.display).toBe('')
+        }
+    })
+
+    it('goes right after the scan button', async () => {
+        await loadThread(threadPage(3, comment('t1_a', 'a')))
+        scanBtn().remove()
+        pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'))
+        pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), gone)
+        pages[commentPath('t1_gone1')] = feed(postEntry(), entry('t1_a', 'a', 'live words'))
+        ui.initRestoreOnThread(true)
+        await vi.advanceTimersByTimeAsync(0)
+        await scanThread()
+        expect(scanBtn().nextElementSibling.className).toBe('rev-thread-filter-bar')
+        const labels = Array.from(document.querySelectorAll('.rev-thread-filter-bar > *'), el => `${el.localName}:${el.textContent}`)
+        expect(labels).toEqual(['span:reveddit:', 'button:all', 'button:removed'])
     })
 })
