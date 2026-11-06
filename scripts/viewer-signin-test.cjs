@@ -81,6 +81,11 @@ const signIn = async (page, account, label) => {
         if (waited > 300) throw new Error(`${label}: the login form never appeared`)
         await sleep(2000)
     }
+    // What Reddit answered, since its page may only say "server error"
+    page.on('response', response => {
+        if (response.request().method() !== 'POST' || !/reddit\.com$/.test(new URL(response.url()).hostname)) return
+        log(`${label}: POST ${new URL(response.url()).pathname} answered ${response.status()}`)
+    })
     try {
         await username.fill(account.username)
         await page.locator('input[type="password"]').fill(account.password)
@@ -231,7 +236,13 @@ const signIn = async (page, account, label) => {
         let done = null
         for (let i = 0; i < 150 && !done; i++) {
             await sleep(2000)
-            if (i === 10) log('Still signing in. If Reddit asks for a code or a check, finish it in the window.')
+            if (i === 10) {
+                log('Still signing in. If Reddit asks for a code or a check, finish it in the window.')
+                const said = await loginTab.evaluate(() => document.body.innerText).catch(() => '')
+                for (const line of said.split('\n').filter(l => /error|try again|whoa|wrong|invalid/i.test(l)).slice(0, 3)) {
+                    log(hide(`  the page says: ${line.trim().slice(0, 120)}`))
+                }
+            }
             const l = await local(['viewer_connect', 'viewer_connect_result', 'viewer_account'])
             if (!l.viewer_connect) done = l
         }
