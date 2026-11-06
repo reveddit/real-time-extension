@@ -122,13 +122,7 @@ const trackTypes: Record<string, any[] | Record<string, any>> = {
     unlocked: {},
 }
 
-const getObjectName = (type: string, thing: string, isUser: boolean): string => {
-    if (isUser) {
-        return type + '_u_' + thing
-    } else {
-        return type + '_' + thing
-    }
-}
+const getObjectName = (type: string, thing: string, isUser: boolean): string => type + (isUser ? '_u_' : '_') + thing
 
 const addTrackTypes = (object: Record<string, any>, thing: string, isUser = true) => {
     Object.keys(trackTypes).forEach(type => {
@@ -144,17 +138,24 @@ export const getObjectNamesForThing = (thing: string, isUser = true): Record<str
     return names
 }
 
+// The status lists of an account or of followed items, without its changes
+const getStatusListKeys = (thing: string, isUser: boolean): Record<string, string> => {
+    const keys = getObjectNamesForThing(thing, isUser)
+    delete keys['changes']
+    return keys
+}
+
+// Each subscribed account, then followed items
+export const subscribedThings = (users: Record<string, unknown>): { thing: string; isUser: boolean }[] => [
+    ...Object.keys(users).map(thing => ({ thing, isUser: true })),
+    { thing: 'other', isUser: false },
+]
+
 // The user's items monitoring's last pass saw in the logged-out view,
 // { ids, t } in local storage (bridge.ts reads it)
-export const getPublicLiveKey = (user: string): string => 'public_live_u_' + user
+export const getPublicLiveKey = (user: string): string => getObjectName('public_live', user, true)
 
-export const getOldestDateKey = (thing: string, isUser: boolean): string => {
-    if (isUser) {
-        return 'oldest_date_u_' + thing
-    } else {
-        return 'oldest_date_' + thing
-    }
-}
+export const getOldestDateKey = (thing: string, isUser: boolean): string => getObjectName('oldest_date', thing, isUser)
 
 // A scan reads feeds with the user's login, and Reddit can ask an account to verify
 // it's human after a lot of automated activity, as it did a test account in 2026-11.
@@ -223,11 +224,9 @@ const getStorageInit = () => {
 
 export const markEverythingAsSeen = () => {
     return (browser.storage.sync.get as any)(null).then((storage: Record<string, any>) => {
-        const users = Object.keys(storage.user_subscriptions)
-        users.forEach(user => {
-            markThingAsSeen(storage, user, true)
-        })
-        markThingAsSeen(storage, 'other', false)
+        subscribedThings(storage.user_subscriptions).forEach(({ thing, isUser }) =>
+            markThingAsSeen(storage, thing, isUser),
+        )
         return setStorageUpdateBadge(storage)
     })
 }
@@ -330,15 +329,9 @@ export const markBacklogSummarySent = (): Promise<void> =>
     updateBacklogSummary({ initialBacklogNotified: true, summarySent: true })
 
 export const markThingAsSeen = (storage: Record<string, any>, thing: string, isUser: boolean) => {
-    const keys = getObjectNamesForThing(thing, isUser)
-    delete keys['changes']
-    const fullKeynames: string[] = []
-    Object.values(keys).forEach(fullKeyname => {
-        fullKeynames.push(fullKeyname)
-    })
     // An account unsubscribed since its notification, or since the popup
     // opened, no longer has lists
-    fullKeynames.forEach(fullKeyname => {
+    Object.values(getStatusListKeys(thing, isUser)).forEach(fullKeyname => {
         Object.values(storage[fullKeyname] || {}).forEach((item: any) => {
             item.u = false
         })
@@ -385,8 +378,7 @@ export const markIDsAsSeenIfSubscribed = (
     unlocked_ids: Record<string, any>,
     callback: () => void = () => {},
 ) => {
-    const storage_keys = getObjectNamesForThing(user, is_user)
-    delete storage_keys['changes']
+    const storage_keys = getStatusListKeys(user, is_user)
     chrome.storage.sync.get(undefined as any, storage => {
         const user_subscribed = storage?.user_subscriptions?.[user]
         if (storage && (user_subscribed || !is_user)) {
@@ -419,8 +411,7 @@ export const subscribeId = (id: string, callback: () => void = () => {}) => {
 }
 export const unsubscribeId = (id: string, callback: () => void = () => {}) => {
     const mainKey = 'other_subscriptions'
-    const otherKeys = getObjectNamesForThing('other', false)
-    delete otherKeys['changes']
+    const otherKeys = getStatusListKeys('other', false)
     chrome.storage.sync.get(Object.values(otherKeys).concat(mainKey), result => {
         delete result[mainKey][id]
         Object.values(otherKeys).forEach(fullKeyname => {
@@ -494,24 +485,20 @@ export const getSubscribedUsers_withSeenAndUnseenIDs = (
             storage.other_subscriptions = storage.other_subscriptions || {}
             storage.options = storage.options || { removal_status: { track: true }, lock_status: { track: true } }
         }
-        const users = Object.keys(storage.user_subscriptions)
         const users_withIDs: Record<string, any> = {}
-        users.forEach(user => {
-            users_withIDs[user] = getIDs_thing(user, true, storage)
+        subscribedThings(storage.user_subscriptions).forEach(({ thing, isUser }) => {
+            users_withIDs[thing] = getIDs_thing(thing, isUser, storage)
         })
-        users_withIDs['other'] = getIDs_thing('other', false, storage)
         callback(users_withIDs, storage)
     })
 }
 
 export const getSubscribedUsers_withUnseenIDs = (callback: (users_withIDs: Record<string, any>) => void) => {
     chrome.storage.sync.get(undefined as any, storage => {
-        const users = Object.keys(storage.user_subscriptions)
         const users_withIDs: Record<string, any> = {}
-        users.forEach(user => {
-            users_withIDs[user] = getUnseenIDs_thing(user, true, storage)
+        subscribedThings(storage.user_subscriptions).forEach(({ thing, isUser }) => {
+            users_withIDs[thing] = getUnseenIDs_thing(thing, isUser, storage)
         })
-        users_withIDs['other'] = getUnseenIDs_thing('other', false, storage)
         callback(users_withIDs)
     })
 }

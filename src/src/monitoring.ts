@@ -39,6 +39,7 @@ import {
     SEEN_COUNT_DEFAULT,
     getObjectNamesForThing,
     getUserInit,
+    subscribedThings,
     getOldestDateKey,
     getNextPendingPosts,
     addToPendingPostQueue,
@@ -171,9 +172,7 @@ const processPendingPosts = async (storage: Record<string, any>) => {
 
     for (const [index, postId] of posts.entries()) {
         const isAlreadyKnownRemoved = (() => {
-            const users = storage.user_subscriptions ? Object.keys(storage.user_subscriptions) : []
-            const things = [...users.map(u => ({ thing: u, isUser: true })), { thing: 'other', isUser: false }]
-            for (const { thing, isUser } of things) {
+            for (const { thing, isUser } of subscribedThings(storage.user_subscriptions || {})) {
                 const keys = getObjectNamesForThing(thing, isUser)
                 if (postId in (storage[keys['removed']] || {})) return true
             }
@@ -1311,13 +1310,8 @@ export const getUnseenBacklogItemIds = (storage: Record<string, any>): string[] 
     const now = Math.floor(Date.now() / 1000)
     const { removal: notifyRemoval, lock: notifyLock } = getNotifyFlags(storage.options || {})
 
-    const things: { thing: string; isUser: boolean }[] = [
-        ...Object.keys(storage.user_subscriptions || {}).map(u => ({ thing: u, isUser: true })),
-        { thing: 'other', isUser: false },
-    ]
-
     const ids: string[] = []
-    for (const { thing, isUser } of things) {
+    for (const { thing, isUser } of subscribedThings(storage.user_subscriptions || {})) {
         const keys = getObjectNamesForThing(thing, isUser)
         const typesToCount: string[] = []
         if (notifyRemoval) typesToCount.push(keys['removed'])
