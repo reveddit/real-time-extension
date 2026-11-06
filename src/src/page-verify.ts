@@ -35,7 +35,7 @@ import { legacyTiebreakAbsent } from './legacy-lookup'
 
 // Set per lookup from the remote option; read by the page classifier calls
 // below so a scaffold-only page can be downgraded to 'unknown' remotely.
-export let scaffoldAbsenceVerdict: 'removed' | 'unknown' = 'removed'
+let scaffoldAbsenceVerdict: 'removed' | 'unknown' = 'removed'
 
 export const isAbsentUnverifiedUnknown = async (): Promise<boolean> =>
     (await getRemoteMechanism(MECHANISM_ABSENT_UNVERIFIED_UNKNOWN).catch(() => 'auto')) === 'on'
@@ -231,7 +231,7 @@ interface AbsentVerdictEntry {
 // markup change the classifier misreads. Dev override (highest priority):
 //   chrome.storage.local.set({ dev_disable_absent_verification: true })  // or false
 //   chrome.storage.local.remove('dev_disable_absent_verification')       // defaults
-export const DEV_DISABLE_ABSENT_VERIFICATION_KEY = 'dev_disable_absent_verification'
+const DEV_DISABLE_ABSENT_VERIFICATION_KEY = 'dev_disable_absent_verification'
 
 export const isAbsentVerificationDisabled = (): Promise<boolean> =>
     browser.storage.local

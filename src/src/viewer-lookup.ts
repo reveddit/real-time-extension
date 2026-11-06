@@ -38,7 +38,7 @@ import { noteRateLimited } from './request-gates'
 // A few thread reads per cycle, verdicts cached, like the public view's page
 // checks. Items in NSFW, quarantined and private subreddits follow the public
 // view's rules (_public_view), whatever the second account can see.
-export const VIEWER_VERDICTS_KEY = 'viewer_item_verdicts'
+const VIEWER_VERDICTS_KEY = 'viewer_item_verdicts'
 
 const VIEWER_LISTING_PAGES = 3
 

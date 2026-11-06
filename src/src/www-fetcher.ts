@@ -26,7 +26,7 @@ declare const content: { fetch?: typeof fetch } | undefined
 // - unavailable: the tab legs can't run (no usable tab, injection refused)
 // - login: reddit sent the fetch to its login page (login-wall-config.ts).
 //   Every route is logged out alike, so no other route is tried and none rests.
-export type RouteFailure = 'refused' | 'network' | 'unavailable' | 'login'
+type RouteFailure = 'refused' | 'network' | 'unavailable' | 'login'
 
 class RouteError extends Error {
     constructor(
@@ -204,9 +204,9 @@ export const _fetchViaExecuteScript = async (
 // routes. Nor does a login page (login-wall-config.ts): every route is logged
 // out alike, so the fetch ends there, and that kind of page is fetched once an
 // hour until one loads.
-export const WWW_PAGE_KINDS = ['profile', 'profile-partial', 'partial', 'page'] as const
+const WWW_PAGE_KINDS = ['profile', 'profile-partial', 'partial', 'page'] as const
 
-export type WwwPageKind = (typeof WWW_PAGE_KINDS)[number]
+type WwwPageKind = (typeof WWW_PAGE_KINDS)[number]
 
 export const wwwPageKind = (url: string): WwwPageKind => {
     const path = url.replace(/^https?:\/\/[^/]+/, '')
@@ -259,7 +259,7 @@ interface KindState {
     login?: LoginWallRecord
 }
 
-export type WwwRouteState = Partial<Record<WwwPageKind, KindState>>
+type WwwRouteState = Partial<Record<WwwPageKind, KindState>>
 
 export const LOGIN_WALL_REST_MS = 60 * 60 * 1000
 
@@ -394,7 +394,7 @@ export const isLoginWalled = async (kinds: WwwPageKind[]): Promise<boolean> => {
     }
 }
 
-export interface WwwHtmlFetcher {
+interface WwwHtmlFetcher {
     fetchHtml: FetchHtml
     // The route that last served each kind of page, for the lookup's log line
     servedRoutes: () => Partial<Record<WwwPageKind, WwwRoute>>

@@ -163,7 +163,7 @@ export const lookupItemsByLoggedInUserWithAuth = (
     })
 }
 
-export const handleFetchErrors = (response: Response) => {
+const handleFetchErrors = (response: Response) => {
     if (!response.ok) {
         throw Error(response.statusText)
     }
@@ -177,7 +177,7 @@ const getRedditData = (data: any) => {
     return data.data.children
 }
 
-export const getRedditToken = (data: any) => {
+const getRedditToken = (data: any) => {
     if (!data || !data.access_token) {
         throw Error('access token is not defined')
     }
@@ -231,7 +231,7 @@ export interface LoginDetectResult {
 // with the usual dev override (highest priority):
 //   chrome.storage.local.set({ dev_disable_me_challenge_solve: true })  // or false
 //   chrome.storage.local.remove('dev_disable_me_challenge_solve')       // defaults
-export const DEV_DISABLE_ME_CHALLENGE_KEY = 'dev_disable_me_challenge_solve'
+const DEV_DISABLE_ME_CHALLENGE_KEY = 'dev_disable_me_challenge_solve'
 
 const isMeChallengeSolveDisabled = (): Promise<boolean> =>
     browser.storage.local

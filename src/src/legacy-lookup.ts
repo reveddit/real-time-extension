@@ -30,12 +30,12 @@ import { fetch_forReddit } from './reddit-auth'
 // 3. Build default (SIMULATE_DEPRECATION=true → dist-*-nolegacy folders). The
 //    extension checks for removals immediately on load, so this is what's in
 //    effect before the first news fetch completes.
-export const DEV_SIMULATE_DEPRECATION_KEY = 'dev_simulate_endpoint_deprecation'
+const DEV_SIMULATE_DEPRECATION_KEY = 'dev_simulate_endpoint_deprecation'
 
 const SIMULATE_DEPRECATION_BUILD_DEFAULT =
     typeof __SIMULATE_DEPRECATION__ !== 'undefined' ? __SIMULATE_DEPRECATION__ : false
 
-export const isLegacyDisabled = (): Promise<boolean> =>
+const isLegacyDisabled = (): Promise<boolean> =>
     browser.storage.local
         .get({ [DEV_SIMULATE_DEPRECATION_KEY]: null })
         .then(async (r: any) => {
@@ -47,13 +47,13 @@ export const isLegacyDisabled = (): Promise<boolean> =>
 
 // Message shape matches flagIfRateLimited's /request failed: (\d+)/ — a 403 does
 // not trigger rate-limit backoff, mirroring how the real deprecation responds.
-export const throwIfLegacyDisabled = async (label: string) => {
+const throwIfLegacyDisabled = async (label: string) => {
     if (await isLegacyDisabled()) {
         throw new Error(`${label} request failed: 403 (legacy endpoints disabled)`)
     }
 }
 
-export type LegacyKind = 'legacy' | 'legacy_info'
+type LegacyKind = 'legacy' | 'legacy_info'
 
 export const isLegacyResting = (kind: LegacyKind = 'legacy'): Promise<boolean> => isCapabilityResting(kind)
 

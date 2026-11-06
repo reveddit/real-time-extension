@@ -5,7 +5,7 @@ import { setWarningBadge } from './common'
 import { recordRateLimitHit, getRateLimitBackoffRemainingMs } from './storage'
 import { isRateLimitError } from './parse_html/common'
 
-export type RestingCapability = 'legacy' | 'legacy_info' | 'api_info' | 'thread_json'
+type RestingCapability = 'legacy' | 'legacy_info' | 'api_info' | 'thread_json'
 
 export const CAPABILITY_FIRST_REST_MS = 6 * 3600 * 1000
 

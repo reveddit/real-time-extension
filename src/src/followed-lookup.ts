@@ -32,7 +32,7 @@ const OTHER_APIINFO_CHUNK_DELAY_MS = 1000
 // is_robot_indexable, locked): a comment through its permalink, where it comes
 // first, a post through its thread. data is the item when reddit answered
 // with it.
-export interface ThreadItemRead {
+interface ThreadItemRead {
     data?: any
     status: number
     blocked: boolean
@@ -57,7 +57,7 @@ export const readThreadItemLoggedIn = async (id: string, postId: string): Promis
 // from (setCurrentStateForId) or from the item cache, whose p is the post's
 // fullname; one found in the cache is copied over, so the cache isn't read
 // every cycle. Both maps keep only followed items.
-export const FOLLOWED_CHECKED_AT_KEY = 'followed_checked_at'
+const FOLLOWED_CHECKED_AT_KEY = 'followed_checked_at'
 
 export const FOLLOWED_POST_IDS_KEY = 'followed_post_ids'
 

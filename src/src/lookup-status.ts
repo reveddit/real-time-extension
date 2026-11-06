@@ -116,7 +116,7 @@ const ABSENT_VERIFY_FAILURE_WARN_THRESHOLD = 5
 // Whether verification has resolved nothing for enough cycles to warn. A
 // processed monitoring pass clears error_status, and must keep this warning:
 // only a cycle that resolves a verdict clears it (recordAbsentVerifyOutcome).
-export const isAbsentVerifyUnavailable = async (): Promise<boolean> => {
+const isAbsentVerifyUnavailable = async (): Promise<boolean> => {
     try {
         const stored = (await browser.storage.local.get({ [ABSENT_VERIFY_FAILURES_KEY]: 0 })) as any
         return Number(stored[ABSENT_VERIFY_FAILURES_KEY] || 0) >= ABSENT_VERIFY_FAILURE_WARN_THRESHOLD
@@ -289,7 +289,7 @@ export const PROFILE_CONTROL_USER = 'reddit'
 // Items below where it stopped are omitted as unknown, so their removals go
 // unseen; a streak gets its own warning, kept at the end of a pass like
 // absent_verify_unavailable.
-export const PROFILE_PAGINATION_UNAVAILABLE = 'profile_pagination_unavailable'
+const PROFILE_PAGINATION_UNAVAILABLE = 'profile_pagination_unavailable'
 
 const PAGINATION_SHORTFALL_KEY = 'profile_pagination_consecutive_shortfalls'
 
