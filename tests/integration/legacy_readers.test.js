@@ -144,6 +144,12 @@ describe('the legacy listing', () => {
         expect(items[0]).toMatchObject({ name: 't1_c3', author: '[deleted]', link_id: 't3_abc', score: 1 })
     })
 
+    it('takes the name from data-fullname when the permalink says another', async () => {
+        const thing = commentThing('c1', '<p>hi</p>').replace('title/c1/', 'title/zz9/')
+        const [item] = await readListing(listing(thing))
+        expect(item).toMatchObject({ name: 't1_c1', id: 'c1', author: 'someone' })
+    })
+
     it('reads on past an element that has no end tag', async () => {
         const [item] = await readListing(listing(commentThing('c1', '<p>one</p><hr/><p>two</p>')))
         expect(item.body).toContain('one')
