@@ -9,16 +9,9 @@ import { placeForThisRun, ofThisRun, markThisRun, orphaned } from './run-token'
 import { observe, findByText } from './dom-helpers'
 import browser from 'webextension-polyfill'
 import { subscribeUser, MAX_SUBSCRIPTIONS } from './storage'
-import {
-    initRestoreOnThread,
-    initProfileScan,
-    initOwnProfileStatus,
-    initOwnThreadStatus,
-    loadOwnRemovedSets,
-    stopWatchingOwnItems,
-    resetScansForPage,
-    ownPart,
-} from './restore-ui'
+import { initRestoreOnThread, initProfileScan, resetScansForPage } from './restore-ui'
+import { initOwnProfileStatus, initOwnThreadStatus, loadOwnRemovedSets, stopWatchingOwnItems } from './own-status'
+import { ownPart } from './comment-dom'
 import { commentIdOf } from './restore'
 import { classifyPostPage } from './parse_html/new'
 import { getMarkupConfig } from './markup-config'
