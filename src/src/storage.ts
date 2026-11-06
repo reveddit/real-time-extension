@@ -232,6 +232,21 @@ export const markEverythingAsSeen = () => {
     })
 }
 
+// One key of local storage, with what it holds when nothing is stored there.
+// pick shapes the answer inside the same .then: callers depend on its timing.
+const readLocal = <T, R = T>(
+    key: string,
+    empty: T,
+    pick: (value: T) => R = value => value as unknown as R,
+): Promise<R> => browser.storage.local.get({ [key]: empty }).then((r: any) => pick(r[key] || empty))
+
+// update changes the value in place, or returns its replacement
+const updateLocal = <T>(key: string, empty: T, update: (value: T) => T | void): Promise<void> =>
+    browser.storage.local.get({ [key]: empty }).then((r: any) => {
+        const value: T = r[key] || empty
+        return browser.storage.local.set({ [key]: update(value) ?? value }) as unknown as void
+    })
+
 const PENDING_NOTIFICATIONS_KEY = 'pending_notifications'
 
 type PendingNotification = {
@@ -243,28 +258,22 @@ type PendingNotification = {
     attempts: number
 }
 
-export const getPendingNotification = (thing: string): Promise<PendingNotification | null> => {
-    return browser.storage.local.get({ [PENDING_NOTIFICATIONS_KEY]: {} }).then((r: any) => {
-        const all = r[PENDING_NOTIFICATIONS_KEY] || {}
-        return all[thing] || null
-    })
-}
+export const getPendingNotification = (thing: string): Promise<PendingNotification | null> =>
+    readLocal<Record<string, PendingNotification>, PendingNotification | null>(
+        PENDING_NOTIFICATIONS_KEY,
+        {},
+        all => all[thing] || null,
+    )
 
-export const setPendingNotification = (thing: string, data: Omit<PendingNotification, 'thing'>) => {
-    return browser.storage.local.get({ [PENDING_NOTIFICATIONS_KEY]: {} }).then((r: any) => {
-        const all = r[PENDING_NOTIFICATIONS_KEY] || {}
+export const setPendingNotification = (thing: string, data: Omit<PendingNotification, 'thing'>) =>
+    updateLocal<Record<string, any>>(PENDING_NOTIFICATIONS_KEY, {}, all => {
         all[thing] = { thing, ...data }
-        return browser.storage.local.set({ [PENDING_NOTIFICATIONS_KEY]: all })
     })
-}
 
-export const clearPendingNotification = (thing: string) => {
-    return browser.storage.local.get({ [PENDING_NOTIFICATIONS_KEY]: {} }).then((r: any) => {
-        const all = r[PENDING_NOTIFICATIONS_KEY] || {}
+export const clearPendingNotification = (thing: string) =>
+    updateLocal<Record<string, any>>(PENDING_NOTIFICATIONS_KEY, {}, all => {
         delete all[thing]
-        return browser.storage.local.set({ [PENDING_NOTIFICATIONS_KEY]: all })
     })
-}
 
 const NOTIFICATION_LOG_KEY = 'notification_log'
 const NOTIFICATION_LOG_MAX = 50
@@ -278,22 +287,16 @@ export type NotificationLogEntry = {
     source: 'recent' | 'retry' | 'backlog_summary'
 }
 
-export const getNotificationLog = (): Promise<NotificationLogEntry[]> => {
-    return browser.storage.local.get({ [NOTIFICATION_LOG_KEY]: [] }).then((r: any) => {
-        return r[NOTIFICATION_LOG_KEY] || []
-    })
-}
+export const getNotificationLog = (): Promise<NotificationLogEntry[]> =>
+    readLocal<NotificationLogEntry[]>(NOTIFICATION_LOG_KEY, [])
 
-export const appendNotificationLog = (entry: NotificationLogEntry): Promise<void> => {
-    return browser.storage.local.get({ [NOTIFICATION_LOG_KEY]: [] }).then((r: any) => {
-        const log: NotificationLogEntry[] = r[NOTIFICATION_LOG_KEY] || []
+export const appendNotificationLog = (entry: NotificationLogEntry): Promise<void> =>
+    updateLocal<NotificationLogEntry[]>(NOTIFICATION_LOG_KEY, [], log => {
         log.push(entry)
         if (log.length > NOTIFICATION_LOG_MAX) {
             log.splice(0, log.length - NOTIFICATION_LOG_MAX)
         }
-        return browser.storage.local.set({ [NOTIFICATION_LOG_KEY]: log }) as unknown as void
     })
-}
 
 const BACKLOG_SUMMARY_KEY = 'backlog_summary'
 export const BACKLOG_SUMMARY_DELAY_MS = 12 * 60 * 60 * 1000
@@ -305,43 +308,26 @@ type BacklogSummaryState = {
     summarySent: boolean
 }
 
-export const getBacklogSummaryState = (): Promise<BacklogSummaryState> => {
-    return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
-        const state = r[BACKLOG_SUMMARY_KEY] || {}
-        return {
-            installedAt: state.installedAt ?? null,
-            initialBacklogNotified: !!state.initialBacklogNotified,
-            initialNotifiedIds: Array.isArray(state.initialNotifiedIds) ? state.initialNotifiedIds : [],
-            summarySent: !!state.summarySent,
-        }
-    })
-}
+export const getBacklogSummaryState = (): Promise<BacklogSummaryState> =>
+    readLocal<Record<string, any>, BacklogSummaryState>(BACKLOG_SUMMARY_KEY, {}, state => ({
+        installedAt: state.installedAt ?? null,
+        initialBacklogNotified: !!state.initialBacklogNotified,
+        initialNotifiedIds: Array.isArray(state.initialNotifiedIds) ? state.initialNotifiedIds : [],
+        summarySent: !!state.summarySent,
+    }))
 
-export const setBacklogSummaryInstalledAt = (ts: number): Promise<void> => {
-    return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
-        const state = r[BACKLOG_SUMMARY_KEY] || {}
-        state.installedAt = ts
-        return browser.storage.local.set({ [BACKLOG_SUMMARY_KEY]: state }) as unknown as void
+const updateBacklogSummary = (fields: Record<string, any>): Promise<void> =>
+    updateLocal<Record<string, any>>(BACKLOG_SUMMARY_KEY, {}, state => {
+        Object.assign(state, fields)
     })
-}
 
-export const markBacklogInitialNotified = (notifiedIds: string[]): Promise<void> => {
-    return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
-        const state = r[BACKLOG_SUMMARY_KEY] || {}
-        state.initialBacklogNotified = true
-        state.initialNotifiedIds = notifiedIds
-        return browser.storage.local.set({ [BACKLOG_SUMMARY_KEY]: state }) as unknown as void
-    })
-}
+export const setBacklogSummaryInstalledAt = (ts: number): Promise<void> => updateBacklogSummary({ installedAt: ts })
 
-export const markBacklogSummarySent = (): Promise<void> => {
-    return browser.storage.local.get({ [BACKLOG_SUMMARY_KEY]: {} }).then((r: any) => {
-        const state = r[BACKLOG_SUMMARY_KEY] || {}
-        state.initialBacklogNotified = true
-        state.summarySent = true
-        return browser.storage.local.set({ [BACKLOG_SUMMARY_KEY]: state }) as unknown as void
-    })
-}
+export const markBacklogInitialNotified = (notifiedIds: string[]): Promise<void> =>
+    updateBacklogSummary({ initialBacklogNotified: true, initialNotifiedIds: notifiedIds })
+
+export const markBacklogSummarySent = (): Promise<void> =>
+    updateBacklogSummary({ initialBacklogNotified: true, summarySent: true })
 
 export const markThingAsSeen = (storage: Record<string, any>, thing: string, isUser: boolean) => {
     const keys = getObjectNamesForThing(thing, isUser)
@@ -705,37 +691,24 @@ export const addToPendingPostQueue = async (postIds: string[]) => {
     const attempts = await getPendingPostAttempts()
     const allowed = postIds.filter(id => (attempts[id] || 0) < MAX_PENDING_POST_ATTEMPTS)
     if (allowed.length === 0) return
-    const result = await browser.storage.local.get({ [PENDING_POSTS_KEY]: [] })
-    const existingQueue = result[PENDING_POSTS_KEY] as string[]
-    const newQueue = [...new Set([...existingQueue, ...allowed])]
-    await browser.storage.local.set({ [PENDING_POSTS_KEY]: newQueue })
+    await updateLocal<string[]>(PENDING_POSTS_KEY, [], queue => [...new Set([...queue, ...allowed])])
 }
 
+const readPendingPosts = () => readLocal<string[]>(PENDING_POSTS_KEY, [])
+
 export const getNextPendingPosts = async (count: number) => {
-    const result = await browser.storage.local.get({ [PENDING_POSTS_KEY]: [] })
-    const queue = result[PENDING_POSTS_KEY] as string[]
+    const queue = await readPendingPosts()
     return { posts: queue.slice(0, count), totalRemaining: queue.length }
 }
 
-export const getPendingPostQueueSize = async () => {
-    const result = await browser.storage.local.get({ [PENDING_POSTS_KEY]: [] })
-    return (result[PENDING_POSTS_KEY] as string[]).length
-}
+export const getPendingPostQueueSize = async () => (await readPendingPosts()).length
 
-export const removeFromPendingPostQueue = async (postId: string) => {
-    const result = await browser.storage.local.get({ [PENDING_POSTS_KEY]: [] })
-    const queue = result[PENDING_POSTS_KEY] as string[]
-    const newQueue = queue.filter((id: string) => id !== postId)
-    await browser.storage.local.set({ [PENDING_POSTS_KEY]: newQueue })
-}
-
-export const removeMultipleFromPendingPostQueue = async (postIds: string[]) => {
-    const result = await browser.storage.local.get({ [PENDING_POSTS_KEY]: [] })
-    const queue = result[PENDING_POSTS_KEY] as string[]
+export const removeMultipleFromPendingPostQueue = (postIds: string[]) => {
     const idsToRemove = new Set(postIds)
-    const newQueue = queue.filter((id: string) => !idsToRemove.has(id))
-    await browser.storage.local.set({ [PENDING_POSTS_KEY]: newQueue })
+    return updateLocal<string[]>(PENDING_POSTS_KEY, [], queue => queue.filter(id => !idsToRemove.has(id)))
 }
+
+export const removeFromPendingPostQueue = (postId: string) => removeMultipleFromPendingPostQueue([postId])
 
 // Per-post attempt tracking so a post that never resolves (e.g. Reddit keeps
 // returning a non-removed status, or the lookup keeps failing) can't be
@@ -753,10 +726,7 @@ export const emptyPendingPostQueue = async () => {
     await browser.storage.local.remove([PENDING_POSTS_KEY, 'pending_post_progress'])
 }
 
-export const getPendingPostAttempts = async (): Promise<Record<string, number>> => {
-    const result = await browser.storage.local.get({ [PENDING_POST_ATTEMPTS_KEY]: {} })
-    return result[PENDING_POST_ATTEMPTS_KEY] as Record<string, number>
-}
+export const getPendingPostAttempts = () => readLocal<Record<string, number>>(PENDING_POST_ATTEMPTS_KEY, {})
 
 export const recordPendingPostAttempt = async (postId: string): Promise<number> => {
     const attempts = await getPendingPostAttempts()
