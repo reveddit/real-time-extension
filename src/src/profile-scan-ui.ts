@@ -273,28 +273,16 @@ interface VisibleItem {
 }
 
 function getVisibleItemPositions(isNewReddit: boolean): VisibleItem[] {
-    const items: VisibleItem[] = []
-
-    if (!isNewReddit) {
-        const things = document.querySelectorAll('#siteTable > .thing[data-fullname]:not(.rev-inserted-comment)')
-        for (const el of Array.from(things)) {
-            const timeEl = el.querySelector('time[datetime]')
-            const datetime = timeEl?.getAttribute('datetime')
-            const created_utc = datetime ? Math.floor(new Date(datetime).getTime() / 1000) : 0
-            items.push({ element: el as HTMLElement, created_utc })
-        }
-    } else {
-        // New reddit profile: articles containing shreddit-post elements
-        const articles = document.querySelectorAll('article[data-post-id]:not(.rev-inserted-comment)')
-        for (const el of Array.from(articles)) {
-            const shredditPost = el.querySelector('shreddit-post')
-            const ts = shredditPost?.getAttribute('created-timestamp')
-            const created_utc = ts ? Math.floor(new Date(ts).getTime() / 1000) : 0
-            items.push({ element: el as HTMLElement, created_utc })
-        }
-    }
-
-    return items
+    // New reddit profile: articles containing shreddit-post elements
+    const selector = isNewReddit
+        ? 'article[data-post-id]:not(.rev-inserted-comment)'
+        : '#siteTable > .thing[data-fullname]:not(.rev-inserted-comment)'
+    return Array.from(document.querySelectorAll(selector), el => {
+        const date = isNewReddit
+            ? el.querySelector('shreddit-post')?.getAttribute('created-timestamp')
+            : el.querySelector('time[datetime]')?.getAttribute('datetime')
+        return { element: el as HTMLElement, created_utc: date ? Math.floor(new Date(date).getTime() / 1000) : 0 }
+    })
 }
 
 function insertMissingComments(
