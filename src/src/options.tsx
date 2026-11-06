@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import {
   getOptions,
@@ -18,7 +17,7 @@ import {
 } from './storage'
 import { DiagStatus, formatDiagStatus } from './diag-status'
 import { setAlarm } from './common'
-import { AppGlobal, setThemeMode, THEME_STORAGE_KEY, ThemeMode } from './ui/global'
+import { mountPage, setThemeMode, THEME_STORAGE_KEY, ThemeMode } from './ui/global'
 import { BlueLink, Button, SectionHeader, MessageBanner } from './ui/components'
 import { tokens } from './ui/tokens'
 import { Note, DiagActions, sendMessageAny, runtimeAny } from './options-shared'
@@ -325,208 +324,200 @@ function Options() {
     scanLimits.seconds_between_reads && `at least ${scanLimits.seconds_between_reads} seconds between reads`,
   ].filter(Boolean).join(' and ')
 
-  if (!loaded) return (
-    <>
-      <AppGlobal />
-      <Page>Loading…</Page>
-    </>
-  )
+  if (!loaded) return <Page>Loading…</Page>
 
   // Only requests made with this id's token read monitor_quarantined
   const hasClientId = clientId.trim() !== ''
 
   return (
-    <>
-      <AppGlobal />
-      <Page>
-        <TopBar>
-          <Title>Options</Title>
-          <Button variant="primary" onClick={saveAndClose}>save</Button>
-        </TopBar>
+    <Page>
+      <TopBar>
+        <Title>Options</Title>
+        <Button variant="primary" onClick={saveAndClose}>save</Button>
+      </TopBar>
 
-        <SectionHeader>Subscriptions</SectionHeader>
-        <FieldStack>
-          <Field>
-            <label>other subscriptions</label>
-            <BlueLink target="_blank" href="/src/other.html">manage ↗</BlueLink>
-          </Field>
-        </FieldStack>
+      <SectionHeader>Subscriptions</SectionHeader>
+      <FieldStack>
+        <Field>
+          <label>other subscriptions</label>
+          <BlueLink target="_blank" href="/src/other.html">manage ↗</BlueLink>
+        </Field>
+      </FieldStack>
 
-        <SecondAccount />
+      <SecondAccount />
 
-        <SectionHeader>Tracking &amp; notification</SectionHeader>
-        <FieldStack>
-          <Field>
-            <label>removed content</label>
-            <ModeSelect value={removedMode} onChange={e => setRemovedMode(e.target.value as TrackMode)}>
-              {MODE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </ModeSelect>
-          </Field>
-          <Field>
-            <label>locked content</label>
-            <ModeSelect value={lockedMode} onChange={e => setLockedMode(e.target.value as TrackMode)}>
-              {MODE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </ModeSelect>
-          </Field>
-        </FieldStack>
-        {(removedMode === 'notify' || lockedMode === 'notify') && (
-          <LinkRow>
-            <BlueLink href="#" onClick={e => {
-              e.preventDefault()
-              // A UI macro, not a setting: drops "badge + notifications" to
-              // "badge only". Never upgrades "off" — that would re-enable
-              // tracking the user turned off.
-              if (removedMode === 'notify') setRemovedMode('badge')
-              if (lockedMode === 'notify') setLockedMode('badge')
-            }}>
-              turn off all notifications
-            </BlueLink>
-          </LinkRow>
+      <SectionHeader>Tracking &amp; notification</SectionHeader>
+      <FieldStack>
+        <Field>
+          <label>removed content</label>
+          <ModeSelect value={removedMode} onChange={e => setRemovedMode(e.target.value as TrackMode)}>
+            {MODE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </ModeSelect>
+        </Field>
+        <Field>
+          <label>locked content</label>
+          <ModeSelect value={lockedMode} onChange={e => setLockedMode(e.target.value as TrackMode)}>
+            {MODE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </ModeSelect>
+        </Field>
+      </FieldStack>
+      {(removedMode === 'notify' || lockedMode === 'notify') && (
+        <LinkRow>
+          <BlueLink href="#" onClick={e => {
+            e.preventDefault()
+            // A UI macro, not a setting: drops "badge + notifications" to
+            // "badge only". Never upgrades "off" — that would re-enable
+            // tracking the user turned off.
+            if (removedMode === 'notify') setRemovedMode('badge')
+            if (lockedMode === 'notify') setLockedMode('badge')
+          }}>
+            turn off all notifications
+          </BlueLink>
+        </LinkRow>
+      )}
+      <Note>
+        "badge only" counts changes on the toolbar icon and in history, without showing system
+        notifications.
+      </Note>
+
+      <SectionHeader>Polling</SectionHeader>
+      <FieldStack>
+        <Field>
+          <label>
+            minutes between Reddit checks
+            <Hint>How often the extension checks Reddit for removed content. Increase this if Reddit rate-limits you (429 errors).</Hint>
+          </label>
+          <input type="text" value={interval} onChange={e => setInterval_(e.target.value)} />
+        </Field>
+        <Field>
+          <label>same-status count before alert</label>
+          <input type="text" value={seenCount} onChange={e => setSeenCount(e.target.value)} />
+        </Field>
+        {hasClientId && (
+          <CheckField label="monitor quarantined content" checked={monitorQuarantined} onChange={setMonitorQuarantined} />
         )}
+        <CheckField label="hide subscribe button" checked={hideSubscribe} onChange={setHideSubscribe} />
+        <CheckField label="show removed-content scan on other profiles" checked={showScanOnOtherProfiles} onChange={setShowScanOnOtherProfiles} />
+        <CheckField label="show removed-content scan on your own profile" checked={showScanOnOwnProfile} onChange={setShowScanOnOwnProfile} />
+        <CheckField label={'show "scan for removed comments" buttons on threads'} checked={showThreadScanButtons} onChange={setShowThreadScanButtons} />
+        <CheckField label="flag your removed/locked content on your own profile" checked={highlightOwnProfileStatus} onChange={setHighlightOwnProfileStatus} />
+        <CheckField label="auto-filter to show only removed comments after thread scan" checked={autoFilterRemovedThreads} onChange={setAutoFilterRemovedThreads} />
+      </FieldStack>
+      {hasClientId && monitorQuarantined && (
         <Note>
-          "badge only" counts changes on the toolbar icon and in history, without showing system
-          notifications.
+          Enabling "monitor quarantined content" may appear to cause an occasional logout.
+          Refreshing the page should show you are still logged in. Increase "minutes between
+          Reddit checks" to 5 or more to reduce this occurrence.
         </Note>
+      )}
 
-        <SectionHeader>Polling</SectionHeader>
-        <FieldStack>
-          <Field>
-            <label>
-              minutes between Reddit checks
-              <Hint>How often the extension checks Reddit for removed content. Increase this if Reddit rate-limits you (429 errors).</Hint>
-            </label>
-            <input type="text" value={interval} onChange={e => setInterval_(e.target.value)} />
-          </Field>
-          <Field>
-            <label>same-status count before alert</label>
-            <input type="text" value={seenCount} onChange={e => setSeenCount(e.target.value)} />
-          </Field>
-          {hasClientId && (
-            <CheckField label="monitor quarantined content" checked={monitorQuarantined} onChange={setMonitorQuarantined} />
-          )}
-          <CheckField label="hide subscribe button" checked={hideSubscribe} onChange={setHideSubscribe} />
-          <CheckField label="show removed-content scan on other profiles" checked={showScanOnOtherProfiles} onChange={setShowScanOnOtherProfiles} />
-          <CheckField label="show removed-content scan on your own profile" checked={showScanOnOwnProfile} onChange={setShowScanOnOwnProfile} />
-          <CheckField label={'show "scan for removed comments" buttons on threads'} checked={showThreadScanButtons} onChange={setShowThreadScanButtons} />
-          <CheckField label="flag your removed/locked content on your own profile" checked={highlightOwnProfileStatus} onChange={setHighlightOwnProfileStatus} />
-          <CheckField label="auto-filter to show only removed comments after thread scan" checked={autoFilterRemovedThreads} onChange={setAutoFilterRemovedThreads} />
-        </FieldStack>
-        {hasClientId && monitorQuarantined && (
-          <Note>
-            Enabling "monitor quarantined content" may appear to cause an occasional logout.
-            Refreshing the page should show you are still logged in. Increase "minutes between
-            Reddit checks" to 5 or more to reduce this occurrence.
-          </Note>
+      <SectionHeader>Scans</SectionHeader>
+      <FieldStack>
+        <Field>
+          <label>most Reddit reads per scan click</label>
+          <input type="text" value={scanReads} onChange={e => setScanReads(e.target.value)} />
+        </Field>
+        <Field>
+          <label>seconds between scan reads</label>
+          <input type="text" value={scanSeconds} onChange={e => setScanSeconds(e.target.value)} />
+        </Field>
+      </FieldStack>
+      <Note>
+        Scans read Reddit with your login. More reads or a shorter wait get through big threads
+        sooner, but Reddit may ask you to verify you&apos;re human if it sees what looks like
+        automated activity.
+        {heldTo && ` For now, Reveddit holds every scan to ${heldTo}, whatever these say.`}
+      </Note>
+
+      <SectionHeader>Appearance</SectionHeader>
+      <FieldStack>
+        <Field>
+          <label>theme</label>
+          <select value={themeMode} onChange={e => handleThemeChange(e.target.value as ThemeMode)}>
+            <option value="auto">auto</option>
+            <option value="dark">dark</option>
+            <option value="light">light</option>
+          </select>
+        </Field>
+      </FieldStack>
+
+      <SectionHeader>Diagnostics</SectionHeader>
+      <Note>
+        If removal detection seems broken, run a check, then copy the log and include it in a GitHub
+        issue or email. The log stays on this device — nothing is sent automatically. Your username is
+        left out unless you include it. The log lists the ids of your recent posts and comments, which
+        let the developer check what happened to them, so leave them in if you can. Hidden, each becomes
+        a stand-in that can&apos;t be traced back, as long as your username stays out too.
+      </Note>
+      <FieldStack>
+        <CheckField label="include username in copied log" checked={diagIncludeUser} onChange={setDiagIncludeUser} />
+        <CheckField label="hide post and comment ids" checked={diagHideIds} onChange={setDiagHideIds} />
+      </FieldStack>
+      <DiagActions>
+        <Button onClick={runCheckNow}>check now</Button>
+        <Button onClick={copyDiagLog} disabled={diagBusy}>copy log</Button>
+        <Button onClick={clearDiagLogClick}>clear log</Button>
+      </DiagActions>
+      {diagStatus && <Note>{diagStatus}</Note>}
+
+      <AdvancedLink>
+        {!showAdvanced && (
+          <BlueLink href="#" onClick={e => { e.preventDefault(); setShowAdvanced(true) }}>
+            advanced
+          </BlueLink>
         )}
-
-        <SectionHeader>Scans</SectionHeader>
-        <FieldStack>
-          <Field>
-            <label>most Reddit reads per scan click</label>
-            <input type="text" value={scanReads} onChange={e => setScanReads(e.target.value)} />
-          </Field>
-          <Field>
-            <label>seconds between scan reads</label>
-            <input type="text" value={scanSeconds} onChange={e => setScanSeconds(e.target.value)} />
-          </Field>
-        </FieldStack>
+      </AdvancedLink>
+      <AdvancedSection visible={showAdvanced}>
+        <SectionHeader>Advanced</SectionHeader>
         <Note>
-          Scans read Reddit with your login. More reads or a shorter wait get through big threads
-          sooner, but Reddit may ask you to verify you&apos;re human if it sees what looks like
-          automated activity.
-          {heldTo && ` For now, Reveddit holds every scan to ${heldTo}, whatever these say.`}
-        </Note>
-
-        <SectionHeader>Appearance</SectionHeader>
-        <FieldStack>
-          <Field>
-            <label>theme</label>
-            <select value={themeMode} onChange={e => handleThemeChange(e.target.value as ThemeMode)}>
-              <option value="auto">auto</option>
-              <option value="dark">dark</option>
-              <option value="light">light</option>
-            </select>
-          </Field>
-        </FieldStack>
-
-        <SectionHeader>Diagnostics</SectionHeader>
-        <Note>
-          If removal detection seems broken, run a check, then copy the log and include it in a GitHub
-          issue or email. The log stays on this device — nothing is sent automatically. Your username is
-          left out unless you include it. The log lists the ids of your recent posts and comments, which
-          let the developer check what happened to them, so leave them in if you can. Hidden, each becomes
-          a stand-in that can&apos;t be traced back, as long as your username stays out too.
+          Takes an "installed app" client id from reddit &gt; preferences &gt; apps. Checks then also use
+          Reddit&apos;s API with it.
         </Note>
         <FieldStack>
-          <CheckField label="include username in copied log" checked={diagIncludeUser} onChange={setDiagIncludeUser} />
-          <CheckField label="hide post and comment ids" checked={diagHideIds} onChange={setDiagHideIds} />
-        </FieldStack>
-        <DiagActions>
-          <Button onClick={runCheckNow}>check now</Button>
-          <Button onClick={copyDiagLog} disabled={diagBusy}>copy log</Button>
-          <Button onClick={clearDiagLogClick}>clear log</Button>
-        </DiagActions>
-        {diagStatus && <Note>{diagStatus}</Note>}
-
-        <AdvancedLink>
-          {!showAdvanced && (
-            <BlueLink href="#" onClick={e => { e.preventDefault(); setShowAdvanced(true) }}>
-              advanced
-            </BlueLink>
-          )}
-        </AdvancedLink>
-        <AdvancedSection visible={showAdvanced}>
-          <SectionHeader>Advanced</SectionHeader>
-          <Note>
-            Takes an "installed app" client id from reddit &gt; preferences &gt; apps. Checks then also use
-            Reddit&apos;s API with it.
-          </Note>
-          <FieldStack>
+          <Field>
+            <label>custom client id</label>
+            <input
+              type="text"
+              value={clientId}
+              onChange={e => setClientId(e.target.value)}
+              placeholder="<default is blank>"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+            />
+          </Field>
+          {/* Dev/test switch only — gated out of released builds (mirrors __replayInstall). */}
+          {__DEV__ && (
             <Field>
-              <label>custom client id</label>
+              <label>
+                simulate Reddit endpoint deprecation (dev)
+                <Hint>
+                  Blocks the legacy old.reddit.com HTML and unauthenticated .json paths, as if Reddit
+                  had already removed them. Detection then relies only on the logged-out
+                  www.reddit.com profile view. Applies on the next check — no save needed.
+                </Hint>
+              </label>
               <input
-                type="text"
-                value={clientId}
-                onChange={e => setClientId(e.target.value)}
-                placeholder="<default is blank>"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
+                type="checkbox"
+                checked={simulateDeprecation}
+                onChange={e => handleSimulateDeprecationChange(e.target.checked)}
               />
             </Field>
-            {/* Dev/test switch only — gated out of released builds (mirrors __replayInstall). */}
-            {__DEV__ && (
-              <Field>
-                <label>
-                  simulate Reddit endpoint deprecation (dev)
-                  <Hint>
-                    Blocks the legacy old.reddit.com HTML and unauthenticated .json paths, as if Reddit
-                    had already removed them. Detection then relies only on the logged-out
-                    www.reddit.com profile view. Applies on the next check — no save needed.
-                  </Hint>
-                </label>
-                <input
-                  type="checkbox"
-                  checked={simulateDeprecation}
-                  onChange={e => handleSimulateDeprecationChange(e.target.checked)}
-                />
-              </Field>
-            )}
-          </FieldStack>
-        </AdvancedSection>
+          )}
+        </FieldStack>
+      </AdvancedSection>
 
-        {error && <MessageBanner variant="warning">{error}</MessageBanner>}
+      {error && <MessageBanner variant="warning">{error}</MessageBanner>}
 
-        <Footer>
-          <BlueLink href="#" onClick={e => { e.preventDefault(); resetDefaults() }}>
-            reset to defaults
-          </BlueLink>
-          <Button variant="primary" onClick={saveAndClose}>save</Button>
-        </Footer>
-      </Page>
-    </>
+      <Footer>
+        <BlueLink href="#" onClick={e => { e.preventDefault(); resetDefaults() }}>
+          reset to defaults
+        </BlueLink>
+        <Button variant="primary" onClick={saveAndClose}>save</Button>
+      </Footer>
+    </Page>
   )
 }
 
-createRoot(document.getElementById('root')!).render(<Options />)
+mountPage(Options)

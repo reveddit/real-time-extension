@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { getAllChanges, getPendingPostQueueSize, clearPendingPostQueue, getNotificationLog, NotificationLogEntry } from './storage'
 import { ChangeForStorage } from './common'
-import { AppGlobal } from './ui/global'
+import { mountPage } from './ui/global'
 import { MessageBanner, MiniSpinner, Page } from './ui/components'
 import { tokens } from './ui/tokens'
 import { redditItemUrl } from './ui/links'
@@ -250,99 +249,96 @@ function History() {
   const showFullBanner = !bannerDismissed
   const showSlimBanner = bannerDismissed && changes.length === 0 && loaded
 
-  if (!loaded) return <AppGlobal />
+  if (!loaded) return null
 
   return (
-    <>
-      <AppGlobal />
-      <Page>
-        {showFullBanner ? (
-          <FullWelcomeBanner currentUser={currentUser} onDismiss={dismissBanner} />
-        ) : (
-          <ShowWelcomeLink onClick={() => { localStorage.removeItem('history_banner_dismissed'); setBannerDismissed(false) }}>
-            show welcome message
-          </ShowWelcomeLink>
-        )}
+    <Page>
+      {showFullBanner ? (
+        <FullWelcomeBanner currentUser={currentUser} onDismiss={dismissBanner} />
+      ) : (
+        <ShowWelcomeLink onClick={() => { localStorage.removeItem('history_banner_dismissed'); setBannerDismissed(false) }}>
+          show welcome message
+        </ShowWelcomeLink>
+      )}
 
-        <TitleBar>
-          <h1 style={{ margin: 0 }}>History</h1>
-          <NotifLogLink onClick={() => {
-            setLogOpen(true)
-            setTimeout(() => logSectionRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
-          }}>notification log</NotifLogLink>
-        </TitleBar>
-        <PageHeader>
-          <Controls>
-            <ControlGroup>
-              <ControlLabel>filter</ControlLabel>
-              {([['removed', 'mod removed'], ['deleted', 'user deleted'], ['locked', 'locked'], ['unlocked', 'unlocked'], ['approved', 'approved'], ['edited', 'edited']] as const).map(([value, label]) => (
-                <label key={value}>
-                  <input type="checkbox" checked={filter.includes(value)} onChange={e => {
-                    setFilter(e.target.checked ? [...filter, value] : filter.filter(f => f !== value))
-                  }} />
-                  {label}
-                </label>
-              ))}
-            </ControlGroup>
-            <ControlGroup>
-              <ControlLabel>sort</ControlLabel>
-              {([['observed', 'observed'], ['created', 'created'], ['delta', 'time to action']] as const).map(([value, label]) => (
-                <label key={value}>
-                  <input type="radio" name="sort" value={value} checked={sort === value} onChange={() => setSort(value)} />
-                  {label}
-                </label>
-              ))}
-            </ControlGroup>
-            <ResetButton disabled={filter.length === 0 && sort === 'observed'} onClick={() => { setFilter([]); setSort('observed') }}>reset</ResetButton>
-          </Controls>
-        </PageHeader>
+      <TitleBar>
+        <h1 style={{ margin: 0 }}>History</h1>
+        <NotifLogLink onClick={() => {
+          setLogOpen(true)
+          setTimeout(() => logSectionRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+        }}>notification log</NotifLogLink>
+      </TitleBar>
+      <PageHeader>
+        <Controls>
+          <ControlGroup>
+            <ControlLabel>filter</ControlLabel>
+            {([['removed', 'mod removed'], ['deleted', 'user deleted'], ['locked', 'locked'], ['unlocked', 'unlocked'], ['approved', 'approved'], ['edited', 'edited']] as const).map(([value, label]) => (
+              <label key={value}>
+                <input type="checkbox" checked={filter.includes(value)} onChange={e => {
+                  setFilter(e.target.checked ? [...filter, value] : filter.filter(f => f !== value))
+                }} />
+                {label}
+              </label>
+            ))}
+          </ControlGroup>
+          <ControlGroup>
+            <ControlLabel>sort</ControlLabel>
+            {([['observed', 'observed'], ['created', 'created'], ['delta', 'time to action']] as const).map(([value, label]) => (
+              <label key={value}>
+                <input type="radio" name="sort" value={value} checked={sort === value} onChange={() => setSort(value)} />
+                {label}
+              </label>
+            ))}
+          </ControlGroup>
+          <ResetButton disabled={filter.length === 0 && sort === 'observed'} onClick={() => { setFilter([]); setSort('observed') }}>reset</ResetButton>
+        </Controls>
+      </PageHeader>
 
-        {pendingPostCount > 0 && (
-          <MessageBanner variant="info">
-            <MiniSpinner />
-            {pendingProgress && pendingProgress.total > 0
-              ? `Scanning ${Math.min(pendingProgress.processed, pendingProgress.total)} of ${pendingProgress.total} posts for removals…`
-              : `Scanning ${pendingPostCount} ${pendingPostCount === 1 ? 'post' : 'posts'} for removals…`}
-            {backoffMs > 0
-              ? ` Paused ~${Math.max(1, Math.ceil(backoffMs / 60000))} min — Reddit rate limit.`
-              : ' New results appear here automatically.'}
-            <StopScanLink onClick={() => { clearPendingPostQueue(); setPendingPostCount(0); setPendingProgress(null) }}>stop</StopScanLink>
-          </MessageBanner>
-        )}
+      {pendingPostCount > 0 && (
+        <MessageBanner variant="info">
+          <MiniSpinner />
+          {pendingProgress && pendingProgress.total > 0
+            ? `Scanning ${Math.min(pendingProgress.processed, pendingProgress.total)} of ${pendingProgress.total} posts for removals…`
+            : `Scanning ${pendingPostCount} ${pendingPostCount === 1 ? 'post' : 'posts'} for removals…`}
+          {backoffMs > 0
+            ? ` Paused ~${Math.max(1, Math.ceil(backoffMs / 60000))} min — Reddit rate limit.`
+            : ' New results appear here automatically.'}
+          <StopScanLink onClick={() => { clearPendingPostQueue(); setPendingPostCount(0); setPendingProgress(null) }}>stop</StopScanLink>
+        </MessageBanner>
+      )}
 
-        {visible.length > 0 ? (
-          visible.map((row, idx) => (
-            <ChangeCard key={`${row.id}-${idx}`} row={row} onResolve={handleResolve} />
-          ))
-        ) : (
-          <>
-            {showSlimBanner && (
-              <SlimWelcomeBanner currentUser={currentUser} />
-            )}
-            {!showSlimBanner && changes.length === 0 && !initialScanDone && (
-              <Empty>
-                <Spinner />
-                Scanning your recent posts and comments…
-              </Empty>
-            )}
-            {!showSlimBanner && (initialScanDone || changes.length > 0) && (
-              <Empty>
-                {changes.length === 0
-                  ? 'No actions observed since extension installation.'
-                  : 'No events match the current filter.'}
-              </Empty>
-            )}
-          </>
-        )}
+      {visible.length > 0 ? (
+        visible.map((row, idx) => (
+          <ChangeCard key={`${row.id}-${idx}`} row={row} onResolve={handleResolve} />
+        ))
+      ) : (
+        <>
+          {showSlimBanner && (
+            <SlimWelcomeBanner currentUser={currentUser} />
+          )}
+          {!showSlimBanner && changes.length === 0 && !initialScanDone && (
+            <Empty>
+              <Spinner />
+              Scanning your recent posts and comments…
+            </Empty>
+          )}
+          {!showSlimBanner && (initialScanDone || changes.length > 0) && (
+            <Empty>
+              {changes.length === 0
+                ? 'No actions observed since extension installation.'
+                : 'No events match the current filter.'}
+            </Empty>
+          )}
+        </>
+      )}
 
-        <NotificationLog
-          sectionRef={logSectionRef}
-          open={logOpen}
-          onToggle={() => setLogOpen(!logOpen)}
-          entries={notifLog}
-        />
-      </Page>
-    </>
+      <NotificationLog
+        sectionRef={logSectionRef}
+        open={logOpen}
+        onToggle={() => setLogOpen(!logOpen)}
+        entries={notifLog}
+      />
+    </Page>
   )
 }
 
@@ -364,4 +360,4 @@ const NotifLogLink = styled.button`
     &:hover { color: var(--link-hover); text-decoration: underline; }
 `
 
-createRoot(document.getElementById('root')!).render(<History />)
+mountPage(History)

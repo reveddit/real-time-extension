@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification } from './common'
-import { AppGlobal, setThemeMode, resolveTheme, THEME_STORAGE_KEY } from './ui/global'
+import { mountPage, setThemeMode, resolveTheme, THEME_STORAGE_KEY } from './ui/global'
 import { MessageBanner, MiniSpinner, Card } from './ui/components'
 import { DiagStatus, formatDiagStatus } from './diag-status'
 import { tokens } from './ui/tokens'
@@ -430,116 +429,113 @@ function Popup() {
   }
 
   return (
-    <>
-      <AppGlobal />
-      <PopupContainer>
-        <TopRow>
-          <Brand>reveddit real-time</Brand>
-          <ThemeToggleBtn onClick={handleToggleTheme} aria-label="Toggle theme">
-            {theme === 'dark' ? '\u{1F319}' : '\u{2600}\u{FE0F}'}
-          </ThemeToggleBtn>
-        </TopRow>
-        {diagStatus && <StatusLine>{diagStatus}</StatusLine>}
+    <PopupContainer>
+      <TopRow>
+        <Brand>reveddit real-time</Brand>
+        <ThemeToggleBtn onClick={handleToggleTheme} aria-label="Toggle theme">
+          {theme === 'dark' ? '\u{1F319}' : '\u{2600}\u{FE0F}'}
+        </ThemeToggleBtn>
+      </TopRow>
+      {diagStatus && <StatusLine>{diagStatus}</StatusLine>}
 
-        {pendingUpdate && <UpdateNotice version={pendingUpdate} onDismiss={handleDismissUpdateNotice} />}
+      {pendingUpdate && <UpdateNotice version={pendingUpdate} onDismiss={handleDismissUpdateNotice} />}
 
-        {showRelease && __LATEST_RELEASE__ && (
-          <ReleaseNotice release={__LATEST_RELEASE__} onDismiss={handleDismissRelease} />
-        )}
+      {showRelease && __LATEST_RELEASE__ && (
+        <ReleaseNotice release={__LATEST_RELEASE__} onDismiss={handleDismissRelease} />
+      )}
 
-        {newsMessage && <NewsBanner message={newsMessage} onDismiss={handleDismissNews} />}
+      {newsMessage && <NewsBanner message={newsMessage} onDismiss={handleDismissNews} />}
 
-        {errorStatus &&
-          (currentUser || errorStatus === 'logged_in_view_unavailable' || errorStatus === 'checks_failing') && (
-          <ErrorNotice
-            errorStatus={errorStatus}
-            viewerName={viewerName}
+      {errorStatus &&
+        (currentUser || errorStatus === 'logged_in_view_unavailable' || errorStatus === 'checks_failing') && (
+        <ErrorNotice
+          errorStatus={errorStatus}
+          viewerName={viewerName}
+          currentUser={currentUser}
+          reconnectSuccess={reconnectSuccess}
+          reconnecting={reconnecting}
+          onReconnect={handleReconnect}
+        />
+      )}
+
+      {switches.length > 0 && (
+        <Card style={{ padding: `${tokens.space.sm} ${tokens.space.md}`, margin: `${tokens.space.sm} 0` }}>
+          {switches.map(sw => (
+            <ToggleSwitch
+              key={sw.id}
+              type={sw.type}
+              checked={sw.subscribed}
+              onToggle={checked => handleToggle(sw.id, checked, activeTab!.url)}
+            />
+          ))}
+        </Card>
+      )}
+
+      {showSubdomainWarning && (
+        <MessageBanner variant="warning">⚠ User monitoring requires www.reddit.com or old.reddit.com</MessageBanner>
+      )}
+
+      {pendingPostCount > 0 && (
+        <MessageBanner variant="info"><MiniSpinner />{pendingProgress && pendingProgress.total > 0
+          ? `Scanning ${Math.min(pendingProgress.processed, pendingProgress.total)} of ${pendingProgress.total} posts for removals…`
+          : `Scanning ${pendingPostCount} posts for removals…`}</MessageBanner>
+      )}
+
+      <SubsCard>
+        {currentUser !== undefined && userData && (
+          <CurrentUserSection
             currentUser={currentUser}
-            reconnectSuccess={reconnectSuccess}
-            reconnecting={reconnecting}
-            onReconnect={handleReconnect}
+            users={userData.users}
+            historyUrl={historyUrl}
+            connectResult={connectResult}
+            connectMessage={connectMessage}
+            connecting={connecting}
+            onConnect={handleConnect}
           />
         )}
-
-        {switches.length > 0 && (
-          <Card style={{ padding: `${tokens.space.sm} ${tokens.space.md}`, margin: `${tokens.space.sm} 0` }}>
-            {switches.map(sw => (
-              <ToggleSwitch
-                key={sw.id}
-                type={sw.type}
-                checked={sw.subscribed}
-                onToggle={checked => handleToggle(sw.id, checked, activeTab!.url)}
-              />
-            ))}
-          </Card>
+        {userData && (
+          <UnseenRow
+            thing="other"
+            isUser={false}
+            unseenCount={userData.otherUnseen.length}
+            totalStr={`${userData.otherUnseen.length} / ${userData.otherTotal}`}
+            url={otherUrl}
+          />
         )}
+        <SubsCardFooter>
+          <MarkSeenLink
+            href="#"
+            $enabled={hasAnyUnseen}
+            aria-disabled={!hasAnyUnseen}
+            onClick={e => {
+              e.preventDefault()
+              if (hasAnyUnseen) handleClearNotifications()
+            }}
+          >
+            mark all as seen
+          </MarkSeenLink>
+        </SubsCardFooter>
+      </SubsCard>
 
-        {showSubdomainWarning && (
-          <MessageBanner variant="warning">⚠ User monitoring requires www.reddit.com or old.reddit.com</MessageBanner>
-        )}
+      <PopupActions>
+        <ActionRowBtn onClick={() => { chrome.tabs.create({ url: historyUrl }); window.close() }}>
+          History
+        </ActionRowBtn>
+        <ActionRowBtn onClick={() => goToOptions()}>
+          Options
+        </ActionRowBtn>
+      </PopupActions>
 
-        {pendingPostCount > 0 && (
-          <MessageBanner variant="info"><MiniSpinner />{pendingProgress && pendingProgress.total > 0
-            ? `Scanning ${Math.min(pendingProgress.processed, pendingProgress.total)} of ${pendingProgress.total} posts for removals…`
-            : `Scanning ${pendingPostCount} posts for removals…`}</MessageBanner>
-        )}
-
-        <SubsCard>
-          {currentUser !== undefined && userData && (
-            <CurrentUserSection
-              currentUser={currentUser}
-              users={userData.users}
-              historyUrl={historyUrl}
-              connectResult={connectResult}
-              connectMessage={connectMessage}
-              connecting={connecting}
-              onConnect={handleConnect}
-            />
-          )}
-          {userData && (
-            <UnseenRow
-              thing="other"
-              isUser={false}
-              unseenCount={userData.otherUnseen.length}
-              totalStr={`${userData.otherUnseen.length} / ${userData.otherTotal}`}
-              url={otherUrl}
-            />
-          )}
-          <SubsCardFooter>
-            <MarkSeenLink
-              href="#"
-              $enabled={hasAnyUnseen}
-              aria-disabled={!hasAnyUnseen}
-              onClick={e => {
-                e.preventDefault()
-                if (hasAnyUnseen) handleClearNotifications()
-              }}
-            >
-              mark all as seen
-            </MarkSeenLink>
-          </SubsCardFooter>
-        </SubsCard>
-
-        <PopupActions>
-          <ActionRowBtn onClick={() => { chrome.tabs.create({ url: historyUrl }); window.close() }}>
-            History
-          </ActionRowBtn>
-          <ActionRowBtn onClick={() => goToOptions()}>
-            Options
-          </ActionRowBtn>
-        </PopupActions>
-
-        <FooterRow>
-          <FooterLink href="#" onClick={e => { e.preventDefault(); handleTestNotification() }}>
-            send a test notification
-          </FooterLink>
-          <FooterLink href="#" onClick={e => { e.preventDefault(); reportProblem() }}>
-            report a problem
-          </FooterLink>
-        </FooterRow>
-      </PopupContainer>
-    </>
+      <FooterRow>
+        <FooterLink href="#" onClick={e => { e.preventDefault(); handleTestNotification() }}>
+          send a test notification
+        </FooterLink>
+        <FooterLink href="#" onClick={e => { e.preventDefault(); reportProblem() }}>
+          report a problem
+        </FooterLink>
+      </FooterRow>
+    </PopupContainer>
   )
 }
 
-createRoot(document.getElementById('root')!).render(<Popup />)
+mountPage(Popup)

@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react'
-import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { getItemFromLocalStorage, unsubscribeId, getIDs_thing } from './storage'
 import { getPrettyDate, isComment, sortDict_by_numberValuedAttribute, LocalStorageItem } from './common'
-import { AppGlobal } from './ui/global'
+import { mountPage } from './ui/global'
 import { redditItemUrl } from './ui/links'
 import {
   Card, CardHeader, CardMeta, CardBody, CardActions,
@@ -129,74 +128,71 @@ function Other() {
   }
 
   return (
-    <>
-      <AppGlobal />
-      <Page>
-        <PageHeader>
-          <h1>Other subscriptions</h1>
+    <Page>
+      <PageHeader>
+        <h1>Other subscriptions</h1>
+        <p>
+          Up to 100 items. When the list is full, the least-recently subscribed items are dropped.
+          Subscribing to a post only tracks the post itself, not its comments.
+        </p>
+        {viewAllHref && (
           <p>
-            Up to 100 items. When the list is full, the least-recently subscribed items are dropped.
-            Subscribing to a post only tracks the post itself, not its comments.
+            <BlueLink href={viewAllHref} target="_blank" rel="noreferrer">
+              View all current statuses on reveddit ↗
+            </BlueLink>
           </p>
-          {viewAllHref && (
-            <p>
-              <BlueLink href={viewAllHref} target="_blank" rel="noreferrer">
-                View all current statuses on reveddit ↗
-              </BlueLink>
-            </p>
-          )}
-        </PageHeader>
-
-        {loaded && rows.length === 0 && (
-          <Card>
-            <Empty>
-              <p>No &quot;other&quot; subscriptions yet. To subscribe:</p>
-              <ul>
-                <li>Click the bell on new reddit, or &quot;subscribe-rev&quot; on old reddit, beneath any comment or post</li>
-                <li>Right-click a Reddit or reveddit link and choose &quot;reveddit subscribe&quot;</li>
-                <li>Open the reveddit extension popup on a Reddit page and toggle &quot;subscribe to comment/post&quot;</li>
-              </ul>
-            </Empty>
-          </Card>
         )}
+      </PageHeader>
 
-        {rows.map(row => (
-          <Card key={row.id}>
-            <CardHeader>
-              <span style={{ color: 'var(--text-secondary)', fontSize: '0.9em' }}>
-                {row.contentType}
-                {row.subreddit && <> in <Subreddit>r/{row.subreddit}</Subreddit></>}
-              </span>
-            </CardHeader>
-            <CardMeta>
-              <span title={row.formattedSubscribedFull}>subscribed {row.formattedSubscribed}</span>
-              {row.formattedCreated && (
-                <span title={row.formattedCreatedFull}>created {row.formattedCreated}</span>
-              )}
-            </CardMeta>
-            {row.title && <PostTitle>{row.title}</PostTitle>}
-            {row.body && (
-              <CardBody>
-                <MdBody
-                  className="md-body"
-                  dangerouslySetInnerHTML={{ __html: markdownToHTML(row.body) }}
-                />
-              </CardBody>
+      {loaded && rows.length === 0 && (
+        <Card>
+          <Empty>
+            <p>No &quot;other&quot; subscriptions yet. To subscribe:</p>
+            <ul>
+              <li>Click the bell on new reddit, or &quot;subscribe-rev&quot; on old reddit, beneath any comment or post</li>
+              <li>Right-click a Reddit or reveddit link and choose &quot;reveddit subscribe&quot;</li>
+              <li>Open the reveddit extension popup on a Reddit page and toggle &quot;subscribe to comment/post&quot;</li>
+            </ul>
+          </Empty>
+        </Card>
+      )}
+
+      {rows.map(row => (
+        <Card key={row.id}>
+          <CardHeader>
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.9em' }}>
+              {row.contentType}
+              {row.subreddit && <> in <Subreddit>r/{row.subreddit}</Subreddit></>}
+            </span>
+          </CardHeader>
+          <CardMeta>
+            <span title={row.formattedSubscribedFull}>subscribed {row.formattedSubscribed}</span>
+            {row.formattedCreated && (
+              <span title={row.formattedCreatedFull}>created {row.formattedCreated}</span>
             )}
-            <CardActions>
-              <BlueLink href={row.href} target="_blank" rel="noreferrer">Open on Reddit ↗</BlueLink>
-              <MutedLink href={row.revedditHref} target="_blank" rel="noreferrer">
-                View on reveddit ↗
-              </MutedLink>
-              <Button variant="ghost" onClick={() => handleUnsubscribe(row.id)}>
-                unsubscribe
-              </Button>
-            </CardActions>
-          </Card>
-        ))}
-      </Page>
-    </>
+          </CardMeta>
+          {row.title && <PostTitle>{row.title}</PostTitle>}
+          {row.body && (
+            <CardBody>
+              <MdBody
+                className="md-body"
+                dangerouslySetInnerHTML={{ __html: markdownToHTML(row.body) }}
+              />
+            </CardBody>
+          )}
+          <CardActions>
+            <BlueLink href={row.href} target="_blank" rel="noreferrer">Open on Reddit ↗</BlueLink>
+            <MutedLink href={row.revedditHref} target="_blank" rel="noreferrer">
+              View on reveddit ↗
+            </MutedLink>
+            <Button variant="ghost" onClick={() => handleUnsubscribe(row.id)}>
+              unsubscribe
+            </Button>
+          </CardActions>
+        </Card>
+      ))}
+    </Page>
   )
 }
 
-createRoot(document.getElementById('root')!).render(<Other />)
+mountPage(Other)

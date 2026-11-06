@@ -1,4 +1,5 @@
-import { useEffect } from 'react'
+import { useEffect, type ComponentType } from 'react'
+import { createRoot } from 'react-dom/client'
 import { Global } from '@emotion/react'
 import { globalTokens, globalBase, globalMarkdown } from './tokens'
 
@@ -15,7 +16,7 @@ function applyTheme(mode: ThemeMode) {
   document.documentElement.setAttribute('data-theme', resolveTheme(mode))
 }
 
-export function AppGlobal() {
+function AppGlobal() {
   useEffect(() => {
     try {
       chrome.storage.local.get([THEME_STORAGE_KEY], res => {
@@ -67,4 +68,13 @@ export function AppGlobal() {
 export function setThemeMode(mode: ThemeMode) {
   chrome.storage.local.set({ [THEME_STORAGE_KEY]: mode })
   applyTheme(mode)
+}
+
+export function mountPage(Page: ComponentType) {
+  createRoot(document.getElementById('root')!).render(
+    <>
+      <AppGlobal />
+      <Page />
+    </>
+  )
 }

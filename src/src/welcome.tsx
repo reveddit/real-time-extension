@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { subscribeUser } from './storage'
 import { getLoggedinUserDetailed } from './reddit-auth'
-import { AppGlobal } from './ui/global'
+import { mountPage } from './ui/global'
 import { BlueLink, Button, Card } from './ui/components'
 import { tokens } from './ui/tokens'
 
@@ -185,57 +184,54 @@ function Welcome() {
   }
 
   return (
-    <>
-      <AppGlobal />
-      <Page>
-        <Header>
-          <Logo src="/icons/128.png" alt="Reveddit" />
-          <Title>Welcome to reveddit real-time</Title>
-          <Subtitle>
-            This extension monitors your Reddit comments and posts in real time,
-            notifying you when content is removed by moderators.
-          </Subtitle>
-        </Header>
+    <Page>
+      <Header>
+        <Logo src="/icons/128.png" alt="Reveddit" />
+        <Title>Welcome to reveddit real-time</Title>
+        <Subtitle>
+          This extension monitors your Reddit comments and posts in real time,
+          notifying you when content is removed by moderators.
+        </Subtitle>
+      </Header>
 
-        <StatusCard>
-          <StatusText statusType={statusType}>{statusMessage}</StatusText>
-        </StatusCard>
+      <StatusCard>
+        <StatusText statusType={statusType}>{statusMessage}</StatusText>
+      </StatusCard>
 
-        {showInstructions && (
-          <InstructionsCard>
-            <h2>Getting started</h2>
-            <ol>
-              <li>
-                Open <BlueLink href="https://www.reddit.com" target="_blank" rel="noreferrer">www.reddit.com</BlueLink>
-                {' '}or <BlueLink href="https://old.reddit.com" target="_blank" rel="noreferrer">old.reddit.com</BlueLink>
-              </li>
-              <li>Log in to your Reddit account</li>
-              <li>We'll detect you automatically — no click needed.</li>
-            </ol>
-          </InstructionsCard>
-        )}
+      {showInstructions && (
+        <InstructionsCard>
+          <h2>Getting started</h2>
+          <ol>
+            <li>
+              Open <BlueLink href="https://www.reddit.com" target="_blank" rel="noreferrer">www.reddit.com</BlueLink>
+              {' '}or <BlueLink href="https://old.reddit.com" target="_blank" rel="noreferrer">old.reddit.com</BlueLink>
+            </li>
+            <li>Log in to your Reddit account</li>
+            <li>We'll detect you automatically — no click needed.</li>
+          </ol>
+        </InstructionsCard>
+      )}
 
-        {!succeeded && (
-          <Actions>
-            <Button variant="primary" onClick={openReddit}>Open Reddit</Button>
-            <Button
-              variant="ghost"
-              onClick={() => checkConnection(true)}
-              disabled={inFlight.current}
-            >
-              Check connection now
-            </Button>
-          </Actions>
-        )}
+      {!succeeded && (
+        <Actions>
+          <Button variant="primary" onClick={openReddit}>Open Reddit</Button>
+          <Button
+            variant="ghost"
+            onClick={() => checkConnection(true)}
+            disabled={inFlight.current}
+          >
+            Check connection now
+          </Button>
+        </Actions>
+      )}
 
-        <Footer>
-          <BlueLink href="https://www.reveddit.com/about/faq/" target="_blank" rel="noreferrer">
-            Learn more about reveddit
-          </BlueLink>
-        </Footer>
-      </Page>
-    </>
+      <Footer>
+        <BlueLink href="https://www.reveddit.com/about/faq/" target="_blank" rel="noreferrer">
+          Learn more about reveddit
+        </BlueLink>
+      </Footer>
+    </Page>
   )
 }
 
-createRoot(document.getElementById('root')!).render(<Welcome />)
+mountPage(Welcome)
