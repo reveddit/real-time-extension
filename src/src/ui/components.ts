@@ -107,7 +107,7 @@ export const Button = styled.button<{ variant?: 'primary' | 'secondary' | 'ghost
     }
 `
 
-export type BannerVariant = 'warning' | 'success' | 'info' | 'news'
+export type BannerVariant = 'warning' | 'success' | 'info'
 
 export const MessageBanner = styled.div<{ variant: BannerVariant }>`
     padding: 10px 12px;
@@ -126,12 +126,6 @@ export const MessageBanner = styled.div<{ variant: BannerVariant }>`
                 return css`
                     background: var(--approved-bg);
                     border: 1px solid var(--approved-border);
-                    color: var(--text-primary);
-                `
-            case 'news':
-                return css`
-                    background: var(--note-bg);
-                    border: 1px solid var(--border-light);
                     color: var(--text-primary);
                 `
             case 'info':
@@ -279,40 +273,6 @@ export const SectionHeader = styled.h2`
     margin: ${tokens.space.lg} 0 ${tokens.space.sm} 0;
     padding-bottom: ${tokens.space.xs};
     border-bottom: 1px solid var(--border);
-`
-
-export const Field = styled.label`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: ${tokens.space.md};
-    padding: ${tokens.space.sm} 0;
-    & > span.label {
-        color: var(--text-primary);
-        font-size: 0.95em;
-    }
-    & > span.hint {
-        color: var(--text-muted);
-        font-size: 0.82em;
-        display: block;
-        margin-top: 2px;
-    }
-`
-
-export const FieldCol = styled.div`
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-width: 0;
-`
-
-export const NumberInput = styled.input`
-    width: 80px;
-    text-align: right;
-`
-
-export const TextInput = styled.input`
-    width: 100%;
 `
 
 export const Author = styled.span`

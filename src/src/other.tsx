@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { getItemFromLocalStorage, unsubscribeId, getIDs_thing } from './storage'

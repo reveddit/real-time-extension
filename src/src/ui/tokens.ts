@@ -29,7 +29,6 @@ export const globalTokens = css`
     :root {
         /* Backgrounds */
         --bg-primary: #1a1b1e;
-        --bg-secondary: #111214;
         --bg-surface: #25262b;
         --bg-surface-hover: #2c2d33;
 
@@ -41,7 +40,6 @@ export const globalTokens = css`
 
         /* Accent / brand */
         --accent: #e03e3e;
-        --accent-dim: #c13030;
         --accent-hover: #e85555;
 
         /* Links */
@@ -50,10 +48,6 @@ export const globalTokens = css`
 
         /* Semantic */
         --author: #6a98af;
-        --submitter: #2b7de9;
-        --moderator: #2ea043;
-        --admin: #e03e3e;
-        --quarantined: #ffd635;
 
         /* Removed / deleted indicators */
         --removed-bg: rgba(99, 54, 54, 1);
@@ -81,15 +75,11 @@ export const globalTokens = css`
         --input-border: #373a40;
         --input-focus: #74b3e0;
 
-        /* Scores & meta */
-        --meta: #909296;
-
         color-scheme: dark;
     }
 
     :root[data-theme='light'] {
         --bg-primary: #ffffff;
-        --bg-secondary: #f8f9fa;
         --bg-surface: #f1f3f5;
         --bg-surface-hover: #e9ecef;
 
@@ -99,16 +89,12 @@ export const globalTokens = css`
         --text-on-accent: #ffffff;
 
         --accent: #c92a2a;
-        --accent-dim: #a82828;
         --accent-hover: #e03131;
 
         --link: #1971c2;
         --link-hover: #1c7ed6;
 
         --author: #3a6f8a;
-        --submitter: #1864ab;
-        --moderator: #2b8a3e;
-        --admin: #c92a2a;
 
         --removed-bg: rgba(255, 230, 230, 1);
         --removed-border: #c92a2a;
@@ -132,8 +118,6 @@ export const globalTokens = css`
         --input-bg: #ffffff;
         --input-border: #ced4da;
         --input-focus: #1971c2;
-
-        --meta: #868e96;
 
         color-scheme: light;
     }

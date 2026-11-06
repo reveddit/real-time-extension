@@ -1,4 +1,3 @@
-import React from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { AppGlobal } from './ui/global'
