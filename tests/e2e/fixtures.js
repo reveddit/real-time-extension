@@ -29,16 +29,37 @@ export const test = base.extend({
         await use(context)
         await context.close()
     },
-    extensionId: async ({ context }, use) => {
-        // Wait for the service worker to register
-        let serviceWorker
-        if (context.serviceWorkers().length > 0) {
-            serviceWorker = context.serviceWorkers()[0]
-        } else {
-            serviceWorker = await context.waitForEvent('serviceworker')
-        }
-        const extensionId = serviceWorker.url().split('/')[2]
-        await use(extensionId)
+    // Auto: every test waits for the service worker to register, and gets it here
+    worker: [
+        async ({ context }, use) => {
+            const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'))
+            await use(worker)
+        },
+        { auto: true },
+    ],
+    extensionId: async ({ worker }, use) => {
+        await use(worker.url().split('/')[2])
+    },
+    // A new tab on one of the extension's own pages, e.g. openPage('options.html#second-account')
+    openPage: async ({ context, extensionId }, use) => {
+        await use(async file => {
+            const page = await context.newPage()
+            await page.goto(`chrome-extension://${extensionId}/src/${file}`)
+            return page
+        })
+    },
+    // The install writes the default options, and the lists of what's followed
+    installed: async ({ worker }, use) => {
+        const options = () => worker.evaluate(() => chrome.storage.sync.get(['options']).then(sync => sync.options))
+        await use(async () => {
+            await expect.poll(options, { timeout: 15000 }).toBeTruthy()
+            return options()
+        })
+    },
+    setOptions: async ({ worker, installed }, use) => {
+        await use(async changes =>
+            worker.evaluate(options => chrome.storage.sync.set({ options }), { ...(await installed()), ...changes }),
+        )
     },
 })
 

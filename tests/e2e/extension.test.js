@@ -4,12 +4,56 @@
 //
 // Prerequisites: run `yarn build-chrome-dev` before running these tests.
 
-import { test, expect } from './fixtures.js'
+import { test as base, expect } from './fixtures.js'
+
+const test = base.extend({
+    seedOwnRemoved: async ({ worker }, use) => {
+        await use(id =>
+            worker.evaluate(
+                id =>
+                    Promise.all([
+                        chrome.storage.local.set({ last_logged_in_user: 'someone' }),
+                        chrome.storage.sync.set({ removed_u_someone: { [id]: { a: 1 } } }),
+                    ]),
+                id,
+            ),
+        )
+    },
+    // A login, and reddit's answers in the background, which sends everything else away
+    answerAs: async ({ context, worker, setOptions }, use) => {
+        await use(async answers => {
+            await context.addCookies([{ name: 'reddit_session', value: 'x', domain: '.reddit.com', path: '/' }])
+            await setOptions({ scan_seconds_between_reads: 1, scan_reads_per_click: 50 })
+            await worker.evaluate(answers => {
+                self.asked = []
+                self.feedsAt = []
+                self.fetch = async url => {
+                    const path = String(url).replace('https://www.reddit.com', '')
+                    self.asked.push(path)
+                    if (path.includes('.rss')) self.feedsAt.push(Date.now())
+                    const answer = answers[path]
+                    return new Response(answer ?? '', { status: answer === undefined ? 404 : 200 })
+                }
+            }, answers)
+        })
+    },
+    // What scans sent, not the login checks monitoring sends alongside them
+    askedFor: async ({ worker }, use) => {
+        await use(() =>
+            worker.evaluate(() => self.asked.filter(path => /\.rss|\/(comments|submitted)\.json/.test(path))),
+        )
+    },
+    followed: async ({ worker }, use) => {
+        await use(async () => {
+            const { other_subscriptions } = await worker.evaluate(() => chrome.storage.sync.get('other_subscriptions'))
+            return Object.keys(other_subscriptions)
+        })
+    },
+})
 
 test.describe('Popup page', () => {
-    test('renders the popup with expected elements', async ({ context, extensionId }) => {
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
+    test('renders the popup with expected elements', async ({ openPage }) => {
+        const page = await openPage('popup.html')
 
         // The root container should exist
         await expect(page.locator('#root')).toBeVisible()
@@ -41,13 +85,11 @@ test.describe('Popup page', () => {
         return new URL(await page.evaluate(() => window.__opened[0]))
     }
 
-    test("logged out: says so, and a button opens reddit's login page", async ({ context, extensionId }) => {
-        const [worker] = context.serviceWorkers()
+    test("logged out: says so, and a button opens reddit's login page", async ({ worker, openPage }) => {
         await worker.evaluate(() =>
             chrome.storage.local.set({ error_status: 'needs_user', last_logged_in_user: 'someone' }),
         )
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
+        const page = await openPage('popup.html')
 
         await expect(page.getByText("You don't seem to be logged in to Reddit")).toBeVisible()
         await recordOpens(page)
@@ -55,40 +97,34 @@ test.describe('Popup page', () => {
         expect((await opened(page)).href).toBe('https://www.reddit.com/login')
     })
 
-    test('a login reddit keeps refusing: says so, and offers to log in', async ({ context, extensionId }) => {
-        const [worker] = context.serviceWorkers()
+    test('a login reddit keeps refusing: says so, and offers to log in', async ({ worker, openPage }) => {
         await worker.evaluate(() =>
             chrome.storage.local.set({ error_status: 'logged_in_view_unavailable', last_logged_in_user: 'someone' }),
         )
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
+        const page = await openPage('popup.html')
 
         await expect(page.getByText("Reddit isn't accepting your login")).toBeVisible()
         await expect(page.getByRole('button', { name: 'Log in to Reddit' })).toBeVisible()
     })
 
     test("checks that keep failing: says nothing's being checked, even with no user to name", async ({
-        context,
-        extensionId,
+        worker,
+        openPage,
     }) => {
-        const [worker] = context.serviceWorkers()
         await worker.evaluate(() => chrome.storage.local.set({ error_status: 'checks_failing' }))
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
+        const page = await openPage('popup.html')
 
         await expect(page.getByText("aren't being checked right now")).toBeVisible()
         await expect(page.getByRole('button', { name: 'Log in to Reddit' })).toHaveCount(0)
     })
 
-    test("reddit's login wall: offers a second account, then says why", async ({ context, extensionId }) => {
+    test("reddit's login wall: offers a second account, then says why", async ({ worker, extensionId, openPage }) => {
         // What monitoring leaves behind after five lookups that landed on
         // reddit's login page
-        const [worker] = context.serviceWorkers()
         await worker.evaluate(() =>
             chrome.storage.local.set({ error_status: 'login_required', last_logged_in_user: 'someone' }),
         )
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
+        const page = await openPage('popup.html')
 
         await expect(
             page.getByText('To keep checking your posts and comments, connect a second Reddit account.'),
@@ -104,16 +140,14 @@ test.describe('Popup page', () => {
     })
 
     test("reddit's public view not loading: a reddit tab first, then a second account", async ({
-        context,
-        extensionId,
+        worker,
+        openPage,
     }) => {
         // A login wall that doesn't redirect to the login page lands here too
-        const [worker] = context.serviceWorkers()
         await worker.evaluate(() =>
             chrome.storage.local.set({ error_status: 'public_view_unavailable', last_logged_in_user: 'someone' }),
         )
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
+        const page = await openPage('popup.html')
         await expect(page.getByText('If it keeps up, connect a second Reddit account.')).toBeVisible()
         await expect(page.getByRole('button', { name: 'Open www.reddit.com' })).toBeVisible()
         await recordOpens(page)
@@ -121,8 +155,7 @@ test.describe('Popup page', () => {
         expect((await opened(page)).hash).toBe('#second-account')
     })
 
-    test('signed in as the second account itself: asks for a different one', async ({ context, extensionId }) => {
-        const [worker] = context.serviceWorkers()
+    test('signed in as the second account itself: asks for a different one', async ({ worker, openPage }) => {
         await worker.evaluate(() =>
             chrome.storage.local.set({
                 error_status: 'login_required',
@@ -130,26 +163,22 @@ test.describe('Popup page', () => {
                 viewer_account: { name: 'Bob', token: 'ab'.repeat(16), cookies: [], connectedAt: Date.now() },
             }),
         )
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
+        const page = await openPage('popup.html')
         await expect(page.getByText("You're signed in to Reddit with your second account")).toBeVisible()
         await recordOpens(page)
         await page.getByRole('button', { name: 'Connect a different account' }).click()
         expect((await opened(page)).hash).toBe('#second-account')
 
-        const options = await context.newPage()
-        await options.goto(`chrome-extension://${extensionId}/src/options.html#second-account`)
+        const options = await openPage('options.html#second-account')
         await expect(options.getByText("it's also the account you're signed in to Reddit with")).toBeVisible()
         await options.getByRole('button', { name: 'connect a different account' }).click()
         await expect(options.getByRole('dialog', { name: 'Connect a second account' })).toBeVisible()
     })
 
     test('report a problem copies the log and opens the issue form with the version filled in', async ({
-        context,
-        extensionId,
+        openPage,
     }) => {
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/popup.html`)
+        const page = await openPage('popup.html')
         await recordOpens(page)
         await page.evaluate(() => {
             const send = chrome.runtime.sendMessage.bind(chrome.runtime)
@@ -186,8 +215,7 @@ test.describe('Popup page', () => {
 })
 
 test.describe('Header rules', () => {
-    test("reach only the extension's own background requests", async ({ context, extensionId }) => {
-        const [worker] = context.serviceWorkers()
+    test("reach only the extension's own background requests", async ({ worker, extensionId }) => {
         const rules = () => worker.evaluate(() => chrome.declarativeNetRequest.getSessionRules())
         await expect.poll(async () => (await rules()).length).toBeGreaterThan(0)
         for (const { condition } of await rules()) {
@@ -198,11 +226,10 @@ test.describe('Header rules', () => {
 
 test.describe('Options page: second account', () => {
     test('offers to connect one, and shows a connected one with a way to disconnect it', async ({
-        context,
-        extensionId,
+        worker,
+        openPage,
     }) => {
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/options.html#second-account`)
+        const page = await openPage('options.html#second-account')
         await expect(page.getByRole('heading', { name: 'Second account' })).toBeVisible()
         await expect(page.getByRole('button', { name: 'connect a second account' })).toBeVisible()
 
@@ -215,7 +242,6 @@ test.describe('Options page: second account', () => {
         )
         await dialog.getByRole('button', { name: 'cancel' }).click()
         await expect(dialog).toBeHidden()
-        const [worker] = context.serviceWorkers()
         expect(await worker.evaluate(() => chrome.storage.local.get('viewer_connect'))).toEqual({})
         await page.getByRole('button', { name: 'connect a second account' }).click()
         await page.keyboard.press('Escape')
@@ -233,11 +259,10 @@ test.describe('Options page: second account', () => {
     })
 
     test('a second account reddit signed out: says so, and offers to connect it again', async ({
-        context,
-        extensionId,
+        worker,
+        openPage,
     }) => {
         const token = 'ab'.repeat(16)
-        const [worker] = context.serviceWorkers()
         await worker.evaluate(
             token =>
                 chrome.storage.local.set({
@@ -247,8 +272,7 @@ test.describe('Options page: second account', () => {
                 }),
             token,
         )
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/options.html#second-account`)
+        const page = await openPage('options.html#second-account')
         await expect(page.getByText("u/bob was signed out of Reddit, so your posts and comments aren't")).toBeVisible()
         await expect(page.getByText('Connected: u/bob')).toBeHidden()
         await page.getByRole('button', { name: 'connect it again' }).click()
@@ -278,14 +302,10 @@ test.describe('Options page: second account', () => {
         await expect(page.getByRole('button', { name: 'connect a second account' })).toBeHidden()
     })
 
-    test('the confirm dialog opens over its button, even in a frame as tall as the page', async ({
-        context,
-        extensionId,
-    }) => {
+    test('the confirm dialog opens over its button, even in a frame as tall as the page', async ({ openPage }) => {
         // Firefox shows options inside about:addons in a frame sized to the
         // whole page, where a dialog in the middle of the frame is off screen
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/options.html`)
+        const page = await openPage('options.html')
         await expect(page.locator('h2', { hasText: 'Appearance' })).toBeVisible({ timeout: 10000 })
         const button = page.getByRole('button', { name: 'connect a second account' })
         await page.setViewportSize({
@@ -331,17 +351,13 @@ test.describe('Background: a reddit tab finishing a load', () => {
         await tab.goto('https://www.reddit.com/')
     }
 
-    test('clears the signed-out warning once someone is signed in', async ({ context, extensionId }) => {
-        expect(extensionId).toBeTruthy()
-        const [worker] = context.serviceWorkers()
+    test('clears the signed-out warning once someone is signed in', async ({ context, worker }) => {
         await signedIn(worker)
         await loadRedditTab(context)
         await expect.poll(() => worker.evaluate(() => chrome.storage.local.get('error_status'))).toEqual({})
     })
 
-    test("leaves a warning that being signed in doesn't fix", async ({ context, extensionId }) => {
-        expect(extensionId).toBeTruthy()
-        const [worker] = context.serviceWorkers()
+    test("leaves a warning that being signed in doesn't fix", async ({ context, worker }) => {
         await signedIn(worker)
         await worker.evaluate(() => chrome.storage.local.set({ error_status: 'login_required' }))
         await loadRedditTab(context)
@@ -354,9 +370,8 @@ test.describe('Background: a reddit tab finishing a load', () => {
 })
 
 test.describe('Options page', () => {
-    test('renders all settings with default values', async ({ context, extensionId }) => {
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/options.html`)
+    test('renders all settings with default values', async ({ openPage }) => {
+        const page = await openPage('options.html')
 
         // Wait for async storage load to complete (Subscriptions heading appears)
         await expect(page.locator('h2', { hasText: 'Subscriptions' }).first()).toBeVisible({ timeout: 10000 })
@@ -408,9 +423,8 @@ test.describe('Options page', () => {
 })
 
 test.describe('Options page: diagnostics', () => {
-    test('copying the log keeps post and comment ids unless asked to hide them', async ({ context, extensionId }) => {
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/options.html`)
+    test('copying the log keeps post and comment ids unless asked to hide them', async ({ openPage }) => {
+        const page = await openPage('options.html')
         await expect(page.locator('h2', { hasText: 'Diagnostics' })).toBeVisible({ timeout: 10000 })
         await page.evaluate(() => {
             navigator.clipboard.writeText = async text => {
@@ -435,9 +449,8 @@ test.describe('Options page: diagnostics', () => {
 })
 
 test.describe('History page', () => {
-    test('renders history page structure', async ({ context, extensionId }) => {
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/history.html`)
+    test('renders history page structure', async ({ openPage }) => {
+        const page = await openPage('history.html')
 
         // Should have a History heading
         await expect(page.locator('h1')).toContainText('History')
@@ -472,18 +485,6 @@ const openNewReddit = (context, path, main) =>
     )
 // Long enough for the content script's first look
 const settle = page => page.waitForTimeout(700)
-// Needs the extensionId fixture, which waits for the service worker
-const seedOwnRemoved = (context, id) =>
-    context
-        .serviceWorkers()[0]
-        .evaluate(
-            id =>
-                Promise.all([
-                    chrome.storage.local.set({ last_logged_in_user: 'someone' }),
-                    chrome.storage.sync.set({ removed_u_someone: { [id]: { a: 1 } } }),
-                ]),
-            id,
-        )
 
 // Reddit's router, as measured 2026-11-04: the address changes first, then
 // one element under shreddit-app is replaced whole, and on a first visit a
@@ -588,9 +589,9 @@ test.describe('Post removal note on reddit pages', () => {
 
     test("shows on the author's post that monitoring found removed, which reddit can hide from them", async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+        seedOwnRemoved,
     }) => {
-        await seedOwnRemoved(context, POST)
+        await seedOwnRemoved(POST)
         const page = await openNewReddit(context, THREAD, postElement(POST))
         await expect(page.locator(NOTE)).toHaveCount(1)
 
@@ -628,9 +629,7 @@ test.describe('Post removal note on reddit pages', () => {
         await expect(page.locator(NOTE)).toContainText("It is not currently visible in u/someone's profile")
     })
 
-    test('its link opens the options page once, whatever put the note there', async ({ context, extensionId }) => {
-        expect(extensionId).toBeTruthy()
-        const [worker] = context.serviceWorkers()
+    test('its link opens the options page once, whatever put the note there', async ({ context, worker }) => {
         await worker.evaluate(() => {
             self.opened = 0
             chrome.runtime.openOptionsPage = () => self.opened++
@@ -668,9 +667,9 @@ test.describe('Reddit pages reached without a new document', () => {
 
     test('a post reached from a list gets its scan button and own highlights, once', async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+        seedOwnRemoved,
     }) => {
-        await seedOwnRemoved(context, OWN)
+        await seedOwnRemoved(OWN)
         const page = await openNewReddit(context, LIST, feed(post))
         await startRouter(page)
         await settle(page)
@@ -691,14 +690,14 @@ test.describe('Reddit pages reached without a new document', () => {
 
     test('the next post gets its own scan button, and records newer than the document count', async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+        seedOwnRemoved,
     }) => {
-        await seedOwnRemoved(context, OTHERS)
+        await seedOwnRemoved(OTHERS)
         const page = await openNewReddit(context, THREAD, post + tree)
         await startRouter(page)
         await expect(page.locator(`[thingid="${OTHERS}"].rev-removed-highlight`)).toHaveCount(1)
 
-        await seedOwnRemoved(context, OWN)
+        await seedOwnRemoved(OWN)
         await visit(page, '/r/pics/comments/abc456/a_title/', postElement('t3_abc456'), tree)
         await expect(ownComment(page)).toHaveCount(1)
         await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
@@ -728,11 +727,8 @@ test.describe('Reddit pages reached without a new document', () => {
         await expect(page.locator(PROFILE_SCAN)).toHaveCount(1)
     })
 
-    test('a scan button leaves with its profile', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await seedOwnRemoved(context, OWN)
+    test('a scan button leaves with its profile', async ({ context, seedOwnRemoved }) => {
+        await seedOwnRemoved(OWN)
         const page = await openNewReddit(context, '/user/other/', feed())
         await startRouter(page)
         await expect(page.locator(PROFILE_SCAN)).toHaveCount(1)
@@ -746,9 +742,9 @@ test.describe('Reddit pages reached without a new document', () => {
 
     test("one's own profile gets its highlights and filter bar, and pages after it stay out of them", async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+        seedOwnRemoved,
     }) => {
-        await seedOwnRemoved(context, OWN)
+        await seedOwnRemoved(OWN)
         const page = await openNewReddit(context, LIST, feed(post))
         await startRouter(page)
 
@@ -811,7 +807,8 @@ test.describe('Reddit pages reached without a new document', () => {
     })
 
     test("old reddit's buttons from the extension's last run give way to working ones", async ({ context }) => {
-        const dead = '<li><a class="rev-comment-action">dead</a></li><li><a class="rev-scan-comment-btn rev-comment-action">dead</a></li>'
+        const dead =
+            '<li><a class="rev-comment-action">dead</a></li><li><a class="rev-scan-comment-btn rev-comment-action">dead</a></li>'
         const page = await open(
             context,
             `https://old.reddit.com${THREAD}`,
@@ -825,11 +822,8 @@ test.describe('Reddit pages reached without a new document', () => {
         await expect(page.locator('.buttons a:not(.rev-scan-comment-btn)')).toHaveText('subscribe-rev')
     })
 
-    test("old reddit's own profile keeps its filter", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await seedOwnRemoved(context, OWN)
+    test("old reddit's own profile keeps its filter", async ({ context, seedOwnRemoved }) => {
+        await seedOwnRemoved(OWN)
         const page = await open(
             context,
             'https://old.reddit.com/user/someone/',
@@ -901,27 +895,6 @@ test.describe("Scans on new reddit's comments", () => {
     )
     const userFeed = name => `/user/${name}/comments/.rss?sort=new&limit=100`
 
-    // A login, and reddit's answers in the background, which sends everything else away
-    const answerAs = async (context, answers) => {
-        await context.addCookies([{ name: 'reddit_session', value: 'x', domain: '.reddit.com', path: '/' }])
-        await setOptions(context, { scan_seconds_between_reads: 1, scan_reads_per_click: 50 })
-        await context.serviceWorkers()[0].evaluate(answers => {
-            self.asked = []
-            self.feedsAt = []
-            self.fetch = async url => {
-                const path = String(url).replace('https://www.reddit.com', '')
-                self.asked.push(path)
-                if (path.includes('.rss')) self.feedsAt.push(Date.now())
-                const answer = answers[path]
-                return new Response(answer ?? '', { status: answer === undefined ? 404 : 200 })
-            }
-        }, answers)
-    }
-    // What scans sent, not the login checks monitoring sends alongside them
-    const askedFor = context =>
-        context
-            .serviceWorkers()[0]
-            .evaluate(() => self.asked.filter(path => /\.rss|\/(comments|submitted)\.json/.test(path)))
     const THREAD_FEED_PATH = '/r/pics/comments/abc123/.rss?limit=500'
     const THE_REMOVED_WORDS = {
         [THREAD_FEED_PATH]: threadFeed,
@@ -953,10 +926,7 @@ test.describe("Scans on new reddit's comments", () => {
             return { height: box.height, offCenter: Math.abs(top - box.top - (box.bottom - bottom)) }
         }, className)
 
-    test("reddit's own size for every button leaves the text of ours centered", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test("reddit's own size for every button leaves the text of ours centered", async ({ context }) => {
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
         // As measured on www.reddit.com, 2026-11-05
@@ -968,10 +938,7 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(page.locator('.rev-scan-all-btn')).toHaveCSS('line-height', '16px')
     })
 
-    test('solid and outlined buttons are one height where reddit sets none', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('solid and outlined buttons are one height where reddit sets none', async ({ context }) => {
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
         const solid = await buttonWith(page, 'rev-btn rev-btn-solid')
@@ -979,10 +946,7 @@ test.describe("Scans on new reddit's comments", () => {
         expect(solid.height).toBe(outlined.height)
     })
 
-    test('a disabled button stays as it is under the mouse', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('a disabled button stays as it is under the mouse', async ({ context }) => {
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         const button = page.locator('.rev-scan-all-btn')
         await expect(button).toHaveCount(1)
@@ -994,10 +958,7 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(button).toHaveCSS('background-color', 'rgb(120, 124, 126)')
     })
 
-    test('RES night mode leaves the selected pill readable and every border dark', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('RES night mode leaves the selected pill readable and every border dark', async ({ context }) => {
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
 
@@ -1030,25 +991,6 @@ test.describe("Scans on new reddit's comments", () => {
         })
     })
 
-    // The install writes the default options, and the lists of what's followed
-    const installed = async context => {
-        const options = () =>
-            context
-                .serviceWorkers()[0]
-                .evaluate(() => chrome.storage.sync.get(['options']).then(sync => sync.options))
-        await expect.poll(options, { timeout: 15000 }).toBeTruthy()
-        return options()
-    }
-    const setOptions = async (context, changes) =>
-        context
-            .serviceWorkers()[0]
-            .evaluate(options => chrome.storage.sync.set({ options }), { ...(await installed(context)), ...changes })
-
-    const followed = async context => {
-        const worker = context.serviceWorkers()[0]
-        const { other_subscriptions } = await worker.evaluate(() => chrome.storage.sync.get('other_subscriptions'))
-        return Object.keys(other_subscriptions)
-    }
     const profileRow =
         `<shreddit-comment-action-row slot="actionRow"><button slot="comment-share">Share</button>` +
         `</shreddit-comment-action-row>`
@@ -1060,11 +1002,8 @@ test.describe("Scans on new reddit's comments", () => {
                 `${profileRow}</shreddit-profile-comment>`,
         )
 
-    test('a comment and its post get a bell that follows them', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await installed(context)
+    test('a comment and its post get a bell that follows them', async ({ context, worker, installed, followed }) => {
+        await installed()
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         const postBell = page.locator('shreddit-post > .rev-comment-action')
         await expect(postBell).toHaveAttribute('slot', 'action-row-whitespace')
@@ -1077,33 +1016,28 @@ test.describe("Scans on new reddit's comments", () => {
         await bell.click()
         await expect(bell).toHaveAttribute('aria-label', 'unsubscribe-rev')
         await expect(bell).toHaveAttribute('title', 'Stop following this')
-        expect(await followed(context)).toEqual(expect.arrayContaining([POST, FIRST]))
+        expect(await followed()).toEqual(expect.arrayContaining([POST, FIRST]))
         await bell.click()
         await expect(bell).toHaveAttribute('aria-label', 'subscribe-rev')
     })
 
-    test('a comment on a profile can be followed', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await installed(context)
+    test('a comment on a profile can be followed', async ({ context, worker, installed, followed }) => {
+        await installed()
         const page = await onProfile(context, '/user/another/comments/')
         const bell = page.locator('.rev-comment-action')
         await bell.click()
         await expect(bell).toHaveAttribute('aria-label', 'unsubscribe-rev')
-        expect(await followed(context)).toContain(REPLY)
+        expect(await followed()).toContain(REPLY)
         const postOf = () =>
-            context
-                .serviceWorkers()[0]
-                .evaluate(id => chrome.storage.local.get('followed_post_ids').then(l => l.followed_post_ids?.[id]), REPLY)
+            worker.evaluate(
+                id => chrome.storage.local.get('followed_post_ids').then(l => l.followed_post_ids?.[id]),
+                REPLY,
+            )
         await expect.poll(postOf).toContain('abc123')
     })
 
-    test("a row reddit draws again says what's followed now", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await installed(context)
+    test("a row reddit draws again says what's followed now", async ({ context, worker, installed }) => {
+        await installed()
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('shreddit-post > .rev-comment-action')).toHaveCount(1)
         await stampRows(page)
@@ -1115,15 +1049,12 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(bell).toHaveAttribute('aria-label', 'unsubscribe-rev')
 
         // Unfollowed elsewhere, such as the popup, with the bell on the page
-        await context.serviceWorkers()[0].evaluate(() => chrome.storage.sync.set({ other_subscriptions: {} }))
+        await worker.evaluate(() => chrome.storage.sync.set({ other_subscriptions: {} }))
         await expect(bell).toHaveAttribute('aria-label', 'subscribe-rev')
     })
 
-    test("a bell left by the extension's last run gives way to a working one", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await installed(context)
+    test("a bell left by the extension's last run gives way to a working one", async ({ context, installed }) => {
+        await installed()
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('shreddit-post > .rev-comment-action')).toHaveCount(1)
         await page.evaluate(() => {
@@ -1141,9 +1072,9 @@ test.describe("Scans on new reddit's comments", () => {
 
     test("one's own comment can't be followed, on a thread or one's profile, but others' saved ones can", async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+        worker,
     }) => {
-        await context.serviceWorkers()[0].evaluate(() => chrome.storage.local.set({ last_logged_in_user: 'someone' }))
+        await worker.evaluate(() => chrome.storage.local.set({ last_logged_in_user: 'someone' }))
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
         await stampRows(page)
@@ -1158,7 +1089,7 @@ test.describe("Scans on new reddit's comments", () => {
         }
 
         // The browser signs in as someone else, with the thread still open
-        await context.serviceWorkers()[0].evaluate(() => chrome.storage.local.set({ last_logged_in_user: 'another' }))
+        await worker.evaluate(() => chrome.storage.local.set({ last_logged_in_user: 'another' }))
         const bell = rowOf(page, FIRST).locator('.rev-comment-action')
         await expect(bell).not.toHaveAttribute('aria-disabled', 'true')
         await expect(bell).toHaveCSS('opacity', '1')
@@ -1166,7 +1097,6 @@ test.describe("Scans on new reddit's comments", () => {
 
     test("a restore link and a profile's scan from the extension's last run give way to working ones", async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
     }) => {
         const removed = comment(REMOVED, { author: '[deleted]' }).replace(
             '</p></div></div>',
@@ -1187,21 +1117,16 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(profile.locator('article')).toBeVisible()
     })
 
-    test("unfollowing one's own comment leaves its bell disabled", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await installed(context)
-        await context
-            .serviceWorkers()[0]
-            .evaluate(
-                id =>
-                    Promise.all([
-                        chrome.storage.local.set({ last_logged_in_user: 'someone' }),
-                        chrome.storage.sync.set({ other_subscriptions: { [id]: { t: 1 } } }),
-                    ]),
-                FIRST,
-            )
+    test("unfollowing one's own comment leaves its bell disabled", async ({ context, worker, installed }) => {
+        await installed()
+        await worker.evaluate(
+            id =>
+                Promise.all([
+                    chrome.storage.local.set({ last_logged_in_user: 'someone' }),
+                    chrome.storage.sync.set({ other_subscriptions: { [id]: { t: 1 } } }),
+                ]),
+            FIRST,
+        )
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('shreddit-post > .rev-comment-action')).toHaveCount(1)
         await stampRows(page)
@@ -1215,7 +1140,6 @@ test.describe("Scans on new reddit's comments", () => {
 
     test("Scan-Rev gives up its label where a row runs out of room, and a bell stays above a post's link", async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
     }) => {
         const page = await openNewReddit(
             context,
@@ -1230,11 +1154,8 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(rowOf(page, FIRST).locator(`${SCAN} span`)).toBeHidden()
     })
 
-    test('the option to hide subscribe buttons hides them', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await setOptions(context, { hide_subscribe: true })
+    test('the option to hide subscribe buttons hides them', async ({ context, setOptions }) => {
+        await setOptions({ hide_subscribe: true })
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
         await stampRows(page)
@@ -1242,10 +1163,7 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(page.locator('.rev-comment-action')).toHaveCount(0)
     })
 
-    test('a comment gets its button when reddit stamps its row, inline with Share', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('a comment gets its button when reddit stamps its row, inline with Share', async ({ context }) => {
         const page = await openNewReddit(
             context,
             THREAD,
@@ -1262,10 +1180,7 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(rowOf(page, FIRST).locator(SCAN)).toHaveAttribute('slot', 'comment-share')
     })
 
-    test('a row reddit puts back keeps one button, and a comment rendered again gets one', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('a row reddit puts back keeps one button, and a comment rendered again gets one', async ({ context }) => {
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
         await settle(page)
@@ -1288,10 +1203,7 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(page.locator(SCAN)).toHaveCount(1)
     })
 
-    test('a removed comment offers restore, and its reply still gets a scan button', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('a removed comment offers restore, and its reply still gets a scan button', async ({ context }) => {
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST, { replies: removedWithReply })))
         await expect(page.locator(RESTORE)).toHaveCount(1)
         await stampRows(page)
@@ -1300,11 +1212,8 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(rowOf(page, REMOVED).locator(SCAN)).toHaveCount(0)
     })
 
-    test('restore shows the text under the removed comment, above its replies', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await answerAs(context, {
+    test('restore shows the text under the removed comment, above its replies', async ({ context, answerAs }) => {
+        await answerAs({
             '/r/pics/comments/abc123/.rss?limit=500': threadFeed,
             [userFeed('op')]: feed(),
             [userFeed('someone')]: feed(entry(REMOVED, 'someone', 'The removed words')),
@@ -1324,11 +1233,8 @@ test.describe("Scans on new reddit's comments", () => {
         expect(above).toBe(true)
     })
 
-    test("a scan button's progress stays by its comment, above the replies", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await answerAs(context, {
+    test("a scan button's progress stays by its comment, above the replies", async ({ context, answerAs }) => {
+        await answerAs({
             '/r/pics/comments/abc123/.rss?limit=500': threadFeed,
             [userFeed('op')]: feed(),
             [userFeed('someone')]: feed(),
@@ -1343,25 +1249,19 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(rowOf(page, FIRST).locator(SCAN)).toBeVisible()
     })
 
-    test('a scan keeps to the pace the options set', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await answerAs(context, THE_REMOVED_WORDS)
+    test('a scan keeps to the pace the options set', async ({ context, worker, answerAs, askedFor }) => {
+        await answerAs(THE_REMOVED_WORDS)
         const page = await openNewReddit(context, THREAD, thread(removedAtTop))
         await page.locator('.rev-scan-all-btn').click()
-        await expect.poll(() => askedFor(context).then(asked => asked.length)).toBeGreaterThan(2)
-        const feedsAt = await context.serviceWorkers()[0].evaluate(() => self.feedsAt)
+        await expect.poll(() => askedFor().then(asked => asked.length)).toBeGreaterThan(2)
+        const feedsAt = await worker.evaluate(() => self.feedsAt)
         const gaps = feedsAt.slice(1).map((at, i) => at - feedsAt[i])
         expect(Math.min(...gaps)).toBeGreaterThan(900)
     })
 
-    test("a block page's second try goes out in the other mode", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await answerAs(context, THE_REMOVED_WORDS)
-        await context.serviceWorkers()[0].evaluate(path => {
+    test("a block page's second try goes out in the other mode", async ({ context, worker, answerAs }) => {
+        await answerAs(THE_REMOVED_WORDS)
+        await worker.evaluate(path => {
             const answered = self.fetch
             self.modes = []
             self.fetch = (url, init) => {
@@ -1374,16 +1274,13 @@ test.describe("Scans on new reddit's comments", () => {
         const page = await openNewReddit(context, THREAD, thread(removedAtTop))
         await page.locator('.rev-scan-all-btn').click()
         await expect(page.locator(RECOVERED)).toHaveCount(1)
-        expect(await context.serviceWorkers()[0].evaluate(() => self.modes)).toEqual(['no-store', 'no-cache'])
+        expect(await worker.evaluate(() => self.modes)).toEqual(['no-store', 'no-cache'])
     })
 
-    test('the thread scan places what it finds, and the filter keeps those branches', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('the thread scan places what it finds, and the filter keeps those branches', async ({ context, answerAs }) => {
         const LEAF = 't1_leaf'
         const OTHER = 't1_other'
-        await answerAs(context, {
+        await answerAs({
             '/r/pics/comments/abc123/.rss?limit=500': threadFeed.replace(
                 '</feed>',
                 `${entry(OTHER, 'bystander', 'Words')}</feed>`,
@@ -1416,11 +1313,8 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(page.locator(`[thingid="${OTHER}"]`)).toBeVisible()
     })
 
-    test("a tombstone's restore link goes once a scan has filled it in", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await answerAs(context, THE_REMOVED_WORDS)
+    test("a tombstone's restore link goes once a scan has filled it in", async ({ context, answerAs }) => {
+        await answerAs(THE_REMOVED_WORDS)
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST), removedAtTop))
         await expect(page.locator(RESTORE)).toHaveCount(1)
         await page.locator('.rev-scan-all-btn').click()
@@ -1428,10 +1322,7 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(page.locator(RESTORE)).toBeHidden()
     })
 
-    test('a tombstone in any language offers restore, not Scan-Rev', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('a tombstone in any language offers restore, not Scan-Rev', async ({ context }) => {
         const german = thread(comment(FIRST, { replies: removedWithReply })).replace(
             'Comment removed by moderator',
             'Von Moderator*innen entfernter Kommentar',
@@ -1442,15 +1333,15 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(rowOf(page, REMOVED).locator(SCAN)).toHaveCount(0)
     })
 
-    test("a user's own deletion and a deleted account's live comment offer no restore", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test("a user's own deletion and a deleted account's live comment offer no restore", async ({ context }) => {
         const deletedByAuthor = comment(REMOVED, { author: '[deleted]' }).replace(
             '<shreddit-comment ',
             '<shreddit-comment is-comment-deleted ',
         )
-        const deletedAccount = comment('t1_account', { text: 'Words' }).replace('author="someone"', 'author="[deleted]"')
+        const deletedAccount = comment('t1_account', { text: 'Words' }).replace(
+            'author="someone"',
+            'author="[deleted]"',
+        )
         const page = await openNewReddit(context, THREAD, thread(deletedByAuthor, deletedAccount))
         await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
         await settle(page)
@@ -1459,12 +1350,14 @@ test.describe("Scans on new reddit's comments", () => {
 
     test("the filter keeps one's own removed comment, and needs no parentid to find replies", async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+        installed,
+        answerAs,
+        seedOwnRemoved,
     }) => {
         const OTHER = 't1_other'
-        await installed(context)
-        await seedOwnRemoved(context, OTHER)
-        await answerAs(context, THE_REMOVED_WORDS)
+        await installed()
+        await seedOwnRemoved(OTHER)
+        await answerAs(THE_REMOVED_WORDS)
         const page = await openNewReddit(
             context,
             THREAD,
@@ -1482,15 +1375,16 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(page.locator('[thingid="t1_quiet"]')).toBeHidden()
     })
 
-    test('Scan-Rev hides while it searches, and cancel stops the search', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await answerAs(context, THE_REMOVED_WORDS)
+    test('Scan-Rev hides while it searches, and cancel stops the search', async ({ context, answerAs, askedFor }) => {
+        await answerAs(THE_REMOVED_WORDS)
         const page = await openNewReddit(
             context,
             THREAD,
-            thread(comment(FIRST, { author: 'bystander' }), comment('t1_b', { author: 'b' }), comment('t1_c', { author: 'c' })),
+            thread(
+                comment(FIRST, { author: 'bystander' }),
+                comment('t1_b', { author: 'b' }),
+                comment('t1_c', { author: 'c' }),
+            ),
         )
         await stampRows(page)
         const button = rowOf(page, FIRST).locator(SCAN)
@@ -1504,20 +1398,20 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(button).toBeVisible()
         await expect(page.locator('.rev-scan-exhausted')).toHaveCount(0)
 
-        const sent = (await askedFor(context)).length
+        const sent = (await askedFor()).length
         await page.waitForTimeout(2000)
-        expect(await askedFor(context)).toHaveLength(sent)
+        expect(await askedFor()).toHaveLength(sent)
     })
 
-    test('a search dims the restore links, and a thread scan can be cancelled', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await answerAs(context, THE_REMOVED_WORDS)
+    test('a search dims the restore links, and a thread scan can be cancelled', async ({ context, answerAs }) => {
+        await answerAs(THE_REMOVED_WORDS)
         const page = await openNewReddit(
             context,
             THREAD,
-            thread(comment(FIRST, { author: 'bystander', replies: removedWithReply }), comment('t1_b', { author: 'b' })),
+            thread(
+                comment(FIRST, { author: 'bystander', replies: removedWithReply }),
+                comment('t1_b', { author: 'b' }),
+            ),
         )
         await page.locator('.rev-scan-all-btn').click()
         await expect(page.locator(`${RESTORE}.rev-scan-disabled`)).toHaveCount(1)
@@ -1534,13 +1428,14 @@ test.describe("Scans on new reddit's comments", () => {
 
     test('a scan left running stops, and leaves the next post alone', async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+        worker,
+        answerAs,
+        askedFor,
     }) => {
-        await answerAs(context, THE_REMOVED_WORDS)
+        await answerAs(THE_REMOVED_WORDS)
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST), removedAtTop))
         await startRouter(page)
         // The scan's first read is still out when the page changes
-        const [worker] = context.serviceWorkers()
         await worker.evaluate(() => {
             const answered = self.fetch
             const held = new Promise(resolve => (self.answerNow = resolve))
@@ -1561,14 +1456,11 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(page.locator('[thingid="t1_next"]')).toBeVisible()
         await expect(page.locator('.rev-scan-exhausted')).toHaveCount(0)
         await expect(page.locator('.rev-scan-all-btn')).toBeEnabled()
-        expect(await askedFor(context)).toEqual([THREAD_FEED_PATH])
+        expect(await askedFor()).toEqual([THREAD_FEED_PATH])
     })
 
-    test("a post's scan isn't answered from another post's reads", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await answerAs(context, {
+    test("a post's scan isn't answered from another post's reads", async ({ context, answerAs, askedFor }) => {
+        await answerAs({
             ...THE_REMOVED_WORDS,
             '/r/pics/comments/def456/.rss?limit=500': feed(entry(NEXT_POST, 'op', 'The post')),
         })
@@ -1581,14 +1473,11 @@ test.describe("Scans on new reddit's comments", () => {
 
         await page.locator('.rev-scan-all-btn').click()
         await expect
-            .poll(() => askedFor(context).then(asked => asked.filter(path => path === userFeed('someone')).length))
+            .poll(() => askedFor().then(asked => asked.filter(path => path === userFeed('someone')).length))
             .toBe(2)
     })
 
-    test('a post on a profile gets no comment buttons, even after a thread', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('a post on a profile gets no comment buttons, even after a thread', async ({ context }) => {
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await expect(page.locator('.rev-scan-all-btn')).toHaveCount(1)
         await settle(page)
@@ -1616,14 +1505,11 @@ test.describe("Scans on new reddit's comments", () => {
     const oldProfile = (...things) =>
         `<!doctype html><html><body><div class="content" role="main"><div id="siteTable">${things.join('')}</div></div></body></html>`
 
-    test('a removed item goes by date on a page that mixes posts and comments', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('a removed item goes by date on a page that mixes posts and comments', async ({ context, answerAs }) => {
         const hoursAgo = hours => new Date(Date.now() - hours * 3600 * 1000).toISOString()
         const dated = (id, hours) => thing(id).replace('<p>', `<time datetime="${hoursAgo(hours)}"></time><p>`)
         const query = 'sort=new&limit=100'
-        await answerAs(context, {
+        await answerAs({
             ...oneRemovedOnProfile(),
             [`/user/other/comments/.rss?${query}`]: feed(
                 entry('t1_c1', 'other', 'Words'),
@@ -1647,13 +1533,10 @@ test.describe("Scans on new reddit's comments", () => {
         expect(order).toEqual(['t3_post1', 't1_c1', 't3_post2', 't1_gone', 't1_c2'])
     })
 
-    test("a comment's search leaves the buttons of comments that need another sort", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test("a comment's search leaves the buttons of comments that need another sort", async ({ context, answerAs }) => {
         const eightMonthsAgo = new Date(Date.now() - 240 * 24 * 3600 * 1000).toISOString()
         const OLD = 't1_old'
-        await answerAs(context, {
+        await answerAs({
             [THREAD_FEED_PATH]: feed(entry(POST, 'op', 'The post')),
             [userFeed('op')]: feed(),
             [userFeed('someone')]: feed(),
@@ -1675,9 +1558,10 @@ test.describe("Scans on new reddit's comments", () => {
 
     test('a rescan reads again, and one that fails leaves the whole page showing', async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+        answerAs,
+        askedFor,
     }) => {
-        await answerAs(context, oneRemovedOnProfile())
+        await answerAs(oneRemovedOnProfile())
         const url = 'https://old.reddit.com/user/other/comments/'
         const page = await open(context, url, oldProfile(thing('t1_live')))
         const button = page.locator('.rev-profile-scan-btn')
@@ -1687,19 +1571,16 @@ test.describe("Scans on new reddit's comments", () => {
 
         await button.click()
         await expect(button).toHaveText('Rescan', { timeout: 15000 })
-        expect((await askedFor(context)).filter(path => path === LOOKUP)).toHaveLength(2)
+        expect((await askedFor()).filter(path => path === LOOKUP)).toHaveLength(2)
 
-        await answerAs(context, {})
+        await answerAs({})
         await button.click()
         await expect(page.locator('.rev-profile-scan-progress')).toHaveText('User not found.', { timeout: 15000 })
         await expect(page.locator('[data-fullname="t1_live"]')).toBeVisible()
     })
 
-    test('a page left during a search comes back ready to search', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await answerAs(context, THE_REMOVED_WORDS)
+    test('a page left during a search comes back ready to search', async ({ context, answerAs }) => {
+        await answerAs(THE_REMOVED_WORDS)
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST), removedAtTop))
         await stampRows(page)
         await startRouter(page)
@@ -1713,12 +1594,9 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(page.locator('.rev-scan-disabled')).toHaveCount(0)
     })
 
-    test('what each click recovers goes in one place for unattached comments', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('what each click recovers goes in one place for unattached comments', async ({ context, answerAs }) => {
         const orphan = (id, author, parent) => feed(entry(POST, 'op', 'The post'), entry(parent, author, 'A parent'))
-        await answerAs(context, {
+        await answerAs({
             [THREAD_FEED_PATH]: feed(entry(POST, 'op', 'The post')),
             [userFeed('op')]: feed(),
             [userFeed('someone')]: feed(entry('t1_orphan1', 'someone', 'First')),
@@ -1741,11 +1619,8 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(page.locator('.rev-unattached-area')).toHaveCount(1)
     })
 
-    test('placing unattached comments stops with its page', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await answerAs(context, {
+    test('placing unattached comments stops with its page', async ({ context, answerAs }) => {
+        await answerAs({
             [THREAD_FEED_PATH]: feed(entry(POST, 'op', 'The post')),
             [userFeed('op')]: feed(),
             [userFeed('someone')]: feed(entry('t1_orphan', 'someone', 'First')),
@@ -1771,9 +1646,10 @@ test.describe("Scans on new reddit's comments", () => {
 
     test('a profile scan left running stops, and leaves the next page alone', async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+        answerAs,
+        askedFor,
     }) => {
-        await answerAs(context, oneRemovedOnProfile())
+        await answerAs(oneRemovedOnProfile())
         const page = await openNewReddit(context, '/user/other/', '<shreddit-feed></shreddit-feed>')
         await startRouter(page)
         await page.locator('.rev-profile-scan-btn').click()
@@ -1783,27 +1659,22 @@ test.describe("Scans on new reddit's comments", () => {
 
         await expect(page.locator('[data-post-id="t3_home"]')).toBeVisible()
         await expect(page.locator(RECOVERED)).toHaveCount(0)
-        expect((await askedFor(context)).length).toBeLessThan(3)
+        expect((await askedFor()).length).toBeLessThan(3)
     })
 
-    test("one's own profile offers a scan for posts", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await setOptions(context, { show_scan_on_own_profile: true })
-        await context
-            .serviceWorkers()[0]
-            .evaluate(() => chrome.storage.local.set({ last_logged_in_user: 'someone' }))
+    test("one's own profile offers a scan for posts", async ({ context, worker, setOptions }) => {
+        await setOptions({ show_scan_on_own_profile: true })
+        await worker.evaluate(() => chrome.storage.local.set({ last_logged_in_user: 'someone' }))
         const page = await openNewReddit(context, '/user/someone/', '<shreddit-feed></shreddit-feed>')
         await expect(page.locator('.rev-profile-scan-btn')).toHaveText('Scan for removed posts')
     })
 
     test('a profile scan puts what it finds where the sort has it, on a page sorted by top', async ({
         context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
+        answerAs,
     }) => {
         const query = 'sort=top&limit=100'
-        await answerAs(context, {
+        await answerAs({
             [`/user/other/comments/.rss?${query}`]: feed(
                 entry('t1_high', 'other', 'Words'),
                 entry('t1_gone', 'other', 'The removed words'),
@@ -1825,11 +1696,8 @@ test.describe("Scans on new reddit's comments", () => {
         expect(order).toEqual(['t1_high', 't1_gone', 't1_low'])
     })
 
-    test("one's own removed comment is highlighted, not the replies inside it", async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
-        await seedOwnRemoved(context, FIRST)
+    test("one's own removed comment is highlighted, not the replies inside it", async ({ context, seedOwnRemoved }) => {
+        await seedOwnRemoved(FIRST)
         const page = await openNewReddit(
             context,
             THREAD,
@@ -1839,10 +1707,7 @@ test.describe("Scans on new reddit's comments", () => {
         await expect(page.locator('.rev-removed-highlight')).toHaveCount(1)
     })
 
-    test('a logged-out browser is asked to sign in, and nothing is sent', async ({
-        context,
-        extensionId, // eslint-disable-line no-unused-vars -- waits for the service worker
-    }) => {
+    test('a logged-out browser is asked to sign in, and nothing is sent', async ({ context }) => {
         const page = await openNewReddit(context, THREAD, thread(comment(FIRST)))
         await page.locator('.rev-scan-all-btn').click()
         await expect(page.locator('.rev-scan-all-progress')).toContainText('Sign in to Reddit to scan')
@@ -1850,7 +1715,7 @@ test.describe("Scans on new reddit's comments", () => {
 })
 
 test.describe('Welcome page', () => {
-    test('renders welcome UI with connection check', async ({ context, extensionId }) => {
+    test('renders welcome UI with connection check', async ({ context, openPage }) => {
         // The rendered state depends on the connection check: "Getting started"
         // only appears after /api/me.json resolves with no user. Stub it so the
         // test exercises the UI deterministically — against live Reddit this
@@ -1859,8 +1724,7 @@ test.describe('Welcome page', () => {
         await context.route('**/api/me.json*', route =>
             route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
         )
-        const page = await context.newPage()
-        await page.goto(`chrome-extension://${extensionId}/src/welcome.html`)
+        const page = await openPage('welcome.html')
 
         // Welcome header
         await expect(page.locator('h1')).toContainText('Welcome to reveddit real-time')
@@ -1883,9 +1747,8 @@ test.describe('Reddit thread pages', () => {
     // Before 0.0.4.0, a scan meant for spans read the text of every element,
     // <html> included, a few times per page view. Threads froze for seconds at
     // a time (the survey's reports of 2026-02-21 and 2026-03-05).
-    test('a long thread is not held up by the content script', async ({ context, extensionId }) => {
-        // extensionId waits for the worker. The page's removal check stays off reddit.
-        const [worker] = context.serviceWorkers()
+    test('a long thread is not held up by the content script', async ({ context, worker }) => {
+        // The page's removal check stays off reddit
         await worker.evaluate(() => {
             self.fetch = async () => new Response('', { status: 404 })
         })
