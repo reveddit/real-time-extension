@@ -262,45 +262,29 @@ function attach(el: HTMLElement, { container, prepend }: Placement) {
     else container.appendChild(el)
 }
 
-// Returns/creates the slot that holds a recovered comment's own children.
-function childSlotOf(el: HTMLElement): HTMLElement {
-    let slot = el.querySelector(':scope > .rev-rec-children') as HTMLElement | null
-    if (!slot) {
-        slot = document.createElement('div')
-        slot.className = 'rev-rec-children'
-        el.appendChild(slot)
-    }
-    return slot
-}
-
-// Returns/creates the child comment listing of a native old-reddit comment.
-function oldRedditChildListing(nativeEl: HTMLElement): HTMLElement {
-    openComment(nativeEl)
-    let child = nativeEl.querySelector(':scope > .child') as HTMLElement | null
+// Returns/creates the div that is a direct child of host and matches selector.
+function childDiv(host: Element, selector: string, className: string): HTMLElement {
+    let child = host.querySelector(`:scope > ${selector}`) as HTMLElement | null
     if (!child) {
         child = document.createElement('div')
-        child.className = 'child'
-        nativeEl.appendChild(child)
+        child.className = className
+        host.appendChild(child)
     }
-    let listing = child.querySelector(':scope > .sitetable') as HTMLElement | null
-    if (!listing) {
-        listing = document.createElement('div')
-        listing.className = 'sitetable listing'
-        child.appendChild(listing)
-    }
-    return listing
+    return child
+}
+
+// The slot that holds a recovered comment's own children.
+const childSlotOf = (el: Element) => childDiv(el, '.rev-rec-children', 'rev-rec-children')
+
+// The child comment listing of a native old-reddit comment.
+function oldRedditChildListing(nativeEl: HTMLElement): HTMLElement {
+    openComment(nativeEl)
+    return childDiv(childDiv(nativeEl, '.child', 'child'), '.sitetable', 'sitetable listing')
 }
 
 function newRedditChildSlot(parentComment: HTMLElement): HTMLElement {
     openComment(parentComment)
-    const replies = ownPart(parentComment, '#comment-children') || parentComment
-    let wrapper = replies.querySelector(':scope > .rev-rec-children') as HTMLElement | null
-    if (!wrapper) {
-        wrapper = document.createElement('div')
-        wrapper.className = 'rev-rec-children'
-        replies.appendChild(wrapper)
-    }
-    return wrapper
+    return childSlotOf(ownPart(parentComment, '#comment-children') || parentComment)
 }
 
 function recoveredMeta(rc: RecoveredComment): HTMLElement {
