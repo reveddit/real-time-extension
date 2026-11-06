@@ -1,8 +1,7 @@
-(()=>{"use strict";var e,t,r,o={1005:(e,t,r)=>{const o={tokenFields:["jsc_token","token"],solutionRegex:'await\\(async e=>e\\+e\\)\\("([^"]*)"\\)'}},9947:(e,t,r)=>{r.d(t,{yK:()=>n});r(7785),r(3150);const o="notifyme";function n(e){chrome.alarms.clear(o),chrome.alarms.create(o,{delayInMinutes:1,periodInMinutes:e})}},4007:(e,t,r)=>{r(3150);new Set(["cycle","auth","feed","ratelimit","news","ui"]);new Set},4976:(e,t,r)=>{const o={paths:["/login","/account/login","/register","/account/register"],markers:[]}},9244:(e,t,r)=>{const o={commentIdAttributes:["thingId","thing-id"],postIdAttributes:["id"],postBannerSlots:["post-removed-banner"],commentButtonSlots:["comment-share"],postButtonSlots:["action-row-whitespace"]}},5302:(e,t,r)=>{r.d(t,{Ws:()=>a});r(4007),r(1005),r(9244),r(4976);const o="news_cache",n=()=>new Promise((e=>{try{chrome.storage.local.get([o],(t=>{e(t&&t[o]||null)}))}catch{e(null)}})),a=async()=>(await n())?.feed?.options?.scan_limits??{}},6155:(e,t,r)=>{var o=r(5893),n=r(7294),a=r(745),i=r(3867),s=r(7785);const c=e=>new Date(e).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});var d=r(9947),l=r(917);const u={sm:"4px",md:"6px",lg:"8px",pill:"999px"},h={xs:"4px",sm:"8px",md:"12px",lg:"16px",xl:"24px"},g={body:'-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',mono:"ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"},m=l.iv`
+(()=>{"use strict";var e,t,r,o={307:(e,t,r)=>{var o=r(893),n=r(294),a=r(206);const i="notifyme";var s=r(150),c=r.n(s);new Set(["cycle","auth","feed","ratelimit","news","ui"]);new Set;const d={tokenFields:["jsc_token","token"],solutionRegex:'await\\(async e=>e\\+e\\)\\("([^"]*)"\\)'};const l={commentIdAttributes:["thingId","thing-id"],postIdAttributes:["id"],postBannerSlots:["post-removed-banner"],commentButtonSlots:["comment-share"],postButtonSlots:["action-row-whitespace"]};const u={paths:["/login","/account/login","/register","/account/register"],markers:[]};const h="news_cache",g=(...e)=>new Promise((t=>{try{chrome.storage.local.get(e,(e=>t(e||{})))}catch{t({})}})),m=async()=>(await g(h))[h]||null,b=async()=>(await m())?.feed?.options||{},p=(e,t,r)=>["number","string"].includes(typeof e)&&Number(e)>=t&&Number(e)<=r,f=e=>p(e,10,100)&&Number.isInteger(Number(e)),v=e=>p(e,1,60),x=e=>({readsPerClick:f(e?.scan_reads_per_click)?Number(e.scan_reads_per_click):20,seconds:v(e?.scan_seconds_between_reads)?Number(e.scan_seconds_between_reads):3}),y=e=>c().storage.sync.get(["options"]).then((t=>e((t||{}).options))).catch((t=>(console.log(t),e({}))));Promise.resolve();const k=e=>new Date(e).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});var w=r(745),j=r(917);const _={sm:"4px",md:"6px",lg:"8px",pill:"999px"},C={xs:"4px",sm:"8px",md:"12px",lg:"16px",xl:"24px"},$={body:'-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',mono:"ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"},S=j.iv`
     :root {
         /* Backgrounds */
         --bg-primary: #1a1b1e;
-        --bg-secondary: #111214;
         --bg-surface: #25262b;
         --bg-surface-hover: #2c2d33;
 
@@ -14,7 +13,6 @@
 
         /* Accent / brand */
         --accent: #e03e3e;
-        --accent-dim: #c13030;
         --accent-hover: #e85555;
 
         /* Links */
@@ -23,10 +21,6 @@
 
         /* Semantic */
         --author: #6a98af;
-        --submitter: #2b7de9;
-        --moderator: #2ea043;
-        --admin: #e03e3e;
-        --quarantined: #ffd635;
 
         /* Removed / deleted indicators */
         --removed-bg: rgba(99, 54, 54, 1);
@@ -54,15 +48,11 @@
         --input-border: #373a40;
         --input-focus: #74b3e0;
 
-        /* Scores & meta */
-        --meta: #909296;
-
         color-scheme: dark;
     }
 
     :root[data-theme='light'] {
         --bg-primary: #ffffff;
-        --bg-secondary: #f8f9fa;
         --bg-surface: #f1f3f5;
         --bg-surface-hover: #e9ecef;
 
@@ -72,16 +62,12 @@
         --text-on-accent: #ffffff;
 
         --accent: #c92a2a;
-        --accent-dim: #a82828;
         --accent-hover: #e03131;
 
         --link: #1971c2;
         --link-hover: #1c7ed6;
 
         --author: #3a6f8a;
-        --submitter: #1864ab;
-        --moderator: #2b8a3e;
-        --admin: #c92a2a;
 
         --removed-bg: rgba(255, 230, 230, 1);
         --removed-border: #c92a2a;
@@ -106,17 +92,15 @@
         --input-border: #ced4da;
         --input-focus: #1971c2;
 
-        --meta: #868e96;
-
         color-scheme: light;
     }
-`,b=l.iv`
+`,R=j.iv`
     html,
     body {
         margin: 0;
         background: var(--bg-primary);
         color: var(--text-primary);
-        font-family: ${g.body};
+        font-family: ${$.body};
         font-size: 14px;
         line-height: 1.45;
     }
@@ -138,7 +122,7 @@
     hr {
         border: 0;
         border-top: 1px solid var(--border);
-        margin: ${h.md} 0;
+        margin: ${C.md} 0;
     }
 
     h1,
@@ -149,15 +133,15 @@
     }
     h1 {
         font-size: 22px;
-        margin: 0 0 ${h.lg} 0;
+        margin: 0 0 ${C.lg} 0;
     }
     h2 {
         font-size: 18px;
-        margin: 0 0 ${h.md} 0;
+        margin: 0 0 ${C.md} 0;
     }
     h3 {
         font-size: 16px;
-        margin: 0 0 ${h.sm} 0;
+        margin: 0 0 ${C.sm} 0;
     }
 
     button {
@@ -172,7 +156,7 @@
         background: var(--input-bg);
         color: var(--text-primary);
         border: 1px solid var(--input-border);
-        border-radius: ${u.sm};
+        border-radius: ${_.sm};
         padding: 6px 8px;
         font-family: inherit;
         font-size: inherit;
@@ -185,7 +169,7 @@
     input[type='checkbox'] {
         accent-color: var(--link);
     }
-`,p=l.iv`
+`,Z=j.iv`
     .md-body {
         word-break: break-word;
         color: var(--text-primary);
@@ -220,14 +204,14 @@
         overflow: auto;
         border: 1px solid var(--code-border);
         background: var(--code-bg);
-        border-radius: ${u.md};
+        border-radius: ${_.md};
     }
     .md-body code {
         background: var(--code-bg);
         border: 1px solid var(--code-border);
         border-radius: 3px;
         padding: 0 4px;
-        font-family: ${g.mono};
+        font-family: ${$.mono};
         font-size: 0.92em;
     }
     .md-body pre code {
@@ -249,21 +233,21 @@
     .md-body > *:last-child {
         margin-bottom: 0;
     }
-`,f="ui_theme";function x(e){const t="auto"===e?window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark":e;document.documentElement.setAttribute("data-theme",t)}function v(){return(0,n.useEffect)((()=>{try{chrome.storage.local.get([f],(e=>{x(e?.[f]||"auto")}))}catch{x("auto")}const e=window.matchMedia?.("(prefers-color-scheme: light)"),t=()=>{try{chrome.storage.local.get([f],(e=>{"auto"===(e?.[f]||"auto")&&x("auto")}))}catch(e){}};e?.addEventListener?.("change",t);const r=(e,t)=>{"local"===t&&e[f]&&x(e[f].newValue||"auto")};return chrome.storage.onChanged.addListener(r),()=>{e?.removeEventListener?.("change",t),chrome.storage.onChanged.removeListener(r)}}),[]),(0,o.jsxs)(o.Fragment,{children:[(0,o.jsx)(l.xB,{styles:m}),(0,o.jsx)(l.xB,{styles:b}),(0,o.jsx)(l.xB,{styles:p})]})}const y=i.Z.a`
+`,z="ui_theme";function M(e){document.documentElement.setAttribute("data-theme",function(e){return"auto"===e?window.matchMedia?.("(prefers-color-scheme: light)").matches?"light":"dark":e}(e))}function O(){return(0,n.useEffect)((()=>{try{chrome.storage.local.get([z],(e=>{M(e?.[z]||"auto")}))}catch{M("auto")}const e=window.matchMedia?.("(prefers-color-scheme: light)"),t=()=>{try{chrome.storage.local.get([z],(e=>{"auto"===(e?.[z]||"auto")&&M("auto")}))}catch(e){}};e?.addEventListener?.("change",t);const r=(e,t)=>{"local"===t&&e[z]&&M(e[z].newValue||"auto")};return chrome.storage.onChanged.addListener(r),()=>{e?.removeEventListener?.("change",t),chrome.storage.onChanged.removeListener(r)}}),[]),(0,o.jsxs)(o.Fragment,{children:[(0,o.jsx)(j.xB,{styles:S}),(0,o.jsx)(j.xB,{styles:R}),(0,o.jsx)(j.xB,{styles:Z})]})}const I=a.Z.a`
     color: var(--link);
     text-decoration: none;
     &:hover {
         color: var(--link-hover);
         text-decoration: underline;
     }
-`,k=(i.Z.a`
+`,E=(a.Z.a`
     color: var(--text-secondary);
     text-decoration: none;
     &:hover {
         color: var(--link-hover);
         text-decoration: underline;
     }
-`,i.Z.button`
+`,a.Z.button`
     display: block;
     width: 100%;
     margin-top: 6px;
@@ -271,7 +255,7 @@
     background: var(--accent);
     color: var(--text-on-accent);
     border: 0;
-    border-radius: ${u.md};
+    border-radius: ${_.md};
     cursor: pointer;
     font-size: 0.95em;
     font-weight: 600;
@@ -284,20 +268,20 @@
         color: var(--text-muted);
         cursor: wait;
     }
-`),j=((0,i.Z)(k)`
+`),T=((0,a.Z)(E)`
     background: var(--button-bg);
     color: var(--button-text);
     border: 1px solid var(--border);
     &:hover {
         background: var(--bg-surface-hover);
     }
-`,i.Z.button`
+`,a.Z.button`
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
     padding: 6px 12px;
-    border-radius: ${u.md};
+    border-radius: ${_.md};
     font-size: 0.92em;
     font-weight: 600;
     cursor: pointer;
@@ -306,21 +290,21 @@
         background 0.15s ease,
         border-color 0.15s ease,
         color 0.15s ease;
-    ${e=>{switch(e.variant){case"secondary":return l.iv`
+    ${e=>{switch(e.variant){case"secondary":return j.iv`
                     background: var(--button-bg);
                     color: var(--button-text);
                     border-color: var(--border);
                     &:hover {
                         background: var(--bg-surface-hover);
                     }
-                `;case"ghost":return l.iv`
+                `;case"ghost":return j.iv`
                     background: transparent;
                     color: var(--link);
                     border-color: transparent;
                     &:hover {
                         background: var(--bg-surface-hover);
                     }
-                `;default:return l.iv`
+                `;default:return j.iv`
                     background: var(--accent);
                     color: var(--text-on-accent);
                     border-color: var(--accent);
@@ -333,29 +317,17 @@
         opacity: 0.6;
         cursor: not-allowed;
     }
-`),w=i.Z.div`
+`),L={warning:["var(--locked-bg)","var(--locked-border)","var(--text-primary)"],success:["var(--approved-bg)","var(--approved-border)","var(--text-primary)"],info:["var(--bg-surface)","var(--border)","var(--text-secondary)"]},N=a.Z.div`
     padding: 10px 12px;
     margin: 6px 0;
-    border-radius: ${u.md};
+    border-radius: ${_.md};
     font-size: 0.92em;
-    ${e=>{switch(e.variant){case"warning":return l.iv`
-                    background: var(--locked-bg);
-                    border: 1px solid var(--locked-border);
-                    color: var(--text-primary);
-                `;case"success":return l.iv`
-                    background: var(--approved-bg);
-                    border: 1px solid var(--approved-border);
-                    color: var(--text-primary);
-                `;case"news":return l.iv`
-                    background: var(--note-bg);
-                    border: 1px solid var(--border-light);
-                    color: var(--text-primary);
-                `;default:return l.iv`
-                    background: var(--bg-surface);
-                    border: 1px solid var(--border);
-                    color: var(--text-secondary);
-                `}}}
-`,_=(i.Z.span`
+    ${e=>{const[t,r,o]=L[e.variant]??L.info;return j.iv`
+            background: ${t};
+            border: 1px solid ${r};
+            color: ${o};
+        `}}
+`,B=(a.Z.span`
     display: inline-block;
     width: 14px;
     height: 14px;
@@ -370,142 +342,131 @@
             transform: rotate(360deg);
         }
     }
-`,i.Z.div`
+`,a.Z.div`
     background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: ${u.lg};
-    padding: ${h.md} ${h.lg};
-    margin-bottom: ${h.md};
+    border-radius: ${_.lg};
+    padding: ${C.md} ${C.lg};
+    margin-bottom: ${C.md};
     transition: border-color 0.15s ease;
     &:hover {
         border-color: var(--border-light);
     }
-`,i.Z.div`
+`,a.Z.div`
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: ${h.sm};
-    margin-bottom: ${h.xs};
-`,i.Z.div`
+    gap: ${C.sm};
+    margin-bottom: ${C.xs};
+`,a.Z.div`
     display: flex;
     flex-wrap: wrap;
-    gap: ${h.sm};
+    gap: ${C.sm};
     color: var(--text-secondary);
     font-size: 0.85em;
-    margin-bottom: ${h.sm};
+    margin-bottom: ${C.sm};
     & > span + span::before {
         content: '·';
-        margin-right: ${h.sm};
+        margin-right: ${C.sm};
         color: var(--text-muted);
     }
-`,i.Z.div`
+`,a.Z.div`
     color: var(--text-primary);
     font-size: 0.95em;
-`,i.Z.div`
+`,a.Z.div`
     display: flex;
-    gap: ${h.sm};
-    margin-top: ${h.sm};
-    padding-top: ${h.sm};
+    gap: ${C.sm};
+    margin-top: ${C.sm};
+    padding-top: ${C.sm};
     border-top: 1px solid var(--border);
-`,i.Z.span`
+`,{removed:["var(--removed-bg)","var(--removed-border)","var(--removed-text)"],deleted:["var(--deleted-bg)","var(--deleted-border)","var(--deleted-text)"],approved:["var(--approved-bg)","var(--approved-border)","var(--text-primary)"],locked:["var(--locked-bg)","var(--locked-border)","var(--text-primary)"],unlocked:["var(--approved-bg)","var(--approved-border)","var(--text-primary)"],edited:["var(--bg-surface-hover)","var(--border)","var(--text-primary)"],default:["var(--bg-surface-hover)","var(--border)","var(--text-secondary)"]}),F=(a.Z.span`
     display: inline-flex;
     align-items: center;
     padding: 3px 10px;
-    border-radius: ${u.pill};
+    border-radius: ${_.pill};
     font-weight: 700;
     font-size: 0.75em;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     white-space: nowrap;
     border: 1px solid transparent;
-    ${e=>{switch(e.variant){case"removed":return l.iv`
-                    background: var(--removed-bg);
-                    border-color: var(--removed-border);
-                    color: var(--removed-text);
-                `;case"deleted":return l.iv`
-                    background: var(--deleted-bg);
-                    border-color: var(--deleted-border);
-                    color: var(--deleted-text);
-                `;case"approved":case"unlocked":return l.iv`
-                    background: var(--approved-bg);
-                    border-color: var(--approved-border);
-                    color: var(--text-primary);
-                `;case"locked":return l.iv`
-                    background: var(--locked-bg);
-                    border-color: var(--locked-border);
-                    color: var(--text-primary);
-                `;case"edited":return l.iv`
-                    background: var(--bg-surface-hover);
-                    border-color: var(--border);
-                    color: var(--text-primary);
-                `;default:return l.iv`
-                    background: var(--bg-surface-hover);
-                    border-color: var(--border);
-                    color: var(--text-secondary);
-                `}}}
-`,i.Z.h2`
+    ${e=>{const[t,r,o]=B[e.variant??"default"]??B.default;return j.iv`
+            background: ${t};
+            border-color: ${r};
+            color: ${o};
+        `}}
+`,a.Z.h2`
     font-size: 0.78em;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--text-secondary);
-    margin: ${h.lg} 0 ${h.sm} 0;
-    padding-bottom: ${h.xs};
+    margin: ${C.lg} 0 ${C.sm} 0;
+    padding-bottom: ${C.xs};
     border-bottom: 1px solid var(--border);
-`);i.Z.label`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: ${h.md};
-    padding: ${h.sm} 0;
-    & > span.label {
-        color: var(--text-primary);
-        font-size: 0.95em;
-    }
-    & > span.hint {
-        color: var(--text-muted);
-        font-size: 0.82em;
-        display: block;
-        margin-top: 2px;
-    }
-`,i.Z.div`
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-width: 0;
-`,i.Z.input`
-    width: 80px;
-    text-align: right;
-`,i.Z.input`
-    width: 100%;
-`,i.Z.span`
+`),P=(a.Z.span`
     color: var(--author);
     font-weight: 600;
-`,i.Z.span`
+`,a.Z.span`
     color: var(--text-secondary);
-`,i.Z.h3`
-    margin: ${h.xs} 0 ${h.sm} 0;
+`,a.Z.h3`
+    margin: ${C.xs} 0 ${C.sm} 0;
     color: var(--text-primary);
-`,i.Z.div`
+`,a.Z.div`
     font-size: 0.95em;
-`;r(3150),r(4007);var C=r(5302);const $="viewer_account",S="viewer_connect",Z="viewer_connect_result",R=(e,t)=>!!e&&!!t&&e.toLowerCase()===t.toLowerCase(),z=()=>{try{return!!globalThis.chrome?.extension?.inIncognitoContext}catch{return!1}};Promise.resolve();const O="viewer_identity",I="https://www.reveddit.com/about/reddit-login/",M=i.Z.div`
+`,a.Z.div`
+    max-width: 820px;
+    margin: 0 auto;
+    padding: ${C.xl} ${C.lg};
+`,a.Z.p`
+  color: var(--text-secondary);
+  font-size: 0.88em;
+  margin: ${C.sm} 0;
+`),A=a.Z.div`
+  display: flex;
+  gap: ${C.sm};
+  margin-top: ${C.sm};
+`,D=chrome.runtime.sendMessage,Y=chrome.runtime,H="rv_legacy=1",q=(new RegExp("[?&]"+H+"(&|$)"),"viewer_account"),U="viewer_connect",W="viewer_connect_result",V=(e,t)=>!!e&&!!t&&e.toLowerCase()===t.toLowerCase(),G=()=>{try{return!!globalThis.chrome?.extension?.inIncognitoContext}catch{return!1}};Promise.resolve();const J="viewer_identity",K="https://www.reveddit.com/about/reddit-login/",Q={same_account:"That's your main account. Connect a different one.",not_signed_in:"The sign-in ended before an account signed in. Your own login is back.",unconfirmed:"Reddit didn't say which account signed in, so the sign-in was undone. Your own login is back. Try again in a few minutes.",cancelled:"Sign-in cancelled. Your own login is back.",timed_out:"The sign-in took too long, so it ended. Your own login is back.",no_tab:"Couldn't open Reddit's login page."},X=6e5,ee=a.Z.dialog`
+  max-width: 400px;
+  padding: ${C.lg};
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: ${_.lg};
+  &::backdrop {
+    background: rgba(0, 0, 0, 0.45);
+  }
+  h3 {
+    margin: 0 0 ${C.sm};
+    font-size: 1em;
+  }
+  p {
+    margin: 0 0 ${C.md};
+    color: var(--text-secondary);
+    font-size: 0.92em;
+  }
+`,te=a.Z.div`
+  display: flex;
+  justify-content: flex-end;
+  gap: ${C.sm};
+`,re=8;function oe({anchor:e,title:t,text:r,confirmLabel:a,onConfirm:i,onCancel:s}){const c=(0,n.useRef)(null);return(0,n.useEffect)((()=>{const t=c.current;if(e&&t&&!t.open){t.showModal();const r=e.getBoundingClientRect(),o=t.offsetHeight,n=Math.max(re,Math.min(r.top+r.height/2-o/2,window.innerHeight-o-re));t.style.margin=`${n}px auto auto`}!e&&t?.open&&t.close()}),[e]),(0,o.jsxs)(ee,{ref:c,"aria-label":t,onCancel:e=>{e.preventDefault(),s()},children:[(0,o.jsx)("h3",{children:t}),(0,o.jsx)("p",{children:r}),(0,o.jsxs)(te,{children:[(0,o.jsx)(T,{variant:"secondary",onClick:s,children:"cancel"}),(0,o.jsx)(T,{variant:"primary",onClick:i,autoFocus:!0,children:a})]})]})}function ne(){const[e,t]=(0,n.useState)(null),[r,a]=(0,n.useState)(!1),[i,s]=(0,n.useState)(""),[c,d]=(0,n.useState)(!1),[l,u]=(0,n.useState)(null),[h,g]=(0,n.useState)(!1),[m,b]=(0,n.useState)(null);(0,n.useEffect)((()=>{const e=[q,U,W,J,"last_logged_in_user"],r=()=>{chrome.storage.local.get(e,(e=>{const r=e?.[q];t(r&&"string"==typeof r.name?{name:r.name,connectedAt:Number(r.connectedAt)||0}:null);const o=e?.[J];a(!!r&&o?.token===r.token&&"signed_out"===o?.result),s(String(e?.last_logged_in_user||"")),d(!!e?.[U]);const n=e?.[W];u(n&&Date.now()-Number(n.t)<X?n:null)}))},o=(t,o)=>{"local"===o&&e.some((e=>e in t))&&r()};return r(),chrome.storage.onChanged.addListener(o),"#second-account"===window.location.hash&&setTimeout((()=>document.getElementById("second-account")?.scrollIntoView()),0),()=>chrome.storage.onChanged.removeListener(o)}),[]);const p=e=>{g(!0),D({action:e},(()=>{Y.lastError,g(!1)}))};return(0,o.jsxs)(o.Fragment,{children:[(0,o.jsx)(F,{id:"second-account",children:"Second account"}),(0,o.jsx)(P,{children:"When Reddit asks for a login before it shows profiles, the extension checks your posts and comments through a second Reddit account, the way other people see them. It only reads: it never posts, votes or joins anything."}),G()?(0,o.jsxs)(P,{children:[e?`Connected: u/${e.name}. `:"","To connect or change the second account, open these options in a normal window, not a private or incognito one."]}):c?(0,o.jsxs)(o.Fragment,{children:[(0,o.jsx)(P,{children:"Waiting for you to sign in on Reddit's page. Your other Reddit tabs are signed out until then."}),(0,o.jsx)(A,{children:(0,o.jsx)(T,{variant:"secondary",onClick:()=>p("viewer-connect-cancel"),disabled:h,children:"cancel"})})]}):!e||V(e.name,i)||r?(0,o.jsxs)(o.Fragment,{children:[(0,o.jsx)(P,{children:e&&V(e.name,i)?(0,o.jsxs)(o.Fragment,{children:["u/",e.name," is connected, but it's also the account you're signed in to Reddit with, so it can't check its own posts and comments. Connect a different account to check them."]}):e?(0,o.jsxs)(o.Fragment,{children:["u/",e.name," was signed out of Reddit, so your posts and comments aren't being checked. Connect it again to pick up where it left off."]}):(0,o.jsx)(o.Fragment,{children:"Use an account that isn't your main one, isn't a moderator where you post, and that you haven't blocked. You'll sign in on Reddit's own page."})}),(0,o.jsxs)(A,{style:{alignItems:"center"},children:[(0,o.jsx)(T,{variant:"primary",onClick:e=>b(e.currentTarget),disabled:h,children:e?V(e.name,i)?"connect a different account":"connect it again":"connect a second account"}),e&&(0,o.jsx)(T,{variant:"secondary",onClick:()=>p("viewer-disconnect"),disabled:h,children:"disconnect"}),(0,o.jsx)(I,{target:"_blank",href:K,children:"Why?"})]})]}):(0,o.jsxs)(o.Fragment,{children:[(0,o.jsxs)(P,{children:["Connected: u/",e.name,e.connectedAt?`, since ${new Date(e.connectedAt).toLocaleDateString()}`:"",". Your posts and comments are checked through it."]}),(0,o.jsx)(A,{children:(0,o.jsx)(T,{variant:"secondary",onClick:()=>p("viewer-disconnect"),disabled:h,children:"disconnect"})})]}),(0,o.jsx)(oe,{anchor:m,title:"Connect a second account",text:"You'll be briefly signed out of Reddit while you sign in to the second account. But you'll be signed back in automatically when you finish.",confirmLabel:"continue",onConfirm:()=>{b(null),p("viewer-connect-start")},onCancel:()=>b(null)}),l?.ok&&e&&(0,o.jsx)(N,{variant:"success",children:"✓ Connected, and your own login is back."}),l&&!l.ok&&l.error&&Q[l.error]&&(0,o.jsx)(N,{variant:"warning",children:Q[l.error]})]})}const ae=a.Z.div`
   width: 380px;
   min-height: 300px;
-  padding: ${h.lg};
-`,B=i.Z.div`
+  padding: ${C.lg};
+`,ie=a.Z.div`
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: ${h.md};
-  margin-bottom: ${h.md};
-`,L=i.Z.h1`
+  gap: ${C.md};
+  margin-bottom: ${C.md};
+`,se=a.Z.h1`
   margin: 0;
   font-size: 18px;
-`,T=i.Z.div`
+`,ce=a.Z.div`
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: ${h.md};
-  padding: ${h.sm} 0;
+  gap: ${C.md};
+  padding: ${C.sm} 0;
   border-bottom: 1px solid var(--border);
   &:last-child { border-bottom: 0; }
   & > label {
@@ -516,64 +477,33 @@
     width: 90px;
     text-align: right;
   }
-`,E=i.Z.div``,F=i.Z.div`
+`,de=a.Z.div``,le=({label:e,checked:t,onChange:r})=>(0,o.jsxs)(ce,{children:[(0,o.jsx)("label",{children:e}),(0,o.jsx)("input",{type:"checkbox",checked:t,onChange:e=>r(e.target.checked)})]}),ue=a.Z.div`
   font-size: 0.8em;
   font-weight: normal;
   color: var(--text-secondary);
   margin-top: 3px;
   max-width: 28em;
-`,N=i.Z.select`
+`,he=a.Z.select`
   && {
     width: auto;
     min-width: 175px;
     text-align: left;
   }
-`,A=i.Z.div`
+`,ge=a.Z.div`
   font-size: 0.9em;
-  margin-top: ${h.xs};
-`,P=i.Z.div`
+  margin-top: ${C.xs};
+`,me=a.Z.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: ${h.lg};
-  padding-top: ${h.md};
+  margin-top: ${C.lg};
+  padding-top: ${C.md};
   border-top: 1px solid var(--border);
-  gap: ${h.md};
-`,U=i.Z.div`
-  margin-top: ${h.md};
+  gap: ${C.md};
+`,be=a.Z.div`
+  margin-top: ${C.md};
   font-size: 0.9em;
-`,D=i.Z.div`
+`,pe=a.Z.div`
   display: ${e=>e.visible?"block":"none"};
-  margin-top: ${h.sm};
-`,Y=i.Z.p`
-  color: var(--text-secondary);
-  font-size: 0.88em;
-  margin: ${h.sm} 0;
-`,W=i.Z.div`
-  display: flex;
-  gap: ${h.sm};
-  margin-top: ${h.sm};
-`,q=chrome.runtime.sendMessage,H=chrome.runtime,J={same_account:"That's your main account. Connect a different one.",not_signed_in:"The sign-in ended before an account signed in. Your own login is back.",unconfirmed:"Reddit didn't say which account signed in, so the sign-in was undone. Your own login is back. Try again in a few minutes.",cancelled:"Sign-in cancelled. Your own login is back.",timed_out:"The sign-in took too long, so it ended. Your own login is back.",no_tab:"Couldn't open Reddit's login page."},V=6e5,K=i.Z.dialog`
-  max-width: 400px;
-  padding: ${h.lg};
-  color: var(--text-primary);
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: ${u.lg};
-  &::backdrop {
-    background: rgba(0, 0, 0, 0.45);
-  }
-  h3 {
-    margin: 0 0 ${h.sm};
-    font-size: 1em;
-  }
-  p {
-    margin: 0 0 ${h.md};
-    color: var(--text-secondary);
-    font-size: 0.92em;
-  }
-`,G=i.Z.div`
-  display: flex;
-  justify-content: flex-end;
-  gap: ${h.sm};
-`,Q=8;function X({anchor:e,title:t,text:r,confirmLabel:a,onConfirm:i,onCancel:s}){const c=(0,n.useRef)(null);return(0,n.useEffect)((()=>{const t=c.current;if(e&&t&&!t.open){t.showModal();const r=e.getBoundingClientRect(),o=t.offsetHeight,n=Math.max(Q,Math.min(r.top+r.height/2-o/2,window.innerHeight-o-Q));t.style.margin=`${n}px auto auto`}!e&&t?.open&&t.close()}),[e]),(0,o.jsxs)(K,{ref:c,"aria-label":t,onCancel:e=>{e.preventDefault(),s()},children:[(0,o.jsx)("h3",{children:t}),(0,o.jsx)("p",{children:r}),(0,o.jsxs)(G,{children:[(0,o.jsx)(j,{variant:"secondary",onClick:s,children:"cancel"}),(0,o.jsx)(j,{variant:"primary",onClick:i,autoFocus:!0,children:a})]})]})}function ee(){const[e,t]=(0,n.useState)(null),[r,a]=(0,n.useState)(!1),[i,s]=(0,n.useState)(""),[c,d]=(0,n.useState)(!1),[l,u]=(0,n.useState)(null),[h,g]=(0,n.useState)(!1),[m,b]=(0,n.useState)(null);(0,n.useEffect)((()=>{const e=[$,S,Z,O,"last_logged_in_user"],r=()=>{chrome.storage.local.get(e,(e=>{const r=e?.[$];t(r&&"string"==typeof r.name?{name:r.name,connectedAt:Number(r.connectedAt)||0}:null);const o=e?.[O];a(!!r&&o?.token===r.token&&"signed_out"===o?.result),s(String(e?.last_logged_in_user||"")),d(!!e?.[S]);const n=e?.[Z];u(n&&Date.now()-Number(n.t)<V?n:null)}))},o=(t,o)=>{"local"===o&&e.some((e=>e in t))&&r()};return r(),chrome.storage.onChanged.addListener(o),"#second-account"===window.location.hash&&setTimeout((()=>document.getElementById("second-account")?.scrollIntoView()),0),()=>chrome.storage.onChanged.removeListener(o)}),[]);const p=e=>{g(!0),q({action:e},(()=>{H.lastError,g(!1)}))};return(0,o.jsxs)(o.Fragment,{children:[(0,o.jsx)(_,{id:"second-account",children:"Second account"}),(0,o.jsx)(Y,{children:"When Reddit asks for a login before it shows profiles, the extension checks your posts and comments through a second Reddit account, the way other people see them. It only reads: it never posts, votes or joins anything."}),z()?(0,o.jsxs)(Y,{children:[e?`Connected: u/${e.name}. `:"","To connect or change the second account, open these options in a normal window, not a private or incognito one."]}):c?(0,o.jsxs)(o.Fragment,{children:[(0,o.jsx)(Y,{children:"Waiting for you to sign in on Reddit's page. Your other Reddit tabs are signed out until then."}),(0,o.jsx)(W,{children:(0,o.jsx)(j,{variant:"secondary",onClick:()=>p("viewer-connect-cancel"),disabled:h,children:"cancel"})})]}):!e||R(e.name,i)||r?(0,o.jsxs)(o.Fragment,{children:[(0,o.jsx)(Y,{children:e&&R(e.name,i)?(0,o.jsxs)(o.Fragment,{children:["u/",e.name," is connected, but it's also the account you're signed in to Reddit with, so it can't check its own posts and comments. Connect a different account to check them."]}):e?(0,o.jsxs)(o.Fragment,{children:["u/",e.name," was signed out of Reddit, so your posts and comments aren't being checked. Connect it again to pick up where it left off."]}):(0,o.jsx)(o.Fragment,{children:"Use an account that isn't your main one, isn't a moderator where you post, and that you haven't blocked. You'll sign in on Reddit's own page."})}),(0,o.jsxs)(W,{style:{alignItems:"center"},children:[(0,o.jsx)(j,{variant:"primary",onClick:e=>b(e.currentTarget),disabled:h,children:e?R(e.name,i)?"connect a different account":"connect it again":"connect a second account"}),e&&(0,o.jsx)(j,{variant:"secondary",onClick:()=>p("viewer-disconnect"),disabled:h,children:"disconnect"}),(0,o.jsx)(y,{target:"_blank",href:I,children:"Why?"})]})]}):(0,o.jsxs)(o.Fragment,{children:[(0,o.jsxs)(Y,{children:["Connected: u/",e.name,e.connectedAt?`, since ${new Date(e.connectedAt).toLocaleDateString()}`:"",". Your posts and comments are checked through it."]}),(0,o.jsx)(W,{children:(0,o.jsx)(j,{variant:"secondary",onClick:()=>p("viewer-disconnect"),disabled:h,children:"disconnect"})})]}),(0,o.jsx)(X,{anchor:m,title:"Connect a second account",text:"You'll be briefly signed out of Reddit while you sign in to the second account. But you'll be signed back in automatically when you finish.",confirmLabel:"continue",onConfirm:()=>{b(null),p("viewer-connect-start")},onCancel:()=>b(null)}),l?.ok&&e&&(0,o.jsx)(w,{variant:"success",children:"✓ Connected, and your own login is back."}),l&&!l.ok&&l.error&&J[l.error]&&(0,o.jsx)(w,{variant:"warning",children:J[l.error]})]})}const te=e=>e.track?e.notify?"notify":"badge":"off",re=[{value:"notify",label:"badge + notifications"},{value:"badge",label:"badge only"},{value:"off",label:"off"}];(0,a.createRoot)(document.getElementById("root")).render((0,o.jsx)((function(){const[e,t]=(0,n.useState)(""),[r,a]=(0,n.useState)(""),[i,l]=(0,n.useState)(""),[u,h]=(0,n.useState)(""),[g,m]=(0,n.useState)({}),[b,p]=(0,n.useState)(""),[k,$]=(0,n.useState)("off"),[S,Z]=(0,n.useState)("off"),[R,z]=(0,n.useState)(!1),[O,I]=(0,n.useState)(!1),[J,V]=(0,n.useState)(!1),[K,G]=(0,n.useState)(!0),[Q,X]=(0,n.useState)(!0),[oe,ne]=(0,n.useState)(!0),[ae,ie]=(0,n.useState)(!0),[se,ce]=(0,n.useState)(!1),[de,le]=(0,n.useState)(!1),[ue,he]=(0,n.useState)("auto"),[ge,me]=(0,n.useState)(""),[be,pe]=(0,n.useState)(!1),[fe,xe]=(0,n.useState)(!1),[ve,ye]=(0,n.useState)(!1),[ke,je]=(0,n.useState)(""),[we,_e]=(0,n.useState)(!1);(0,n.useEffect)((()=>{let e=!1;const r=(e,t)=>{"sync"===t&&e.options&&o()},o=()=>{(0,s.FW)(((o,n,i)=>{if(e||!i||!Object.keys(i).length)return;e=!0,chrome.storage.onChanged.removeListener(r);const c=i,d=c.removal_status||{},u=c.lock_status||{};t(String(c.interval??s.Bz)),a(String(c.seen_count||s.UU));const g=(0,s.oL)(c);l(String(g.readsPerClick)),h(String(g.seconds)),p(c.custom_clientid||""),$(te(d)),Z(te(u)),z(!!c.hide_subscribe),I(!!c.monitor_quarantined),V(!!c.show_scan_on_own_profile),G(!1!==c.show_scan_on_other_profiles),X(!1!==c.show_thread_scan_buttons),ne(!1!==c.highlight_own_profile_status),ie(!1!==c.auto_filter_removed_threads),pe(!0)}))};return chrome.storage.onChanged.addListener(r),o(),(0,C.Ws)().then(m),chrome.storage.local.get([f],(e=>{he(e?.[f]||"auto")})),chrome.storage.local.get(["dev_simulate_endpoint_deprecation"],(e=>{le(!!e?.dev_simulate_endpoint_deprecation)})),q({action:"get-diag-status"},(e=>{if(H.lastError||!e||e.error)return;const t=((e,t=Date.now())=>{const r=[];return e.lastCheck&&r.push(`last check ${c(1e3*e.lastCheck)}`),e.backoffRemainingMs&&e.backoffRemainingMs>0?r.push(`paused ~${Math.max(1,Math.ceil(e.backoffRemainingMs/6e4))} min (Reddit rate limit)`):e.nextCheck&&e.nextCheck>t&&r.push(`next ~${c(e.nextCheck)}`),r.join(" · ")})(e);t&&je(t)})),()=>chrome.storage.onChanged.removeListener(r)}),[]);const Ce=e=>{he(e),function(e){chrome.storage.local.set({[f]:e}),x(e)}(e)},$e=()=>{const t=Number(e),o=Number(r),n=(b||"").trim(),a=e=>{me(e),setTimeout((()=>me("")),2800)};return Number.isInteger(t)&&t>0?Number.isInteger(o)&&o>0?(0,s.C$)(i)?(0,s.VJ)(u)?(me(""),void(0,s.oe)(o,t,n,"off"!==k,"notify"===k,"off"!==S,"notify"===S,R,O,J,K,Q,oe,ae,Number(i),Number(u),(()=>{(0,d.yK)(t),chrome.runtime.sendMessage({action:"update-badge"}),window.close()}))):a(`"seconds between scan reads" must be from ${s.oo} to ${s.Z8}`):a(`"most Reddit reads per scan click" must be a whole number from ${s.x2} to ${s.Bw}`):a('"same-status count before alert" must be a positive integer'):a('"minutes between Reddit checks" must be a positive integer')},Se=[g.reads_per_click&&`at most ${g.reads_per_click} reads a click`,g.seconds_between_reads&&`at least ${g.seconds_between_reads} seconds between reads`].filter(Boolean).join(" and ");if(!be)return(0,o.jsxs)(o.Fragment,{children:[(0,o.jsx)(v,{}),(0,o.jsx)(M,{children:"Loading…"})]});const Ze=""!==b.trim();return(0,o.jsxs)(o.Fragment,{children:[(0,o.jsx)(v,{}),(0,o.jsxs)(M,{children:[(0,o.jsxs)(B,{children:[(0,o.jsx)(L,{children:"Options"}),(0,o.jsx)(j,{variant:"primary",onClick:$e,children:"save"})]}),(0,o.jsx)(_,{children:"Subscriptions"}),(0,o.jsx)(E,{children:(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"other subscriptions"}),(0,o.jsx)(y,{target:"_blank",href:"/src/other.html",children:"manage ↗"})]})}),(0,o.jsx)(ee,{}),(0,o.jsx)(_,{children:"Tracking & notification"}),(0,o.jsxs)(E,{children:[(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"removed content"}),(0,o.jsx)(N,{value:k,onChange:e=>$(e.target.value),children:re.map((e=>(0,o.jsx)("option",{value:e.value,children:e.label},e.value)))})]}),(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"locked content"}),(0,o.jsx)(N,{value:S,onChange:e=>Z(e.target.value),children:re.map((e=>(0,o.jsx)("option",{value:e.value,children:e.label},e.value)))})]})]}),("notify"===k||"notify"===S)&&(0,o.jsx)(A,{children:(0,o.jsx)(y,{href:"#",onClick:e=>{e.preventDefault(),"notify"===k&&$("badge"),"notify"===S&&Z("badge")},children:"turn off all notifications"})}),(0,o.jsx)(Y,{children:'"badge only" counts changes on the toolbar icon and in history, without showing system notifications.'}),(0,o.jsx)(_,{children:"Polling"}),(0,o.jsxs)(E,{children:[(0,o.jsxs)(T,{children:[(0,o.jsxs)("label",{children:["minutes between Reddit checks",(0,o.jsx)(F,{children:"How often the extension checks Reddit for removed content. Increase this if Reddit rate-limits you (429 errors)."})]}),(0,o.jsx)("input",{type:"text",value:e,onChange:e=>t(e.target.value)})]}),(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"same-status count before alert"}),(0,o.jsx)("input",{type:"text",value:r,onChange:e=>a(e.target.value)})]}),Ze&&(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"monitor quarantined content"}),(0,o.jsx)("input",{type:"checkbox",checked:O,onChange:e=>I(e.target.checked)})]}),(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"hide subscribe button"}),(0,o.jsx)("input",{type:"checkbox",checked:R,onChange:e=>z(e.target.checked)})]}),(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"show removed-content scan on other profiles"}),(0,o.jsx)("input",{type:"checkbox",checked:K,onChange:e=>G(e.target.checked)})]}),(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"show removed-content scan on your own profile"}),(0,o.jsx)("input",{type:"checkbox",checked:J,onChange:e=>V(e.target.checked)})]}),(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:'show "scan for removed comments" buttons on threads'}),(0,o.jsx)("input",{type:"checkbox",checked:Q,onChange:e=>X(e.target.checked)})]}),(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"flag your removed/locked content on your own profile"}),(0,o.jsx)("input",{type:"checkbox",checked:oe,onChange:e=>ne(e.target.checked)})]}),(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"auto-filter to show only removed comments after thread scan"}),(0,o.jsx)("input",{type:"checkbox",checked:ae,onChange:e=>ie(e.target.checked)})]})]}),Ze&&O&&(0,o.jsx)(Y,{children:'Enabling "monitor quarantined content" may appear to cause an occasional logout. Refreshing the page should show you are still logged in. Increase "minutes between Reddit checks" to 5 or more to reduce this occurrence.'}),(0,o.jsx)(_,{children:"Scans"}),(0,o.jsxs)(E,{children:[(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"most Reddit reads per scan click"}),(0,o.jsx)("input",{type:"text",value:i,onChange:e=>l(e.target.value)})]}),(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"seconds between scan reads"}),(0,o.jsx)("input",{type:"text",value:u,onChange:e=>h(e.target.value)})]})]}),(0,o.jsxs)(Y,{children:["Scans read Reddit with your login. More reads or a shorter wait get through big threads sooner, but Reddit may ask you to verify you're human if it sees what looks like automated activity.",Se&&` For now, Reveddit holds every scan to ${Se}, whatever these say.`]}),(0,o.jsx)(_,{children:"Appearance"}),(0,o.jsx)(E,{children:(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"theme"}),(0,o.jsxs)("select",{value:ue,onChange:e=>Ce(e.target.value),children:[(0,o.jsx)("option",{value:"auto",children:"auto"}),(0,o.jsx)("option",{value:"dark",children:"dark"}),(0,o.jsx)("option",{value:"light",children:"light"})]})]})}),(0,o.jsx)(_,{children:"Diagnostics"}),(0,o.jsx)(Y,{children:"If removal detection seems broken, run a check, then copy the log and include it in a GitHub issue or email. The log stays on this device — nothing is sent automatically. Your username is left out unless you include it. The log lists the ids of your recent posts and comments, which let the developer check what happened to them, so leave them in if you can. Hidden, each becomes a stand-in that can't be traced back, as long as your username stays out too."}),(0,o.jsxs)(E,{children:[(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"include username in copied log"}),(0,o.jsx)("input",{type:"checkbox",checked:fe,onChange:e=>xe(e.target.checked)})]}),(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"hide post and comment ids"}),(0,o.jsx)("input",{type:"checkbox",checked:ve,onChange:e=>ye(e.target.checked)})]})]}),(0,o.jsxs)(W,{children:[(0,o.jsx)(j,{onClick:()=>{q({action:"run-check-now"},(e=>{!H.lastError&&e?je(e.throttled?"a manual check already ran in the last minute":"check started — wait about 30 seconds, then copy the log"):je("could not start a check — try reopening this page")}))},children:"check now"}),(0,o.jsx)(j,{onClick:()=>{_e(!0),q({action:"get-diag-log",includeUsername:fe,hideIds:ve},(e=>{if(_e(!1),H.lastError||!e||e.error||"string"!=typeof e.text)return void je("could not read the log — try reopening this page");const t=e.text;navigator.clipboard.writeText(t).then((()=>je(`copied ${t.split("\n").length} lines to the clipboard`)),(()=>je("copy failed — clipboard unavailable")))}))},disabled:we,children:"copy log"}),(0,o.jsx)(j,{onClick:()=>{q({action:"clear-diag-log"},(()=>{H.lastError||je("log cleared")}))},children:"clear log"})]}),ke&&(0,o.jsx)(Y,{children:ke}),(0,o.jsx)(U,{children:!se&&(0,o.jsx)(y,{href:"#",onClick:e=>{e.preventDefault(),ce(!0)},children:"advanced"})}),(0,o.jsxs)(D,{visible:se,children:[(0,o.jsx)(_,{children:"Advanced"}),(0,o.jsx)(Y,{children:'Takes an "installed app" client id from reddit > preferences > apps. Checks then also use Reddit\'s API with it.'}),(0,o.jsxs)(E,{children:[(0,o.jsxs)(T,{children:[(0,o.jsx)("label",{children:"custom client id"}),(0,o.jsx)("input",{type:"text",value:b,onChange:e=>p(e.target.value),placeholder:"<default is blank>",autoComplete:"off",autoCorrect:"off",autoCapitalize:"off",spellCheck:!1})]}),!1]})]}),ge&&(0,o.jsx)(w,{variant:"warning",children:ge}),(0,o.jsxs)(P,{children:[(0,o.jsx)(y,{href:"#",onClick:e=>{e.preventDefault(),t(String(s.Bz)),a(String(s.UU)),l(String(s.Ih)),h(String(s.JA)),p("")},children:"reset to defaults"}),(0,o.jsx)(j,{variant:"primary",onClick:$e,children:"save"})]})]})]})}),{}))},7785:(e,t,r)=>{r.d(t,{Bw:()=>d,Bz:()=>a,C$:()=>m,FW:()=>f,Ih:()=>s,JA:()=>l,UU:()=>i,VJ:()=>b,Z8:()=>h,oL:()=>p,oe:()=>x,oo:()=>u,x2:()=>c});r(9947),r(5302);var o=r(3150),n=r.n(o);const a=1,i=2,s=20,c=10,d=100,l=3,u=1,h=60,g=(e,t,r)=>["number","string"].includes(typeof e)&&Number(e)>=t&&Number(e)<=r,m=e=>g(e,c,d)&&Number.isInteger(Number(e)),b=e=>g(e,u,h),p=e=>({readsPerClick:m(e?.scan_reads_per_click)?Number(e.scan_reads_per_click):s,seconds:b(e?.scan_seconds_between_reads)?Number(e.scan_seconds_between_reads):l}),f=e=>n().storage.sync.get(["user_subscriptions","other_subscriptions","options"]).then((t=>{const r=t||{},o=Object.keys(r.user_subscriptions||{}),n=Object.keys(r.other_subscriptions||{}),a=r.options;return e(o,n,a)})).catch((t=>(console.log(t),e([],[],{})))),x=(e,t,r,o,n,a,i,c,d,u,h,g,m,b,p,f,x)=>{chrome.storage.sync.set({options:{seen_count:e,interval:t,custom_clientid:r,removal_status:{track:o,notify:n},lock_status:{track:a,notify:i},hide_subscribe:c,monitor_quarantined:d,show_scan_on_own_profile:u,show_scan_on_other_profiles:h,show_thread_scan_buttons:g,highlight_own_profile_status:m,auto_filter_removed_threads:b,...p!==s&&{scan_reads_per_click:p},...f!==l&&{scan_seconds_between_reads:f}}},x)};Promise.resolve()}},n={};function a(e){var t=n[e];if(void 0!==t)return t.exports;var r=n[e]={exports:{}};return o[e].call(r.exports,r,r.exports,a),r.exports}a.m=o,e=[],a.O=(t,r,o,n)=>{if(!r){var i=1/0;for(l=0;l<e.length;l++){for(var[r,o,n]=e[l],s=!0,c=0;c<r.length;c++)(!1&n||i>=n)&&Object.keys(a.O).every((e=>a.O[e](r[c])))?r.splice(c--,1):(s=!1,n<i&&(i=n));if(s){e.splice(l--,1);var d=o();void 0!==d&&(t=d)}}return t}n=n||0;for(var l=e.length;l>0&&e[l-1][2]>n;l--)e[l]=e[l-1];e[l]=[r,o,n]},a.n=e=>{var t=e&&e.__esModule?()=>e.default:()=>e;return a.d(t,{a:t}),t},r=Object.getPrototypeOf?e=>Object.getPrototypeOf(e):e=>e.__proto__,a.t=function(e,o){if(1&o&&(e=this(e)),8&o)return e;if("object"==typeof e&&e){if(4&o&&e.__esModule)return e;if(16&o&&"function"==typeof e.then)return e}var n=Object.create(null);a.r(n);var i={};t=t||[null,r({}),r([]),r(r)];for(var s=2&o&&e;"object"==typeof s&&!~t.indexOf(s);s=r(s))Object.getOwnPropertyNames(s).forEach((t=>i[t]=()=>e[t]));return i.default=()=>e,a.d(n,i),n},a.d=(e,t)=>{for(var r in t)a.o(t,r)&&!a.o(e,r)&&Object.defineProperty(e,r,{enumerable:!0,get:t[r]})},a.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t),a.r=e=>{"undefined"!=typeof Symbol&&Symbol.toStringTag&&Object.defineProperty(e,Symbol.toStringTag,{value:"Module"}),Object.defineProperty(e,"__esModule",{value:!0})},a.j=798,a.p="",(()=>{a.b=document.baseURI||self.location.href;var e={798:0};a.O.j=t=>0===e[t];var t=(t,r)=>{var o,n,[i,s,c]=r,d=0;if(i.some((t=>0!==e[t]))){for(o in s)a.o(s,o)&&(a.m[o]=s[o]);if(c)var l=c(a)}for(t&&t(r);d<i.length;d++)n=i[d],a.o(e,n)&&e[n]&&e[n][0](),e[n]=0;return a.O(l)},r=self.webpackChunkreveddit_real_time=self.webpackChunkreveddit_real_time||[];r.forEach(t.bind(null,0)),r.push=t.bind(null,r.push.bind(r))})();var i=a.O(void 0,[736],(()=>a(6155)));i=a.O(i)})();
+  margin-top: ${C.sm};
+`,fe=e=>e.track?e.notify?"notify":"badge":"off",ve=[{value:"notify",label:"badge + notifications"},{value:"badge",label:"badge only"},{value:"off",label:"off"}];!function(e){(0,w.createRoot)(document.getElementById("root")).render((0,o.jsxs)(o.Fragment,{children:[(0,o.jsx)(O,{}),(0,o.jsx)(e,{})]}))}((function(){const[e,t]=(0,n.useState)(""),[r,a]=(0,n.useState)(""),[s,c]=(0,n.useState)(""),[d,l]=(0,n.useState)(""),[u,h]=(0,n.useState)({}),[g,m]=(0,n.useState)(""),[p,w]=(0,n.useState)("off"),[j,_]=(0,n.useState)("off"),[C,$]=(0,n.useState)(!1),[S,R]=(0,n.useState)(!1),[Z,O]=(0,n.useState)(!1),[E,L]=(0,n.useState)(!0),[B,H]=(0,n.useState)(!0),[q,U]=(0,n.useState)(!0),[W,V]=(0,n.useState)(!0),[G,J]=(0,n.useState)(!1),[K,Q]=(0,n.useState)(!1),[X,ee]=(0,n.useState)("auto"),[te,re]=(0,n.useState)(""),[oe,xe]=(0,n.useState)(!1),[ye,ke]=(0,n.useState)(!1),[we,je]=(0,n.useState)(!1),[_e,Ce]=(0,n.useState)(""),[$e,Se]=(0,n.useState)(!1);(0,n.useEffect)((()=>{let e=!1;const r=(e,t)=>{"sync"===t&&e.options&&o()},o=()=>{y((o=>{if(e||!o||!Object.keys(o).length)return;e=!0,chrome.storage.onChanged.removeListener(r);const n=o,i=n.removal_status||{},s=n.lock_status||{};t(String(n.interval??1)),a(String(n.seen_count||2));const d=x(n);c(String(d.readsPerClick)),l(String(d.seconds)),m(n.custom_clientid||""),w(fe(i)),_(fe(s)),$(!!n.hide_subscribe),R(!!n.monitor_quarantined),O(!!n.show_scan_on_own_profile),L(!1!==n.show_scan_on_other_profiles),H(!1!==n.show_thread_scan_buttons),U(!1!==n.highlight_own_profile_status),V(!1!==n.auto_filter_removed_threads),xe(!0)}))};return chrome.storage.onChanged.addListener(r),o(),(async()=>(await b()).scan_limits??{})().then(h),chrome.storage.local.get([z],(e=>{ee(e?.[z]||"auto")})),chrome.storage.local.get(["dev_simulate_endpoint_deprecation"],(e=>{Q(!!e?.dev_simulate_endpoint_deprecation)})),D({action:"get-diag-status"},(e=>{if(Y.lastError||!e||e.error)return;const t=((e,t=Date.now())=>{const r=[];return e.lastCheck&&r.push(`last check ${k(1e3*e.lastCheck)}`),e.backoffRemainingMs&&e.backoffRemainingMs>0?r.push(`paused ~${Math.max(1,Math.ceil(e.backoffRemainingMs/6e4))} min (Reddit rate limit)`):e.nextCheck&&e.nextCheck>t&&r.push(`next ~${k(e.nextCheck)}`),r.join(" · ")})(e);t&&Ce(t)})),()=>chrome.storage.onChanged.removeListener(r)}),[]);const Re=e=>{ee(e),function(e){chrome.storage.local.set({[z]:e}),M(e)}(e)},Ze=()=>{const t=Number(e),o=Number(r),n=(g||"").trim(),a=e=>{re(e),setTimeout((()=>re("")),2800)};return Number.isInteger(t)&&t>0?Number.isInteger(o)&&o>0?f(s)?v(d)?(re(""),void((e,t)=>{const{scan_reads_per_click:r,scan_seconds_between_reads:o,...n}=e;chrome.storage.sync.set({options:{...n,...20!==r&&{scan_reads_per_click:r},...3!==o&&{scan_seconds_between_reads:o}}},t)})({seen_count:o,interval:t,custom_clientid:n,removal_status:{track:"off"!==p,notify:"notify"===p},lock_status:{track:"off"!==j,notify:"notify"===j},hide_subscribe:C,monitor_quarantined:S,show_scan_on_own_profile:Z,show_scan_on_other_profiles:E,show_thread_scan_buttons:B,highlight_own_profile_status:q,auto_filter_removed_threads:W,scan_reads_per_click:Number(s),scan_seconds_between_reads:Number(d)},(()=>{var e;e=t,chrome.alarms.clear(i),chrome.alarms.create(i,{delayInMinutes:1,periodInMinutes:e}),chrome.runtime.sendMessage({action:"update-badge"}),window.close()}))):a('"seconds between scan reads" must be from 1 to 60'):a('"most Reddit reads per scan click" must be a whole number from 10 to 100'):a('"same-status count before alert" must be a positive integer'):a('"minutes between Reddit checks" must be a positive integer')},ze=[u.reads_per_click&&`at most ${u.reads_per_click} reads a click`,u.seconds_between_reads&&`at least ${u.seconds_between_reads} seconds between reads`].filter(Boolean).join(" and ");if(!oe)return(0,o.jsx)(ae,{children:"Loading…"});const Me=""!==g.trim();return(0,o.jsxs)(ae,{children:[(0,o.jsxs)(ie,{children:[(0,o.jsx)(se,{children:"Options"}),(0,o.jsx)(T,{variant:"primary",onClick:Ze,children:"save"})]}),(0,o.jsx)(F,{children:"Subscriptions"}),(0,o.jsx)(de,{children:(0,o.jsxs)(ce,{children:[(0,o.jsx)("label",{children:"other subscriptions"}),(0,o.jsx)(I,{target:"_blank",href:"/src/other.html",children:"manage ↗"})]})}),(0,o.jsx)(ne,{}),(0,o.jsx)(F,{children:"Tracking & notification"}),(0,o.jsxs)(de,{children:[(0,o.jsxs)(ce,{children:[(0,o.jsx)("label",{children:"removed content"}),(0,o.jsx)(he,{value:p,onChange:e=>w(e.target.value),children:ve.map((e=>(0,o.jsx)("option",{value:e.value,children:e.label},e.value)))})]}),(0,o.jsxs)(ce,{children:[(0,o.jsx)("label",{children:"locked content"}),(0,o.jsx)(he,{value:j,onChange:e=>_(e.target.value),children:ve.map((e=>(0,o.jsx)("option",{value:e.value,children:e.label},e.value)))})]})]}),("notify"===p||"notify"===j)&&(0,o.jsx)(ge,{children:(0,o.jsx)(I,{href:"#",onClick:e=>{e.preventDefault(),"notify"===p&&w("badge"),"notify"===j&&_("badge")},children:"turn off all notifications"})}),(0,o.jsx)(P,{children:'"badge only" counts changes on the toolbar icon and in history, without showing system notifications.'}),(0,o.jsx)(F,{children:"Polling"}),(0,o.jsxs)(de,{children:[(0,o.jsxs)(ce,{children:[(0,o.jsxs)("label",{children:["minutes between Reddit checks",(0,o.jsx)(ue,{children:"How often the extension checks Reddit for removed content. Increase this if Reddit rate-limits you (429 errors)."})]}),(0,o.jsx)("input",{type:"text",value:e,onChange:e=>t(e.target.value)})]}),(0,o.jsxs)(ce,{children:[(0,o.jsx)("label",{children:"same-status count before alert"}),(0,o.jsx)("input",{type:"text",value:r,onChange:e=>a(e.target.value)})]}),Me&&(0,o.jsx)(le,{label:"monitor quarantined content",checked:S,onChange:R}),(0,o.jsx)(le,{label:"hide subscribe button",checked:C,onChange:$}),(0,o.jsx)(le,{label:"show removed-content scan on other profiles",checked:E,onChange:L}),(0,o.jsx)(le,{label:"show removed-content scan on your own profile",checked:Z,onChange:O}),(0,o.jsx)(le,{label:'show "scan for removed comments" buttons on threads',checked:B,onChange:H}),(0,o.jsx)(le,{label:"flag your removed/locked content on your own profile",checked:q,onChange:U}),(0,o.jsx)(le,{label:"auto-filter to show only removed comments after thread scan",checked:W,onChange:V})]}),Me&&S&&(0,o.jsx)(P,{children:'Enabling "monitor quarantined content" may appear to cause an occasional logout. Refreshing the page should show you are still logged in. Increase "minutes between Reddit checks" to 5 or more to reduce this occurrence.'}),(0,o.jsx)(F,{children:"Scans"}),(0,o.jsxs)(de,{children:[(0,o.jsxs)(ce,{children:[(0,o.jsx)("label",{children:"most Reddit reads per scan click"}),(0,o.jsx)("input",{type:"text",value:s,onChange:e=>c(e.target.value)})]}),(0,o.jsxs)(ce,{children:[(0,o.jsx)("label",{children:"seconds between scan reads"}),(0,o.jsx)("input",{type:"text",value:d,onChange:e=>l(e.target.value)})]})]}),(0,o.jsxs)(P,{children:["Scans read Reddit with your login. More reads or a shorter wait get through big threads sooner, but Reddit may ask you to verify you're human if it sees what looks like automated activity.",ze&&` For now, Reveddit holds every scan to ${ze}, whatever these say.`]}),(0,o.jsx)(F,{children:"Appearance"}),(0,o.jsx)(de,{children:(0,o.jsxs)(ce,{children:[(0,o.jsx)("label",{children:"theme"}),(0,o.jsxs)("select",{value:X,onChange:e=>Re(e.target.value),children:[(0,o.jsx)("option",{value:"auto",children:"auto"}),(0,o.jsx)("option",{value:"dark",children:"dark"}),(0,o.jsx)("option",{value:"light",children:"light"})]})]})}),(0,o.jsx)(F,{children:"Diagnostics"}),(0,o.jsx)(P,{children:"If removal detection seems broken, run a check, then copy the log and include it in a GitHub issue or email. The log stays on this device — nothing is sent automatically. Your username is left out unless you include it. The log lists the ids of your recent posts and comments, which let the developer check what happened to them, so leave them in if you can. Hidden, each becomes a stand-in that can't be traced back, as long as your username stays out too."}),(0,o.jsxs)(de,{children:[(0,o.jsx)(le,{label:"include username in copied log",checked:ye,onChange:ke}),(0,o.jsx)(le,{label:"hide post and comment ids",checked:we,onChange:je})]}),(0,o.jsxs)(A,{children:[(0,o.jsx)(T,{onClick:()=>{D({action:"run-check-now"},(e=>{!Y.lastError&&e?Ce(e.throttled?"a manual check already ran in the last minute":"check started — wait about 30 seconds, then copy the log"):Ce("could not start a check — try reopening this page")}))},children:"check now"}),(0,o.jsx)(T,{onClick:()=>{Se(!0),D({action:"get-diag-log",includeUsername:ye,hideIds:we},(e=>{if(Se(!1),Y.lastError||!e||e.error||"string"!=typeof e.text)return void Ce("could not read the log — try reopening this page");const t=e.text;navigator.clipboard.writeText(t).then((()=>Ce(`copied ${t.split("\n").length} lines to the clipboard`)),(()=>Ce("copy failed — clipboard unavailable")))}))},disabled:$e,children:"copy log"}),(0,o.jsx)(T,{onClick:()=>{D({action:"clear-diag-log"},(()=>{Y.lastError||Ce("log cleared")}))},children:"clear log"})]}),_e&&(0,o.jsx)(P,{children:_e}),(0,o.jsx)(be,{children:!G&&(0,o.jsx)(I,{href:"#",onClick:e=>{e.preventDefault(),J(!0)},children:"advanced"})}),(0,o.jsxs)(pe,{visible:G,children:[(0,o.jsx)(F,{children:"Advanced"}),(0,o.jsx)(P,{children:'Takes an "installed app" client id from reddit > preferences > apps. Checks then also use Reddit\'s API with it.'}),(0,o.jsxs)(de,{children:[(0,o.jsxs)(ce,{children:[(0,o.jsx)("label",{children:"custom client id"}),(0,o.jsx)("input",{type:"text",value:g,onChange:e=>m(e.target.value),placeholder:"<default is blank>",autoComplete:"off",autoCorrect:"off",autoCapitalize:"off",spellCheck:!1})]}),!1]})]}),te&&(0,o.jsx)(N,{variant:"warning",children:te}),(0,o.jsxs)(me,{children:[(0,o.jsx)(I,{href:"#",onClick:e=>{e.preventDefault(),t(String(1)),a(String(2)),c(String(20)),l(String(3)),m("")},children:"reset to defaults"}),(0,o.jsx)(T,{variant:"primary",onClick:Ze,children:"save"})]})]})}))}},n={};function a(e){var t=n[e];if(void 0!==t)return t.exports;var r=n[e]={exports:{}};return o[e].call(r.exports,r,r.exports,a),r.exports}a.m=o,e=[],a.O=(t,r,o,n)=>{if(!r){var i=1/0;for(l=0;l<e.length;l++){for(var[r,o,n]=e[l],s=!0,c=0;c<r.length;c++)(!1&n||i>=n)&&Object.keys(a.O).every((e=>a.O[e](r[c])))?r.splice(c--,1):(s=!1,n<i&&(i=n));if(s){e.splice(l--,1);var d=o();void 0!==d&&(t=d)}}return t}n=n||0;for(var l=e.length;l>0&&e[l-1][2]>n;l--)e[l]=e[l-1];e[l]=[r,o,n]},a.n=e=>{var t=e&&e.__esModule?()=>e.default:()=>e;return a.d(t,{a:t}),t},r=Object.getPrototypeOf?e=>Object.getPrototypeOf(e):e=>e.__proto__,a.t=function(e,o){if(1&o&&(e=this(e)),8&o)return e;if("object"==typeof e&&e){if(4&o&&e.__esModule)return e;if(16&o&&"function"==typeof e.then)return e}var n=Object.create(null);a.r(n);var i={};t=t||[null,r({}),r([]),r(r)];for(var s=2&o&&e;"object"==typeof s&&!~t.indexOf(s);s=r(s))Object.getOwnPropertyNames(s).forEach((t=>i[t]=()=>e[t]));return i.default=()=>e,a.d(n,i),n},a.d=(e,t)=>{for(var r in t)a.o(t,r)&&!a.o(e,r)&&Object.defineProperty(e,r,{enumerable:!0,get:t[r]})},a.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t),a.r=e=>{"undefined"!=typeof Symbol&&Symbol.toStringTag&&Object.defineProperty(e,Symbol.toStringTag,{value:"Module"}),Object.defineProperty(e,"__esModule",{value:!0})},a.j=798,a.p="",(()=>{a.b=document.baseURI||self.location.href;var e={798:0};a.O.j=t=>0===e[t];var t=(t,r)=>{var o,n,[i,s,c]=r,d=0;if(i.some((t=>0!==e[t]))){for(o in s)a.o(s,o)&&(a.m[o]=s[o]);if(c)var l=c(a)}for(t&&t(r);d<i.length;d++)n=i[d],a.o(e,n)&&e[n]&&e[n][0](),e[n]=0;return a.O(l)},r=self.webpackChunkreveddit_real_time=self.webpackChunkreveddit_real_time||[];r.forEach(t.bind(null,0)),r.push=t.bind(null,r.push.bind(r))})();var i=a.O(void 0,[736],(()=>a(307)));i=a.O(i)})();
