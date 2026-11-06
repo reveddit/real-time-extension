@@ -330,6 +330,10 @@ describe('getIDs_thing / getUnseenIDs_thing', () => {
 describe('pending post queue', () => {
     beforeEach(() => __resetStorage({}, {}))
 
+    it('gives nothing from an empty queue', async () => {
+        expect(await getNextPendingPosts(1)).toEqual({ posts: [], totalRemaining: 0 })
+    })
+
     it('adds to queue and retrieves next', async () => {
         await addToPendingPostQueue(['t3_a', 't3_b'])
         const { posts } = await getNextPendingPosts(1)

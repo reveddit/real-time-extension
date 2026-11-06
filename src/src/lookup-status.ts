@@ -374,8 +374,13 @@ export const formatPublicViewUnchecked = (stored: any, includeIds = false): stri
     return `${label}: ${list}; as of ${new Date(Number(stored.t) || 0).toISOString()}`
 }
 
-export const getPublicViewUncheckedLine = async (includeIds = false): Promise<string> =>
-    formatPublicViewUnchecked(await readLocal(PUBLIC_VIEW_UNCHECKED_KEY, null), includeIds)
+export const getPublicViewUncheckedLine = async (includeIds = false): Promise<string> => {
+    try {
+        return formatPublicViewUnchecked(await readLocal(PUBLIC_VIEW_UNCHECKED_KEY, null), includeIds)
+    } catch {
+        return formatPublicViewUnchecked(null)
+    }
+}
 
 export const threadItemUrl = (id: string, postId: string): string => {
     const post = postId.replace(/^t3_/, '')
