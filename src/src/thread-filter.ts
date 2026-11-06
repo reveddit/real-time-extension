@@ -23,16 +23,16 @@ function isRemovedOrRecovered(el: Element): boolean {
     return false
 }
 
+const repliesOf_oldReddit = (el: Element) =>
+    Array.from(
+        el
+            .querySelector(':scope > .child')
+            ?.querySelectorAll(':scope > .sitetable > .thing.comment, :scope > .thing.comment') ?? [],
+    )
+
 // Does this comment or any of its descendants contain a removed comment?
 function hasRemovedDescendant(el: Element): boolean {
-    if (isRemovedOrRecovered(el)) return true
-    const childContainer = el.querySelector(':scope > .child')
-    if (!childContainer) return false
-    const children = childContainer.querySelectorAll(':scope > .sitetable > .thing.comment, :scope > .thing.comment')
-    for (const child of Array.from(children)) {
-        if (hasRemovedDescendant(child)) return true
-    }
-    return false
+    return isRemovedOrRecovered(el) || repliesOf_oldReddit(el).some(hasRemovedDescendant)
 }
 
 function applyThreadFilter(filter: ThreadFilter, isNewReddit: boolean) {
@@ -46,18 +46,10 @@ function applyThreadFilter(filter: ThreadFilter, isNewReddit: boolean) {
         for (const el of comments.filter(c => !c.parentElement?.closest('shreddit-comment'))) {
             applyFilterToNewRedditComment(el as HTMLElement, filter)
         }
-        const unattached = document.querySelector('.rev-unattached-area')
-        if (unattached)
-            (unattached as HTMLElement).style.display =
-                filter === 'all' || unattached.querySelector('.rev-removed-highlight, .rev-inserted-comment')
-                    ? ''
-                    : 'none'
-        return
-    }
-
-    const topComments = document.querySelectorAll('.commentarea > .sitetable > .thing.comment')
-    for (const el of Array.from(topComments)) {
-        applyFilterToComment(el as HTMLElement, filter)
+    } else {
+        for (const el of Array.from(document.querySelectorAll('.commentarea > .sitetable > .thing.comment'))) {
+            applyFilterToComment(el as HTMLElement, filter)
+        }
     }
     // Also handle unattached area
     const unattached = document.querySelector('.rev-unattached-area')
@@ -72,13 +64,7 @@ function applyFilterToComment(el: HTMLElement, filter: ThreadFilter) {
             expandComment(el)
             el.removeAttribute('data-rev-filter-collapsed')
         }
-        const childContainer = el.querySelector(':scope > .child')
-        if (childContainer) {
-            const children = childContainer.querySelectorAll(
-                ':scope > .sitetable > .thing.comment, :scope > .thing.comment',
-            )
-            children.forEach(c => applyFilterToComment(c as HTMLElement, filter))
-        }
+        repliesOf_oldReddit(el).forEach(c => applyFilterToComment(c as HTMLElement, filter))
         return
     }
 
@@ -101,13 +87,7 @@ function applyFilterToComment(el: HTMLElement, filter: ThreadFilter) {
         expandComment(el)
     }
 
-    const childContainer = el.querySelector(':scope > .child')
-    if (childContainer) {
-        const children = childContainer.querySelectorAll(
-            ':scope > .sitetable > .thing.comment, :scope > .thing.comment',
-        )
-        children.forEach(c => applyFilterToComment(c as HTMLElement, filter))
-    }
+    repliesOf_oldReddit(el).forEach(c => applyFilterToComment(c as HTMLElement, filter))
 }
 
 // Replies sit deep inside their parent, and hold their own replies
