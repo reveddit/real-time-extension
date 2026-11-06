@@ -25,11 +25,3 @@ declare module 'turndown' {
         ): void
     }
 }
-
-// @worker-tools/html-rewriter
-declare module '@worker-tools/html-rewriter' {
-    export class HTMLRewriter {
-        on(selector: string, handler: any): HTMLRewriter
-        transform(response: Response): Response
-    }
-}

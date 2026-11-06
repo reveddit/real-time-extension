@@ -162,7 +162,7 @@ const getLoggedInUser = async (): Promise<string> => {
 // Only a pass this recent counts as having seen an item live
 const PUBLIC_LIVE_MAX_AGE_MS = 2 * 3600 * 1000
 
-export interface PublicViewContext {
+interface PublicViewContext {
     // Fullnames monitoring has confirmed removed
     knownRemoved: Set<string>
     // The logged-in user, lowercased; '' when unknown
@@ -347,10 +347,10 @@ const isMembersOnly = (data: any): boolean => MEMBERS_ONLY_SUBREDDIT_TYPES.has(d
 // An answer that is wholly a members-only community's: its about, or a
 // thread whose post is in one. The bridge answers those as reddit does
 // logged out.
-export const isMembersOnlyAnswer = (json: any): boolean =>
+const isMembersOnlyAnswer = (json: any): boolean =>
     (json?.kind === 't5' && isMembersOnly(json.data)) ||
     (Array.isArray(json) && json[0]?.kind === 'Listing' && isMembersOnly(json[0].data?.children?.[0]?.data))
-export const MEMBERS_ONLY_ANSWER = { reason: 'private', message: 'Forbidden', error: 403 }
+const MEMBERS_ONLY_ANSWER = { reason: 'private', message: 'Forbidden', error: 403 }
 
 // The logged-in view rewritten to the public one (see the top). Walks the
 // shapes the allowlisted endpoints return: listings, a thread's [post,
@@ -457,7 +457,7 @@ let recentTimes: number[] = []
 // single-lane serialization with spacing between fetches
 let lane: Promise<void> = Promise.resolve()
 
-export interface BridgeResponse {
+interface BridgeResponse {
     ok: boolean
     status: number
     data?: any

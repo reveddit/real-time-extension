@@ -21,7 +21,6 @@ export const setupContextualMenu = () => {
     chrome.contextMenus.onClicked.addListener(function (info) {
         if (info.menuItemId == contextMenu_id) {
             const url = info.linkUrl!
-            const text = 'link'
             const [postID, commentID, user] = getFullIDsFromURL(url)
             if (commentID) {
                 subscribeId(commentID)
@@ -32,7 +31,7 @@ export const setupContextualMenu = () => {
             } else if (user) {
                 subscribeUser(user)
             } else {
-                alert(`Unable to subscribe to this ${text}, it is not a comment, post or user.\n\n${url}`)
+                alert(`Unable to subscribe to this link, it is not a comment, post or user.\n\n${url}`)
             }
         }
     })
