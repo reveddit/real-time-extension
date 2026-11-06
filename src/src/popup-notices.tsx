@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { ReactNode } from 'react'
 import styled from '@emotion/styled'
 import { ActionBtn, SecondaryActionBtn, MessageBanner, Card } from './ui/components'
 import { tokens } from './ui/tokens'
@@ -77,6 +77,74 @@ const openSecondAccount = () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('src/options.html#second-account') })
   window.close()
 }
+const openWww = () => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })
+
+const Why = () => (
+  <a href={LOGIN_WALL_INFO_URL} target="_blank" rel="noopener noreferrer">
+    Why?
+  </a>
+)
+
+type Warning = { text: ReactNode; button?: [string, () => void]; fallback?: [string, () => void] }
+const OPEN_WWW: [string, () => void] = ['Open www.reddit.com', openWww]
+
+// login_required or public_view_unavailable, while Reddit is signed in to the second account
+const SIGNED_IN_AS_VIEWER: Warning = {
+  text: (
+    <>
+      ⚠ You&apos;re signed in to Reddit with your second account, which can&apos;t check its own posts and
+      comments. To keep checking them, connect a different account.{' '}
+      <Why />
+    </>
+  ),
+  button: ['Connect a different account', openSecondAccount],
+}
+
+const WARNINGS: Record<string, Warning> = {
+  rate_limited: { text: '⚠ Reddit is rate-limiting requests. Monitoring will resume automatically.' },
+  reddit_blocked: {
+    text: "⚠ Reddit blocked the extension's last request (HTTP 403). It keeps retrying; opening a www.reddit.com tab usually clears this.",
+  },
+  checks_failing: {
+    text: "⚠ Your posts and comments aren't being checked right now. Reddit or your connection may be down. The extension keeps trying.",
+  },
+  profile_publicly_empty: {
+    text: '⚠ Your profile appears empty to logged-out users — possibly a shadowban. Removal alerts are paused. You can appeal at reddit.com/appeals.',
+  },
+  login_required: {
+    text: (
+      <>
+        ⚠ Reddit now asks for a login before it shows profiles. To keep checking your posts and
+        comments, connect a second Reddit account.{' '}
+        <Why />
+      </>
+    ),
+    button: ['Connect a second account', openSecondAccount],
+  },
+  viewer_signed_out: {
+    text: "⚠ Your second Reddit account was signed out, so your posts and comments aren't being checked. Connect it again to pick up where it left off.",
+    button: ['Connect it again', openSecondAccount],
+  },
+  viewer_unavailable: {
+    text: "⚠ Reddit isn't answering checks through your second account right now. They keep retrying. If this keeps up, connect the account again, or use “report a problem” below.",
+    button: ['Second account settings', openSecondAccount],
+  },
+  // Also how a login wall shows up when it doesn't redirect to the
+  // login page (login-wall-config.ts), so the second account is here too
+  public_view_unavailable: {
+    text: "⚠ Removal monitoring is paused — Reddit's public view isn't loading. Opening a www.reddit.com tab usually restores it. If it keeps up, connect a second Reddit account.",
+    button: OPEN_WWW,
+    fallback: ['Connect a second account', openSecondAccount],
+  },
+  absent_verify_unavailable: {
+    text: "⚠ Reddit isn't letting the extension confirm whether missing content was removed, so some removals can't be detected. Keeping a www.reddit.com tab open usually restores this. If it keeps up, use “report a problem” below.",
+    button: OPEN_WWW,
+  },
+  profile_pagination_unavailable: {
+    text: "⚠ Reddit stopped loading the older pages of your public profile, so removals of your older posts and comments can't be checked right now. Keeping a www.reddit.com tab open usually restores this.",
+    button: OPEN_WWW,
+  },
+}
 
 export function ErrorNotice({ errorStatus, viewerName, currentUser, reconnectSuccess, reconnecting, onReconnect }: {
   errorStatus: string
@@ -86,105 +154,14 @@ export function ErrorNotice({ errorStatus, viewerName, currentUser, reconnectSuc
   reconnecting: boolean
   onReconnect: () => void
 }) {
-  return (
-  <div>
-    {reconnectSuccess ? (
-      <MessageBanner variant="success">✓ Connected!</MessageBanner>
-    ) : errorStatus === 'rate_limited' ? (
-      <MessageBanner variant="warning">
-        ⚠ Reddit is rate-limiting requests. Monitoring will resume automatically.
-      </MessageBanner>
-    ) : errorStatus === 'reddit_blocked' ? (
-      <MessageBanner variant="warning">
-        ⚠ Reddit blocked the extension&apos;s last request (HTTP 403). It keeps retrying; opening a
-        www.reddit.com tab usually clears this.
-      </MessageBanner>
-    ) : errorStatus === 'checks_failing' ? (
-      <MessageBanner variant="warning">
-        ⚠ Your posts and comments aren&apos;t being checked right now. Reddit or your connection may be
-        down. The extension keeps trying.
-      </MessageBanner>
-    ) : errorStatus === 'profile_publicly_empty' ? (
-      <MessageBanner variant="warning">
-        ⚠ Your profile appears empty to logged-out users — possibly a shadowban. Removal alerts are
-        paused. You can appeal at reddit.com/appeals.
-      </MessageBanner>
-    ) : (errorStatus === 'login_required' || errorStatus === 'public_view_unavailable') &&
-      isSignedInViewer(viewerName, currentUser || '') ? (
-      <>
-        <MessageBanner variant="warning">
-          ⚠ You&apos;re signed in to Reddit with your second account, which can&apos;t check its own posts and
-          comments. To keep checking them, connect a different account.{' '}
-          <a href={LOGIN_WALL_INFO_URL} target="_blank" rel="noopener noreferrer">
-            Why?
-          </a>
-        </MessageBanner>
-        <ActionBtn onClick={openSecondAccount}>Connect a different account</ActionBtn>
-      </>
-    ) : errorStatus === 'login_required' ? (
-      <>
-        <MessageBanner variant="warning">
-          ⚠ Reddit now asks for a login before it shows profiles. To keep checking your posts and
-          comments, connect a second Reddit account.{' '}
-          <a href={LOGIN_WALL_INFO_URL} target="_blank" rel="noopener noreferrer">
-            Why?
-          </a>
-        </MessageBanner>
-        <ActionBtn onClick={openSecondAccount}>Connect a second account</ActionBtn>
-      </>
-    ) : errorStatus === 'viewer_signed_out' ? (
-      <>
-        <MessageBanner variant="warning">
-          ⚠ Your second Reddit account was signed out, so your posts and comments aren&apos;t being
-          checked. Connect it again to pick up where it left off.
-        </MessageBanner>
-        <ActionBtn onClick={openSecondAccount}>Connect it again</ActionBtn>
-      </>
-    ) : errorStatus === 'viewer_unavailable' ? (
-      <>
-        <MessageBanner variant="warning">
-          ⚠ Reddit isn&apos;t answering checks through your second account right now. They keep retrying.
-          If this keeps up, connect the account again, or use &ldquo;report a problem&rdquo; below.
-        </MessageBanner>
-        <ActionBtn onClick={openSecondAccount}>Second account settings</ActionBtn>
-      </>
-    ) : errorStatus === 'public_view_unavailable' ? (
-      // Also how a login wall shows up when it doesn't redirect to the
-      // login page (login-wall-config.ts), so the second account is here too
-      <>
-        <MessageBanner variant="warning">
-          ⚠ Removal monitoring is paused — Reddit&apos;s public view isn&apos;t loading. Opening a
-          www.reddit.com tab usually restores it. If it keeps up, connect a second Reddit account.
-        </MessageBanner>
-        <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
-          Open www.reddit.com
-        </ActionBtn>
-        <SecondaryActionBtn onClick={openSecondAccount}>Connect a second account</SecondaryActionBtn>
-      </>
-    ) : errorStatus === 'absent_verify_unavailable' ? (
-      <>
-        <MessageBanner variant="warning">
-          ⚠ Reddit isn&apos;t letting the extension confirm whether missing content was removed, so
-          some removals can&apos;t be detected. Keeping a www.reddit.com tab open usually restores
-          this. If it keeps up, use &ldquo;report a problem&rdquo; below.
-        </MessageBanner>
-        <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
-          Open www.reddit.com
-        </ActionBtn>
-      </>
-    ) : errorStatus === 'profile_pagination_unavailable' ? (
-      <>
-        <MessageBanner variant="warning">
-          ⚠ Reddit stopped loading the older pages of your public profile, so removals of your older
-          posts and comments can&apos;t be checked right now. Keeping a www.reddit.com tab open usually
-          restores this.
-        </MessageBanner>
-        <ActionBtn onClick={() => chrome.tabs.create({ url: 'https://www.reddit.com/', active: true })}>
-          Open www.reddit.com
-        </ActionBtn>
-      </>
-    ) : (
-      <>
+  if (reconnectSuccess) return <div><MessageBanner variant="success">✓ Connected!</MessageBanner></div>
+  const asViewer =
+    (errorStatus === 'login_required' || errorStatus === 'public_view_unavailable') &&
+    isSignedInViewer(viewerName, currentUser || '')
+  const warning = asViewer ? SIGNED_IN_AS_VIEWER : WARNINGS[errorStatus]
+  if (!warning) {
+    return (
+      <div>
         <MessageBanner variant="warning">
           {reconnectSuccess === false
             ? "⚠ Reddit still isn't showing you as logged in."
@@ -198,8 +175,14 @@ export function ErrorNotice({ errorStatus, viewerName, currentUser, reconnectSuc
         <SecondaryActionBtn onClick={onReconnect} disabled={reconnecting}>
           {reconnecting ? 'Checking...' : 'Check again'}
         </SecondaryActionBtn>
-      </>
-    )}
-  </div>
+      </div>
+    )
+  }
+  return (
+    <div>
+      <MessageBanner variant="warning">{warning.text}</MessageBanner>
+      {warning.button && <ActionBtn onClick={warning.button[1]}>{warning.button[0]}</ActionBtn>}
+      {warning.fallback && <SecondaryActionBtn onClick={warning.fallback[1]}>{warning.fallback[0]}</SecondaryActionBtn>}
+    </div>
   )
 }
