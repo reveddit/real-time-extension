@@ -199,6 +199,9 @@ try {
 } catch (err) {
     failures.push(`threw at load: ${describe(err)}`)
 }
+// runInContext is synchronous, so no await in the script has run yet: what
+// is registered here is what the background registers before its first await
+const registeredAtLoad = Object.keys(listeners)
 await new Promise(r => setTimeout(r, SETTLE_MS))
 
 // Each kind of event once, as Firefox delivers them
@@ -236,6 +239,9 @@ const REQUIRED = ['runtime.onMessage', 'runtime.onInstalled', 'alarms.onAlarm', 
 const registered = Object.keys(listeners).sort()
 const missing = REQUIRED.filter(name => !registered.includes(name))
 for (const name of missing) failures.push(`no ${name} listener registered`)
+for (const name of REQUIRED.filter(n => registered.includes(n) && !registeredAtLoad.includes(n))) {
+    failures.push(`${name} listener registered only after the script's first await`)
+}
 
 console.log(`firefox load smoke: ${path.relative(process.cwd(), file)} (version ${manifest.version})`)
 console.log(`listeners: ${registered.join(', ') || 'none'}; alarms delivered: ${[...alarmNames].join(', ') || 'none'}`)
