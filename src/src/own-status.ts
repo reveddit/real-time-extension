@@ -1,6 +1,6 @@
 import { getObjectNamesForThing } from './storage'
 import { observe } from './dom-helpers'
-import { commentIdOf, commentSelector } from './restore'
+import { commentIdOf, commentSelector } from './comment-tree'
 import { ownPart } from './comment-dom'
 import { createNoteMark } from './note-mark'
 

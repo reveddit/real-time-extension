@@ -59,7 +59,13 @@ let restore
 const savedSendMessage = browserMock.runtime.sendMessage
 beforeAll(async () => {
     globalThis.DOMParser = DOMParser
-    restore = await import('../../src/src/restore.ts')
+    restore = Object.assign(
+        {},
+        await import('../../src/src/restore.ts'),
+        await import('../../src/src/scan-reads.ts'),
+        await import('../../src/src/comment-tree.ts'),
+        await import('../../src/src/profile-scan.ts'),
+    )
 })
 beforeEach(() => {
     // More than the default, so the scans here have room

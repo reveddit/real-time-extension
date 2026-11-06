@@ -1,5 +1,6 @@
 import { getPrettyDate } from './common'
-import { lookupCommentsByIds, scanFailure, COULD_NOT_READ, ScanReads, type RecoveredComment } from './restore'
+import { lookupCommentsByIds, scanFailure, COULD_NOT_READ, ScanReads } from './scan-reads'
+import { type RecoveredComment } from './restore'
 import { addUnderComment, findOldRedditCommentEl, newRedditCommentEl, openComment, ownPart } from './comment-dom'
 import { activeScan, addCancelLink, endScan, pageReads, scanStopped, startScan } from './scan-session'
 import { refreshThreadFilter } from './thread-filter'

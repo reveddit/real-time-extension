@@ -2,12 +2,8 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { __resetStorage } from '../mocks/webextension-polyfill.js'
-import {
-    getCandidateAuthors,
-    commentFullnameFromPermalink,
-    RateLimiter,
-    monitoringBackoffGate,
-} from '../../src/src/restore.ts'
+import { getCandidateAuthors, commentFullnameFromPermalink } from '../../src/src/comment-tree.ts'
+import { RateLimiter, monitoringBackoffGate } from '../../src/src/scan-reads.ts'
 
 // Helper to build a CommentTreeNode
 function node(id, author, parent_id, created_utc = 0) {

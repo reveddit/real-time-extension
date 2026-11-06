@@ -4,13 +4,12 @@ import { getMarkupConfig } from './markup-config'
 import {
     restoreComment,
     scanThreadForRemovedComments,
-    commentFullnameFromPermalink,
-    commentIdOf,
     recoveredOnPage,
-    type RestoreProgress,
     type RestoreResult,
     type RecoveredComment,
 } from './restore'
+import { commentFullnameFromPermalink, commentIdOf } from './comment-tree'
+import { type RestoreProgress } from './scan-reads'
 import {
     addUnderComment,
     findOldRedditCommentEl,

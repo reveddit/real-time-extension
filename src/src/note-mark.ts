@@ -1,5 +1,5 @@
 import { getPrettyDate } from './common'
-import { type ScanResult } from './restore'
+import { type ScanResult } from './profile-scan'
 
 // --- Shared helper ---
 

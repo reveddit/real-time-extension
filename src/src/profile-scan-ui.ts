@@ -1,6 +1,7 @@
 import { getPrettyDate, detectIsNewReddit } from './common'
 import { ofThisRun, markThisRun, orphaned } from './run-token'
-import { scanUserProfile, type RestoreProgress, type ScanResult, type ProfileScanOptions } from './restore'
+import { scanUserProfile, type ScanResult, type ProfileScanOptions } from './profile-scan'
+import { type RestoreProgress } from './scan-reads'
 import { endScan, pageReads, readsGoWith, scanStopped, showProgress, startScan } from './scan-session'
 import { OWN_VIEW_HINT, createNoteMark, createScanResultItem, isViewer } from './note-mark'
 

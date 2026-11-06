@@ -1,4 +1,4 @@
-import { RateLimiter } from './restore'
+import { RateLimiter } from './scan-reads'
 
 // The scan running now, on this tab: one at a time
 export let activeScan: RateLimiter | null = null

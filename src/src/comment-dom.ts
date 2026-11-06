@@ -1,4 +1,4 @@
-import { commentFullnameFromPermalink, commentSelector } from './restore'
+import { commentFullnameFromPermalink, commentSelector } from './comment-tree'
 
 // --- Thread Restore: New Reddit ---
 
