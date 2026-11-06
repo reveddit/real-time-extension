@@ -11,9 +11,9 @@ import { sanitizeWwwRouteOrder, WwwRouteOrderOption } from './www-routes'
 import { sanitizePublicModlogsFeed, setPublicModlogsFeed } from './bridge-config'
 import { sanitizeNameList } from './name-list'
 
-export const NEWS_URL = 'https://www.reveddit.com/extension-news.json'
+const NEWS_URL = 'https://www.reveddit.com/extension-news.json'
 export const NEWS_CACHE_KEY = 'news_cache'
-export const NEWS_READ_IDS_KEY = 'news_read_ids'
+const NEWS_READ_IDS_KEY = 'news_read_ids'
 // Hourly, so a newly published version is noticed within the hour
 // (requestStoreUpdateIfBehind, Chrome and Edge) and remote options reach every
 // build within the hour. The feed is a small static file behind Cloudflare.
@@ -39,8 +39,8 @@ export interface NewsMessage {
 // switch is three-state — 'auto' (compiled default decides), 'on' (force-enable),
 // 'off' (force-disable). Anything missing or malformed resolves to 'auto', so a
 // feed outage or bad edit can never break detection.
-export type RemoteMechanismState = 'auto' | 'on' | 'off'
-export interface RemoteOptions {
+type RemoteMechanismState = 'auto' | 'on' | 'off'
+interface RemoteOptions {
     mechanisms: Record<string, RemoteMechanismState>
     // Host that serves reddit's legacy (pre-Shreddit) HTML logged out. Set to
     // www.reddit.com on 2026-08-31 when old.reddit.com began requiring login
@@ -85,7 +85,7 @@ export interface ScanLimits {
     reads_per_click?: number
     seconds_between_reads?: number
 }
-export const LEGACY_HOSTS = ['www.reddit.com', 'old.reddit.com'] as const
+const LEGACY_HOSTS = ['www.reddit.com', 'old.reddit.com'] as const
 export const LEGACY_HOST_DEFAULT = 'www.reddit.com'
 // The unauthenticated legacy paths (old.reddit HTML, unauth www .json). Flip to
 // 'off' once Reddit's deprecation actually lands, to stop the doomed attempts.
@@ -110,7 +110,7 @@ export const MECHANISM_ABSENT_UNVERIFIED_UNKNOWN = 'absentUnverifiedIsUnknown'
 // stop before sending anything and say reddit is refusing them.
 export const MECHANISM_SCAN_FEEDS = 'scanFeeds'
 
-export interface NewsFeed {
+interface NewsFeed {
     messages: NewsMessage[]
     options?: RemoteOptions
     // Latest published store version and its release date (epoch ms). Lets a
@@ -125,10 +125,10 @@ export interface NewsFeed {
     store_versions?: StoreVersions
 }
 
-export const STORES = ['chrome', 'edge', 'firefox'] as const
-export type StoreVersions = Partial<Record<(typeof STORES)[number], string>>
+const STORES = ['chrome', 'edge', 'firefox'] as const
+type StoreVersions = Partial<Record<(typeof STORES)[number], string>>
 
-export interface NewsCache {
+interface NewsCache {
     feed: NewsFeed
     lastFetched: number
 }
@@ -146,7 +146,7 @@ export const getCachedNews = (): Promise<NewsCache | null> =>
         }
     })
 
-export const getReadIds = (): Promise<Record<string, true>> =>
+const getReadIds = (): Promise<Record<string, true>> =>
     new Promise(resolve => {
         try {
             chrome.storage.local.get([NEWS_READ_IDS_KEY], res => {
@@ -172,7 +172,7 @@ export const markNewsRead = (id: string): Promise<void> =>
 
 const VERSION_RE = /^\d+(\.\d+){0,3}$/
 
-export const isValidVersion = (v: unknown): v is string => typeof v === 'string' && VERSION_RE.test(v)
+const isValidVersion = (v: unknown): v is string => typeof v === 'string' && VERSION_RE.test(v)
 
 // Numeric dotted-version compare: negative when a < b, zero when equal.
 export const compareVersions = (a: string, b: string): number => {
@@ -381,7 +381,7 @@ export const getRemoteWwwRouteOrder = async (): Promise<WwwRouteOrderOption> => 
 }
 
 const COOKIE_NAME = /^[A-Za-z0-9_.-]{1,64}$/
-export const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList(raw, COOKIE_NAME, 4)
+const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList(raw, COOKIE_NAME, 4)
 
 // Methods reddit refused outright rest for a while, longer with each refusal
 // in a row (requests.ts noteCapabilityRefused), keyed by name ('legacy',

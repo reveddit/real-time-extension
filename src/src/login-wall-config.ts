@@ -22,7 +22,7 @@ export interface LoginWallConfig {
     markers: string[]
 }
 
-export const DEFAULT_LOGIN_WALL_CONFIG: LoginWallConfig = {
+const DEFAULT_LOGIN_WALL_CONFIG: LoginWallConfig = {
     paths: ['/login', '/account/login', '/register', '/account/register'],
     markers: [],
 }

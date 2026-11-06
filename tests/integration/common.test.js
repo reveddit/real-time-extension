@@ -223,19 +223,13 @@ describe('getPrettyTimeLength', () => {
 describe('ItemForStorage', () => {
     it('stores created_utc and unseen flag', () => {
         const item = new ItemForStorage(1000, true)
-        expect(item.getCreatedUTC()).toBe(1000)
-        expect(item.getUnseen()).toBe(true)
-    })
-
-    it('reconstructs from serialized object', () => {
-        const item = new ItemForStorage(null, null, null, { c: 2000, u: false })
-        expect(item.getCreatedUTC()).toBe(2000)
-        expect(item.getUnseen()).toBe(false)
+        expect(item.c).toBe(1000)
+        expect(item.u).toBe(true)
     })
 
     it('stores post_id for comments', () => {
         const item = new ItemForStorage(1000, true, 't3_abc')
-        expect(item.getPostID()).toBe('t3_abc')
+        expect(item.p).toBe('t3_abc')
     })
 })
 

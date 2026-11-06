@@ -33,7 +33,7 @@
 // by hand from the options page.
 import browser from 'webextension-polyfill'
 
-export type DiagArea =
+type DiagArea =
     | 'cycle' // checkForChanges boundaries and skips
     | 'auth' // logged-in-user detection
     | 'feed' // public-profile lookup
@@ -44,37 +44,30 @@ export type DiagArea =
     | 'news' // remote news/mechanism fetches
     | 'ui' // user-initiated actions (manual check, clear)
 
-export interface DiagEntry {
+interface DiagEntry {
     t: number // epoch ms
     a: DiagArea
     m: string // exactly what console.log printed
     d?: string // optional JSON payload, truncated
 }
 
-export type DiagTier = 'summary' | 'detail'
+type DiagTier = 'summary' | 'detail'
 
 // Areas whose every line is low-volume, per-cycle history.
-export const SUMMARY_AREAS: ReadonlySet<DiagArea> = new Set<DiagArea>([
-    'cycle',
-    'auth',
-    'feed',
-    'ratelimit',
-    'news',
-    'ui',
-])
+const SUMMARY_AREAS: ReadonlySet<DiagArea> = new Set<DiagArea>(['cycle', 'auth', 'feed', 'ratelimit', 'news', 'ui'])
 
 // Detail tier: the recent past, per item. One ring, one key.
 export const DIAG_LOG_KEY = 'diag_log_v1'
 export const DIAG_MAX_ENTRIES = 600
 // Serialized-size backstop so the ring can't crowd storage.local even if
 // entries run long (storage.local quota is shared with verdict caches etc.).
-export const DIAG_MAX_BYTES = 128 * 1024
+const DIAG_MAX_BYTES = 128 * 1024
 
 // Summary tier: hourly chunks under DIAG_SUMMARY_LOG_KEY + '_' + hourIndex,
 // kept for SUMMARY_RETENTION_HOURS. The count cap is a memory backstop only;
 // at three or four ~150-byte lines per one-minute cycle, 36 hours is ~8000
 // entries and ~1.2 MB across chunks.
-export const DIAG_SUMMARY_LOG_KEY = 'diag_summary_v2'
+const DIAG_SUMMARY_LOG_KEY = 'diag_summary_v2'
 export const SUMMARY_CHUNK_MS = 60 * 60 * 1000
 export const SUMMARY_RETENTION_HOURS = 36
 export const DIAG_SUMMARY_MAX_ENTRIES = 12000
@@ -93,25 +86,18 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null
 const hourIndex = (t: number) => Math.floor(t / SUMMARY_CHUNK_MS)
 export const summaryChunkKey = (t: number) => `${DIAG_SUMMARY_LOG_KEY}_${hourIndex(t)}`
 
+const chunkKeysBetween = (first: number, last: number): string[] =>
+    Array.from({ length: last - first + 1 }, (_, i) => `${DIAG_SUMMARY_LOG_KEY}_${first + i}`)
+
 // The chunk keys covering the retention window ending now.
-const retainedChunkKeys = (now: number): string[] => {
-    const keys: string[] = []
-    const last = hourIndex(now)
-    for (let h = last - SUMMARY_RETENTION_HOURS + 1; h <= last; h++) {
-        keys.push(`${DIAG_SUMMARY_LOG_KEY}_${h}`)
-    }
-    return keys
-}
+const retainedChunkKeys = (now: number) =>
+    chunkKeysBetween(hourIndex(now) - SUMMARY_RETENTION_HOURS + 1, hourIndex(now))
 
 // Keys just outside the window: removed on flush so storage never accumulates
 // stale hours (bounded lookback, since removal is idempotent).
-const expiredChunkKeys = (now: number): string[] => {
-    const keys: string[] = []
+const expiredChunkKeys = (now: number) => {
     const oldestKept = hourIndex(now) - SUMMARY_RETENTION_HOURS + 1
-    for (let h = oldestKept - 24; h < oldestKept; h++) {
-        keys.push(`${DIAG_SUMMARY_LOG_KEY}_${h}`)
-    }
-    return keys
+    return chunkKeysBetween(oldestKept - 24, oldestKept - 1)
 }
 
 const pruneSummaries = (list: DiagEntry[], now: number): DiagEntry[] => {

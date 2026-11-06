@@ -24,7 +24,7 @@ export interface MarkupConfig {
     postButtonSlots: string[]
 }
 
-export const DEFAULT_MARKUP_CONFIG: MarkupConfig = {
+const DEFAULT_MARKUP_CONFIG: MarkupConfig = {
     commentIdAttributes: ['thingId', 'thing-id'],
     postIdAttributes: ['id'],
     postBannerSlots: ['post-removed-banner'],

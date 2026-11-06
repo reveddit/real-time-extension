@@ -23,12 +23,12 @@ export const MAX_OTHER_SUBSCRIPTIONS = 100
 // about 63 bytes reach that, so the writers that add entries also trim each
 // list to fit (issue #15). The margin leaves room for the writers that mark
 // everything seen without trimming: "u":false is a byte longer than "u":true.
-export const SYNC_QUOTA_BYTES_PER_ITEM = 8192
+const SYNC_QUOTA_BYTES_PER_ITEM = 8192
 const SYNC_ITEM_MARGIN_BYTES = 256
 // Both also refuse a set() that would take all of sync storage past 102,400
 // bytes, which five accounts with full lists pass. Firefox counts a few bytes
 // more per key than Chrome does; the margin covers that too.
-export const SYNC_QUOTA_BYTES = 102400
+const SYNC_QUOTA_BYTES = 102400
 const SYNC_TOTAL_MARGIN_BYTES = 1024
 
 const syncItemBytes = (key: string, value: any) => key.length + (JSON.stringify(value) ?? '').length

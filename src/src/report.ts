@@ -16,7 +16,7 @@ export const REPORT_LOG_MAX_CHARS = 50000
 // Why reddit's login screen means connecting a second account, on reveddit.com
 export const LOGIN_WALL_INFO_URL = 'https://www.reveddit.com/about/reddit-login/'
 
-export interface IssueDraft {
+interface IssueDraft {
     // Version and browser, e.g. '0.0.5.30, Chrome 141'
     runningOn: string
     logCopied: boolean

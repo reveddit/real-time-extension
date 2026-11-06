@@ -94,7 +94,7 @@ const BACKLOG_AGE_THRESHOLD_SECONDS = 48 * 60 * 60
 interface MarkChangesResult {
     num_changes: number
     realtimeChanges: { count: number; changeTypes: string[]; ids: string[] }
-    backlogChanges: { count: number; ids: string[]; ageRange: { min: number; max: number } }
+    backlogCount: number
 }
 
 const updateOldestDateThreshold = (items: any[], itemLookup: Record<string, any>, thing: string, isUser: boolean) => {
@@ -861,27 +861,14 @@ const checkForChanges_thing_byId = async (
             changeTypes: [],
             ids: [],
         }
-        const mergedBacklog: {
-            count: number
-            ids: string[]
-            ageRange: { min: number; max: number }
-        } = {
-            count: 0,
-            ids: [],
-            ageRange: { min: Infinity, max: 0 },
-        }
+        let backlogCount = 0
         const mergeResult = (r: MarkChangesResult) => {
             num_changes += r.num_changes
             mergedRealtime.count += r.realtimeChanges.count
             mergedRealtime.ids.push(...r.realtimeChanges.ids)
-            mergedBacklog.count += r.backlogChanges.count
-            mergedBacklog.ids.push(...r.backlogChanges.ids)
+            backlogCount += r.backlogCount
             for (const t of r.realtimeChanges.changeTypes) {
                 if (!mergedRealtime.changeTypes.includes(t)) mergedRealtime.changeTypes.push(t)
-            }
-            if (r.backlogChanges.count > 0) {
-                mergedBacklog.ageRange.min = Math.min(mergedBacklog.ageRange.min, r.backlogChanges.ageRange.min)
-                mergedBacklog.ageRange.max = Math.max(mergedBacklog.ageRange.max, r.backlogChanges.ageRange.max)
             }
         }
         return Promise.all([getLocalStorageItems(thing, isUser), getOldestDateThreshold(thing, isUser)]).then(
@@ -947,7 +934,7 @@ const checkForChanges_thing_byId = async (
                     existingLS: Object.keys(existingLocalStorageItems || {}).length,
                     num_changes,
                     realtimeCount: mergedRealtime.count,
-                    backlogCount: mergedBacklog.count,
+                    backlogCount,
                 })
                 if (mergedRealtime.count > 0) {
                     const msg = `${mergedRealtime.count} new [${mergedRealtime.changeTypes.join(', ')}] actions, click to view`
@@ -977,9 +964,9 @@ const checkForChanges_thing_byId = async (
                         source: 'recent',
                     }).catch(() => {})
                 }
-                if (mergedBacklog.count > 0) {
+                if (backlogCount > 0) {
                     console.log(
-                        `Backlog for ${thing}: ${mergedBacklog.count} older changes collected (badge-only, no notification)`,
+                        `Backlog for ${thing}: ${backlogCount} older changes collected (badge-only, no notification)`,
                     )
                 }
                 if (num_changes === 0) {
@@ -1101,7 +1088,7 @@ const changeIsPreviouslyRecorded = (name: string, change_type: number | string, 
         if (!(change_obj instanceof ChangeForStorage)) {
             change_obj = new ChangeForStorage({ object: change })
         }
-        if (change_obj.getID() === name && change_type === change_obj.getChangeTypeInternal()) {
+        if (change_obj.getID() === name && change_type === change_obj.g) {
             return true
         }
     }
@@ -1288,9 +1275,7 @@ function markChanges(
     const allUnseenIds = [...alert_unseen_ids, ...normal_unseen_ids, ...alert_userDeleted_unseen_ids]
     const num_changes = allUnseenIds.length
 
-    const backlogAges: number[] = []
     const realtimeIds: string[] = []
-    const backlogIds: string[] = []
     let realtimeCount = 0
     let backlogCount = 0
 
@@ -1299,8 +1284,6 @@ function markChanges(
         const age = item?.created_utc ? now - item.created_utc : 0
         if (age > BACKLOG_AGE_THRESHOLD_SECONDS) {
             backlogCount++
-            backlogAges.push(age)
-            backlogIds.push(id)
         } else if (notify) {
             realtimeCount++
             realtimeIds.push(id)
@@ -1316,13 +1299,7 @@ function markChanges(
     return {
         num_changes,
         realtimeChanges: { count: realtimeCount, changeTypes: realtimeChangeTypes, ids: realtimeIds },
-        backlogChanges: {
-            count: backlogCount,
-            ids: backlogIds,
-            ageRange: backlogAges.length
-                ? { min: Math.min(...backlogAges), max: Math.max(...backlogAges) }
-                : { min: 0, max: 0 },
-        },
+        backlogCount,
     } as MarkChangesResult
 }
 

@@ -197,52 +197,24 @@ export const trimDict_by_numberValuedAttribute = (
     maxNumItems: number,
     numberValuedAttribute: string,
 ): Record<string, any> => {
-    const array = sortDict_by_numberValuedAttribute(dict, numberValuedAttribute)
-
-    const shortenedArray = array.slice(0, maxNumItems)
-    const newDict: Record<string, any> = {}
-    shortenedArray.forEach(item => {
-        newDict[item[0]] = item[1]
-    })
-    return newDict
+    return Object.fromEntries(sortDict_by_numberValuedAttribute(dict, numberValuedAttribute).slice(0, maxNumItems))
 }
 
 export const sortDict_by_numberValuedAttribute = (
     dict: Record<string, any>,
     numberValuedAttribute: string,
 ): [string, any][] => {
-    let array: [string, any][] = Object.keys(dict).map(key => {
-        return [key, dict[key]] as [string, any]
-    })
-    array.sort((a, b) => {
-        return b[1][numberValuedAttribute] - a[1][numberValuedAttribute]
-    })
-    return array
+    return Object.entries(dict).sort((a, b) => b[1][numberValuedAttribute] - a[1][numberValuedAttribute])
 }
 
 export class ItemForStorage {
     c: number
     u: boolean
     p?: string
-    constructor(created_utc: number, unseen: boolean, post_id?: string, object: any = null) {
-        if (object) {
-            this.c = object.c
-            this.u = object.u
-            if (typeof object.p !== 'undefined') this.p = object.p
-        } else {
-            this.c = created_utc
-            this.u = unseen
-            if (typeof post_id !== 'undefined') this.p = post_id
-        }
-    }
-    getCreatedUTC() {
-        return this.c
-    }
-    getUnseen() {
-        return this.u
-    }
-    getPostID() {
-        return this.p
+    constructor(created_utc: number, unseen: boolean, post_id?: string) {
+        this.c = created_utc
+        this.u = unseen
+        if (typeof post_id !== 'undefined') this.p = post_id
     }
 }
 
@@ -282,9 +254,6 @@ export class ChangeForStorage {
     }
     getObservedUTC() {
         return this.o
-    }
-    getChangeTypeInternal() {
-        return this.g
     }
     getChangeType() {
         switch (this.g) {
@@ -405,15 +374,6 @@ export function setAlarm(periodInMinutes: number) {
     chrome.alarms.create(ALARM_NAME, { delayInMinutes: 1, periodInMinutes: periodInMinutes })
 }
 
-export function alphaLowerSort(a: string, b: string): number {
-    const textA = a.toLowerCase()
-    const textB = b.toLowerCase()
-
-    if (textA < textB) return -1
-    if (textA > textB) return 1
-    return 0
-}
-
 export function goToOptions() {
     const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
     if (isAndroid) {
@@ -425,26 +385,6 @@ export function goToOptions() {
     } else {
         window.open(chrome.runtime.getURL('/src/options.html'))
     }
-}
-
-export function showError(message: string, selector: string) {
-    const div = document.createElement('div')
-    div.className = 'rr-error'
-    div.textContent = message
-    div.style.transition = 'opacity 400ms'
-    const parent = document.querySelector(selector)
-    if (parent) {
-        parent.appendChild(div)
-        setTimeout(() => {
-            div.style.opacity = '0'
-            setTimeout(() => div.remove(), 400)
-        }, 2400)
-    }
-}
-
-//noinspection JSUnusedLocalSymbols
-export function pprint(obj: any) {
-    console.log(JSON.stringify(obj, null, '\t'))
 }
 
 export const getPrettyTimeLength = (seconds: number): string | undefined => {
