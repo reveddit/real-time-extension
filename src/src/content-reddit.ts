@@ -265,7 +265,7 @@ const setSubscribeButton = (
 // A comment's button takes a slot of its action row, beside Scan-Rev, and a post's
 // takes the spare slot at the end of its action row: its share button's slot would
 // push Share out of line. Reddit stamps a comment's row when the comment comes
-// into view (restore-ui.ts injectScanButton_newReddit).
+// into view (thread-scan-ui.ts injectScanButton_newReddit).
 const addSubscribeButtons_newReddit = async (subscriptions: Record<string, any>) => {
     let followed = subscriptions
     let { last_logged_in_user: me } = (await browser.storage.local.get({ last_logged_in_user: '' })) as any

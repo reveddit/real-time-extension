@@ -9,7 +9,8 @@
 // both modes got the block page, the retry is skipped for a while, so a
 // blocked client doesn't send every request twice.
 //
-// Import-free: bridge.ts and requests.ts both import it.
+// Import-free: bridge.ts, requests.ts, www-fetcher.ts, followed-lookup.ts and
+// viewer.ts import it.
 
 export const LOGGED_IN_CACHE_MODES: RequestCache[] = ['default', 'no-cache']
 // Feeds send max-age=3600, so a scan's read must never come from the browser's

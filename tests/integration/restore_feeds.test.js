@@ -1,4 +1,4 @@
-// Scans read reddit's feeds (restore.ts). A person's feed keeps the comments
+// Scans read reddit's feeds (scan-reads.ts). A person's feed keeps the comments
 // moderators removed, with their text, a thread's feed shows those with replies
 // as [deleted], and a comment's feed names its parent. Shapes from 2026-11-04.
 

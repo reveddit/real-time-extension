@@ -7,9 +7,9 @@
 // sends Cache-Control: max-age=0, 'reload' sends Pragma and Cache-Control:
 // no-cache. Firefox follows the Fetch spec, under which 'no-store' sends the
 // same two headers as 'reload'; its routes use 'default' for no headers.
-// getWwwHtmlFetcher (requests.ts) explains why no route is fixed.
+// getWwwHtmlFetcher (www-fetcher.ts) explains why no route is fixed.
 //
-// Kept import-free: news.ts and requests.ts both import it.
+// Kept import-free: news.ts, www-fetcher.ts and content.ts import it.
 
 export const WWW_ROUTE_LEGS = ['background', 'tab'] as const
 export type WwwLeg = (typeof WWW_ROUTE_LEGS)[number]

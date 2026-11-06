@@ -47,7 +47,7 @@ const load = async (html, path = '/r/sub/comments/post/a_title/') => {
     }
     globalThis.DOMParser = DOMParser
     vi.resetModules()
-    // restore.ts gets the fresh instance of the mock
+    // scan-reads.ts gets the fresh instance of the mock
     const mock = await import('../mocks/webextension-polyfill.js')
     // More than the default, so the scans here have room
     mock.__resetStorage({ options: { scan_reads_per_click: 50 } })

@@ -445,7 +445,7 @@ const scanTurnIn = async (): Promise<number> => {
     return 0
 }
 
-// For a scan the user started (restore.ts). A login reads reddit's feeds at a
+// For a scan the user started (scan-reads.ts). A login reads reddit's feeds at a
 // scan's pace, where a logged-out browser gets one a minute (verified 2026-11-04).
 // Every scan comes through here, so they share one pace and the backoff that
 // monitoring and the bridge honor, whichever tab they run in. Too soon, it answers

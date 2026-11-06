@@ -59,7 +59,7 @@ export interface PublicProfileData {
     hidden?: { t1: boolean; t3: boolean }
 }
 
-// Fetching is delegated so requests.ts can choose the route, a www.reddit.com
+// Fetching is delegated so www-fetcher.ts can choose the route, a www.reddit.com
 // tab's content script or the background worker (reddit.md, Fetch paths). Must
 // resolve to the response body text; must reject or throw on network/HTTP failure. accept
 // says whether a page is one the caller can read: the fetcher counts any other

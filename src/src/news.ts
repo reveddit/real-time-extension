@@ -360,7 +360,7 @@ const COOKIE_NAME = /^[A-Za-z0-9_.-]{1,64}$/
 const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList(raw, COOKIE_NAME, 4)
 
 // Methods reddit refused outright rest for a while, longer with each refusal
-// in a row (requests.ts noteCapabilityRefused), keyed by name ('legacy',
+// in a row (request-gates.ts noteCapabilityRefused), keyed by name ('legacy',
 // 'legacy_info', 'api_info'). Kept here so a feed change to the legacy host or switch can end
 // the legacy rest at once: the new setting deserves a try.
 export const CAPABILITY_REST_KEY = 'capability_rest'

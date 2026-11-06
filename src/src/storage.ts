@@ -179,7 +179,7 @@ export const getOldestDateKey = (thing: string, isUser: boolean): string => getO
 // it's human after a lot of automated activity, as it did a test account in 2026-11.
 // So scans start gentle, and people can speed them up in options at their own risk.
 export const SCAN_READS_DEFAULT = 20
-// The reads that open a profile scan can take 6 of these (restore.ts)
+// The reads that open a profile scan can take 6 of these (profile-scan.ts)
 export const SCAN_READS_MIN = 10
 export const SCAN_READS_MAX = 100
 export const SCAN_SECONDS_DEFAULT = 3

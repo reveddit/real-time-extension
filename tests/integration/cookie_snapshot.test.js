@@ -1,5 +1,5 @@
 // The snapshot of the user's Reddit cookies that checks run with when no
-// Reddit tab is open (requests.ts storeRedditCookies and
+// Reddit tab is open (reddit-cookies.ts storeRedditCookies and
 // rehydrateStoredRedditCookies): each cookie saved as it was, expiry
 // included, and put back only where the browser no longer holds it. One put
 // back without its expiry lasts only until the browser closes, which signs the

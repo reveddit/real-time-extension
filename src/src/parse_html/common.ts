@@ -26,7 +26,7 @@ export const newReddit = 'https://www.reddit.com'
 // needs no store republish.
 // Legacy post pages on www need the redesign_optout cookie or the
 // Shreddit challenge comes back instead. The extension can't set a Cookie
-// header from fetch(), so background.ts injects it (DNR on Chrome/Edge,
+// header from fetch(), so header-rules.ts injects it (DNR on Chrome/Edge,
 // webRequest on Firefox) on background requests carrying this query marker.
 // /api/info needs no cookie and carries no marker.
 const LEGACY_PAGE_MARKER = 'rv_legacy=1'

@@ -51,7 +51,7 @@
 // - Private communities' items are left out, and a private community's about
 //   or thread is answered 403, as reddit does logged out.
 // - While monitoring finds the user's own profile missing from the logged-out
-//   view (the shadowban signature, requests.ts), the bridge answers 404 for
+//   view (the shadowban signature, lookup-status.ts), the bridge answers 404 for
 //   it, as reddit does logged out.
 // Monitoring's own public-view fetches stay logged out.
 

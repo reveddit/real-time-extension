@@ -314,7 +314,7 @@ export const getItemsById_fromOldHTML = async (ids: string | string[]) => {
     }
     // Return only comments — posts are excluded because /api/info HTML cannot
     // determine post removal status. Posts are handled via the pending post
-    // queue, which reads their own pages (requests.ts lookupItemsByID_legacy).
+    // queue, which reads their own pages (legacy-lookup.ts lookupItemsByID_legacy).
     return items.filter(item => !item.name || !item.name.startsWith('t3_')).map(item => ({ data: item }))
 }
 

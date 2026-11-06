@@ -1,5 +1,5 @@
 // Persistent diagnostic log: the always-on, user-copyable successor to the
-// dev-only __devLog ring buffer in background.ts. dlog() mirrors what the
+// dev-only __devLog ring buffer in background-dev.ts. dlog() mirrors what the
 // service-worker console already shows (every call also console.logs the same
 // line) while keeping a bounded buffer the options page can copy — so a report
 // like issue #14 ("zero detections, no visible error") doesn't require walking

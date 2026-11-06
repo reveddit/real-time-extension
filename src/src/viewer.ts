@@ -15,7 +15,7 @@
 // ride only on the extension's own GET requests that carry a secret marker
 // (rv_viewer=<token>, a new token each time it connects), through a header
 // rule: declarativeNetRequest on Chrome and Edge (installViewerHeaderRule),
-// webRequest on Firefox (background.ts). Those requests omit the browser's
+// webRequest on Firefox (header-rules.ts). Those requests omit the browser's
 // cookies, so reddit's answers can't write into the user's cookie store, and
 // the rule matches no other request, so pages can't borrow the login. It only
 // reads: the rule matches GETs only.
@@ -426,7 +426,7 @@ export const disconnectViewer = async () => {
     await installViewerHeaderRule()
 }
 
-// The warning and failure count a second account left (requests.ts), which
+// The warning and failure count a second account left (lookup-status.ts), which
 // say nothing about the next one, or about none
 export const VIEWER_FAILURES_KEY = 'viewer_lookup_consecutive_failures'
 const forgetViewerWarnings = async () => {
@@ -445,8 +445,8 @@ const forgetViewerWarnings = async () => {
 // extension's own marked GET requests (tabId -1: not from any tab). Replaced
 // whenever the account changes, on every worker start, since session rules
 // don't outlive the browser, and before each lookup through the account
-// (requests.ts), so a cookie that has expired since drops off. Firefox does
-// this in background.ts.
+// (viewer-lookup.ts), so a cookie that has expired since drops off. Firefox does
+// this in header-rules.ts.
 export const installViewerHeaderRule = async () => {
     if (typeof __BUILT_FOR__ !== 'undefined' && __BUILT_FOR__ !== 'chrome') {
         return
@@ -494,7 +494,7 @@ export const installViewerHeaderRule = async () => {
 // minutes ago: the retry is skipped for a while then. That memory is per
 // account and kind of request (me.json, each listing, thread reads), so one
 // refused kind doesn't keep another from finding the mode that works. The
-// lookup rests a second account refused outright (restViewer in requests.ts).
+// lookup rests a second account refused outright (restViewer in viewer-lookup.ts).
 export interface ViewerJson {
     ok: boolean
     status: number

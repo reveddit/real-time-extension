@@ -13,8 +13,8 @@
 // The news feed (options.login_wall) adds to both without a store release; the
 // built-in paths always stay.
 //
-// Imports only name-list.ts, which is import-free: news.ts, requests.ts and
-// parse_html/new.ts import this module.
+// Imports only name-list.ts, which is import-free: news.ts, requests.ts,
+// www-fetcher.ts and parse_html/new.ts import this module.
 import { sanitizeNameList } from './name-list'
 
 export interface LoginWallConfig {

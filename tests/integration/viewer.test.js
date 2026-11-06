@@ -2,7 +2,7 @@
 // login page while the user's cookies are set aside and put back, the gates
 // that keep everything else still meanwhile, the header rule that puts its
 // cookies on the extension's own marked requests, and the lookup of the
-// user's own items through it (requests.ts lookupItemsByID_fromViewer).
+// user's own items through it (viewer-lookup.ts lookupItemsByID_fromViewer).
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
