@@ -4,7 +4,7 @@ Update this file whenever a permission changes, or what the extension does with 
 
 Privacy policy URL: https://www.reveddit.com/about/extension-privacy/
 Remote code: No
-Data usage: tick Personally identifiable information, Authentication information, Website content and all three certifications.
+Data usage: tick Authentication information, Website content and all three certifications. Leave Personally identifiable information unticked: a reddit username is a pseudonym.
 
 
 SINGLE PURPOSE
