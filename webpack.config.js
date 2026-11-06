@@ -108,17 +108,8 @@ function modify(buffer) {
     return JSON.stringify(manifest, null, 2);
 }
 const contentScripts = {
-    common: './src/src/common.ts',
     content: './src/src/content.ts',
-    'content-reddit': './src/src/content-reddit.ts',
-    'content-revddit': './src/src/content-revddit.ts',
     'content-revddit-start': './src/src/content-revddit-start.ts',
-    'content-common': './src/src/content-common.ts',
-    contextMenus: './src/src/contextMenus.ts',
-    requests: './src/src/requests.ts',
-    storage: './src/src/storage.ts',
-    restore: './src/src/restore.ts',
-    'restore-ui': './src/src/restore-ui.ts',
 }
 const extensionPages = {
     options: './src/src/options.tsx',
@@ -127,7 +118,6 @@ const extensionPages = {
     other: './src/src/other.tsx',
     welcome: './src/src/welcome.tsx',
     whatsnew: './src/src/whatsnew.tsx',
-    parse: ['./src/src/parse_html/common.ts', './src/src/parse_html/old.ts'],
 }
 const extensionPageNames = Object.keys(extensionPages)
 
