@@ -1,13 +1,15 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
-import { getAllChanges, getItemFromLocalStorage, getPendingPostQueueSize, clearPendingPostQueue, getNotificationLog, NotificationLogEntry } from './storage'
-import { ChangeForStorage, LocalStorageItem, getPrettyDate, getPrettyTimeLength, isComment } from './common'
+import { getAllChanges, getPendingPostQueueSize, clearPendingPostQueue, getNotificationLog, NotificationLogEntry } from './storage'
+import { ChangeForStorage } from './common'
 import { AppGlobal } from './ui/global'
-import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueLink, MutedLink, Author, Subreddit, PostTitle, MdBody, MessageBanner, MiniSpinner, Page } from './ui/components'
+import { MessageBanner, MiniSpinner, Page } from './ui/components'
 import { tokens } from './ui/tokens'
-import { markdownToHTML } from './ui/markdown'
 import { redditItemUrl } from './ui/links'
+import { ChangeRow, FilterOption, FilterValue, SortValue, matchesFilter, ChangeCard, toRow } from './history-rows'
+import { FullWelcomeBanner, SlimWelcomeBanner } from './history-welcome'
+import { NotificationLog } from './history-log'
 
 const searchParams = new URLSearchParams(window.location.search)
 const VALID_FILTERS = ['removed', 'deleted', 'approved', 'locked', 'unlocked', 'edited'] as const
@@ -16,39 +18,6 @@ const initialFilter: FilterValue = (() => {
     if (!f) return []
     return f.split(',').filter((v): v is FilterOption => (VALID_FILTERS as readonly string[]).includes(v))
 })()
-
-const getPinInstructions = (): string => {
-  if (__BUILT_FOR__ === 'firefox') return 'Click the extensions puzzle icon in the toolbar, then pin reveddit real-time.'
-  if (navigator.userAgent.includes('Edg/')) return 'Click the extensions icon in the toolbar, then pin reveddit real-time.'
-  return 'Click the puzzle piece icon in the toolbar, then pin reveddit real-time.'
-}
-
-const WelcomeBanner = styled(Card)`
-  margin-bottom: ${tokens.space.lg};
-  & h2 {
-    margin: 0 0 ${tokens.space.sm} 0;
-    font-size: 1.2em;
-  }
-  & p {
-    margin: ${tokens.space.xs} 0;
-    line-height: 1.6;
-    color: var(--text-primary);
-  }
-  & ul {
-    margin: ${tokens.space.sm} 0;
-    padding-left: 1.4em;
-    line-height: 1.8;
-    color: var(--text-primary);
-  }
-`
-
-const BannerActions = styled.div`
-  display: flex;
-  gap: ${tokens.space.sm};
-  align-items: center;
-  margin-top: ${tokens.space.md};
-  flex-wrap: wrap;
-`
 
 const PageHeader = styled.div`
   display: flex;
@@ -143,108 +112,6 @@ const Spinner = styled.span`
   @keyframes spin { to { transform: rotate(360deg); } }
 `
 
-interface ChangeRow {
-  id: string | null
-  action: string
-  actionVariant: 'removed' | 'deleted' | 'approved' | 'locked' | 'unlocked' | 'edited' | 'default'
-  observedUTC: number
-  createdUTC: number
-  formattedObserved: string
-  formattedObservedFull: string
-  timeLength: string
-  formattedCreated: string
-  contentType: 'comment' | 'post'
-  user: string
-  subreddit: string
-  text: string
-  body: string
-  href: string
-  needsResolve: boolean
-  seenCount: number | null
-}
-
-type FilterOption = 'removed' | 'deleted' | 'approved' | 'locked' | 'unlocked' | 'edited'
-type FilterValue = FilterOption[]
-type SortValue = 'observed' | 'delta' | 'created'
-
-const variantFromAction = (action: string): ChangeRow['actionVariant'] => {
-  if (action === 'mod removed') return 'removed'
-  if (action === 'user deleted') return 'deleted'
-  if (action === 'approved') return 'approved'
-  if (action === 'locked') return 'locked'
-  if (action === 'unlocked') return 'unlocked'
-  if (action === 'edited') return 'edited'
-  return 'default'
-}
-
-const matchesFilter = (row: ChangeRow, filter: FilterValue): boolean => {
-  if (filter.length === 0) return true
-  return filter.includes(row.actionVariant as FilterOption)
-}
-
-function ChangeCard({ row, onResolve }: { row: ChangeRow; onResolve: (id: string) => void }) {
-  const rendered = useMemo(() => {
-    if (row.contentType === 'comment') {
-      return row.text ? markdownToHTML(row.text) : ''
-    }
-    return row.body ? markdownToHTML(row.body) : ''
-  }, [row.text, row.body, row.contentType])
-
-  const showPostTitle = row.contentType === 'post' && row.text
-  const bodyIsEmpty = !rendered || rendered.trim() === '' || rendered.trim() === '<p></p>'
-
-  return (
-    <Card>
-      <CardHeader>
-        <Badge variant={row.actionVariant}>{row.action}</Badge>
-        <span style={{ color: 'var(--text-secondary)', fontSize: '0.9em' }}>
-          {row.contentType} by <Author>u/{row.user}</Author>
-          {row.subreddit ? <> in <Subreddit>r/{row.subreddit}</Subreddit></> : null}
-        </span>
-      </CardHeader>
-
-      <CardMeta>
-        <span title={row.formattedObservedFull}>observed {row.formattedObserved}</span>
-        {row.timeLength !== 'n/a' && <span title={row.formattedCreated}>{row.action} {row.timeLength} after creation</span>}
-        {row.seenCount ? <span>seen {row.seenCount}×</span> : null}
-      </CardMeta>
-
-      {showPostTitle && <PostTitle>{row.text}</PostTitle>}
-
-      <CardBody>
-        {bodyIsEmpty ? (
-          <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
-            (no body content stored)
-          </span>
-        ) : (
-          <MdBody className="md-body" dangerouslySetInnerHTML={{ __html: rendered }} />
-        )}
-      </CardBody>
-
-      <CardActions>
-        {row.needsResolve ? (
-          <Button variant="secondary" onClick={() => onResolve(row.id!)}>
-            Open on Reddit ↗
-          </Button>
-        ) : (
-          <BlueLink href={row.href} target="_blank" rel="noreferrer">
-            Open on Reddit ↗
-          </BlueLink>
-        )}
-        {row.id && (
-          <MutedLink
-            href={`https://www.reveddit.com/info?id=${encodeURIComponent(row.id)}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            View on reveddit ↗
-          </MutedLink>
-        )}
-      </CardActions>
-    </Card>
-  )
-}
-
 function History() {
   const [changes, setChanges] = useState<ChangeRow[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -291,70 +158,7 @@ function History() {
           })
         })
 
-        const rows: ChangeRow[] = all.map(change => {
-          const id = change.getID()
-          const observedUTC = change.getObservedUTC() || 0
-          const action = change.getChangeType() || ''
-          const seenCount = change.getSeenCount()
-          const user = change.user || ''
-          const isUser = user !== 'other'
-
-          const item = getItemFromLocalStorage(user, isUser, id!, localStorage)
-          const contentType: 'comment' | 'post' = isComment(id!) ? 'comment' : 'post'
-          let text = ''
-          let body = ''
-          let subreddit = ''
-          let timeLength = 'n/a'
-          let formattedCreated = ''
-          let createdUTC = 0
-
-          if (item && typeof item !== 'string') {
-            const lsi = item as LocalStorageItem
-            createdUTC = lsi.getCreatedUTC() || 0
-            text = (lsi.getText() || '').trim()
-            body = (lsi.getBody?.() || '').trim()
-            subreddit = lsi.getSubreddit?.() || ''
-            if (createdUTC) {
-              timeLength = getPrettyTimeLength(observedUTC - createdUTC) || 'n/a'
-              formattedCreated = new Date(createdUTC * 1000).toString()
-            }
-          }
-
-          if (!text && !body) text = id || ''
-
-          const postId = item && typeof item !== 'string' ? (item as LocalStorageItem).getPostID?.() : undefined
-          let href = '#'
-          let needsResolve = false
-          if (isComment(id!)) {
-            if (postId) {
-              href = redditItemUrl(id!, postId)
-            } else {
-              needsResolve = true
-            }
-          } else {
-            href = redditItemUrl(id!)
-          }
-
-          return {
-            id,
-            action,
-            actionVariant: variantFromAction(action),
-            observedUTC,
-            createdUTC,
-            formattedObserved: getPrettyDate(observedUTC),
-            formattedObservedFull: new Date(observedUTC * 1000).toString(),
-            timeLength,
-            formattedCreated,
-            contentType,
-            user,
-            subreddit,
-            text,
-            body,
-            href,
-            needsResolve,
-            seenCount,
-          }
-        })
+        const rows: ChangeRow[] = all.map(change => toRow(change, localStorage))
 
         setChanges(rows)
         setLoaded(true)
@@ -453,26 +257,7 @@ function History() {
       <AppGlobal />
       <Page>
         {showFullBanner ? (
-          <WelcomeBanner>
-            <h2>Monitoring is active{currentUser ? ` for u/${currentUser}` : ''}</h2>
-            <p>reveddit real-time is now watching your Reddit comments and posts. You'll be notified whenever content is removed by moderators, reapproved, locked, or unlocked.</p>
-            <ul>
-              <li>The extension's toolbar icon displays a badge count of removed comments and posts you haven't viewed yet.</li>
-              <li><strong>Pin the extension to your toolbar</strong> so you can always see this count. {getPinInstructions()}</li>
-            </ul>
-            {currentUser && (
-              <p>
-                You can also view your{' '}
-                <BlueLink href={`https://www.reveddit.com/user/${currentUser}?all=true`} target="_blank" rel="noreferrer">
-                  reveddit.com user page
-                </BlueLink>
-                , which can show orphaned and collapsed comments.
-              </p>
-            )}
-            <BannerActions>
-              <Button variant="secondary" onClick={dismissBanner}>Got it</Button>
-            </BannerActions>
-          </WelcomeBanner>
+          <FullWelcomeBanner currentUser={currentUser} onDismiss={dismissBanner} />
         ) : (
           <ShowWelcomeLink onClick={() => { localStorage.removeItem('history_banner_dismissed'); setBannerDismissed(false) }}>
             show welcome message
@@ -532,20 +317,7 @@ function History() {
         ) : (
           <>
             {showSlimBanner && (
-              <WelcomeBanner>
-                <h2>Monitoring is active{currentUser ? ` for u/${currentUser}` : ''}</h2>
-                <p>No removed or changed content has been observed yet. You'll be notified when any of your comments or posts are removed by moderators.</p>
-                <p>The extension's toolbar icon will display a count of removed items you haven't viewed. Pin the extension to your toolbar to always see it. {getPinInstructions()}</p>
-                {currentUser && (
-                  <p>
-                    You can also check your{' '}
-                    <BlueLink href={`https://www.reveddit.com/user/${currentUser}?all=true`} target="_blank" rel="noreferrer">
-                      reveddit.com user page
-                    </BlueLink>
-                    {' '}for orphaned and collapsed comments.
-                  </p>
-                )}
-              </WelcomeBanner>
+              <SlimWelcomeBanner currentUser={currentUser} />
             )}
             {!showSlimBanner && changes.length === 0 && !initialScanDone && (
               <Empty>
@@ -563,73 +335,18 @@ function History() {
           </>
         )}
 
-        <LogSection ref={logSectionRef}>
-          <LogToggle onClick={() => setLogOpen(!logOpen)}>
-            {logOpen ? '▾' : '▸'} Notification Log ({notifLog.length})
-          </LogToggle>
-          {logOpen && (
-            notifLog.length === 0 ? <LogEmpty>No notifications logged yet.</LogEmpty> : (
-            <LogTable>
-              <LogHeader>Time</LogHeader>
-              <LogHeader>Type</LogHeader>
-              <LogHeader>Message</LogHeader>
-              <LogHeader>IDs</LogHeader>
-              {notifLog.slice().reverse().map((entry, i) => (
-                <React.Fragment key={i}>
-                  <LogCell>{new Date(entry.ts).toLocaleString()}</LogCell>
-                  <LogCell>{entry.source}</LogCell>
-                  <LogCell>{entry.message}</LogCell>
-                  <LogCell>{entry.itemIds?.join(', ')}</LogCell>
-                </React.Fragment>
-              ))}
-            </LogTable>
-            )
-          )}
-        </LogSection>
+        <NotificationLog
+          sectionRef={logSectionRef}
+          open={logOpen}
+          onToggle={() => setLogOpen(!logOpen)}
+          entries={notifLog}
+        />
       </Page>
     </>
   )
 }
 
-const LogSection = styled.div`
-    margin-top: ${tokens.space.lg};
-    padding-top: ${tokens.space.md};
-    border-top: 1px solid var(--border);
-`
-const LogToggle = styled.button`
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-size: 0.85em;
-    padding: ${tokens.space.xs} 0;
-    &:hover { color: var(--text-primary); }
-`
-const LogTable = styled.div`
-    display: grid;
-    grid-template-columns: auto auto 1fr auto;
-    gap: 0;
-    margin-top: ${tokens.space.sm};
-    font-size: 0.82em;
-    color: var(--text-secondary);
-`
-const LogHeader = styled.div`
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-    padding: ${tokens.space.xs} ${tokens.space.sm};
-    border-bottom: 1px solid var(--border);
-`
-const LogCell = styled.div`
-    padding: ${tokens.space.xs} ${tokens.space.sm};
-    border-bottom: 1px solid var(--border);
-    word-break: break-all;
-`
-const LogEmpty = styled.div`
-    color: var(--text-muted);
-    padding: ${tokens.space.sm} 0;
-`
+
 const TitleBar = styled.div`
     display: flex;
     align-items: baseline;
