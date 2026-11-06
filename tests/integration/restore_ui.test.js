@@ -364,7 +364,7 @@ describe('Place unattached', () => {
             return querySelector(selector)
         }
         await scanThread()
-        expect(threadNote()).toContain("Couldn't read reddit's feeds")
+        expect(threadNote()).toContain('The scan stopped unexpectedly')
         expect(scanBtn().disabled).toBe(false)
         expect(document.querySelector('.rev-restore-cancel')).toBeNull()
         expect(document.querySelector('.rev-scan-comment-btn').classList.contains('rev-scan-disabled')).toBe(false)
@@ -378,7 +378,7 @@ describe('Place unattached', () => {
             throw new Error('broken')
         }
         await settle(() => btn.disabled)
-        expect(placeNote()).toContain("Couldn't read reddit's feeds")
+        expect(placeNote()).toContain('The scan stopped unexpectedly')
         expect(btn.textContent).toBe('Place unattached comments (1 left)')
     })
 
@@ -430,13 +430,100 @@ describe("when a scan ends, the page's Scan-Rev buttons", () => {
         expect(scanRev().title).not.toContain('click to continue')
     })
 
+    it('end "Continue scan" once another click would read nothing', async () => {
+        const authors = Array.from({ length: 15 }, (_, i) => `author${i}`)
+        await loadThread(threadPage(30, authors.map(name => comment(`t1_${name}`, name)).join('')))
+        pages[threadPath] = feed(postEntry())
+        for (const name of authors) pages[authorPath(name)] = feed()
+        pages[authorPath('author14')] = { ok: false, status: 403, blockPage: false }
+        const mock = await import('../mocks/webextension-polyfill.js')
+        mock.__getSyncStorage().options = { scan_reads_per_click: 10 }
+        await scanThread()
+        expect(scanBtn().textContent).toBe('Continue scan')
+        for (let click_ = 0; click_ < 2; click_++) {
+            click(scanRev())
+            await settle(() => document.querySelector('.rev-spinner'))
+        }
+        expect(scanBtn().textContent).toBe('Scan for removed comments')
+    })
+
+    it.each([
+        ['it searched everyone', () => {}],
+        ['all that is left is a feed it could not read', () => (pages[authorPath('author14')] = { ok: false, status: 403, blockPage: false })],
+    ])('leave "Continue scan" for a thread scan of another sort when %s', async (_, setUp) => {
+        const eightMonthsAgo = new Date(Date.now() - 240 * 24 * 3600 * 1000).toISOString()
+        const authors = Array.from({ length: 15 }, (_, i) => `author${i}`)
+        await loadThread(threadPage(30, authors.map(name => comment(`t1_${name}`, name)).join('')))
+        document.querySelectorAll('[thingid]').forEach((el, i) => i && el.setAttribute('created', eightMonthsAgo))
+        pages[threadPath] = feed(postEntry().replace(NOW, eightMonthsAgo))
+        for (const name of ['op_user', ...authors]) {
+            pages[authorPath(name)] = feed()
+            pages[`/user/${name}/comments/.rss?sort=controversial&limit=100&t=year`] = feed()
+        }
+        setUp()
+        const mock = await import('../mocks/webextension-polyfill.js')
+        mock.__getSyncStorage().options = { scan_reads_per_click: 10 }
+        await scanThread()
+        expect(scanBtn().textContent).toBe('Continue scan')
+        for (let click_ = 0; click_ < 2; click_++) {
+            click(scanRev())
+            await settle(() => document.querySelector('.rev-spinner'))
+        }
+        expect(scanBtn().textContent).toBe('Continue scan')
+        expect(document.querySelector('.rev-scan-all-progress').textContent).not.toBe('')
+    })
+
+    it('end "Continue scan" after a search of its own sort, with another sort still to come', async () => {
+        const authors = Array.from({ length: 15 }, (_, i) => `author${i}`)
+        await loadThread(threadPage(30, authors.map(name => comment(`t1_${name}`, name)).join('')))
+        const eightMonthsAgo = new Date(Date.now() - 240 * 24 * 3600 * 1000).toISOString()
+        document.querySelector('[thingid="t1_author14"]').setAttribute('created', eightMonthsAgo)
+        pages[threadPath] = feed(postEntry())
+        for (const name of authors) pages[authorPath(name)] = feed()
+        const mock = await import('../mocks/webextension-polyfill.js')
+        mock.__getSyncStorage().options = { scan_reads_per_click: 10 }
+        await scanThread()
+        for (let click_ = 0; click_ < 2; click_++) {
+            click(scanRev())
+            await settle(() => document.querySelector('.rev-spinner'))
+        }
+        expect(scanBtn().textContent).toBe('Scan for removed comments')
+        const read = asked.length
+        await scanThread()
+        expect(asked.length).toBe(read)
+        expect(scanBtn().classList.contains('rev-scan-exhausted')).toBe(true)
+        expect(scanBtn().title).toContain('other ages')
+    })
+
+    it('lose their number when a scan finishes and they stay for another sort', async () => {
+        await twoAuthors()
+        const eightMonthsAgo = new Date(Date.now() - 240 * 24 * 3600 * 1000).toISOString()
+        document.querySelector('[thingid="t1_b"]').setAttribute('created', eightMonthsAgo)
+        scanRev().querySelector('span').textContent = 'Scan-Rev (12)'
+        await scanThread()
+        expect(scanRev().textContent).toBe('Scan-Rev')
+    })
+
     it('stay for a comment that needs another sort of feeds', async () => {
         await twoAuthors()
         const eightMonthsAgo = new Date(Date.now() - 240 * 24 * 3600 * 1000).toISOString()
         document.querySelector('[thingid="t1_b"]').setAttribute('created', eightMonthsAgo)
         await scanThread()
         expect(scanBtn().classList.contains('rev-scan-exhausted')).toBe(true)
+        expect(scanBtn().title).not.toContain('No more removed comments')
         expect(document.querySelector('.rev-scan-comment-btn.rev-scan-exhausted')).toBeNull()
+    })
+
+    it('all go when nothing is missing any more, whatever sorts are left', async () => {
+        await loadThread(threadPage(3, comment('t1_a', 'a') + comment('t1_b', 'b')))
+        pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_b', 'b', 'live words'))
+        pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), entry('t1_gone', 'a', 'removed words'))
+        pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'))
+        pages[commentPath('t1_gone')] = feed(postEntry())
+        const eightMonthsAgo = new Date(Date.now() - 240 * 24 * 3600 * 1000).toISOString()
+        document.querySelector('[thingid="t1_b"]').setAttribute('created', eightMonthsAgo)
+        await scanThread()
+        expect(document.querySelector('.rev-scan-comment-btn:not(.rev-scan-exhausted)')).toBeNull()
     })
 
     it('all go when every comment was read the same way', async () => {
@@ -744,6 +831,46 @@ describe('the profile scan', () => {
         expect(rows.map(el => el.getAttribute('data-fullname'))).toEqual(['t1_a', 't1_x', 't1_y', 't1_b'])
     })
 
+    it('keeps the order of items older than the last row, across clicks', async () => {
+        const secondsAgo = seconds => new Date(Date.now() - seconds * 1000).toISOString()
+        const row = (id, seconds) =>
+            `<div class="thing" data-fullname="${id}"><time datetime="${secondsAgo(seconds)}"></time></div>`
+        await loadProfile(
+            `<html><body><div class="content" role="main"><div id="siteTable">${row('t1_a', 100)}${row('t1_b', 200)}` +
+                `<div class="thing rev-inserted-comment" data-fullname="t1_x"></div></div></div></body></html>`,
+        )
+        pages[`/user/someone/comments/.rss?${query}`] = feed(
+            entry('t1_a', 'someone', 'live'),
+            entry('t1_b', 'someone', 'live'),
+            entry('t1_y', 'someone', 'the removed text').replace(NOW, secondsAgo(300)),
+            entry('t1_z', 'someone', 'the removed text').replace(NOW, secondsAgo(400)),
+        )
+        pages[`/user/someone/comments.json?${query}`] = listing({ data: { name: 't1_a' } }, { data: { name: 't1_b' } })
+        pages[commentPath('t1_y')] = pages[commentPath('t1_z')] = feed(postEntry())
+        await scanProfile()
+        const rows = Array.from(document.querySelectorAll('#siteTable > [data-fullname]'))
+        expect(rows.map(el => el.getAttribute('data-fullname'))).toEqual(['t1_a', 't1_b', 't1_x', 't1_y', 't1_z'])
+    })
+
+    it('keeps its reads and what it finished through Back', async () => {
+        const ids = Array.from({ length: 30 }, (_, i) => `t1_off${i}`)
+        pages[`/user/someone/comments/.rss?${query}`] = feed(...ids.map(id => entry(id, 'someone', 'the text')))
+        for (const id of ids) pages[commentPath(id)] = feed(postEntry())
+        await loadProfile(profilePage)
+        const mock = await import('../mocks/webextension-polyfill.js')
+        mock.__getSyncStorage().options = { scan_reads_per_click: 20 }
+        await scanProfile()
+        expect(progress()).toContain('scan again to go on')
+        const read = [...asked]
+
+        ui.resetScansForPage()
+        ui.initProfileScan('someone', false)
+        await vi.advanceTimersByTimeAsync(0)
+        asked.length = 0
+        await scanProfile()
+        expect(asked.filter(path => read.includes(path))).toEqual([])
+    })
+
     it('leaves the text of a row an earlier click inserted as it is', async () => {
         await loadProfile(
             `<html device="desktop"><body><div class="content" role="main"></div>` +
@@ -777,7 +904,7 @@ describe('the profile scan', () => {
         await loadProfile(profilePage)
         globalThis.window = {}
         await scanProfile()
-        expect(progress()).toBe("Couldn't read reddit's feeds. Try again.")
+        expect(progress()).toBe('The scan stopped unexpectedly. Try again.')
         expect(profileBtn().textContent).toBe('Rescan')
     })
 

@@ -442,7 +442,8 @@ describe('restoring one comment', () => {
         const { result, last } = await run('t1_bob1', pageReads)
         expect(result).toMatchObject({ exhausted: false, remaining: 0 })
         expect(last.status).toBe('noted')
-        expect(last.message).toContain("1 feed(s) couldn't be read. Reload the page to try them again.")
+        expect(last.message).toContain("1 feed(s) couldn't be read.")
+        expect(last.message).not.toContain('Click again')
     })
 
     it('leaves a failed feed to read again, and the next click reads only that', async () => {
@@ -494,9 +495,19 @@ describe('restoring one comment', () => {
             pages[commentPath(offPage)] = feed(postEntry(), entry(offPage, name, 'x'))
         }
         const { result } = await run('t1_author0')
-        expect(asked.filter(path => path.startsWith('/user/'))).toHaveLength(9)
-        expect(asked.filter(path => path.startsWith('/comments/'))).toHaveLength(8)
+        expect(asked.filter(path => path.startsWith('/user/'))).toHaveLength(10)
+        expect(asked.filter(path => path.startsWith('/comments/'))).toHaveLength(9)
         expect(result).toMatchObject({ exhausted: false })
+    })
+
+    it('holds back only what the comments waiting still need', async () => {
+        __resetStorage()
+        for (const name of threadOfAuthors(30)) pages[authorPath(name)] = feed()
+        pages[authorPath('op_user')] = feed(entry('t1_offPage', 'op_user', 'x'))
+        pages[commentPath('t1_offPage')] = feed(postEntry(), entry('t1_offPage', 'op_user', 'x'))
+        await run('t1_author0')
+        expect(asked.filter(path => path.startsWith('/user/'))).toHaveLength(18)
+        expect(asked.filter(path => path.startsWith('/comments/'))).toHaveLength(1)
     })
 
     it('uses the whole click on authors while nothing needs checking', async () => {
@@ -585,30 +596,42 @@ describe('reads that fail', () => {
         expect(pageReads.has(authorPath('alice'))).toBe(false)
     })
 
-    it("sends a block page's second try in the other mode, if the click has room for it", async () => {
+    const blocked = { ...refused, otherMode: 1 }
+
+    it("sends a block page's second try in the mode it names, if the click has room for it", async () => {
         const sent = []
-        browserMock.runtime.sendMessage = async ({ path, secondTry }) => {
-            sent.push([path, secondTry])
-            return refused
-        }
-        const reads = new restore.ScanReads(new restore.RateLimiter(), 3)
+        onRead = ({ path, secondTryMode }) => sent.push([path, secondTryMode])
+        pages['/a'] = pages['/b'] = blocked
+        const reads = new restore.ScanReads(new restore.RateLimiter(), 2)
         await withTimers(() => reads.feed('/a'))
-        expect(reads.canRead('/c')).toBe(true)
-        await withTimers(() => reads.feed('/b'))
         expect(sent).toEqual([
-            ['/a', false],
-            ['/a', true],
-            ['/b', false],
+            ['/a', undefined],
+            ['/a', 1],
         ])
         expect(reads.canRead('/c')).toBe(false)
+
+        sent.length = 0
+        const oneLeft = new restore.ScanReads(new restore.RateLimiter(), 1)
+        await withTimers(() => oneLeft.feed('/b'))
+        expect(sent).toEqual([['/b', undefined]])
+    })
+
+    it('tries no more second tries in a click that saw both refused', async () => {
+        pages['/a'] = pages['/b'] = blocked
+        const reads = new restore.ScanReads(new restore.RateLimiter(), 9)
+        await withTimers(() => reads.feed('/a'))
+        asked.length = 0
+        await withTimers(() => reads.feed('/b'))
+        expect(asked).toEqual(['/b'])
     })
 
     it('waits as long as the background says, and asks again', async () => {
         vi.useFakeTimers()
         const sent = []
-        browserMock.runtime.sendMessage = async () => {
+        pages['/a'] = { ok: false, status: 0, waitMs: 2000 }
+        onRead = () => {
             sent.push(Date.now())
-            return sent.length < 3 ? { ok: false, status: 0, waitMs: 2000 } : { ok: true, status: 200, text: feed() }
+            if (sent.length === 3) pages['/a'] = feed()
         }
         const reads = new restore.ScanReads(new restore.RateLimiter(), 3)
         const read = reads.feed('/a')
@@ -620,7 +643,7 @@ describe('reads that fail', () => {
 
     it('takes a waiting read back on a cancel, with no failure to remember', async () => {
         vi.useFakeTimers()
-        browserMock.runtime.sendMessage = async () => ({ ok: false, status: 0, waitMs: 20000 })
+        pages['/a'] = { ok: false, status: 0, waitMs: 20000 }
         const limiter = new restore.RateLimiter()
         const pageReads = new Map()
         const reads = new restore.ScanReads(limiter, 3, pageReads)
@@ -633,20 +656,49 @@ describe('reads that fail', () => {
         expect(pageReads.size).toBe(0)
     })
 
-    it("gets past a feed that always answers 403, as a suspended account's does, and says so", async () => {
-        for (const answered of [{ ok: false, status: 403, blockPage: false }, refused]) {
-            pages[authorPath('alice')] = answered
-            const pageReads = new Map()
-            expect((await scan(pageReads)).last).toMatchObject({ status: 'partial' })
-            expect((await scan(pageReads)).last.message).toContain("couldn't be read. Click again to try them.")
-            expect((await scan(pageReads)).last).toMatchObject({
-                status: 'noted',
-                message: "0 recovered. 1 feed(s) couldn't be read. Reload the page to try them again.",
-            })
-            asked.length = 0
-            await scan(pageReads)
-            expect(asked).toEqual([])
-        }
+    it("takes reddit's own 403, as a suspended account's feed may get, as final, and says so", async () => {
+        pages[authorPath('alice')] = { ok: false, status: 403, blockPage: false }
+        const pageReads = new Map()
+        expect((await scan(pageReads)).last).toMatchObject({
+            status: 'noted',
+            message: "0 recovered. 1 feed(s) couldn't be read.",
+        })
+        asked.length = 0
+        await scan(pageReads)
+        expect(asked).toEqual([])
+    })
+
+    it('keeps trying a refused feed for two more clicks, stops, then tries again a while later', async () => {
+        pages[authorPath('alice')] = refused
+        const pageReads = new Map()
+        expect((await scan(pageReads)).last).toMatchObject({ status: 'partial' })
+        expect((await scan(pageReads)).last.message).toContain("couldn't be read. Click again to try them.")
+        expect((await scan(pageReads)).last).toMatchObject({
+            status: 'noted',
+            message: "0 recovered. 1 feed(s) couldn't be read.",
+        })
+        asked.length = 0
+        await scan(pageReads)
+        expect(asked).toEqual([])
+
+        vi.setSystemTime(Date.now() + 6 * 60 * 1000)
+        expect((await scan(pageReads)).last.message).toContain('Click again to try them.')
+        pages[authorPath('alice')] = feed()
+        await scan(pageReads)
+        expect(asked).toEqual([authorPath('alice')])
+    })
+
+    it('stops at once with scans turned off from the website, and spends no tries', async () => {
+        const off = { ok: false, status: 0, blockPage: true }
+        pages[threadPath] = THREAD_FEED
+        pages[authorPath('alice')] = off
+        const pageReads = new Map()
+        expect((await scan(pageReads)).last).toMatchObject({ status: 'error' })
+        expect(pageReads.has(`tried ${authorPath('alice')}`)).toBe(false)
+        pages[authorPath('alice')] = feed()
+        asked.length = 0
+        await scan(pageReads)
+        expect(asked).toContain(authorPath('alice'))
     })
 
     it("doesn't offer to retry a feed once what's missing has been found", async () => {

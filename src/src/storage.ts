@@ -170,36 +170,28 @@ export const SCAN_READS_MIN = 10
 export const SCAN_READS_MAX = 100
 export const SCAN_SECONDS_DEFAULT = 3
 export const SCAN_SECONDS_MIN = 1
-// The next turn is in the service worker's memory, which an idle 30 seconds ends,
-// and a 429 doubles the gap for a while (requests.ts)
-export const SCAN_SECONDS_MAX = 10
-const isNumberBetween = (value: unknown, min: number, max: number) => Number(value) >= min && Number(value) <= max
+export const SCAN_SECONDS_MAX = 60
+const isNumberBetween = (value: unknown, min: number, max: number) =>
+    ['number', 'string'].includes(typeof value) && Number(value) >= min && Number(value) <= max
 export const isScanReads = (value: unknown) =>
     isNumberBetween(value, SCAN_READS_MIN, SCAN_READS_MAX) && Number.isInteger(Number(value))
 export const isScanSeconds = (value: unknown) => isNumberBetween(value, SCAN_SECONDS_MIN, SCAN_SECONDS_MAX)
-// What the options say, or otherwise in place of what can't be used
-export const scanSettingsFrom = (
-    options: any,
-    otherwise = { readsPerClick: SCAN_READS_DEFAULT, seconds: SCAN_SECONDS_DEFAULT },
-) => ({
+// What the options say, or the default in place of what can't be used
+export const scanSettingsFrom = (options: any) => ({
     readsPerClick: isScanReads(options?.scan_reads_per_click)
         ? Number(options.scan_reads_per_click)
-        : otherwise.readsPerClick,
+        : SCAN_READS_DEFAULT,
     seconds: isScanSeconds(options?.scan_seconds_between_reads)
         ? Number(options.scan_seconds_between_reads)
-        : otherwise.seconds,
+        : SCAN_SECONDS_DEFAULT,
 })
 // The user's choice, held to the website's limits
 export const getScanSettings = async () => {
     const chosen = scanSettingsFrom(await getOptions((_users, _others, options) => options))
-    const { reads_per_click, seconds_between_reads } = await getRemoteScanLimits()
-    const limit = scanSettingsFrom(
-        { scan_reads_per_click: reads_per_click, scan_seconds_between_reads: seconds_between_reads },
-        { readsPerClick: SCAN_READS_MAX, seconds: SCAN_SECONDS_MIN },
-    )
+    const { reads_per_click = Infinity, seconds_between_reads = 0 } = await getRemoteScanLimits()
     return {
-        readsPerClick: Math.min(chosen.readsPerClick, limit.readsPerClick),
-        gapMs: 1000 * Math.max(chosen.seconds, limit.seconds),
+        readsPerClick: Math.min(chosen.readsPerClick, reads_per_click),
+        gapMs: 1000 * Math.min(Math.max(chosen.seconds, seconds_between_reads), SCAN_SECONDS_MAX),
     }
 }
 

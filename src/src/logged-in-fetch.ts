@@ -66,14 +66,17 @@ export const fetchLoggedIn = async (
     return { response, blockPage, retried }
 }
 
-// A scan's read: one request. After a block page, the page sends a second try on
-// a turn of its own, in the other mode, and a cancel can stop it. A block page may
-// be about that one feed, so unlike above it says nothing about other requests.
-export const fetchForScan = async (url: string, signal: AbortSignal, secondTry: boolean) => {
-    const mode = (_loggedInFetchState.preferredCacheMode + (secondTry ? 1 : 0)) % SCAN_CACHE_MODES.length
+// A scan's read: one request. After a block page it names the mode for a second
+// try, which the page sends on a turn of its own, where a cancel can stop it. A
+// block page may be about that one feed, so unlike above it says nothing about
+// other requests.
+export const fetchForScan = async (url: string, signal: AbortSignal, secondTryMode?: number) => {
+    const isSecondTry = secondTryMode !== undefined
+    const mode = secondTryMode ?? _loggedInFetchState.preferredCacheMode
     const response = await fetchInMode(url, SCAN_CACHE_MODES[mode], signal)
     const blockPage = isBlockPage(response)
     // Past the edge, whatever the resource said: keep this mode
-    if (secondTry && !blockPage) _loggedInFetchState.preferredCacheMode = mode
-    return { response, blockPage }
+    if (isSecondTry && !blockPage) _loggedInFetchState.preferredCacheMode = mode
+    const retry = blockPage && !isSecondTry && Date.now() >= _loggedInFetchState.doubleBlockUntil
+    return { response, blockPage, otherMode: retry ? (mode + 1) % SCAN_CACHE_MODES.length : undefined }
 }

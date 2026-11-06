@@ -125,9 +125,9 @@ describe('the scan settings', () => {
         [READS, '101', 'from 10 to 100'],
         [READS, '10.5', 'from 10 to 100'],
         [READS, '', 'from 10 to 100'],
-        [SECONDS, '0.5', 'from 1 to 10'],
-        [SECONDS, '11', 'from 1 to 10'],
-        [SECONDS, 'fast', 'from 1 to 10'],
+        [SECONDS, '0.5', 'from 1 to 60'],
+        [SECONDS, '61', 'from 1 to 60'],
+        [SECONDS, 'fast', 'from 1 to 60'],
     ])('won\'t save %s as "%s"', async (name, value, message) => {
         const page = await open({ custom_clientid: '' })
         page.type(field(page, name), value)

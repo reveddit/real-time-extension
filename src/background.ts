@@ -509,7 +509,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             sendResponse({ ok: false, status: 0, otherIdentity: true })
             return true
         }
-        readWithLogin(String(request.path), Boolean(request.secondTry))
+        readWithLogin(String(request.path), request.secondTryMode)
             .then(sendResponse)
             .catch(err => sendResponse({ ok: false, status: 0, error: String(err?.message || err) }))
         return true

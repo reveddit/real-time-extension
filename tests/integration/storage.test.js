@@ -447,7 +447,7 @@ describe('getScanSettings', () => {
     it('uses what was saved, the ends of the range included', async () => {
         for (const [reads, seconds] of [
             [10, 1],
-            [100, 10],
+            [100, 60],
             [35, 2.5],
         ]) {
             __resetStorage({ options: { scan_reads_per_click: reads, scan_seconds_between_reads: seconds } })
@@ -458,9 +458,10 @@ describe('getScanSettings', () => {
     it("uses the default for what it can't use, which a limit of 5 would be on a profile", async () => {
         for (const [reads, seconds] of [
             [9, 0.5],
-            [101, 11],
+            [101, 61],
             [20.5, 'fast'],
             [null, null],
+            [[50], true],
         ]) {
             __resetStorage({ options: { scan_reads_per_click: reads, scan_seconds_between_reads: seconds } })
             expect(await getScanSettings()).toEqual({ readsPerClick: 20, gapMs: 3000 })
@@ -481,19 +482,19 @@ describe('getScanSettings', () => {
         expect(await getScanSettings()).toEqual({ readsPerClick: 50, gapMs: 2000 })
     })
 
-    it("ignores website limits outside the options' ranges", async () => {
-        __resetStorage({}, { [NEWS_CACHE_KEY]: { feed: { options: { scan_limits: { reads_per_click: 2, seconds_between_reads: 99 } } } } })
-        expect(await getScanSettings()).toEqual({ readsPerClick: 20, gapMs: 3000 })
+    it("applies a website limit past the options' range, up to the slowest pace the turns allow", async () => {
+        __resetStorage({}, { [NEWS_CACHE_KEY]: { feed: { options: { scan_limits: { reads_per_click: 6, seconds_between_reads: 99 } } } } })
+        expect(await getScanSettings()).toEqual({ readsPerClick: 6, gapMs: 60000 })
     })
 
-    it('takes limits from the news feed, numbers only', async () => {
+    it('takes limits from the news feed, whole reads and sane numbers only', async () => {
         vi.stubGlobal(
             'fetch',
             vi.fn(async () => ({
                 ok: true,
                 json: async () => ({
                     messages: [],
-                    options: { scan_limits: { reads_per_click: 12, seconds_between_reads: 'slow', other: 1 } },
+                    options: { scan_limits: { reads_per_click: 12.5, seconds_between_reads: 'slow', other: 1 } },
                 }),
             })),
         )
@@ -502,6 +503,17 @@ describe('getScanSettings', () => {
         vi.unstubAllGlobals()
         expect(__getLocalStorage()[NEWS_CACHE_KEY].feed.options.scan_limits).toEqual({ reads_per_click: 12 })
         expect(await getScanSettings()).toEqual({ readsPerClick: 12, gapMs: 3000 })
+    })
+
+    it('takes no limit under what a scan needs to start', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => ({ ok: true, json: async () => ({ messages: [], options: { scan_limits: { reads_per_click: 2 } } }) })),
+        )
+        __resetStorage()
+        await fetchNews({ force: true })
+        vi.unstubAllGlobals()
+        expect(await getScanSettings()).toEqual({ readsPerClick: 6, gapMs: 3000 })
     })
 
     it('leaves the defaults unset, so a gentler one later reaches those who never chose', async () => {

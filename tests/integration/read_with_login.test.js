@@ -47,22 +47,39 @@ describe('a read for a scan', () => {
 
     it("leaves a block page's second try to the page, in the other mode, at no cost to other requests", async () => {
         fetchMock.mockImplementation(async () => blockPage())
-        expect(await readWithLogin(PATH)).toMatchObject({ ok: false, status: 403, blockPage: true })
+        const first = await readWithLogin(PATH)
+        expect(first).toMatchObject({ ok: false, status: 403, blockPage: true, otherMode: 1 })
         expect(fetchMock).toHaveBeenCalledTimes(1)
         _scanTurn.next = 0
-        expect(await readWithLogin(PATH, true)).toMatchObject({ ok: false, status: 403, blockPage: true })
+        const second = await readWithLogin(PATH, first.otherMode)
+        expect(second).toMatchObject({ ok: false, status: 403, blockPage: true, otherMode: undefined })
         expect(fetchMock.mock.calls.map(call => call[1].cache)).toEqual(['no-store', 'no-cache'])
         expect(_loggedInFetchState.doubleBlockUntil).toBe(0)
     })
 
     it('keeps the mode a second try got past the edge in', async () => {
         fetchMock.mockImplementation(async (url, { cache }) => (cache === 'no-cache' ? answer(200) : blockPage()))
-        await readWithLogin(PATH)
+        const { otherMode } = await readWithLogin(PATH)
         _scanTurn.next = 0
-        expect(await readWithLogin(PATH, true)).toMatchObject({ ok: true })
+        expect(await readWithLogin(PATH, otherMode)).toMatchObject({ ok: true })
         _scanTurn.next = 0
         await readWithLogin(PATH)
         expect(fetchMock.mock.calls.at(-1)[1].cache).toBe('no-cache')
+    })
+
+    it('tries the mode its first try named, whatever another request has learned since', async () => {
+        fetchMock.mockImplementation(async () => blockPage())
+        const { otherMode } = await readWithLogin(PATH)
+        _loggedInFetchState.preferredCacheMode = 1
+        _scanTurn.next = 0
+        await readWithLogin(PATH, otherMode)
+        expect(fetchMock.mock.calls.map(call => call[1].cache)).toEqual(['no-store', 'no-cache'])
+    })
+
+    it('offers no second try while both modes are blocked for every request', async () => {
+        _loggedInFetchState.doubleBlockUntil = Date.now() + 60000
+        fetchMock.mockImplementation(async () => blockPage())
+        expect(await readWithLogin(PATH)).toMatchObject({ blockPage: true, otherMode: undefined })
     })
 
     it('a 429 enters the backoff that monitoring and the bridge honor, once', async () => {
@@ -100,8 +117,8 @@ describe('scans in several tabs', () => {
     it("take a turn for a block page's second try too", async () => {
         vi.useFakeTimers()
         fetchMock.mockImplementation(async () => blockPage())
-        await readWithLogin(PATH)
-        expect(await readWithLogin(PATH, true)).toEqual({ ok: false, status: 0, waitMs: 3000 })
+        const { otherMode } = await readWithLogin(PATH)
+        expect(await readWithLogin(PATH, otherMode)).toEqual({ ok: false, status: 0, waitMs: 3000 })
         expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 
@@ -155,6 +172,15 @@ describe('scans in several tabs', () => {
         expect(await readWithLogin(PATH)).toEqual({ ok: false, status: 0, waitMs: 3000 })
     })
 
+    it('keep a turn already set when the pace gets faster', async () => {
+        vi.useFakeTimers()
+        __getSyncStorage().options = { scan_seconds_between_reads: 10 }
+        await readWithLogin(PATH)
+        __getSyncStorage().options = { scan_seconds_between_reads: 1 }
+        await vi.advanceTimersByTimeAsync(500)
+        expect(await readWithLogin(PATH)).toEqual({ ok: false, status: 0, waitMs: 9500 })
+    })
+
     it('give up on a turn further off than a gap can be, as a clock set back leaves', async () => {
         _scanTurn.next = Date.now() + 2 * 3600 * 1000
         expect(await readWithLogin(PATH)).toMatchObject({ ok: true })
@@ -183,9 +209,19 @@ describe('a login reddit keeps refusing', () => {
         expect(__getLocalStorage().error_status).toBe('logged_in_view_unavailable')
     })
 
-    it('asks to sign in where a block page would read as try later', async () => {
+    it('asks to sign in where both tries got a block page, which would read as try later', async () => {
         fetchMock.mockImplementation(async () => blockPage())
-        expect(await readWithLogin(PATH)).toMatchObject({ ok: false, status: 0, needsLogin: true })
+        const first = await readWithLogin(PATH)
+        expect(first).toMatchObject({ ok: false, status: 403, otherMode: 1 })
+        _scanTurn.next = 0
+        expect(await readWithLogin(PATH, first.otherMode)).toMatchObject({ ok: false, status: 0, needsLogin: true })
+    })
+
+    it('reads on when the other mode gets past the edge, which says the login is fine', async () => {
+        fetchMock.mockImplementation(async (url, { cache }) => (cache === 'no-cache' ? answer(200) : blockPage()))
+        const { otherMode } = await readWithLogin(PATH)
+        _scanTurn.next = 0
+        expect(await readWithLogin(PATH, otherMode)).toMatchObject({ ok: true })
     })
 
     it("still reads what reddit answers: only a refusal is taken for the login's", async () => {

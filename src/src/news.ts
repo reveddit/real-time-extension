@@ -78,10 +78,10 @@ export interface RemoteOptions {
     login_wall?: Partial<LoginWallConfig>
     // Holds every install to this pace or slower, whatever its options say, so
     // scans can slow down without a release: { reads_per_click?: number,
-    // seconds_between_reads?: number }. Outside the options' ranges, ignored.
+    // seconds_between_reads?: number }.
     scan_limits?: ScanLimits
 }
-interface ScanLimits {
+export interface ScanLimits {
     reads_per_click?: number
     seconds_between_reads?: number
 }
@@ -389,9 +389,16 @@ export const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList
 // the legacy rest at once: the new setting deserves a try.
 export const CAPABILITY_REST_KEY = 'capability_rest'
 
+const isAtLeastOne = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 1
+// What a profile scan's first click needs. A limit under it couldn't start one, or
+// leave a block page room for its second try; mechanisms.scanFeeds turns scans off.
+const FEWEST_SCAN_READS = 6
 const sanitizeScanLimits = (raw: any): ScanLimits => ({
-    ...(typeof raw?.reads_per_click === 'number' ? { reads_per_click: raw.reads_per_click } : {}),
-    ...(typeof raw?.seconds_between_reads === 'number' ? { seconds_between_reads: raw.seconds_between_reads } : {}),
+    ...(isAtLeastOne(raw?.reads_per_click)
+        ? { reads_per_click: Math.max(Math.floor(raw.reads_per_click), FEWEST_SCAN_READS) }
+        : {}),
+    ...(isAtLeastOne(raw?.seconds_between_reads) ? { seconds_between_reads: raw.seconds_between_reads } : {}),
 })
 
 // The feed's limits on scans (storage.ts getScanSettings)

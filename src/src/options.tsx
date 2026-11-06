@@ -31,6 +31,7 @@ import {
   inIncognitoContext,
 } from './viewer'
 import { LOGIN_WALL_INFO_URL } from './report'
+import { getRemoteScanLimits, ScanLimits } from './news'
 
 const Page = styled.div`
   width: 380px;
@@ -363,6 +364,7 @@ function Options() {
   const [seenCount, setSeenCount] = useState('')
   const [scanReads, setScanReads] = useState('')
   const [scanSeconds, setScanSeconds] = useState('')
+  const [scanLimits, setScanLimits] = useState<ScanLimits>({})
   const [clientId, setClientId] = useState('')
   const [removedMode, setRemovedMode] = useState<TrackMode>('off')
   const [lockedMode, setLockedMode] = useState<TrackMode>('off')
@@ -421,6 +423,7 @@ function Options() {
     }
     chrome.storage.onChanged.addListener(onStorageChanged)
     tryLoadOptions()
+    getRemoteScanLimits().then(setScanLimits)
     chrome.storage.local.get([THEME_STORAGE_KEY], res => {
       setThemeModeState((res?.[THEME_STORAGE_KEY] as ThemeMode) || 'auto')
     })
@@ -532,6 +535,11 @@ function Options() {
       window.close()
     })
   }
+
+  const heldTo = [
+    scanLimits.reads_per_click && `at most ${scanLimits.reads_per_click} reads a click`,
+    scanLimits.seconds_between_reads && `at least ${scanLimits.seconds_between_reads} seconds between reads`,
+  ].filter(Boolean).join(' and ')
 
   if (!loaded) return (
     <>
@@ -670,6 +678,7 @@ function Options() {
           Scans read Reddit with your login. More reads or a shorter wait get through big threads
           sooner, but Reddit may ask you to verify you&apos;re human if it sees what looks like
           automated activity.
+          {heldTo && ` For now, Reveddit holds every scan to ${heldTo}, whatever these say.`}
         </Note>
 
         <SectionHeader>Appearance</SectionHeader>

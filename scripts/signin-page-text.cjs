@@ -5,6 +5,6 @@ const pageComplaints = text =>
         .split('\n')
         .filter(line => /error|try again|whoa|wrong|invalid/i.test(line))
         .slice(0, 3)
-        .map(line => line.trim().slice(0, 120).replace(/\S+@\S+/g, '<email>'))
+        .map(line => line.replace(/\S+@\S+/g, '<email>').trim().slice(0, 120))
 
 module.exports = { pageComplaints }

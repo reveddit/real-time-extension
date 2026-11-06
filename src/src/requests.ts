@@ -8,6 +8,7 @@ import {
     clearRateLimitBackoff,
     getMsSinceLastRateLimitHit,
     getScanSettings,
+    SCAN_SECONDS_MAX,
     getRateLimitBackoffRemainingMs,
 } from './storage'
 import browser from 'webextension-polyfill'
@@ -3179,8 +3180,9 @@ const scanTurnIn = async (): Promise<number> => {
     const sinceHit = await getMsSinceLastRateLimitHit().catch(() => null)
     const gap = sinceHit !== null && sinceHit < RECENT_RATE_LIMIT_WINDOW_MS ? gapMs * 2 : gapMs
     const now = Date.now()
-    // Further off than a gap, the clock went back
-    if (_scanTurn.next > now && _scanTurn.next - now <= gap) return _scanTurn.next - now
+    // Further off than any gap could put it, the clock went back
+    const left = _scanTurn.next - now
+    if (left > 0 && left <= 2000 * SCAN_SECONDS_MAX) return left
     _scanTurn.next = now + gap
     return 0
 }
@@ -3190,7 +3192,7 @@ const scanTurnIn = async (): Promise<number> => {
 // Every scan comes through here, so they share one pace and the backoff that
 // monitoring and the bridge honor, whichever tab they run in. Too soon, it answers
 // with waitMs: the page waits and asks again, where a cancel can take the read back.
-export const readWithLogin = async (path: string, secondTry = false) => {
+export const readWithLogin = async (path: string, secondTryMode?: number) => {
     if ((await getRemoteMechanism(MECHANISM_SCAN_FEEDS)) === 'off') {
         return { ok: false, status: 0, blockPage: true }
     }
@@ -3212,10 +3214,12 @@ export const readWithLogin = async (path: string, secondTry = false) => {
     const timer = setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
     try {
         const url = `https://www.reddit.com${path}`
-        const { response, blockPage } = await fetchForScan(url, controller.signal, secondTry)
+        const { response, blockPage, otherMode } = await fetchForScan(url, controller.signal, secondTryMode)
         // Reddit's logout leaves a short cookie of the login's name, so holding one
-        // settles nothing, and no wait helps. Its answers to the login check do.
-        if ((response.status === 429 || blockPage) && (await isLoginKeptOut())) {
+        // settles nothing, and no wait helps. Its answers to the login check do. A
+        // block page with a second try to come says nothing yet.
+        const refused = response.status === 429 || (blockPage && otherMode === undefined)
+        if (refused && (await isLoginKeptOut())) {
             return { ok: false, status: 0, needsLogin: true }
         }
         if (response.status === 429) {
@@ -3225,6 +3229,7 @@ export const readWithLogin = async (path: string, secondTry = false) => {
             ok: response.ok,
             status: response.status,
             blockPage,
+            otherMode,
             text: response.ok ? await response.text() : '',
         }
     } finally {
