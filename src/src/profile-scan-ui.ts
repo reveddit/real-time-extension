@@ -199,35 +199,20 @@ async function handleProfileScan(username: string, container: HTMLElement) {
 function highlightVisibleRemovedComments(results: ScanResult[], isNewReddit: boolean): Set<string> {
     const matched = new Set<string>()
     const resultMap = new Map(results.map(r => [r.id, r]))
-
-    if (!isNewReddit) {
-        const commentEls = document.querySelectorAll('.thing[data-fullname]')
-        for (const el of Array.from(commentEls)) {
-            const fullname = el.getAttribute('data-fullname')
-            if (!fullname) continue
-            const scanResult = resultMap.get(fullname)
-            if (scanResult) {
-                matched.add(fullname)
-                highlightComment_oldReddit(el as HTMLElement, scanResult)
-            }
-        }
-    } else {
-        // New reddit: articles with data-post-id, or shreddit-post with id attribute
-        const articles = document.querySelectorAll('article[data-post-id]')
-        for (const el of Array.from(articles)) {
-            const postId = el.getAttribute('data-post-id')
-            if (!postId) continue
-            const scanResult = resultMap.get(postId)
-            if (scanResult) {
-                matched.add(postId)
-                // One inserted by an earlier click shows its text already
-                if (!el.classList.contains('rev-inserted-comment')) {
-                    highlightComment_newReddit(el as HTMLElement, scanResult)
-                }
-            }
-        }
+    // New reddit: articles with data-post-id, or shreddit-post with id attribute
+    const [selector, idAttr] = isNewReddit
+        ? ['article[data-post-id]', 'data-post-id']
+        : ['.thing[data-fullname]', 'data-fullname']
+    for (const el of Array.from(document.querySelectorAll(selector))) {
+        const id = el.getAttribute(idAttr)
+        const scanResult = id ? resultMap.get(id) : undefined
+        if (!id || !scanResult) continue
+        matched.add(id)
+        // One inserted by an earlier click shows its text already
+        if (el.classList.contains('rev-inserted-comment')) continue
+        if (isNewReddit) highlightComment_newReddit(el as HTMLElement, scanResult)
+        else highlightComment_oldReddit(el as HTMLElement, scanResult)
     }
-
     return matched
 }
 
