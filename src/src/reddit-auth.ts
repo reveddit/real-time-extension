@@ -185,7 +185,7 @@ const getRedditToken = (data: any) => {
 }
 
 export const getAuth = () => {
-    return getOptions((users: string[], others: string[], options: Record<string, any>) => {
+    return getOptions((options: Record<string, any>) => {
         const use_this_clientID = options.custom_clientid
         if (!use_this_clientID || use_this_clientID === 'testing') {
             return NO_AUTH

@@ -50,8 +50,26 @@ const subscribeIdP = (id) =>
     new Promise((resolve) => subscribeId(id, resolve))
 const unsubscribeIdP = (id) =>
     new Promise((resolve) => unsubscribeId(id, resolve))
-const saveOptionsP = (...args) =>
-    new Promise((resolve) => saveOptions(...args, resolve))
+const saveOptionsP = (options) =>
+    new Promise((resolve) => saveOptions(options, resolve))
+// An options object as the options page builds it; the changes override
+const optionsToSave = (changes = {}) => ({
+    seen_count: 2,
+    interval: 1,
+    custom_clientid: '',
+    removal_status: { track: true, notify: true },
+    lock_status: { track: true, notify: true },
+    hide_subscribe: false,
+    monitor_quarantined: false,
+    show_scan_on_own_profile: false,
+    show_scan_on_other_profiles: true,
+    show_thread_scan_buttons: true,
+    highlight_own_profile_status: true,
+    auto_filter_removed_threads: true,
+    scan_reads_per_click: 20,
+    scan_seconds_between_reads: 3,
+    ...changes,
+})
 
 // Helper: create a full storage init matching what initStorage would produce
 function makeStorageInit(overrides = {}) {
@@ -495,7 +513,7 @@ describe('getScanSettings', () => {
     it('leaves the defaults unset, so a gentler one later reaches those who never chose', async () => {
         __resetStorage()
         const save = (reads, seconds) =>
-            saveOptionsP(2, 1, '', true, true, true, true, false, false, false, true, true, true, true, reads, seconds)
+            saveOptionsP(optionsToSave({ scan_reads_per_click: reads, scan_seconds_between_reads: seconds }))
         await save(20, 3)
         expect(__getSyncStorage().options).not.toHaveProperty('scan_reads_per_click')
         expect(__getSyncStorage().options).not.toHaveProperty('scan_seconds_between_reads')
@@ -508,7 +526,7 @@ describe('getOptions / saveOptions', () => {
     beforeEach(() => __resetStorage(makeStorageInit()))
 
     it('retrieves current options', async () => {
-        await getOptions((users, others, options) => {
+        await getOptions((options) => {
             expect(options.interval).toBe(INTERVAL_DEFAULT)
             expect(options.removal_status.track).toBe(true)
             expect(options.lock_status.notify).toBe(true)
@@ -516,7 +534,22 @@ describe('getOptions / saveOptions', () => {
     })
 
     it('saves options and persists', async () => {
-        await saveOptionsP(3, 5, 'my_client', true, false, false, true, true, false, true, false, false, true, false, 30, 2.5)
+        await saveOptionsP(
+            optionsToSave({
+                seen_count: 3,
+                interval: 5,
+                custom_clientid: 'my_client',
+                removal_status: { track: true, notify: false },
+                lock_status: { track: false, notify: true },
+                hide_subscribe: true,
+                show_scan_on_own_profile: true,
+                show_scan_on_other_profiles: false,
+                show_thread_scan_buttons: false,
+                auto_filter_removed_threads: false,
+                scan_reads_per_click: 30,
+                scan_seconds_between_reads: 2.5,
+            }),
+        )
         const storage = __getSyncStorage()
         expect(storage.options.seen_count).toBe(3)
         expect(storage.options.interval).toBe(5)

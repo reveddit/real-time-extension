@@ -696,7 +696,7 @@ let lastAlarm = 0
 // Recreate the monitoring alarm at the interval the user chose on the options
 // page, never the compiled default: the watchdog must not undo a raised interval.
 function setAlarmFromOptions() {
-    getOptions((_users, _others, options) => {
+    getOptions(options => {
         const interval = Number(options?.interval)
         setAlarm(Number.isInteger(interval) && interval > 0 ? interval : INTERVAL_DEFAULT)
     })

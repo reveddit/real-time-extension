@@ -201,7 +201,7 @@ export const scanSettingsFrom = (options: any) => ({
 })
 // The user's choice, held to the website's limits
 export const getScanSettings = async () => {
-    const chosen = scanSettingsFrom(await getOptions((_users, _others, options) => options))
+    const chosen = scanSettingsFrom(await getOptions(options => options))
     const { reads_per_click = Infinity, seconds_between_reads = 0 } = await getRemoteScanLimits()
     return {
         readsPerClick: Math.min(chosen.readsPerClick, reads_per_click),
@@ -626,55 +626,23 @@ export const getNotifyFlags = (options: Record<string, any>): { removal: boolean
     }
 }
 
-export const getOptions = (callback: (users: string[], others: string[], options: Record<string, any>) => any) => {
+export const getOptions = (callback: (options: Record<string, any>) => any) => {
     return browser.storage.sync
-        .get(['user_subscriptions', 'other_subscriptions', 'options'])
-        .then((result: Record<string, any>) => {
-            const r = result || {}
-            const users = Object.keys(r.user_subscriptions || {})
-            const others = Object.keys(r.other_subscriptions || {})
-            const options = r.options
-            return callback(users, others, options)
-        })
+        .get(['options'])
+        .then((result: Record<string, any>) => callback((result || {}).options))
         .catch(err => {
             console.log(err)
-            return callback([], [], {})
+            return callback({})
         })
 }
-export const saveOptions = (
-    seen_count: number,
-    interval: number,
-    custom_clientid: string,
-    removed_track: boolean,
-    removed_notify: boolean,
-    locked_track: boolean,
-    locked_notify: boolean,
-    hide_subscribe: boolean,
-    monitor_quarantined: boolean,
-    show_scan_on_own_profile: boolean,
-    show_scan_on_other_profiles: boolean,
-    show_thread_scan_buttons: boolean,
-    highlight_own_profile_status: boolean,
-    auto_filter_removed_threads: boolean,
-    scan_reads_per_click: number,
-    scan_seconds_between_reads: number,
-    callback: () => void,
-) => {
+
+// options holds every option under its stored name
+export const saveOptions = (options: Record<string, any>, callback: () => void) => {
+    const { scan_reads_per_click, scan_seconds_between_reads, ...rest } = options
     chrome.storage.sync.set(
         {
             options: {
-                seen_count,
-                interval,
-                custom_clientid,
-                removal_status: { track: removed_track, notify: removed_notify },
-                lock_status: { track: locked_track, notify: locked_notify },
-                hide_subscribe,
-                monitor_quarantined,
-                show_scan_on_own_profile,
-                show_scan_on_other_profiles,
-                show_thread_scan_buttons,
-                highlight_own_profile_status,
-                auto_filter_removed_threads,
+                ...rest,
                 // Left out at the default, so a later, gentler one reaches them
                 ...(scan_reads_per_click !== SCAN_READS_DEFAULT && { scan_reads_per_click }),
                 ...(scan_seconds_between_reads !== SCAN_SECONDS_DEFAULT && { scan_seconds_between_reads }),

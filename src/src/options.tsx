@@ -155,7 +155,7 @@ function Options() {
       if (area === 'sync' && changes.options) tryLoadOptions()
     }
     const tryLoadOptions = () => {
-      getOptions((_users, _others, options) => {
+      getOptions(options => {
         if (optionsLoaded || !options || !Object.keys(options).length) return
         optionsLoaded = true
         chrome.storage.onChanged.removeListener(onStorageChanged)
@@ -287,8 +287,22 @@ function Options() {
     }
 
     setError('')
-    saveOptions(seenCountNum, intervalNum, customClientId, removedMode !== 'off', removedMode === 'notify',
-                lockedMode !== 'off', lockedMode === 'notify', hideSubscribe, monitorQuarantined, showScanOnOwnProfile, showScanOnOtherProfiles, showThreadScanButtons, highlightOwnProfileStatus, autoFilterRemovedThreads, Number(scanReads), Number(scanSeconds), () => {
+    saveOptions({
+      seen_count: seenCountNum,
+      interval: intervalNum,
+      custom_clientid: customClientId,
+      removal_status: { track: removedMode !== 'off', notify: removedMode === 'notify' },
+      lock_status: { track: lockedMode !== 'off', notify: lockedMode === 'notify' },
+      hide_subscribe: hideSubscribe,
+      monitor_quarantined: monitorQuarantined,
+      show_scan_on_own_profile: showScanOnOwnProfile,
+      show_scan_on_other_profiles: showScanOnOtherProfiles,
+      show_thread_scan_buttons: showThreadScanButtons,
+      highlight_own_profile_status: highlightOwnProfileStatus,
+      auto_filter_removed_threads: autoFilterRemovedThreads,
+      scan_reads_per_click: Number(scanReads),
+      scan_seconds_between_reads: Number(scanSeconds),
+    }, () => {
       setAlarm(intervalNum)
       chrome.runtime.sendMessage({ action: 'update-badge' })
       window.close()
