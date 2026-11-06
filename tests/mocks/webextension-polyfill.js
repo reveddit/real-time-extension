@@ -18,7 +18,7 @@ export function __getLocalStorage() {
 }
 
 function applyDefaults(keys, storage) {
-    if (keys === null) return { ...storage }
+    if (keys === null || keys === undefined) return { ...storage }
     if (typeof keys === 'string') {
         return { [keys]: storage[keys] }
     }
@@ -38,36 +38,34 @@ function applyDefaults(keys, storage) {
     return result
 }
 
+// A storage area over one of the in-memory stores. It answers with a promise
+// (browser.*) and also calls a callback when given one (chrome.*).
+export function makeStorageArea(getStore) {
+    return {
+        get(keys, callback) {
+            const result = applyDefaults(keys, getStore())
+            if (callback) callback(result)
+            return Promise.resolve(result)
+        },
+        set(items, callback) {
+            Object.assign(getStore(), items)
+            if (callback) callback()
+            return Promise.resolve()
+        },
+        remove(keys, callback) {
+            const storage = getStore()
+            const arr = Array.isArray(keys) ? keys : [keys]
+            arr.forEach((k) => delete storage[k])
+            if (callback) callback()
+            return Promise.resolve()
+        },
+    }
+}
+
 const browser = {
     storage: {
-        sync: {
-            get(keys) {
-                return Promise.resolve(applyDefaults(keys, syncStorage))
-            },
-            set(items) {
-                Object.assign(syncStorage, items)
-                return Promise.resolve()
-            },
-            remove(keys) {
-                const arr = Array.isArray(keys) ? keys : [keys]
-                arr.forEach((k) => delete syncStorage[k])
-                return Promise.resolve()
-            },
-        },
-        local: {
-            get(keys) {
-                return Promise.resolve(applyDefaults(keys, localStorage))
-            },
-            set(items) {
-                Object.assign(localStorage, items)
-                return Promise.resolve()
-            },
-            remove(keys) {
-                const arr = Array.isArray(keys) ? keys : [keys]
-                arr.forEach((k) => delete localStorage[k])
-                return Promise.resolve()
-            },
-        },
+        sync: makeStorageArea(() => syncStorage),
+        local: makeStorageArea(() => localStorage),
     },
     // Tests may override these per-case (and restore after): the default is the
     // no-tabs environment, which routes public fetches to the background path.
