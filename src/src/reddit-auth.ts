@@ -5,7 +5,7 @@ import { settableCookie, toStoredCookie, hasRedditLoginCookie } from './viewer'
 import { getOptions } from './storage'
 import { getRemoteMechanism, MECHANISM_ME_CHALLENGE, resolveMechanismDisabled } from './news'
 import { solveChallenge } from './parse_html/new'
-import { LOGIN_DETECT_FAILURE_WARN_THRESHOLD, countFailure } from './lookup-status'
+import { STREAK_WARN_AT, recordStreak } from './lookup-status'
 import { rehydrateStoredRedditCookies } from './reddit-cookies'
 import { flagIfRateLimited } from './request-gates'
 
@@ -36,24 +36,16 @@ export const isLoginRefusal = (failure = ''): boolean => /(status|request failed
 // Reddit keeps refusing the login check and the user's listing
 export const isLoginKeptOut = async (): Promise<boolean> => {
     const stored = (await browser.storage.local.get({ [LOGIN_DETECT_FAILURES_KEY]: 0 })) as any
-    return Number(stored[LOGIN_DETECT_FAILURES_KEY]) >= LOGIN_DETECT_FAILURE_WARN_THRESHOLD
+    return Number(stored[LOGIN_DETECT_FAILURES_KEY]) >= STREAK_WARN_AT
 }
 
-export const recordLoginDetectOutcome = async (indeterminate: boolean) => {
-    try {
-        if (!indeterminate) {
-            await browser.storage.local.remove(LOGIN_DETECT_FAILURES_KEY)
-            return
-        }
-        const failures = await countFailure(LOGIN_DETECT_FAILURES_KEY)
-        dlog('auth', `[reveddit] login detection indeterminate — consecutive failures: ${failures}`)
-        if (failures >= LOGIN_DETECT_FAILURE_WARN_THRESHOLD) {
-            setWarningBadge(LOGGED_IN_VIEW_UNAVAILABLE)
-        }
-    } catch {
-        /* ignored */
-    }
-}
+export const recordLoginDetectOutcome = (indeterminate: boolean) =>
+    recordStreak(
+        LOGIN_DETECT_FAILURES_KEY,
+        !indeterminate,
+        n => dlog('auth', `[reveddit] login detection indeterminate — consecutive failures: ${n}`),
+        () => setWarningBadge(LOGGED_IN_VIEW_UNAVAILABLE),
+    )
 
 const cookieDetails_redditSession = { name: 'reddit_session', url: 'https://reddit.com' }
 

@@ -68,8 +68,6 @@ export const PROFILE_PUBLICLY_EMPTY = 'profile_publicly_empty'
 
 const WWW_DETECT_FAILURES_KEY = 'www_detect_consecutive_failures'
 
-const WWW_DETECT_FAILURE_WARN_THRESHOLD = 5
-
 // Feed presence is not a liveness signal for POSTS: held ("awaiting moderator
 // approval") and spam-removed posts linger in the author's public feed for a
 // grace period (verified live — same anomaly as is_robot_indexable staying true
@@ -111,54 +109,72 @@ export const ABSENT_VERIFY_UNAVAILABLE = 'absent_verify_unavailable'
 
 const ABSENT_VERIFY_FAILURES_KEY = 'absent_verify_consecutive_failures'
 
-const ABSENT_VERIFY_FAILURE_WARN_THRESHOLD = 5
-
 // Whether verification has resolved nothing for enough cycles to warn. A
 // processed monitoring pass clears error_status, and must keep this warning:
 // only a cycle that resolves a verdict clears it (recordAbsentVerifyOutcome).
-const isAbsentVerifyUnavailable = async (): Promise<boolean> => {
-    try {
-        const stored = (await browser.storage.local.get({ [ABSENT_VERIFY_FAILURES_KEY]: 0 })) as any
-        return Number(stored[ABSENT_VERIFY_FAILURES_KEY] || 0) >= ABSENT_VERIFY_FAILURE_WARN_THRESHOLD
-    } catch {
-        return false
-    }
-}
+const isAbsentVerifyUnavailable = () => isStreakLong(ABSENT_VERIFY_FAILURES_KEY)
 
-export const recordAbsentVerifyOutcome = async (ok: boolean) => {
-    try {
-        if (ok) {
-            const stored = (await browser.storage.local.get({ [ABSENT_VERIFY_FAILURES_KEY]: 0 })) as any
-            if (Number(stored[ABSENT_VERIFY_FAILURES_KEY] || 0) > 0) {
-                await browser.storage.local.remove(ABSENT_VERIFY_FAILURES_KEY)
-            }
-            return
-        }
-        const stored = (await browser.storage.local.get({ [ABSENT_VERIFY_FAILURES_KEY]: 0 })) as any
-        const failures = Number(stored[ABSENT_VERIFY_FAILURES_KEY] || 0) + 1
-        await browser.storage.local.set({ [ABSENT_VERIFY_FAILURES_KEY]: failures })
-        dlogSummary('verify', `[reveddit] absent verification resolved nothing — consecutive cycles: ${failures}`)
-        if (failures >= ABSENT_VERIFY_FAILURE_WARN_THRESHOLD) {
-            setWarningBadge(await absentVerifyWarning())
-        }
-    } catch {
-        /* ignored */
-    }
-}
+export const recordAbsentVerifyOutcome = (ok: boolean) =>
+    recordStreak(
+        ABSENT_VERIFY_FAILURES_KEY,
+        ok,
+        n => dlogSummary('verify', `[reveddit] absent verification resolved nothing — consecutive cycles: ${n}`),
+        async () => setWarningBadge(await absentVerifyWarning()),
+        true,
+    )
 
 // When the pages it checks (the comment partial, then the page) ask for a
 // login, the warning says so: a second account helps then, not a tab
 const absentVerifyWarning = async () =>
     (await isLoginWalled(['partial', 'page'])) ? LOGIN_REQUIRED : ABSENT_VERIFY_UNAVAILABLE
 
-export const LOGIN_DETECT_FAILURE_WARN_THRESHOLD = 5
+// Streaks of failures kept in storage. One failure is noise; a warning comes
+// after STREAK_WARN_AT in a row.
+export const STREAK_WARN_AT = 5
 
-// One more failure in a streak kept in storage
-export const countFailure = async (key: string): Promise<number> => {
-    const stored = (await browser.storage.local.get({ [key]: 0 })) as any
-    const failures = Number(stored[key] || 0) + 1
-    await browser.storage.local.set({ [key]: failures })
-    return failures
+const isStreakLong = async (key: string): Promise<boolean> => {
+    try {
+        const stored = (await browser.storage.local.get({ [key]: 0 })) as any
+        return Number(stored[key] || 0) >= STREAK_WARN_AT
+    } catch {
+        return false
+    }
+}
+
+// ok ends the streak (clearOnlyIfSet: removing it only when it is there). Else
+// it grows by one, say logs it, and at STREAK_WARN_AT warn raises the warning.
+// A storage failure anywhere in this stops it there, unreported.
+export const recordStreak = async (
+    key: string,
+    ok: boolean,
+    say: (failures: number) => void,
+    warn: () => void | Promise<void>,
+    clearOnlyIfSet = false,
+) => {
+    try {
+        if (ok) {
+            if (clearOnlyIfSet) {
+                const stored = (await browser.storage.local.get({ [key]: 0 })) as any
+                if (!(Number(stored[key] || 0) > 0)) {
+                    return
+                }
+            }
+            await browser.storage.local.remove(key)
+            return
+        }
+        const stored = (await browser.storage.local.get({ [key]: 0 })) as any
+        const failures = Number(stored[key] || 0) + 1
+        await browser.storage.local.set({ [key]: failures })
+        say(failures)
+        if (failures >= STREAK_WARN_AT) {
+            const raised = warn()
+            if (raised) {
+                await raised
+            }
+        }
+    } catch {
+        /* ignored */
+    }
 }
 
 // Cycles in a row that checked none of the user's items, for any reason. A
@@ -168,22 +184,18 @@ export const CHECKS_FAILING = 'checks_failing'
 
 const CHECK_FAILURES_KEY = 'check_consecutive_failures'
 
-export const recordCheckOutcome = async (checked: boolean) => {
-    try {
-        if (checked) {
-            await browser.storage.local.remove(CHECK_FAILURES_KEY)
-            return
-        }
-        const failures = await countFailure(CHECK_FAILURES_KEY)
-        dlog('cycle', `[reveddit] nothing checked this cycle — consecutive failures: ${failures}`)
-        const { error_status } = (await browser.storage.local.get({ error_status: '' })) as any
-        if (failures >= LOGIN_DETECT_FAILURE_WARN_THRESHOLD && (!error_status || PARTIAL_WARNINGS.has(error_status))) {
-            setWarningBadge(CHECKS_FAILING)
-        }
-    } catch {
-        /* ignored */
-    }
-}
+export const recordCheckOutcome = (checked: boolean) =>
+    recordStreak(
+        CHECK_FAILURES_KEY,
+        checked,
+        n => dlog('cycle', `[reveddit] nothing checked this cycle — consecutive failures: ${n}`),
+        async () => {
+            const { error_status } = (await browser.storage.local.get({ error_status: '' })) as any
+            if (!error_status || PARTIAL_WARNINGS.has(error_status)) {
+                setWarningBadge(CHECKS_FAILING)
+            }
+        },
+    )
 
 // Track consecutive failures of the www public-view path. One failure is noise
 // (deploys, blips); persistent failure means the detection path is broken and
@@ -193,25 +205,18 @@ export const recordCheckOutcome = async (checked: boolean) => {
 // instead, since opening a tab doesn't help with that.
 export const LOGIN_REQUIRED = 'login_required'
 
-export const recordWwwDetectOutcome = async (ok: boolean, reason = '', loginWall = false) => {
-    try {
-        if (ok) {
-            await browser.storage.local.remove(WWW_DETECT_FAILURES_KEY)
-            return
-        }
-        const failures = await countFailure(WWW_DETECT_FAILURES_KEY)
-        dlog(
-            'feed',
-            `[reveddit] www public-view lookup failed — consecutive failures: ${failures}` +
-                (reason ? ` (${reason})` : ''),
-        )
-        if (failures >= WWW_DETECT_FAILURE_WARN_THRESHOLD) {
-            setWarningBadge(loginWall ? LOGIN_REQUIRED : 'public_view_unavailable')
-        }
-    } catch {
-        /* ignored */
-    }
-}
+export const recordWwwDetectOutcome = (ok: boolean, reason = '', loginWall = false) =>
+    recordStreak(
+        WWW_DETECT_FAILURES_KEY,
+        ok,
+        n =>
+            dlog(
+                'feed',
+                `[reveddit] www public-view lookup failed — consecutive failures: ${n}` +
+                    (reason ? ` (${reason})` : ''),
+            ),
+        () => setWarningBadge(loginWall ? LOGIN_REQUIRED : 'public_view_unavailable'),
+    )
 
 // The logged-in user's profile is publicly empty or missing (the shadowban
 // signature), as the last lookup found it. The bridge reads it so reveddit.com
@@ -293,37 +298,16 @@ const PROFILE_PAGINATION_UNAVAILABLE = 'profile_pagination_unavailable'
 
 const PAGINATION_SHORTFALL_KEY = 'profile_pagination_consecutive_shortfalls'
 
-const PAGINATION_SHORTFALL_WARN_THRESHOLD = 5
+export const isProfilePaginationShort = () => isStreakLong(PAGINATION_SHORTFALL_KEY)
 
-export const isProfilePaginationShort = async (): Promise<boolean> => {
-    try {
-        const stored = (await browser.storage.local.get({ [PAGINATION_SHORTFALL_KEY]: 0 })) as any
-        return Number(stored[PAGINATION_SHORTFALL_KEY] || 0) >= PAGINATION_SHORTFALL_WARN_THRESHOLD
-    } catch {
-        return false
-    }
-}
-
-export const recordPaginationOutcome = async (stopped: string | undefined) => {
-    try {
-        const stored = (await browser.storage.local.get({ [PAGINATION_SHORTFALL_KEY]: 0 })) as any
-        const before = Number(stored[PAGINATION_SHORTFALL_KEY] || 0)
-        if (!stopped) {
-            if (before > 0) {
-                await browser.storage.local.remove(PAGINATION_SHORTFALL_KEY)
-            }
-            return
-        }
-        const shortfalls = before + 1
-        await browser.storage.local.set({ [PAGINATION_SHORTFALL_KEY]: shortfalls })
-        dlogSummary('feed', `[reveddit] profile pagination stopped short — consecutive lookups: ${shortfalls}`)
-        if (shortfalls >= PAGINATION_SHORTFALL_WARN_THRESHOLD) {
-            setWarningBadge(await paginationWarning())
-        }
-    } catch {
-        /* ignored */
-    }
-}
+export const recordPaginationOutcome = (stopped: string | undefined) =>
+    recordStreak(
+        PAGINATION_SHORTFALL_KEY,
+        !stopped,
+        n => dlogSummary('feed', `[reveddit] profile pagination stopped short — consecutive lookups: ${n}`),
+        async () => setWarningBadge(await paginationWarning()),
+        true,
+    )
 
 // When the profile's older pages ask for a login, the warning says so
 const paginationWarning = async () =>
@@ -405,27 +389,15 @@ export const VIEWER_SIGNED_OUT = 'viewer_signed_out'
 
 export const VIEWER_UNAVAILABLE = 'viewer_unavailable'
 
-const VIEWER_FAILURE_WARN_THRESHOLD = 5
-
 // Consecutive failed lookups through the second account, warned about after a
 // streak like the public view's (recordWwwDetectOutcome)
-export const recordViewerOutcome = async (ok: boolean, reason = '') => {
-    try {
-        if (ok) {
-            await browser.storage.local.remove(VIEWER_FAILURES_KEY)
-            return
-        }
-        const stored = (await browser.storage.local.get({ [VIEWER_FAILURES_KEY]: 0 })) as any
-        const failures = Number(stored[VIEWER_FAILURES_KEY] || 0) + 1
-        await browser.storage.local.set({ [VIEWER_FAILURES_KEY]: failures })
-        dlog('feed', `[reveddit] second-account lookup failed — consecutive failures: ${failures} (${reason})`)
-        if (failures >= VIEWER_FAILURE_WARN_THRESHOLD) {
-            setWarningBadge(VIEWER_UNAVAILABLE)
-        }
-    } catch {
-        /* ignored */
-    }
-}
+export const recordViewerOutcome = (ok: boolean, reason = '') =>
+    recordStreak(
+        VIEWER_FAILURES_KEY,
+        ok,
+        n => dlog('feed', `[reveddit] second-account lookup failed — consecutive failures: ${n} (${reason})`),
+        () => setWarningBadge(VIEWER_UNAVAILABLE),
+    )
 
 // Consecutive cycles whose thread reads as the second account all came back
 // without a verdict (block pages, unreadable answers), warned about like the
@@ -470,7 +442,7 @@ export const recordViewerThreadOutcome = async (
             'verify',
             `[reveddit] second-account thread reads resolved nothing — consecutive cycles: ${failures}`,
         )
-        if (failures >= VIEWER_FAILURE_WARN_THRESHOLD) {
+        if (failures >= STREAK_WARN_AT) {
             setWarningBadge(VIEWER_UNAVAILABLE)
         }
     } catch {
@@ -494,7 +466,7 @@ export const lookupWarningToKeep = async (username: string): Promise<string | nu
     const viewer = await getViewer()
     const viaViewer = viewerCheckedLast.get(username.toLowerCase()) ?? !isSignedInViewer(viewer?.name || '', username)
     if (viewer && viaViewer) {
-        return (await viewerThreadFailures(viewer)) >= VIEWER_FAILURE_WARN_THRESHOLD ? VIEWER_UNAVAILABLE : null
+        return (await viewerThreadFailures(viewer)) >= STREAK_WARN_AT ? VIEWER_UNAVAILABLE : null
     }
     if (await isAbsentVerifyUnavailable()) {
         return absentVerifyWarning()
