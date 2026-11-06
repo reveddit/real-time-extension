@@ -165,7 +165,10 @@ shreddit-comment[depth]:not([depth='0'], [depth='1'], [depth='2'], [depth='3']) 
     color: #0079d3;
     font-size: 12px;
 }
-.rev-restore-btn:hover {
+.rev-restore-btn:hover,
+.rev-restore-cancel:hover,
+.rev-scan-item-title:hover,
+.rev-scan-item-link:hover {
     text-decoration: underline;
 }
 
@@ -201,9 +204,6 @@ shreddit-comment[depth]:not([depth='0'], [depth='1'], [depth='2'], [depth='3']) 
     color: var(--color-neutral-content-weak, #787c7e);
     margin-right: 8px;
     cursor: pointer;
-}
-.rev-restore-cancel:hover {
-    text-decoration: underline;
 }
 
 /* --- Restored comment --- */
@@ -377,9 +377,6 @@ li.rev-own-mark-li {
     color: #0079d3;
     margin-bottom: 4px;
 }
-.rev-scan-item-title:hover {
-    text-decoration: underline;
-}
 
 .rev-scan-item-meta {
     font-size: 11px;
@@ -393,9 +390,9 @@ li.rev-own-mark-li {
     gap: 12px;
 }
 
-.rev-scan-badge-removed {
+.rev-scan-badge-removed,
+.rev-scan-badge-context {
     display: inline-block;
-    background: #ff585b;
     color: white;
     font-size: 10px;
     font-weight: 700;
@@ -403,6 +400,9 @@ li.rev-own-mark-li {
     border-radius: 2px;
     text-transform: uppercase;
     margin-left: 4px;
+}
+.rev-scan-badge-removed {
+    background: #ff585b;
 }
 
 .rev-scan-item-body {
@@ -414,9 +414,6 @@ li.rev-own-mark-li {
 .rev-scan-item-link {
     font-size: 11px;
     color: #0079d3;
-}
-.rev-scan-item-link:hover {
-    text-decoration: underline;
 }
 
 /* --- Inline removed highlighting --- */
@@ -523,15 +520,7 @@ li.rev-own-mark-li {
     background-color: rgba(154, 160, 166, 0.06) !important;
 }
 .rev-scan-badge-context {
-    display: inline-block;
     background: #9aa0a6;
-    color: white;
-    font-size: 10px;
-    font-weight: 700;
-    padding: 1px 6px;
-    border-radius: 2px;
-    text-transform: uppercase;
-    margin-left: 4px;
 }
 
 /* --- Filter bar --- */
