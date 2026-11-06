@@ -16,14 +16,12 @@ import { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/we
 import { _checkForChanges_thing_byId } from '../../src/src/monitoring'
 import {
     getObjectNamesForThing,
-    REMOVED,
-    APPROVED,
     trimDict_toFitSyncItem,
     fitDicts_toSyncTotal,
     markIDsAsSeenIfSubscribed,
     formatSyncUsage,
 } from '../../src/src/storage'
-import { trimDict_by_numberValuedAttribute } from '../../src/src/common'
+import { REMOVED, APPROVED, trimDict_by_numberValuedAttribute } from '../../src/src/common'
 
 const LIMIT = 8192
 const TOTAL_LIMIT = 102400

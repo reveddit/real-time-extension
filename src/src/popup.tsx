@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { createRoot } from 'react-dom/client'
 import styled from '@emotion/styled'
 import { css } from '@emotion/react'
-import { goToOptions, getFullIDsFromURL, createNotification, getTestNotificationMessage } from './common'
+import { goToOptions, getFullIDsFromURL, createNotification } from './common'
 import { AppGlobal, setThemeMode, resolveTheme, THEME_STORAGE_KEY } from './ui/global'
 import { ActionBtn, SecondaryActionBtn, MessageBanner, MiniSpinner, Card } from './ui/components'
 import { DiagStatus, formatDiagStatus } from './diag-status'
@@ -11,7 +11,7 @@ import {
   getSubscribedUsers_withSeenAndUnseenIDs,
   subscribeId, unsubscribeId,
   markThingAsSeen, setStorageUpdateBadge, markEverythingAsSeen, clearPendingNotification,
-  getPendingPostQueueSize,
+  getPendingPostQueueSize, getTestNotificationMessage,
 } from './storage'
 import { setCurrentStateForId } from './monitoring'
 import { fetchNews, getUnreadMessages, getPendingUpdateVersion, markNewsRead, NewsMessage } from './news'

@@ -1,15 +1,3 @@
-import {
-    REMOVED,
-    DELETED,
-    APPROVED,
-    LOCKED,
-    UNLOCKED,
-    EDITED,
-    getSubscribedUsers_withUnseenIDs,
-    getNotifyFlags,
-} from './storage'
-import browser from 'webextension-polyfill'
-
 export interface RedditItem {
     name: string
     author: string
@@ -33,6 +21,13 @@ export interface RedditItem {
 export const ALARM_NAME = 'notifyme'
 export const REMOVED_BY_MODERATOR_TEXT = 'comment removed by moderator'
 
+export const REMOVED = 1
+export const APPROVED = 2
+export const LOCKED = 3
+export const UNLOCKED = 4
+export const EDITED = 5
+export const DELETED = 6
+
 export function detectIsNewReddit(): boolean {
     // Available before JS renders — new reddit sets device attribute on <html>
     if (document.documentElement.hasAttribute('device')) return true
@@ -43,7 +38,7 @@ export function detectIsNewReddit(): boolean {
     return false
 }
 const maxRedditContentLength = 10000
-const ACTION_API = __BUILT_FOR__ === 'chrome' ? 'action' : 'browserAction'
+export const ACTION_API = __BUILT_FOR__ === 'chrome' ? 'action' : 'browserAction'
 
 export const setWarningBadge = (errorStatus?: string) => {
     try {
@@ -434,20 +429,6 @@ export const getPrettyDate = (createdUTC: number): string => {
     return getPrettyTimeLength(seconds) + ' ago'
 }
 
-// Message for the popup's "send a test notification" link: confirms the
-// system-level pipeline works, and flags any notification types turned off in
-// options so a quiet extension isn't mistaken for a broken one.
-export const getTestNotificationMessage = (options: Record<string, any>): string => {
-    const flags = getNotifyFlags(options)
-    const base = 'If you see this, notifications are working.'
-    if (!flags.removal && !flags.lock) {
-        return 'If you see this, notifications are working, but notifications for removed and locked content are turned off in options.'
-    }
-    if (!flags.removal) return base + ' Note: notifications for removed content are turned off in options.'
-    if (!flags.lock) return base + ' Note: notifications for locked content are turned off in options.'
-    return base
-}
-
 export const createNotification = ({
     notificationId,
     title,
@@ -508,34 +489,4 @@ export const createNotification = ({
             }
         }
     })
-}
-
-export const updateBadgeUnseenCount = () => {
-    if (location.protocol.match(/^http/)) {
-        browser.runtime
-            .sendMessage({
-                action: 'update-badge',
-            })
-            .catch(() => {})
-    } else {
-        getSubscribedUsers_withUnseenIDs(usersUnseenIDs => {
-            let total = 0
-            Object.values(usersUnseenIDs).forEach(ids => {
-                total += ids.length
-            })
-            const setCount = (text: string) => {
-                ;(chrome as any)[ACTION_API].setBadgeBackgroundColor({ color: 'red' })
-                ;(chrome as any)[ACTION_API].setBadgeText({ text })
-            }
-            if (total > 0) {
-                setCount(total.toString())
-                return
-            }
-            // A warning still standing keeps its mark: every check ends up here
-            chrome.storage.local.get(['error_status'], local => {
-                if (local?.error_status) setWarningBadge()
-                else setCount('')
-            })
-        })
-    }
 }

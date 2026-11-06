@@ -3,7 +3,6 @@ import {
     setAlarm,
     ALARM_NAME,
     createNotification,
-    updateBadgeUnseenCount,
     createTab,
     setWarningBadge,
     isOtherIdentity,
@@ -33,6 +32,7 @@ import {
     clearPendingNotification,
     setBacklogSummaryInstalledAt,
     markBacklogSummarySent,
+    updateBadgeUnseenCount,
 } from './src/storage'
 import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'

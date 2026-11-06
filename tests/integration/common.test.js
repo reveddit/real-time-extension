@@ -22,9 +22,8 @@ import {
     ItemForStorage,
     ChangeForStorage,
     LocalStorageItem,
-    getTestNotificationMessage,
-    updateBadgeUnseenCount,
 } from '../../src/src/common.ts'
+import { getTestNotificationMessage, updateBadgeUnseenCount } from '../../src/src/storage.ts'
 
 describe('getFullIDsFromPath', () => {
     it('extracts post ID from a subreddit post URL', () => {

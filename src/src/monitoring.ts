@@ -26,11 +26,6 @@ import {
 import { dlog } from './diaglog'
 import { isViewerConnecting, recoverViewerConnect } from './viewer'
 import {
-    REMOVED,
-    DELETED,
-    APPROVED,
-    LOCKED,
-    UNLOCKED,
     addLocalStorageItems,
     getLocalStorageItems,
     getPendingNotification,
@@ -59,10 +54,15 @@ import {
     getPublicLiveKey,
     trimDict_toFitSyncItem,
     fitDicts_toSyncTotal,
+    updateBadgeUnseenCount,
 } from './storage'
 import {
+    REMOVED,
+    DELETED,
+    APPROVED,
+    LOCKED,
+    UNLOCKED,
     createNotification,
-    updateBadgeUnseenCount,
     isUserDeletedItem,
     isRemovedItem,
     isComment,

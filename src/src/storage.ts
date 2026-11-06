@@ -1,8 +1,10 @@
 import {
+    ACTION_API,
     ItemForStorage,
     LocalStorageItem,
     sortDict_by_numberValuedAttribute,
     trimDict_by_numberValuedAttribute,
+    setWarningBadge,
 } from './common'
 import { getRemoteScanLimits } from './news'
 import browser from 'webextension-polyfill'
@@ -111,13 +113,6 @@ export const getSyncUsageLine = async (): Promise<string> => {
         return `sync storage: unreadable (${String(err?.message || err)})`
     }
 }
-
-export const REMOVED = 1
-export const APPROVED = 2
-export const LOCKED = 3
-export const UNLOCKED = 4
-export const EDITED = 5
-export const DELETED = 6
 
 const trackTypes: Record<string, any[] | Record<string, any>> = {
     changes: [],
@@ -845,4 +840,48 @@ export const getRateLimitBackoffRemainingMs = async (): Promise<number> => {
     const result = await browser.storage.local.get({ [RATE_LIMIT_UNTIL_KEY]: 0 })
     const until = (result[RATE_LIMIT_UNTIL_KEY] as number) || 0
     return Math.max(0, until - Date.now())
+}
+
+// Message for the popup's "send a test notification" link: confirms the
+// system-level pipeline works, and flags any notification types turned off in
+// options so a quiet extension isn't mistaken for a broken one.
+export const getTestNotificationMessage = (options: Record<string, any>): string => {
+    const flags = getNotifyFlags(options)
+    const base = 'If you see this, notifications are working.'
+    if (!flags.removal && !flags.lock) {
+        return 'If you see this, notifications are working, but notifications for removed and locked content are turned off in options.'
+    }
+    if (!flags.removal) return base + ' Note: notifications for removed content are turned off in options.'
+    if (!flags.lock) return base + ' Note: notifications for locked content are turned off in options.'
+    return base
+}
+
+export const updateBadgeUnseenCount = () => {
+    if (location.protocol.match(/^http/)) {
+        browser.runtime
+            .sendMessage({
+                action: 'update-badge',
+            })
+            .catch(() => {})
+    } else {
+        getSubscribedUsers_withUnseenIDs(usersUnseenIDs => {
+            let total = 0
+            Object.values(usersUnseenIDs).forEach(ids => {
+                total += ids.length
+            })
+            const setCount = (text: string) => {
+                ;(chrome as any)[ACTION_API].setBadgeBackgroundColor({ color: 'red' })
+                ;(chrome as any)[ACTION_API].setBadgeText({ text })
+            }
+            if (total > 0) {
+                setCount(total.toString())
+                return
+            }
+            // A warning still standing keeps its mark: every check ends up here
+            chrome.storage.local.get(['error_status'], local => {
+                if (local?.error_status) setWarningBadge()
+                else setCount('')
+            })
+        })
+    }
 }

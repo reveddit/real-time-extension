@@ -7,12 +7,9 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { fetchNews, NEWS_CACHE_KEY } from '../../src/src/news'
+import { REMOVED, APPROVED, LOCKED, UNLOCKED } from '../../src/src/common'
 
 import {
-    REMOVED,
-    APPROVED,
-    LOCKED,
-    UNLOCKED,
     INTERVAL_DEFAULT,
     SEEN_COUNT_DEFAULT,
     MAX_SUBSCRIPTIONS,
