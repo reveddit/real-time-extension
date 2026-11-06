@@ -90,7 +90,6 @@ beforeEach(() => {
 })
 afterEach(() => {
     browserMock.runtime.sendMessage = savedSendMessage
-    vi.useRealTimers()
 })
 
 const scan = async (pageReads = new Map(), limiter, isNewReddit = true) => {

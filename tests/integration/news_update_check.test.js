@@ -66,7 +66,6 @@ describe('requestStoreUpdateIfBehind', () => {
     beforeEach(async () => {
         __resetStorage({}, { [NEWS_CACHE_KEY]: { feed: structuredClone(FEED), lastFetched: Date.now() } })
         // dlog mirrors every line to the console; keep test output readable
-        vi.spyOn(console, 'log').mockImplementation(() => {})
         await clearDiagLog()
         globalThis.__STORE__ = 'chrome'
         chrome.runtime.getManifest = () => ({ version: '0.0.5.25' })
@@ -77,7 +76,6 @@ describe('requestStoreUpdateIfBehind', () => {
         globalThis.__STORE__ = 'chrome'
         delete chrome.runtime.getManifest
         delete chrome.runtime.requestUpdateCheck
-        vi.restoreAllMocks()
     })
 
     it('asks once for a newer version in its store, remembers it, and logs the answer', async () => {
@@ -157,7 +155,6 @@ describe('fetchNews store versions and throttle', () => {
 
     beforeEach(() => {
         __resetStorage({}, {})
-        vi.spyOn(console, 'log').mockImplementation(() => {})
         fetchMock = vi.fn(async () => ({
             ok: true,
             json: async () => ({
@@ -166,11 +163,6 @@ describe('fetchNews store versions and throttle', () => {
             }),
         }))
         vi.stubGlobal('fetch', fetchMock)
-    })
-
-    afterEach(() => {
-        vi.unstubAllGlobals()
-        vi.restoreAllMocks()
     })
 
     it('keeps only well-formed versions of known stores', async () => {

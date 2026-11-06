@@ -6,7 +6,7 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { _checkForChanges_thing_byId } from '../../src/src/monitoring.ts'
 import { getObjectNamesForThing } from '../../src/src/storage.ts'
@@ -87,7 +87,6 @@ const checksUntilListed = async (name, observation) => {
 }
 
 beforeEach(() => {
-    vi.spyOn(console, 'log').mockImplementation(() => {})
     resetStorage()
 })
 

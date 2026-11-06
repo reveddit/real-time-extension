@@ -84,7 +84,6 @@ beforeEach(() => {
     browserMock.tabs.get = vi.fn(async id => ({ id }))
     _viewerTiming.delayMs = 0
     Object.assign(_viewerFetchState, { preferredCacheMode: {}, latestMode: {}, doubleBlockAt: {} })
-    vi.spyOn(console, 'log').mockImplementation(() => {})
     globalThis.fetch = vi.fn(async url => {
         throw new Error(`unexpected network call: ${url}`)
     })
@@ -100,7 +99,6 @@ afterEach(() => {
     globalThis.chrome.storage.sync.get = savedChrome.sync
     delete globalThis.chrome.cookies
     delete globalThis.chrome.declarativeNetRequest
-    vi.restoreAllMocks()
 })
 
 describe('the second account cookies', () => {

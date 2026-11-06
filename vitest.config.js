@@ -6,6 +6,10 @@ export default defineConfig({
         exclude: ['tests/e2e/**'],
         globals: true,
         environment: 'node',
+        restoreMocks: true,
+        unstubGlobals: true,
+        silent: true,
+        setupFiles: ['tests/mocks/setup.js'],
     },
     resolve: {
         alias: {

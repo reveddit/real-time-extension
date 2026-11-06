@@ -1,6 +1,6 @@
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { __resetStorage } from '../mocks/webextension-polyfill.js'
 import { getCandidateAuthors, commentFullnameFromPermalink } from '../../src/src/comment-tree.ts'
 import { RateLimiter, monitoringBackoffGate } from '../../src/src/scan-reads.ts'
@@ -186,8 +186,6 @@ describe('commentFullnameFromPermalink', () => {
 })
 
 describe('RateLimiter', () => {
-    afterEach(() => vi.useRealTimers())
-
     // Starts a wait of this long, on a limiter that says how it ended
     const waiting = (limiter, ms) => {
         vi.useFakeTimers()

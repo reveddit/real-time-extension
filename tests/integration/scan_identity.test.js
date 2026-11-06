@@ -34,10 +34,6 @@ beforeAll(async () => {
     browserMock.storage.onChanged = event()
     browserMock.webRequest = { onBeforeSendHeaders: event(), onHeadersReceived: event() }
     browserMock.runtime = { ...browserMock.runtime, onInstalled: event() }
-    vi.stubGlobal(
-        'fetch',
-        vi.fn(async () => new Response('<feed/>', { status: 200 })),
-    )
     await import('../../src/background.ts')
 })
 
@@ -52,7 +48,10 @@ const tab = extra => ({ tab: { id: 7, url: 'https://www.reddit.com/r/x/comments/
 beforeEach(() => {
     __resetStorage()
     fill([cookie('reddit_session', 'S1')])
-    fetch.mockClear()
+    vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('<feed/>', { status: 200 })),
+    )
 })
 
 describe('a scan in Firefox', () => {

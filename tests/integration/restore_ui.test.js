@@ -4,7 +4,7 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { __resetStorage } from '../mocks/webextension-polyfill.js'
 import { parseHTML, DOMParser } from 'linkedom'
 import { POST, NOW, entry, postEntry, feed, listing } from '../mocks/feeds.js'
@@ -107,13 +107,7 @@ beforeEach(() => {
     vi.useFakeTimers()
     asked = []
     pages = { [authorPath('op_user')]: feed() }
-    vi.spyOn(console, 'log').mockImplementation(() => {})
 })
-afterEach(() => {
-    vi.useRealTimers()
-    vi.restoreAllMocks()
-})
-
 // A removed comment whose parent, a live one the page didn't load, sits between it and a's comment
 const orphanAndParent = () => {
     pages[commentPath('t1_gone1')] = feed(postEntry(), entry('t1_parent', 'p', 'live words'))

@@ -46,15 +46,12 @@ beforeEach(() => {
     __resetStorage()
     fill([cookie('reddit_session', 'S1')])
     browserMock.cookies = cookiesApi
-    vi.spyOn(console, 'log').mockImplementation(() => {})
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 })
 
 afterEach(() => {
     delete browserMock.cookies
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
 })
 
 describe('whoIsSignedIn, for the second account’s sign-in', () => {

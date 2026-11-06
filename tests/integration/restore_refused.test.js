@@ -5,7 +5,7 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterEach } from 'vitest'
 import browserMock, { __resetStorage } from '../mocks/webextension-polyfill.js'
 import { parseHTML, DOMParser } from 'linkedom'
 import { withTimers } from '../mocks/feeds.js'
@@ -39,7 +39,6 @@ const THREAD_FEED =
 const savedSendMessage = browserMock.runtime.sendMessage
 afterEach(() => {
     browserMock.runtime.sendMessage = savedSendMessage
-    vi.useRealTimers()
 })
 
 // The thread's feed reads, and every author's is refused; returns the feeds asked for

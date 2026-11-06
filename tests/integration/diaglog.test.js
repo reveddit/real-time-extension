@@ -5,7 +5,7 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
 import {
@@ -30,14 +30,7 @@ import { getDiagEntries } from '../mocks/diag-entries.js'
 
 beforeEach(async () => {
     __resetStorage()
-    // dlog mirrors every line to the console; keep test output readable
-    vi.spyOn(console, 'log').mockImplementation(() => {})
     await clearDiagLog()
-})
-
-afterEach(() => {
-    vi.restoreAllMocks()
-    vi.useRealTimers()
 })
 
 describe('dlog buffer', () => {
@@ -109,6 +102,7 @@ describe('dlog buffer', () => {
     })
 
     it('mirrors the exact message to the console', () => {
+        vi.spyOn(console, 'log')
         dlog('cycle', 'hello there')
         expect(console.log).toHaveBeenCalledWith('hello there')
         dlog('cycle', 'with data', 'payload')

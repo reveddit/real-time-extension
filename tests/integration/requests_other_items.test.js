@@ -6,7 +6,7 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { __resetStorage } from '../mocks/webextension-polyfill.js'
 
 import { lookupItemsByID } from '../../src/src/requests'
@@ -19,7 +19,6 @@ const child = (name, data) => ({
 
 describe("followed items in a moderator's view", () => {
     beforeEach(() => __resetStorage())
-    afterEach(() => vi.restoreAllMocks())
 
     it('reads removals the moderator can still read as removed, keeping their text', async () => {
         const children = [

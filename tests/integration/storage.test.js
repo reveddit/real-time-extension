@@ -4,7 +4,7 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { fetchNews, NEWS_CACHE_KEY } from '../../src/src/news'
 import { REMOVED, APPROVED, LOCKED, UNLOCKED } from '../../src/src/common'
@@ -204,7 +204,6 @@ describe('subscribeUser / unsubscribeUser', () => {
 
 describe('subscribeId / unsubscribeId', () => {
     beforeEach(() => __resetStorage(makeStorageInit()))
-    afterEach(() => vi.restoreAllMocks())
 
     it('subscribes an item by ID', async () => {
         await subscribeIdP('t3_abc123')
@@ -479,7 +478,6 @@ describe('getScanSettings', () => {
         )
         __resetStorage()
         await fetchNews({ force: true })
-        vi.unstubAllGlobals()
         expect(__getLocalStorage()[NEWS_CACHE_KEY].feed.options.scan_limits).toEqual({ reads_per_click: 12 })
         expect(await getScanSettings()).toEqual({ readsPerClick: 12, gapMs: 3000 })
     })
@@ -491,7 +489,6 @@ describe('getScanSettings', () => {
         )
         __resetStorage()
         await fetchNews({ force: true })
-        vi.unstubAllGlobals()
         expect(await getScanSettings()).toEqual({ readsPerClick: 6, gapMs: 3000 })
     })
 

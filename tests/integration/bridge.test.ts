@@ -294,8 +294,6 @@ describe('handleBridgeFetch', () => {
     })
     afterEach(() => {
         ;(browserMock as any).cookies = savedCookies
-        vi.useRealTimers()
-        vi.restoreAllMocks()
     })
 
     it("fetches with the user's cookies and returns the public view, marking the logged-in account's removals", async () => {
@@ -434,7 +432,6 @@ describe('0.0.5.27 review fixes: the bridge', () => {
     })
     afterEach(() => {
         ;(browserMock as any).cookies = savedCookies
-        vi.restoreAllMocks()
     })
 
     it('reads a mod log only through the one publicmodlogs feed, with one feed and one user', () => {

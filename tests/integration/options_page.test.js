@@ -1,6 +1,6 @@
 // The options page as a person sees it: the real options.tsx over a fake DOM.
 
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { parseHTML } from 'linkedom'
 
 const FIELD = 'monitor quarantined content'
@@ -50,7 +50,6 @@ const open = async stored => {
     }
 }
 
-afterEach(() => vi.unstubAllGlobals())
 
 describe('monitor quarantined content', () => {
     it('is hidden with no client id, whatever is stored', async () => {

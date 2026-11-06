@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 import {
     resolveMechanismDisabled,
@@ -31,7 +31,16 @@ describe('resolveMechanismDisabled', () => {
 })
 
 describe('getRemoteMechanism', () => {
-    it('fails safe to auto when the cache is unreadable (no chrome in this env)', async () => {
+    it('fails safe to auto when the cache is unreadable', async () => {
+        vi.stubGlobal('chrome', {
+            storage: {
+                local: {
+                    get() {
+                        throw new Error('storage unreadable')
+                    },
+                },
+            },
+        })
         expect(await getRemoteMechanism(MECHANISM_LEGACY)).toBe('auto')
     })
 })

@@ -41,7 +41,6 @@ beforeEach(() => {
     // storeRedditCookies reads through chrome.*, and only with a Reddit tab open
     globalThis.chrome.tabs.query = (q, cb) => cb([{ id: 1, url: 'https://www.reddit.com/' }])
     globalThis.chrome.cookies = { getAll: jarForChrome }
-    vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 
 afterEach(() => {
@@ -49,7 +48,6 @@ afterEach(() => {
     globalThis.chrome.tabs.query = saved.tabs
     globalThis.chrome.cookies = saved.cookies
     globalThis.fetch = saved.fetch
-    vi.restoreAllMocks()
 })
 
 describe('the cookie snapshot', () => {

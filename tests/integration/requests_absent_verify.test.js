@@ -78,7 +78,6 @@ afterEach(() => {
     browserMock.tabs.query = savedTabs.query
     browserMock.tabs.sendMessage = savedTabs.sendMessage
     delete browserMock.scripting
-    vi.restoreAllMocks()
 })
 
 describe('verifyFeedAbsentItems unknown caching', () => {

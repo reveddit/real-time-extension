@@ -6,7 +6,7 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
 import { maybeFireBacklogSummary, getUnseenBacklogItemIds } from '../../src/src/monitoring.ts'
@@ -71,10 +71,6 @@ describe('maybeFireBacklogSummary', () => {
     beforeEach(() => {
         __resetStorage({}, {})
         notifySpy = vi.spyOn(chrome.notifications, 'create')
-    })
-
-    afterEach(() => {
-        notifySpy.mockRestore()
     })
 
     it('phase 1: notifies when backlog items first appear and records their ids', async () => {

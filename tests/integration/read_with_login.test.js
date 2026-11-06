@@ -34,8 +34,6 @@ beforeEach(() => {
 
 afterEach(() => {
     delete browserMock.cookies
-    vi.unstubAllGlobals()
-    vi.useRealTimers()
 })
 
 describe('a read for a scan', () => {

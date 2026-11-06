@@ -103,12 +103,6 @@ describe('options.www_route_order in the news feed', () => {
 
     beforeEach(() => {
         __resetStorage({}, {})
-        vi.spyOn(console, 'log').mockImplementation(() => {})
-    })
-
-    afterEach(() => {
-        vi.unstubAllGlobals()
-        vi.restoreAllMocks()
     })
 
     it('is cached sanitized and read back', async () => {
@@ -139,12 +133,9 @@ describe('options.www_route_order in the news feed', () => {
 describe('options.markup and options.login_cookies in the news feed', () => {
     beforeEach(() => {
         __resetStorage({}, {})
-        vi.spyOn(console, 'log').mockImplementation(() => {})
     })
     afterEach(() => {
         setMarkupConfig({})
-        vi.unstubAllGlobals()
-        vi.restoreAllMocks()
     })
 
     it('are cached sanitized, and the markup names apply at once', async () => {
@@ -183,12 +174,9 @@ describe('0.0.5.27 review fixes: the news feed', () => {
         )
     beforeEach(() => {
         __resetStorage({}, {})
-        vi.spyOn(console, 'log').mockImplementation(() => {})
     })
     afterEach(() => {
         setPublicModlogsFeed('')
-        vi.unstubAllGlobals()
-        vi.restoreAllMocks()
     })
 
     it('a cache dated in the future (a clock set back) does not hold the hourly fetch off', async () => {

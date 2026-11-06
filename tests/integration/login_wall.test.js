@@ -65,7 +65,6 @@ beforeEach(() => {
     _wwwRouteTiming.switchDelayMs = 0
     _legacyLookups.commentsById = vi.fn(async () => [])
     _legacyLookups.postByPath = vi.fn(async () => null)
-    vi.spyOn(console, 'log').mockImplementation(() => {})
     globalThis.fetch = vi.fn(async () => {
         throw new Error('unexpected network call')
     })
@@ -78,8 +77,6 @@ afterEach(() => {
     browserMock.tabs.sendMessage = savedTabs.sendMessage
     delete browserMock.scripting
     setLoginWallConfig({})
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
 })
 
 describe('where a redirect landed', () => {

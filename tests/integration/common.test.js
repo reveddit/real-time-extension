@@ -4,7 +4,7 @@
 // Install chrome global BEFORE any source import that references __BUILT_FOR__
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import browserMock from '../mocks/webextension-polyfill.js'
 import {
     getFullIDsFromPath,
@@ -367,11 +367,6 @@ describe('showsWhatsNew', () => {
 })
 
 describe('updateBadgeUnseenCount', () => {
-    afterEach(() => {
-        vi.unstubAllGlobals()
-        vi.restoreAllMocks()
-    })
-
     it("asks the background from a content script on Firefox, where a promise-style chrome.runtime.sendMessage returns undefined", () => {
         vi.stubGlobal('location', { protocol: 'https:' })
         vi.spyOn(chrome.runtime, 'sendMessage').mockReturnValue(undefined)
