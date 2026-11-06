@@ -109,33 +109,24 @@ export const Button = styled.button<{ variant?: 'primary' | 'secondary' | 'ghost
 
 export type BannerVariant = 'warning' | 'success' | 'info'
 
+const BANNER_COLORS: Record<BannerVariant, [string, string, string]> = {
+    warning: ['var(--locked-bg)', 'var(--locked-border)', 'var(--text-primary)'],
+    success: ['var(--approved-bg)', 'var(--approved-border)', 'var(--text-primary)'],
+    info: ['var(--bg-surface)', 'var(--border)', 'var(--text-secondary)'],
+}
+
 export const MessageBanner = styled.div<{ variant: BannerVariant }>`
     padding: 10px 12px;
     margin: 6px 0;
     border-radius: ${tokens.radius.md};
     font-size: 0.92em;
     ${p => {
-        switch (p.variant) {
-            case 'warning':
-                return css`
-                    background: var(--locked-bg);
-                    border: 1px solid var(--locked-border);
-                    color: var(--text-primary);
-                `
-            case 'success':
-                return css`
-                    background: var(--approved-bg);
-                    border: 1px solid var(--approved-border);
-                    color: var(--text-primary);
-                `
-            case 'info':
-            default:
-                return css`
-                    background: var(--bg-surface);
-                    border: 1px solid var(--border);
-                    color: var(--text-secondary);
-                `
-        }
+        const [bg, border, color] = BANNER_COLORS[p.variant] ?? BANNER_COLORS.info
+        return css`
+            background: ${bg};
+            border: 1px solid ${border};
+            color: ${color};
+        `
     }}
 `
 
@@ -205,6 +196,16 @@ export const CardActions = styled.div`
 
 export type BadgeVariant = 'removed' | 'deleted' | 'approved' | 'locked' | 'unlocked' | 'edited' | 'default'
 
+const BADGE_COLORS: Record<BadgeVariant, [string, string, string]> = {
+    removed: ['var(--removed-bg)', 'var(--removed-border)', 'var(--removed-text)'],
+    deleted: ['var(--deleted-bg)', 'var(--deleted-border)', 'var(--deleted-text)'],
+    approved: ['var(--approved-bg)', 'var(--approved-border)', 'var(--text-primary)'],
+    locked: ['var(--locked-bg)', 'var(--locked-border)', 'var(--text-primary)'],
+    unlocked: ['var(--approved-bg)', 'var(--approved-border)', 'var(--text-primary)'],
+    edited: ['var(--bg-surface-hover)', 'var(--border)', 'var(--text-primary)'],
+    default: ['var(--bg-surface-hover)', 'var(--border)', 'var(--text-secondary)'],
+}
+
 export const Badge = styled.span<{ variant?: BadgeVariant }>`
     display: inline-flex;
     align-items: center;
@@ -217,51 +218,12 @@ export const Badge = styled.span<{ variant?: BadgeVariant }>`
     white-space: nowrap;
     border: 1px solid transparent;
     ${p => {
-        switch (p.variant) {
-            case 'removed':
-                return css`
-                    background: var(--removed-bg);
-                    border-color: var(--removed-border);
-                    color: var(--removed-text);
-                `
-            case 'deleted':
-                return css`
-                    background: var(--deleted-bg);
-                    border-color: var(--deleted-border);
-                    color: var(--deleted-text);
-                `
-            case 'approved':
-                return css`
-                    background: var(--approved-bg);
-                    border-color: var(--approved-border);
-                    color: var(--text-primary);
-                `
-            case 'locked':
-                return css`
-                    background: var(--locked-bg);
-                    border-color: var(--locked-border);
-                    color: var(--text-primary);
-                `
-            case 'unlocked':
-                return css`
-                    background: var(--approved-bg);
-                    border-color: var(--approved-border);
-                    color: var(--text-primary);
-                `
-            case 'edited':
-                return css`
-                    background: var(--bg-surface-hover);
-                    border-color: var(--border);
-                    color: var(--text-primary);
-                `
-            case 'default':
-            default:
-                return css`
-                    background: var(--bg-surface-hover);
-                    border-color: var(--border);
-                    color: var(--text-secondary);
-                `
-        }
+        const [bg, border, color] = BADGE_COLORS[p.variant ?? 'default'] ?? BADGE_COLORS.default
+        return css`
+            background: ${bg};
+            border-color: ${border};
+            color: ${color};
+        `
     }}
 `
 
