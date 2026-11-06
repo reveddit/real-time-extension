@@ -34,7 +34,6 @@ import {
     setPendingNotification,
     clearPendingNotification,
     appendNotificationLog,
-    MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
     MAX_SYNC_STORAGE_CHANGES,
     SEEN_COUNT_DEFAULT,
     getObjectNamesForThing,
@@ -55,8 +54,8 @@ import {
     BACKLOG_SUMMARY_DELAY_MS,
     getNotifyFlags,
     getPublicLiveKey,
-    trimDict_toFitSyncItem,
-    fitDicts_toSyncTotal,
+    fitStatusLists,
+    PendingNotificationData,
     updateBadgeUnseenCount,
 } from './storage'
 import {
@@ -72,6 +71,7 @@ import {
     ItemForStorage,
     LocalStorageItem,
     ChangeForStorage,
+    CHANGE_TYPE_TEXT,
     setWarningBadge,
     getFullIDsFromURL,
     isOtherIdentity,
@@ -93,6 +93,25 @@ const REMOVAL_CONFIRMATION_THRESHOLD = Math.floor(Math.random() * 3) + 3
 const FULL_RESPONSE_ITEM_COUNT = 100
 
 const BACKLOG_AGE_THRESHOLD_SECONDS = 48 * 60 * 60
+
+// One side of a track: what this check read, its type, and the known list
+interface TrackSide {
+    current: string[]
+    type: number
+    known: Record<string, any>
+}
+
+interface MarkChangesContext {
+    changes: any[]
+    itemLookup: Record<string, any>
+    newLocalStorageItems: Record<string, any>
+    isUser: boolean
+    subscribedFrom: number
+    existingLocalStorageItems: Record<string, any>
+    target_seen_count: number
+    oldestDateThreshold: number | null
+    skipConfirmationThreshold: boolean
+}
 
 interface MarkChangesResult {
     num_changes: number
@@ -723,6 +742,27 @@ export const readLookupResult = (
     return isRemovedItem(item) ? 'removed' : 'approved'
 }
 
+// Shows a notification of changes, keeps it as pending until it shows, and logs it either way
+const announce = (thing: string, pending: PendingNotificationData, source: 'recent' | 'retry') => {
+    const message = `${pending.count} new [${pending.types.join(', ')}] actions, click to view`
+    createNotification({
+        notificationId: thing,
+        title: thing,
+        message,
+    }).then(success => {
+        if (success) clearPendingNotification(thing).catch(() => {})
+    })
+    setPendingNotification(thing, pending).catch(() => {})
+    appendNotificationLog({
+        ts: Date.now(),
+        id: thing,
+        title: thing,
+        message,
+        itemIds: pending.itemIds,
+        source,
+    }).catch(() => {})
+}
+
 // Returns the lookup, so the cycle (and the bridge's wait on it) lasts until it
 // ends. Its failure is logged here: reaching the cycle's catch would skip the
 // pending posts and last_check, and reset the badge a warning had set.
@@ -874,51 +914,34 @@ const checkForChanges_thing_byId = async (
         }
         return Promise.all([getLocalStorageItems(thing, isUser), getOldestDateThreshold(thing, isUser)]).then(
             ([existingLocalStorageItems, oldestDateThreshold]: [any, any]) => {
+                const context: MarkChangesContext = {
+                    changes,
+                    itemLookup,
+                    newLocalStorageItems,
+                    isUser,
+                    subscribedFrom,
+                    existingLocalStorageItems,
+                    target_seen_count,
+                    oldestDateThreshold,
+                    skipConfirmationThreshold,
+                }
                 if (removal_status.track) {
                     mergeResult(
                         markChanges(
-                            removed,
-                            REMOVED,
-                            'mod removed',
-                            known_removed,
-                            approved,
-                            APPROVED,
-                            'approved',
-                            known_approved,
-                            changes,
-                            itemLookup,
+                            { current: removed, type: REMOVED, known: known_removed },
+                            { current: approved, type: APPROVED, known: known_approved },
                             removal_status.notify,
-                            newLocalStorageItems,
-                            isUser,
-                            subscribedFrom,
-                            existingLocalStorageItems,
-                            target_seen_count,
-                            oldestDateThreshold,
-                            skipConfirmationThreshold,
+                            context,
                         ),
                     )
                 }
                 if (lock_status.track) {
                     mergeResult(
                         markChanges(
-                            locked,
-                            LOCKED,
-                            'locked',
-                            known_locked,
-                            unlocked,
-                            UNLOCKED,
-                            'unlocked',
-                            known_unlocked,
-                            changes,
-                            itemLookup,
+                            { current: locked, type: LOCKED, known: known_locked },
+                            { current: unlocked, type: UNLOCKED, known: known_unlocked },
                             lock_status.notify,
-                            newLocalStorageItems,
-                            isUser,
-                            subscribedFrom,
-                            existingLocalStorageItems,
-                            target_seen_count,
-                            oldestDateThreshold,
-                            skipConfirmationThreshold,
+                            context,
                         ),
                     )
                 }
@@ -938,32 +961,20 @@ const checkForChanges_thing_byId = async (
                     backlogCount,
                 })
                 if (mergedRealtime.count > 0) {
-                    const msg = `${mergedRealtime.count} new [${mergedRealtime.changeTypes.join(', ')}] actions, click to view`
                     console.log(
                         `Creating realtime notification for ${thing}: ${mergedRealtime.count} changes of type ${mergedRealtime.changeTypes.join(', ')}`,
                     )
-                    createNotification({
-                        notificationId: thing,
-                        title: thing,
-                        message: msg,
-                    }).then(success => {
-                        if (success) clearPendingNotification(thing).catch(() => {})
-                    })
-                    setPendingNotification(thing, {
-                        count: mergedRealtime.count,
-                        types: mergedRealtime.changeTypes,
-                        itemIds: mergedRealtime.ids,
-                        firstAttemptAt: Date.now(),
-                        attempts: 1,
-                    }).catch(() => {})
-                    appendNotificationLog({
-                        ts: Date.now(),
-                        id: thing,
-                        title: thing,
-                        message: msg,
-                        itemIds: mergedRealtime.ids,
-                        source: 'recent',
-                    }).catch(() => {})
+                    announce(
+                        thing,
+                        {
+                            count: mergedRealtime.count,
+                            types: mergedRealtime.changeTypes,
+                            itemIds: mergedRealtime.ids,
+                            firstAttemptAt: Date.now(),
+                            attempts: 1,
+                        },
+                        'recent',
+                    )
                 }
                 if (backlogCount > 0) {
                     console.log(
@@ -989,65 +1000,22 @@ const checkForChanges_thing_byId = async (
                             if (pending.attempts >= MAX_RETRY_ATTEMPTS) return
                             const MIN_RETRY_DELAY_MS = 2 * 60 * 1000
                             if (Date.now() - pending.firstAttemptAt < MIN_RETRY_DELAY_MS) return
-                            const retryMsg = `${pending.count} new [${pending.types.join(', ')}] actions, click to view`
                             console.log(`Retrying pending notification for ${thing} (attempt ${pending.attempts + 1})`)
-                            createNotification({
-                                notificationId: thing,
-                                title: thing,
-                                message: retryMsg,
-                            }).then(success => {
-                                if (success) clearPendingNotification(thing).catch(() => {})
-                            })
-                            setPendingNotification(thing, {
-                                ...pending,
-                                attempts: pending.attempts + 1,
-                            }).catch(() => {})
-                            appendNotificationLog({
-                                ts: Date.now(),
-                                id: thing,
-                                title: thing,
-                                message: retryMsg,
-                                itemIds: pending.itemIds,
-                                source: 'retry',
-                            }).catch(() => {})
+                            announce(thing, { ...pending, attempts: pending.attempts + 1 }, 'retry')
                         })
                         .catch(() => {})
                 }
-                // Approved and unlocked get only the room left under the total:
-                // losing their oldest entries announces nothing, while a known
-                // removal dropped from removed would be announced again
-                const toSave = fitDicts_toSyncTotal(
+                const toSave = fitStatusLists(
                     {
-                        [keys['removed']]: trimDict_toFitSyncItem(
-                            known_removed,
-                            MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
-                            'c',
-                            keys['removed'],
-                        ),
-                        [keys['approved']]: trimDict_toFitSyncItem(
-                            known_approved,
-                            MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
-                            'c',
-                            keys['approved'],
-                        ),
-                        [keys['locked']]: trimDict_toFitSyncItem(
-                            known_locked,
-                            MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
-                            'c',
-                            keys['locked'],
-                        ),
-                        [keys['unlocked']]: trimDict_toFitSyncItem(
-                            known_unlocked,
-                            MAX_SYNC_STORAGE_ITEMS_PER_OBJECT,
-                            'c',
-                            keys['unlocked'],
-                        ),
-                        // 100 entries come to about 5 KB, well inside one item
-                        [keys['changes']]: changes.slice(-MAX_SYNC_STORAGE_CHANGES),
+                        [keys['removed']]: known_removed,
+                        [keys['approved']]: known_approved,
+                        [keys['locked']]: known_locked,
+                        [keys['unlocked']]: known_unlocked,
                     },
                     storage,
-                    [keys['approved'], keys['unlocked']],
-                    'c',
+                    keys,
+                    // 100 entries come to about 5 KB, well inside one item
+                    { [keys['changes']]: changes.slice(-MAX_SYNC_STORAGE_CHANGES) },
                 )
                 return chrome.storage.sync.set(toSave, () => {
                     // A refused save is otherwise silent, and the next check
@@ -1098,25 +1066,23 @@ const changeIsPreviouslyRecorded = (name: string, change_type: number | string, 
 
 // newLocalStorageItems operates as a return value
 function markChanges(
-    alert_current_list: string[],
-    alert_type: number,
-    alert_text: string,
-    alert_known_hash: Record<string, any>,
-    normal_current_list: string[],
-    normal_type: number,
-    normal_text: string,
-    normal_known_hash: Record<string, any>,
-    changes: any[],
-    itemLookup: Record<string, any>,
+    alert: TrackSide,
+    normal: TrackSide,
     notify: boolean,
-    newLocalStorageItems: Record<string, any>,
-    isUser: boolean,
-    subscribedFrom: number,
-    existingLocalStorageItems: Record<string, any>,
-    target_seen_count: number,
-    oldestDateThreshold: number | null,
-    skipConfirmationThreshold = false,
+    {
+        changes,
+        itemLookup,
+        newLocalStorageItems,
+        isUser,
+        subscribedFrom,
+        existingLocalStorageItems,
+        target_seen_count,
+        oldestDateThreshold,
+        skipConfirmationThreshold,
+    }: MarkChangesContext,
 ) {
+    const { current: alert_current_list, type: alert_type, known: alert_known_hash } = alert
+    const { current: normal_current_list, type: normal_type, known: normal_known_hash } = normal
     const alert_unseen_ids: string[] = [],
         normal_unseen_ids: string[] = [],
         alert_userDeleted_unseen_ids: string[] = [],
@@ -1293,9 +1259,9 @@ function markChanges(
     // A notification names only the changes it counts
     const isRealtime = (id: string) => realtimeIds.includes(id)
     const realtimeChangeTypes: string[] = []
-    if (alert_unseen_ids.some(isRealtime)) realtimeChangeTypes.push(alert_text)
-    if (alert_userDeleted_unseen_ids.some(isRealtime)) realtimeChangeTypes.push('user deleted')
-    if (normal_unseen_ids.some(isRealtime)) realtimeChangeTypes.push(normal_text)
+    if (alert_unseen_ids.some(isRealtime)) realtimeChangeTypes.push(CHANGE_TYPE_TEXT[alert_type])
+    if (alert_userDeleted_unseen_ids.some(isRealtime)) realtimeChangeTypes.push(CHANGE_TYPE_TEXT[DELETED])
+    if (normal_unseen_ids.some(isRealtime)) realtimeChangeTypes.push(CHANGE_TYPE_TEXT[normal_type])
 
     return {
         num_changes,
@@ -1330,6 +1296,14 @@ export const getUnseenBacklogItemIds = (storage: Record<string, any>): string[] 
     return ids
 }
 
+const announceBacklog = (count: string, typeText: string, itemIds: string[]) => {
+    const id = 'backlog_summary'
+    const title = 'reveddit real-time'
+    const message = `${count} ${typeText} posts or comments found in your history. Click to review.`
+    createNotification({ notificationId: id, title, message })
+    appendNotificationLog({ ts: Date.now(), id, title, message, itemIds, source: id }).catch(() => {})
+}
+
 // Old (backlog) content notifies in two phases: one notification as soon as the
 // first backlog items are found after install, then a single follow-up summary
 // after BACKLOG_SUMMARY_DELAY_MS covering only items gathered since that first
@@ -1354,20 +1328,7 @@ export const maybeFireBacklogSummary = async (storage: Record<string, any>): Pro
     if (!state.initialBacklogNotified) {
         if (unseenBacklogIds.length === 0) return
         await markBacklogInitialNotified(unseenBacklogIds)
-        const msg = `${unseenBacklogIds.length} older ${typeText} posts or comments found in your history. Click to review.`
-        createNotification({
-            notificationId: 'backlog_summary',
-            title: 'reveddit real-time',
-            message: msg,
-        })
-        appendNotificationLog({
-            ts: Date.now(),
-            id: 'backlog_summary',
-            title: 'reveddit real-time',
-            message: msg,
-            itemIds: unseenBacklogIds,
-            source: 'backlog_summary',
-        }).catch(() => {})
+        announceBacklog(`${unseenBacklogIds.length} older`, typeText, unseenBacklogIds)
         return
     }
 
@@ -1378,18 +1339,5 @@ export const maybeFireBacklogSummary = async (storage: Record<string, any>): Pro
     const newIds = unseenBacklogIds.filter(id => !alreadyNotified.has(id))
     if (newIds.length === 0) return
 
-    const msg = `${newIds.length} more older ${typeText} posts or comments found in your history. Click to review.`
-    createNotification({
-        notificationId: 'backlog_summary',
-        title: 'reveddit real-time',
-        message: msg,
-    })
-    appendNotificationLog({
-        ts: Date.now(),
-        id: 'backlog_summary',
-        title: 'reveddit real-time',
-        message: msg,
-        itemIds: newIds,
-        source: 'backlog_summary',
-    }).catch(() => {})
+    announceBacklog(`${newIds.length} more older`, typeText, newIds)
 }

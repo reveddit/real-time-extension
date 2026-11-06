@@ -93,6 +93,24 @@ export const fitDicts_toSyncTotal = (
     return fitted
 }
 
+// A save of status lists, each trimmed to fit one sync item, with the entries
+// of alongside added as they are. Approved and unlocked get only the room left
+// under the total: losing their oldest entries announces nothing, while a known
+// removal dropped from removed would be announced again.
+export const fitStatusLists = (
+    lists: Record<string, any>,
+    storage: Record<string, any>,
+    keys: Record<string, string>,
+    alongside: Record<string, any> = {},
+): Record<string, any> => {
+    const toSave: Record<string, any> = {}
+    for (const [key, list] of Object.entries(lists)) {
+        toSave[key] = trimDict_toFitSyncItem(list, MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c', key)
+    }
+    Object.assign(toSave, alongside)
+    return fitDicts_toSyncTotal(toSave, storage, [keys['approved'], keys['unlocked']], 'c')
+}
+
 // For the diagnostic log's header: how full sync storage is, and its largest
 // items, against the limits
 export const formatSyncUsage = (storage: Record<string, any>): string => {
@@ -257,6 +275,8 @@ type PendingNotification = {
     attempts: number
 }
 
+export type PendingNotificationData = Omit<PendingNotification, 'thing'>
+
 export const getPendingNotification = (thing: string): Promise<PendingNotification | null> =>
     readLocal<Record<string, PendingNotification>, PendingNotification | null>(
         PENDING_NOTIFICATIONS_KEY,
@@ -264,7 +284,7 @@ export const getPendingNotification = (thing: string): Promise<PendingNotificati
         all => all[thing] || null,
     )
 
-export const setPendingNotification = (thing: string, data: Omit<PendingNotification, 'thing'>) =>
+export const setPendingNotification = (thing: string, data: PendingNotificationData) =>
     updateLocal<Record<string, any>>(PENDING_NOTIFICATIONS_KEY, {}, all => {
         all[thing] = { thing, ...data }
     })
@@ -387,16 +407,12 @@ export const markIDsAsSeenIfSubscribed = (
             markSeenForStorageKey(storage, storage_keys, 'locked', locked_ids, is_user)
             markSeenForStorageKey(storage, storage_keys, 'unlocked', unlocked_ids, is_user)
             // The entries added here have to fit like the monitoring save's
-            const toSave: Record<string, any> = {}
-            Object.values(storage_keys).forEach(key => {
-                if (storage[key]) {
-                    toSave[key] = trimDict_toFitSyncItem(storage[key], MAX_SYNC_STORAGE_ITEMS_PER_OBJECT, 'c', key)
-                }
-            })
-            chrome.storage.sync.set(
-                fitDicts_toSyncTotal(toSave, storage, [storage_keys['approved'], storage_keys['unlocked']], 'c'),
-                callback,
+            const lists = Object.fromEntries(
+                Object.values(storage_keys)
+                    .filter(key => storage[key])
+                    .map(key => [key, storage[key]]),
             )
+            chrome.storage.sync.set(fitStatusLists(lists, storage, storage_keys), callback)
         }
     })
 }

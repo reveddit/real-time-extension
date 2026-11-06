@@ -27,6 +27,14 @@ export const LOCKED = 3
 export const UNLOCKED = 4
 export const EDITED = 5
 export const DELETED = 6
+export const CHANGE_TYPE_TEXT: Record<number, string> = {
+    [REMOVED]: 'mod removed',
+    [DELETED]: 'user deleted',
+    [APPROVED]: 'approved',
+    [LOCKED]: 'locked',
+    [UNLOCKED]: 'unlocked',
+    [EDITED]: 'edited',
+}
 
 export function detectIsNewReddit(): boolean {
     // Available before JS renders — new reddit sets device attribute on <html>
@@ -251,20 +259,7 @@ export class ChangeForStorage {
         return this.o
     }
     getChangeType() {
-        switch (this.g) {
-            case REMOVED:
-                return 'mod removed'
-            case DELETED:
-                return 'user deleted'
-            case APPROVED:
-                return 'approved'
-            case LOCKED:
-                return 'locked'
-            case UNLOCKED:
-                return 'unlocked'
-            case EDITED:
-                return 'edited'
-        }
+        return CHANGE_TYPE_TEXT[this.g as number]
     }
     getSeenCount() {
         return this.n
