@@ -1,18 +1,15 @@
-// Integration tests for the feed-absent verification path in
-// lookupItemsByID_fromPublicProfile: since ~2026-07 Reddit omits items from
-// profile-hidden subreddits from the logged-out profile feed, so feed absence
-// must be verified against the item's own page before concluding removal.
+// Integration tests for lookupItemsByID_fromPublicProfile: since ~2026-07
+// Reddit omits items from profile-hidden subreddits from the logged-out profile
+// feed, so feed absence must be verified against the item's own page before
+// concluding removal. Also the profile-level signals: shadowbans, empty and
+// hidden profiles, failure reasons and rate limits.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
-import { json as jsonResponse } from '../mocks/responses.js'
-
+import { describe, it, expect } from 'vitest'
+import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { lookupItemsByID, lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
-import { _legacyLookups, isLegacyResting, noteLegacyRefusal } from '../../src/src/legacy-lookup'
-import { _wwwRouteTiming } from '../../src/src/www-fetcher'
 import {
     isPublicProfileUnavailable,
     isProfilePaginationShort,
@@ -20,127 +17,30 @@ import {
     formatPublicViewUnchecked,
     getPublicViewUncheckedLine,
 } from '../../src/src/lookup-status'
-import { CAPABILITY_REST_KEY } from '../../src/src/news'
-import {
-    CAPABILITY_MAX_REST_MS,
-    CAPABILITY_FIRST_REST_MS,
-    capabilityRestMs,
-    isCapabilityResting,
-    noteCapabilityRefused,
-    noteCapabilityWorked,
-} from '../../src/src/request-gates'
-import { _followedTiming } from '../../src/src/followed-lookup'
 import { getDiagEntries } from '../mocks/diag-entries.js'
-import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
+import {
+    stubLegacy,
+    USER,
+    thingIdEl,
+    emptyStatePage,
+    commentEl,
+    commentsPage,
+    FRONT_PAGE,
+    HIDDEN,
+    GONE,
+    FEED_OK,
+    PERMALINKS,
+    THREAD_PAGES,
+    REDIRECT_SHELL,
+    meta,
+    installFetch,
+    defaultRoutes,
+    useLegacyStub,
+} from '../mocks/public-profile.js'
 
-// The real legacy parsers run HTMLRewriter (WASM) which cannot load under
-// vitest — always stub the seam so no test can reach them.
-const originalLegacyLookups = { ..._legacyLookups }
-const stubLegacy = (commentsById, postByPath) => {
-    _legacyLookups.commentsById = commentsById || (async () => [])
-    _legacyLookups.postByPath = postByPath || (async () => ({ error: 'stubbed' }))
-}
-
-beforeEach(() => {
-    __resetStorage()
-    stubLegacy()
-})
-const savedQuery = browserMock.tabs.query
-afterEach(() => {
-    Object.assign(_legacyLookups, originalLegacyLookups)
-    browserMock.tabs.query = savedQuery
-})
-
-const USER = 'testuser'
-
-// no pause between fetch routes in these tests
-_wwwRouteTiming.switchDelayMs = 0
-
-// --- page fixtures (modeled on live pages, verified 2026-07-20) ---
-
-const thingIdEl = id => `<div thing-id="${id}" class="something"></div>`
-
-const emptyStatePage = type =>
-    `<shreddit-feed navigation-session-id="x"><div>Welcome! u/${USER} doesn&#x27;t have any ${type} yet, ` +
-    `but check out their stats to learn more about them.</div></shreddit-feed>`
-
-const commentEl = (id, author) =>
-    `<shreddit-comment created="2019-10-12T00:53:40.750000+0000" author="${author}" ` +
-    `thingId="${id}" depth="0" comment-position="0" comment-parent-positions="[]" ` +
-    `permalink="/r/test/comments/abc123/comment/${id.slice(3)}/" score="1">` +
-    `<div slot="comment">some text</div></shreddit-comment>`
-
-// focalId: the comment the thread page was served for, which its tree names
-// even when that comment is gone
-const commentsPage = (inner, focalId) =>
-    `<html><body><shreddit-post class="block" id="t3_abc123" author="someone" ` +
-    `subreddit-name="test" permalink="/r/test/comments/abc123/title/"></shreddit-post>` +
-    `<shreddit-comment-tree id="comment-tree"${focalId ? ` thingId="${focalId}"` : ''} post-id="t3_abc123">` +
-    `${inner}</shreddit-comment-tree></body></html>`
-
-// The logged-out front page (trimmed), which reddit has served in place of
-// permalinks: feed items, no comment tree
-const FRONT_PAGE =
-    `<html><head><link rel="canonical" href="https://www.reddit.com/"></head><body><shreddit-feed>` +
-    `<shreddit-post id="t3_feed1" author="someone" post-title="A feed post" subreddit-name="pics" ` +
-    `permalink="/r/pics/comments/feed1/a/"></shreddit-post></shreddit-feed></body></html>`
-
-// Absent from the feed, but live on its own page (profile-hidden subreddit)
-const HIDDEN = 't1_hidden1'
-// Absent from the feed and from its own page (genuinely removed)
-const GONE = 't1_gone11'
-// Present in the feed
-const FEED_OK = 't1_feedok1'
-
-// The auth view's permalinks, in the API's form
-const PERMALINKS = {
-    [HIDDEN]: `/r/hiddensub/comments/abc123/title/${HIDDEN.slice(3)}/`,
-    [GONE]: `/r/somesub/comments/abc123/title/${GONE.slice(3)}/`,
-}
-// The comments' own pages, in the site's form: the API's form is only a
-// redirect shell now (2026-10-17)
-const THREAD_PAGES = {
-    [HIDDEN]: `/r/hiddensub/comments/abc123/comment/${HIDDEN.slice(3)}/`,
-    [GONE]: `/r/somesub/comments/abc123/comment/${GONE.slice(3)}/`,
-}
-// What the API's form returned, trimmed
-const REDIRECT_SHELL =
-    `<html><body><div id="shreddit-redirect"><ac-call delay="0" ` +
-    `method="location.replace(&quot;${THREAD_PAGES[GONE]}&quot;)" target="window" trigger="init">` +
-    `</ac-call></div></body></html>`
-
-const meta = (id, extra = {}) => ({
-    locked: false,
-    created_utc: 1700000000,
-    permalink: PERMALINKS[id],
-    link_id: 't3_abc123',
-    ...extra,
-})
-
-const installFetch = routes => {
-    const calls = []
-    globalThis.fetch = async url => {
-        calls.push(url)
-        for (const [substr, html] of routes) {
-            if (url.includes(substr)) {
-                return { ok: true, text: async () => html }
-            }
-        }
-        throw new Error(`unexpected url: ${url}`)
-    }
-    return calls
-}
-
-const defaultRoutes = () => [
-    [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
-    [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
-    [THREAD_PAGES[HIDDEN], commentsPage(commentEl(HIDDEN, USER), HIDDEN)],
-    // the comment's own thread page without the comment → removed
-    [THREAD_PAGES[GONE], commentsPage(commentEl('t1_other11', 'SomeoneElse'), GONE)],
-]
+useLegacyStub()
 
 describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
-
     it('keeps a profile-hidden comment live and flags a page-absent comment removed', async () => {
         installFetch(defaultRoutes())
         const ids = [FEED_OK, HIDDEN, GONE]
@@ -652,425 +552,6 @@ describe('lookup failure reasons', () => {
     })
 })
 
-// Reddit refused the legacy endpoints in every cache mode on 2026-10-21, and
-// each failed public-view lookup still sent them two refused requests
-describe('legacy refusal memory', () => {
-
-    it('after a real 403, the legacy listing rests instead of being refused again each cycle', async () => {
-        const calls = []
-        globalThis.fetch = async url => {
-            calls.push(String(url))
-            return { ok: false, status: 403, text: async () => 'BLOCK' }
-        }
-        const lookup = () => lookupItemsByID([GONE], 'none', false, USER, { [GONE]: meta(GONE) })
-        await expect(lookup()).rejects.toThrow(/legacy fallback: legacy reddit HTML request failed: 403$/)
-        expect(await isLegacyResting('legacy_info')).toBe(true)
-        // the legacy pages answer separately and keep going
-        expect(await isLegacyResting()).toBe(false)
-        const legacyCalls = () => calls.filter(u => u.includes('api/info')).length
-        // the HTML request; the JSON one behind it rests already
-        expect(legacyCalls()).toBe(1)
-        await expect(lookup()).rejects.toThrow(
-            /legacy fallback: legacy reddit HTML skipped: resting after reddit refused it$/,
-        )
-        expect(legacyCalls()).toBe(1)
-        // neither is reported as rate limiting or a block: the public view's failure is what reports
-        expect(__getLocalStorage().error_status).toBeUndefined()
-    })
-
-    it("the simulated deprecation's 403 and other statuses start no rest", async () => {
-        noteLegacyRefusal(new Error('legacy reddit HTML request failed: 403 (legacy endpoints disabled)'))
-        noteLegacyRefusal(new Error('legacy reddit HTML request failed: 500'))
-        expect(await isLegacyResting()).toBe(false)
-    })
-
-    it('a rest recorded further ahead than the longest rest (a clock set back) is ignored', async () => {
-        __getLocalStorage()[CAPABILITY_REST_KEY] = {
-            legacy: { refusals: 1, until: Date.now() + 4 * CAPABILITY_MAX_REST_MS, since: Date.now() },
-        }
-        expect(await isLegacyResting()).toBe(false)
-    })
-})
-
-// Held and spam-filtered posts linger in the public feed, so young ones get
-// their own page read while a www tab can fetch: at the permalink, which
-// doesn't redirect (a redirect drops a solved challenge), solving a challenge.
-describe('feed-present post verification', () => {
-    const POST = 't3_post11'
-    const POST_PERMALINK = '/r/somesub/comments/post11/a_title/'
-    const heldPostPage =
-        `<html><body><shreddit-post id="${POST}" author="${USER}" post-title="t" subreddit-name="somesub">` +
-        `<div slot="post-removed-banner">Post is awaiting moderator approval.</div></shreddit-post></body></html>`
-    const challenge =
-        `<script>const solution = await(async e=>e+e)("ab");</script>` +
-        `<form hidden method="GET"><input type="hidden" name="js_challenge" value="1"/>` +
-        `<input type="hidden" name="jsc_token" value="tok1"/><input type="hidden" name="jsc_orig_r" value=""/></form>`
-
-    it("reads a young post's page at its permalink and solves the challenge", async () => {
-        browserMock.tabs.query = async () => [{ id: 7 }]
-        const calls = installFetch([
-            [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
-            [`/user/${USER}/submitted/?sort=new`, thingIdEl(POST)],
-            [`${POST_PERMALINK}?solution=abab&js_challenge=1&jsc_token=tok1`, heldPostPage],
-            [POST_PERMALINK, challenge],
-        ])
-        const results = await lookupItemsByID_fromPublicProfile([POST], USER, {
-            [POST]: { locked: false, created_utc: Math.floor(Date.now() / 1000) - 3600, permalink: POST_PERMALINK },
-        })
-        expect(results.find(r => r.data.name === POST).data.is_robot_indexable).toBe(false)
-        expect(calls.filter(u => u.includes('/comments/post11/'))).toHaveLength(2)
-    })
-
-    it('checks young posts page by page without a www tab too', async () => {
-        const calls = installFetch([
-            [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
-            [`/user/${USER}/submitted/?sort=new`, thingIdEl(POST)],
-            [`${POST_PERMALINK}?solution=abab&js_challenge=1&jsc_token=tok1`, heldPostPage],
-            [POST_PERMALINK, challenge],
-        ])
-        const results = await lookupItemsByID_fromPublicProfile([POST], USER, {
-            [POST]: { locked: false, created_utc: Math.floor(Date.now() / 1000) - 3600, permalink: POST_PERMALINK },
-        })
-        expect(results.find(r => r.data.name === POST).data.is_robot_indexable).toBe(false)
-        expect(calls.filter(u => u.includes('/comments/post11/'))).toHaveLength(2)
-    })
-
-    it("paces a post page it can't read instead of fetching it every cycle", async () => {
-        const calls = installFetch([
-            [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
-            [`/user/${USER}/submitted/?sort=new`, thingIdEl(POST)],
-            [POST_PERMALINK, FRONT_PAGE],
-        ])
-        const authMeta = {
-            [POST]: { locked: false, created_utc: Math.floor(Date.now() / 1000) - 3600, permalink: POST_PERMALINK },
-        }
-        const first = await lookupItemsByID_fromPublicProfile([POST], USER, authMeta)
-        // nothing says otherwise, so the feed's presence stands
-        expect(first.find(r => r.data.name === POST).data.is_robot_indexable).toBe(true)
-        const pageFetches = () => calls.filter(u => u.includes('/comments/post11/')).length
-        const afterFirst = pageFetches()
-        expect(afterFirst).toBeGreaterThan(0)
-        await lookupItemsByID_fromPublicProfile([POST], USER, authMeta)
-        expect(pageFetches()).toBe(afterFirst)
-    })
-
-    it('fetches at most 10 post pages per cycle', async () => {
-        const posts = Array.from({ length: 12 }, (_, i) => `t3_pp${i.toString(36).padStart(4, '0')}`)
-        const permalink = id => `/r/somesub/comments/${id.slice(3)}/t/`
-        const calls = installFetch([
-            [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
-            [`/user/${USER}/submitted/?sort=new`, posts.map(thingIdEl).join('')],
-            ...posts.map(id => [
-                permalink(id),
-                `<html><body><shreddit-post id="${id}" author="${USER}" post-title="t" subreddit-name="somesub">` +
-                    `<div slot="post-removed-banner">Post is awaiting moderator approval.</div></shreddit-post></body></html>`,
-            ]),
-        ])
-        const created = Math.floor(Date.now() / 1000) - 3600
-        await lookupItemsByID_fromPublicProfile(
-            posts,
-            USER,
-            Object.fromEntries(
-                posts.map(id => [id, { locked: false, created_utc: created, permalink: permalink(id) }]),
-            ),
-        )
-        const fetched = new Set(calls.filter(u => u.includes('/r/somesub/comments/')).map(u => u.split('/')[6]))
-        expect(fetched.size).toBe(10)
-    })
-})
-
-// Fixes from the 0.0.5.27 review (2026-10-22), applied 2026-10-24
-describe('0.0.5.27 review fixes: warning streaks and public-live hints', () => {
-
-    it('a lookup with nothing absent to verify clears the verification warning streak', async () => {
-        __resetStorage({}, { absent_verify_consecutive_failures: 7 })
-        installFetch(defaultRoutes())
-        await lookupItemsByID_fromPublicProfile([FEED_OK], USER, { [FEED_OK]: meta(FEED_OK) })
-        expect(__getLocalStorage().absent_verify_consecutive_failures).toBeUndefined()
-    })
-
-    it('pagination that keeps stopping short warns after five lookups, and a full one clears it', async () => {
-        // the first page ends with a cursor, GONE lies below it, and no route serves the next page
-        const cursor = `<shreddit-feed-load-more-observer cursor="${Buffer.from(FEED_OK).toString('base64')}"></shreddit-feed-load-more-observer>`
-        installFetch([
-            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK) + cursor],
-            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
-        ])
-        const ids = [FEED_OK, GONE]
-        const authItemsMeta = Object.fromEntries(ids.map(id => [id, meta(id)]))
-        for (let i = 0; i < 5; i++) {
-            await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
-        }
-        expect(__getLocalStorage().profile_pagination_consecutive_shortfalls).toBe(5)
-        expect(__getLocalStorage().error_status).toBe('profile_pagination_unavailable')
-        expect(await isProfilePaginationShort()).toBe(true)
-
-        installFetch(defaultRoutes())
-        await lookupItemsByID_fromPublicProfile([FEED_OK], USER, { [FEED_OK]: meta(FEED_OK) })
-        expect(await isProfilePaginationShort()).toBe(false)
-    })
-
-    it("a young feed-present post without a 'live' page verdict is not reported publicly live", async () => {
-        const YOUNG = 't3_young1'
-        const OLD = 't3_old1'
-        installFetch([
-            [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
-            [`/user/${USER}/submitted/?sort=new`, thingIdEl(YOUNG) + thingIdEl(OLD)],
-            // its own page is unreadable, so no verdict
-            ['/comments/young1', '<html><body>please wait</body></html>'],
-        ])
-        const now = Math.floor(Date.now() / 1000)
-        const results = await lookupItemsByID_fromPublicProfile([YOUNG, OLD], USER, {
-            [YOUNG]: { locked: false, created_utc: now - 3600 },
-            [OLD]: { locked: false, created_utc: now - 30 * 86400 },
-        })
-        const byId = Object.fromEntries(results.map(r => [r.data.name, r.data]))
-        expect(byId[YOUNG]._public_view_unverified).toBe(true)
-        expect(byId[OLD]._public_view_unverified).toBeUndefined()
-    })
-})
-
-describe('0.0.5.27 review fixes: feed-present post verification', () => {
-    const POSTS = ['t3_young1', 't3_young2']
-    const now = () => Math.floor(Date.now() / 1000)
-    const youngMeta = () => Object.fromEntries(POSTS.map(id => [id, { locked: false, created_utc: now() - 3600 }]))
-    const servePosts = postPage => {
-        const pageCalls = []
-        globalThis.fetch = async url => {
-            const u = String(url)
-            if (u.includes(`/user/${USER}/comments/`))
-                return { ok: true, status: 200, text: async () => emptyStatePage('comments') }
-            if (u.includes(`/user/${USER}/submitted/`))
-                return { ok: true, status: 200, text: async () => POSTS.map(thingIdEl).join('') }
-            pageCalls.push(u)
-            return postPage(u)
-        }
-        return pageCalls
-    }
-
-    it('a 429 on a post page ends the verification loop', async () => {
-        const pageCalls = servePosts(() => ({ ok: false, status: 429, text: async () => '' }))
-        await lookupItemsByID_fromPublicProfile(POSTS, USER, youngMeta())
-        expect(pageCalls).toHaveLength(1)
-        expect(__getLocalStorage().error_status).toBe('rate_limited')
-    })
-
-    it('a post once seen held keeps that history when its page later reads unknown', async () => {
-        __resetStorage({}, { www_post_page_verdicts: { t3_young1: { v: 'held', t: Date.now() - 3 * 3600 * 1000 } } })
-        servePosts(() => ({ ok: true, status: 200, text: async () => '<html><body>please wait</body></html>' }))
-        const old = { t3_young1: { locked: false, created_utc: now() - 30 * 86400 } }
-        await lookupItemsByID_fromPublicProfile(['t3_young1'], USER, old)
-        const entry = __getLocalStorage().www_post_page_verdicts.t3_young1
-        expect(entry.v).toBe('unknown')
-        expect(entry.adverse).toBe(true)
-    })
-})
-
-// Methods reddit refuses outright rest longer with each refusal in a row, up to
-// a week, and are tried again after every rest: none is given up for good.
-describe('the escalating rest after a refusal', () => {
-    it('doubles from 6 hours to a weekly cap', () => {
-        const hours = [1, 2, 3, 4, 5, 6, 7, 20].map(n => capabilityRestMs(n) / 3600000)
-        expect(hours).toEqual([6, 12, 24, 48, 96, 168, 168, 168])
-        expect(capabilityRestMs(1)).toBe(CAPABILITY_FIRST_REST_MS)
-    })
-
-    it('escalates only on tries the rest allowed, and one success ends it', async () => {
-        await noteCapabilityRefused('api_info', 'block page')
-        expect(await isCapabilityResting('api_info')).toBe(true)
-        // a refusal while resting (a path that ignores the rest) adds nothing
-        await noteCapabilityRefused('api_info', 'block page')
-        expect(__getLocalStorage()[CAPABILITY_REST_KEY].api_info.refusals).toBe(1)
-        // the rest runs out, the next try is refused: twice as long
-        __getLocalStorage()[CAPABILITY_REST_KEY].api_info.until = Date.now() - 1000
-        expect(await isCapabilityResting('api_info')).toBe(false)
-        await noteCapabilityRefused('api_info', 'block page')
-        const rest = __getLocalStorage()[CAPABILITY_REST_KEY].api_info
-        expect(rest.refusals).toBe(2)
-        expect(rest.until - Date.now()).toBeGreaterThan(2 * CAPABILITY_FIRST_REST_MS - 5000)
-        await noteCapabilityWorked('api_info')
-        expect(__getLocalStorage()[CAPABILITY_REST_KEY].api_info).toBeUndefined()
-        expect(await isCapabilityResting('api_info')).toBe(false)
-    })
-})
-
-// Followed items (other people's posts and comments the user tracks) were
-// read 100 at a time through api/info.json, which reddit refuses since
-// 2026-10-24. While it rests, each is read through its thread's JSON.
-describe('followed items while api/info is refused', () => {
-    const COMMENT = 't1_folc1'
-    const COMMENT2 = 't1_folc2'
-    const NOPOST = 't1_folc3'
-    const POSTF = 't3_folp1'
-    const json = (status, data, type) => ({ ...jsonResponse(status, data, type), text: async () => JSON.stringify(data) })
-    const blockPage = () => json(403, null, 'text/html; charset=utf-8')
-    const thread = (post, comment) => [
-        { kind: 'Listing', data: { children: [{ kind: 't3', data: post }] } },
-        { kind: 'Listing', data: { children: comment ? [{ kind: 't1', data: comment }] : [] } },
-    ]
-    let calls
-    const serve = ({ apiInfo }) => {
-        calls = []
-        globalThis.fetch = async url => {
-            const u = String(url)
-            calls.push(u)
-            if (u.includes('/api/info.json')) return apiInfo()
-            if (u.includes(`/comments/p1/_/folc1.json`))
-                return json(200, thread({ name: 't3_p1' }, { name: COMMENT, author: '[deleted]', body: '[removed]' }))
-            if (u.includes(`/comments/p2/_/folc2.json`))
-                return json(200, thread({ name: 't3_p2' }, { name: COMMENT2, author: 'someone', body: 'still here' }))
-            if (u.includes(`/comments/folp1.json`))
-                return json(
-                    200,
-                    thread({ name: POSTF, author: 'someone', is_robot_indexable: false, selftext: '[removed]' }),
-                )
-            throw new Error(`unexpected url: ${u}`)
-        }
-    }
-    const lookupFollowed = ids => lookupItemsByID(ids, 'none', false, '', {})
-    // The followed list (storage.sync), which the rotation's maps are pruned to
-    const following = ids => Object.fromEntries(ids.map(id => [id, { t: 1 }]))
-    const savedCookies = browserMock.cookies
-    let loggedIn
-    beforeEach(() => {
-        __resetStorage(
-            { other_subscriptions: following([COMMENT, COMMENT2, POSTF, NOPOST]) },
-            { followed_post_ids: { [COMMENT]: 'p1', [COMMENT2]: 'p2' } },
-        )
-        _followedTiming.delayMs = 0
-        _loggedInFetchState.preferredCacheMode = 0
-        _loggedInFetchState.doubleBlockUntil = 0
-        loggedIn = true
-        browserMock.cookies = { get: async ({ name }) => (loggedIn ? { name, value: 'x' } : null) }
-    })
-    afterEach(() => {
-        _followedTiming.delayMs = 700
-        browserMock.cookies = savedCookies
-    })
-
-    it('a block page rests api/info and reads each followed item through its thread instead', async () => {
-        serve({ apiInfo: blockPage })
-        const results = await lookupFollowed([COMMENT, COMMENT2, POSTF, NOPOST])
-        const byId = Object.fromEntries(results.map(r => [r.data.name, r.data]))
-        expect(byId[COMMENT].body).toBe('[removed]')
-        expect(byId[COMMENT2].body).toBe('still here')
-        expect(byId[POSTF].is_robot_indexable).toBe(false)
-        // a comment with no known post can't be read this way: no news, no false removal
-        expect(byId[NOPOST]).toBeUndefined()
-        expect(await isCapabilityResting('api_info')).toBe(true)
-
-        // the next cycle doesn't ask api/info while it rests
-        calls.length = 0
-        await lookupFollowed([COMMENT, COMMENT2, POSTF])
-        expect(calls.some(u => u.includes('/api/info.json'))).toBe(false)
-    })
-
-    it('reads a few per cycle, the ones read longest ago first', async () => {
-        serve({ apiInfo: blockPage })
-        const ids = [COMMENT, COMMENT2, POSTF]
-        const many = Array.from({ length: 8 }, (_, i) => `t3_x${i}`)
-        __getSyncStorage().other_subscriptions = following([...ids, ...many])
-        globalThis.fetch = (orig => async url => {
-            const m = String(url).match(/comments\/(x\d)\.json/)
-            if (m) return json(200, thread({ name: `t3_${m[1]}`, author: 'someone' }))
-            return orig(url)
-        })(globalThis.fetch)
-        const first = await lookupFollowed([...ids, ...many])
-        expect(first).toHaveLength(5)
-        const second = await lookupFollowed([...ids, ...many])
-        const firstIds = new Set(first.map(r => r.data.name))
-        expect(second.some(r => firstIds.has(r.data.name))).toBe(false)
-    })
-
-    it("follows from before 0.0.5.27 are read through the post their cached item names (its fullname)", async () => {
-        const OLD = 't1_oldc1'
-        __getSyncStorage().other_subscriptions = following([OLD])
-        __getLocalStorage().items_other = { [OLD]: { p: 't3_pold1' } }
-        serve({ apiInfo: blockPage })
-        globalThis.fetch = (orig => async url => {
-            if (String(url).includes('/comments/pold1/_/oldc1.json'))
-                return json(200, thread({ name: 't3_pold1' }, { name: OLD, author: '[deleted]', body: '[removed]' }))
-            return orig(url)
-        })(globalThis.fetch)
-        const results = await lookupFollowed([OLD])
-        expect(results.map(r => r.data.name)).toEqual([OLD])
-        expect(calls.some(u => u.includes('t3_'))).toBe(false)
-        // copied over, so the next cycle needn't read the item cache
-        expect(__getLocalStorage().followed_post_ids[OLD]).toBe('pold1')
-    })
-
-    it('a follow (one id) leaves the rotation of the others alone', async () => {
-        serve({ apiInfo: blockPage })
-        const many = Array.from({ length: 10 }, (_, i) => `t3_x${i}`)
-        __getSyncStorage().other_subscriptions = following([...many, 't3_new1'])
-        globalThis.fetch = (orig => async url => {
-            const m = String(url).match(/comments\/(x\d|new1)\.json/)
-            if (m) return json(200, thread({ name: `t3_${m[1]}`, author: 'someone' }))
-            return orig(url)
-        })(globalThis.fetch)
-        const first = await lookupFollowed(many)
-        await lookupFollowed(['t3_new1'])
-        const second = await lookupFollowed(many)
-        const firstIds = new Set(first.map(r => r.data.name))
-        expect(second.some(r => firstIds.has(r.data.name))).toBe(false)
-        expect(Object.keys(__getLocalStorage().followed_checked_at)).toContain('t3_new1')
-    })
-
-    it('reads nothing without a reddit login, and rests the thread reads after a block page in both modes', async () => {
-        serve({ apiInfo: blockPage })
-        loggedIn = false
-        expect(await lookupFollowed([COMMENT, COMMENT2])).toEqual([])
-        expect(calls.filter(u => !u.includes('/api/info.json'))).toEqual([])
-
-        loggedIn = true
-        globalThis.fetch = async url => {
-            calls.push(String(url))
-            return blockPage()
-        }
-        // api/info's block page in both modes skips the retry for a while: a
-        // block page in one mode stops this cycle's reads but rests nothing
-        calls.length = 0
-        expect(await lookupFollowed([COMMENT, COMMENT2, POSTF])).toEqual([])
-        expect(calls).toHaveLength(1)
-        expect(await isCapabilityResting('thread_json')).toBe(false)
-
-        _loggedInFetchState.doubleBlockUntil = 0
-        calls.length = 0
-        expect(await lookupFollowed([COMMENT, COMMENT2, POSTF])).toEqual([])
-        // the first read's two cache modes, then the batch stops
-        expect(calls).toHaveLength(2)
-        expect(await isCapabilityResting('thread_json')).toBe(true)
-        calls.length = 0
-        expect(await lookupFollowed([COMMENT, COMMENT2, POSTF])).toEqual([])
-        expect(calls).toEqual([])
-    })
-
-    it("leaves out a followed comment whose author blocked the user: [unavailable] isn't a removal", async () => {
-        serve({ apiInfo: blockPage })
-        globalThis.fetch = (orig => async url => {
-            if (String(url).includes('/comments/p1/_/folc1.json'))
-                return json(200, thread({ name: 't3_p1' }, { name: COMMENT, author: '[unavailable]', body: '[unavailable]' }))
-            return orig(url)
-        })(globalThis.fetch)
-        const results = await lookupFollowed([COMMENT, COMMENT2])
-        expect(results.map(r => r.data.name)).toEqual([COMMENT2])
-    })
-
-    it('once the rest runs out and api/info answers again, the rest ends', async () => {
-        serve({ apiInfo: blockPage })
-        await lookupFollowed([COMMENT])
-        __getLocalStorage()[CAPABILITY_REST_KEY].api_info.until = Date.now() - 1000
-        serve({
-            apiInfo: () =>
-                json(200, { data: { children: [{ kind: 't1', data: { name: COMMENT, body: 'x', author: 'a' } }] } }),
-        })
-        const results = await lookupFollowed([COMMENT])
-        expect(results.map(r => r.data.name)).toEqual([COMMENT])
-        expect(await isCapabilityResting('api_info')).toBe(false)
-        expect(__getLocalStorage()[CAPABILITY_REST_KEY].api_info).toBeUndefined()
-    })
-})
-
 // A profile whose comments tab is hidden from logged-out visitors (reported
 // 2026-10-25: every check stopped at "comments page unrecognized")
 describe('a profile that hides its comments from logged-out visitors', () => {
@@ -1161,34 +642,33 @@ describe('a profile that hides its comments from logged-out visitors', () => {
     })
 })
 
-// Fixes from the 0.0.5.27 release review (2026-10-25)
-describe('0.0.5.27 release review fixes: rate limits, the legacy queue, the public-live set', () => {
-    const POSTS = ['t3_young1', 't3_young2']
-    const now = () => Math.floor(Date.now() / 1000)
+describe('profile lookup warnings and limits', () => {
+    it('a lookup with nothing absent to verify clears the verification warning streak', async () => {
+        __resetStorage({}, { absent_verify_consecutive_failures: 7 })
+        installFetch(defaultRoutes())
+        await lookupItemsByID_fromPublicProfile([FEED_OK], USER, { [FEED_OK]: meta(FEED_OK) })
+        expect(__getLocalStorage().absent_verify_consecutive_failures).toBeUndefined()
+    })
 
-    it("a post page's 429 keeps its backoff through the whole lookup, and the absent items wait for it", async () => {
-        const pageCalls = []
-        globalThis.fetch = async url => {
-            const u = String(url)
-            if (u.includes(`/user/${USER}/comments/`))
-                return { ok: true, status: 200, text: async () => commentsPage('') + thingIdEl(FEED_OK) }
-            if (u.includes(`/user/${USER}/submitted/`))
-                return { ok: true, status: 200, text: async () => POSTS.map(thingIdEl).join('') }
-            pageCalls.push(u)
-            return { ok: false, status: 429, text: async () => '' }
+    it('pagination that keeps stopping short warns after five lookups, and a full one clears it', async () => {
+        // the first page ends with a cursor, GONE lies below it, and no route serves the next page
+        const cursor = `<shreddit-feed-load-more-observer cursor="${Buffer.from(FEED_OK).toString('base64')}"></shreddit-feed-load-more-observer>`
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK) + cursor],
+            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+        ])
+        const ids = [FEED_OK, GONE]
+        const authItemsMeta = Object.fromEntries(ids.map(id => [id, meta(id)]))
+        for (let i = 0; i < 5; i++) {
+            await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
         }
-        const authItemsMeta = {
-            [FEED_OK]: meta(FEED_OK),
-            [GONE]: meta(GONE),
-            ...Object.fromEntries(POSTS.map(id => [id, { locked: false, created_utc: now() - 3600 }])),
-        }
-        const results = await lookupItemsByID([FEED_OK, GONE, ...POSTS], 'none', false, USER, authItemsMeta)
-        // the first post page's 429, then nothing more
-        expect(pageCalls).toHaveLength(1)
-        expect(__getLocalStorage().rate_limit_until).toBeGreaterThan(Date.now())
-        expect(__getLocalStorage().rate_limit_level).toBe(1)
-        // the absent comment got no verdict: no news
-        expect(results.map(r => r.data.name)).not.toContain(GONE)
+        expect(__getLocalStorage().profile_pagination_consecutive_shortfalls).toBe(5)
+        expect(__getLocalStorage().error_status).toBe('profile_pagination_unavailable')
+        expect(await isProfilePaginationShort()).toBe(true)
+
+        installFetch(defaultRoutes())
+        await lookupItemsByID_fromPublicProfile([FEED_OK], USER, { [FEED_OK]: meta(FEED_OK) })
+        expect(await isProfilePaginationShort()).toBe(false)
     })
 
     it('a profile 429 ends the lookup without the legacy chain', async () => {
@@ -1204,49 +684,6 @@ describe('0.0.5.27 release review fixes: rate limits, the legacy queue, the publ
         // the chain would queue the post first, then ask the legacy hosts
         expect(__getLocalStorage().pending_post_lookups).toBeUndefined()
         expect(calls.every(u => u.includes(`/user/${USER}/`))).toBe(true)
-    })
-
-    it("posts go to the pending-post queue even while reddit refuses the legacy listing", async () => {
-        // the public view is down: every route gets a page that isn't the profile
-        globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => FRONT_PAGE })
-        __getLocalStorage()[CAPABILITY_REST_KEY] = {
-            legacy_info: { refusals: 1, until: Date.now() + 3600 * 1000, since: Date.now() },
-        }
-        await expect(
-            lookupItemsByID(['t3_queued1', 't3_private1', 't3_quar1', GONE], 'none', false, USER, {
-                [GONE]: meta(GONE),
-                // their legacy pages answer 403 logged out, which reads like reddit refusing every page
-                t3_private1: { locked: false, subreddit_type: 'private' },
-                t3_quar1: { locked: false, quarantine: true },
-            }),
-        ).rejects.toThrow()
-        expect(__getLocalStorage().pending_post_lookups).toEqual(['t3_queued1'])
-    })
-
-    it("a post verdict 0.0.5.27's classifier cached as removed is read again, not reused", async () => {
-        const YOUNG = 't3_young1'
-        __resetStorage({}, { www_post_page_verdicts: { [YOUNG]: { v: 'removed', t: Date.now() - 60 * 1000 } } })
-        const pageCalls = []
-        globalThis.fetch = async url => {
-            const u = String(url)
-            if (u.includes(`/user/${USER}/comments/`))
-                return { ok: true, status: 200, text: async () => emptyStatePage('comments') }
-            if (u.includes(`/user/${USER}/submitted/`)) return { ok: true, status: 200, text: async () => thingIdEl(YOUNG) }
-            pageCalls.push(u)
-            return {
-                ok: true,
-                status: 200,
-                text: async () =>
-                    `<html><body><shreddit-post id="${YOUNG}" author="${USER}" subreddit-name="s" ` +
-                    `post-title="Why was my post removed by moderators?"></shreddit-post></body></html>`,
-            }
-        }
-        const results = await lookupItemsByID_fromPublicProfile([YOUNG], USER, {
-            [YOUNG]: { locked: false, created_utc: now() - 3600 },
-        })
-        expect(pageCalls).toHaveLength(1)
-        expect(results.find(r => r.data.name === YOUNG).data.is_robot_indexable).toBe(true)
-        expect(__getLocalStorage().www_post_page_verdicts[YOUNG]).toMatchObject({ v: 'live', k: 2 })
     })
 
     it('an empty profile forgets which items were seen publicly, so the bridge stops vouching for them', async () => {
@@ -1272,15 +709,5 @@ describe('0.0.5.27 release review fixes: rate limits, the legacy queue, the publ
         expect(first).toBeGreaterThan(0)
         await expect(lookupItemsByID_fromPublicProfile([GONE], USER, { [GONE]: meta(GONE) })).rejects.toThrow(/404/)
         expect(controlCalls).toBe(first)
-    })
-
-    it('after the clock was set back, a refusal starts a new rest instead of finding the old one running', async () => {
-        __getLocalStorage()[CAPABILITY_REST_KEY] = {
-            api_info: { refusals: 6, until: Date.now() + CAPABILITY_MAX_REST_MS + 24 * 3600 * 1000, since: 1 },
-        }
-        expect(await isCapabilityResting('api_info')).toBe(false)
-        await noteCapabilityRefused('api_info', 'block page')
-        expect(await isCapabilityResting('api_info')).toBe(true)
-        expect(__getLocalStorage()[CAPABILITY_REST_KEY].api_info.refusals).toBe(7)
     })
 })
