@@ -20,7 +20,7 @@ export const forgetPageReads = () => {
 
 // Disable every scan/restore button while one search runs, so a user can't fire
 // many at once (which would multiply requests to reddit and risk a rate-limit).
-export function setScanButtonsEnabled(enabled: boolean) {
+function setScanButtonsEnabled(enabled: boolean) {
     document
         .querySelectorAll('.rev-scan-comment-btn, .rev-restore-btn, .rev-scan-all-btn, .rev-place-unattached-btn')
         .forEach(b => {

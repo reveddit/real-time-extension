@@ -449,7 +449,7 @@ function renderFilterControls(container: HTMLElement, results: ScanResult[]) {
     container.prepend(filterBar)
 }
 
-export function applyFilter(filter: 'all' | 'removed') {
+function applyFilter(filter: 'all' | 'removed') {
     const isNewReddit = detectIsNewReddit()
 
     // Handle items in the main listing
