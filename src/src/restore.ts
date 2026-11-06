@@ -44,7 +44,7 @@ export interface RestoreProgress {
     otherSorts?: boolean
 }
 
-export type ProgressCallback = (progress: RestoreProgress) => void
+type ProgressCallback = (progress: RestoreProgress) => void
 
 export interface ScanResult {
     id: string
@@ -149,12 +149,9 @@ function linkChildren(map: Map<string, CommentTreeNode>) {
     }
 }
 
-export function extractCommentTree_oldReddit(
-    postFullname: string,
-    root: ParentNode = document,
-): Map<string, CommentTreeNode> {
+function extractCommentTree_oldReddit(postFullname: string): Map<string, CommentTreeNode> {
     const map = new Map<string, CommentTreeNode>()
-    const commentEls = root.querySelectorAll('.commentarea .thing.comment')
+    const commentEls = document.querySelectorAll('.commentarea .thing.comment')
 
     for (const el of Array.from(commentEls)) {
         const id = el.getAttribute('data-fullname') || commentFullnameFromPermalink(el.getAttribute('data-permalink'))
@@ -212,12 +209,9 @@ export const commentSelector = (id?: string): string =>
 
 // The comments new reddit's page shows, with who replied to whom. A reply sits
 // inside its parent, and a comment at the top of the thread has no parentid.
-export function extractCommentTree_newReddit(
-    postFullname: string,
-    root: ParentNode = document,
-): Map<string, CommentTreeNode> {
+export function extractCommentTree_newReddit(postFullname: string): Map<string, CommentTreeNode> {
     const map = new Map<string, CommentTreeNode>()
-    for (const el of Array.from(root.querySelectorAll(commentSelector()))) {
+    for (const el of Array.from(document.querySelectorAll(commentSelector()))) {
         const id = commentIdOf(el)
         map.set(id, {
             id,
@@ -233,47 +227,6 @@ export function extractCommentTree_newReddit(
     }
     linkChildren(map)
     return map
-}
-
-export function extractCommentTree_fromJSON(jsonData: any[]): {
-    map: Map<string, CommentTreeNode>
-    postAuthor: string
-} {
-    const map = new Map<string, CommentTreeNode>()
-    let postAuthor = ''
-
-    if (jsonData.length >= 1 && jsonData[0]?.data?.children?.[0]?.data) {
-        postAuthor = jsonData[0].data.children[0].data.author || ''
-    }
-
-    if (jsonData.length >= 2 && jsonData[1]?.data?.children) {
-        parseCommentListing(jsonData[1].data.children, map)
-    }
-
-    linkChildren(map)
-
-    return { map, postAuthor }
-}
-
-function parseCommentListing(children: any[], map: Map<string, CommentTreeNode>) {
-    for (const child of children) {
-        if (child.kind !== 't1') continue
-        const d = child.data
-        const node: CommentTreeNode = {
-            id: d.name,
-            author: d.author || '',
-            parent_id: d.parent_id || '',
-            body: d.body || '',
-            created_utc: d.created_utc || 0,
-            link_id: d.link_id || '',
-            children: [],
-        }
-        map.set(node.id, node)
-
-        if (d.replies?.data?.children) {
-            parseCommentListing(d.replies.data.children, map)
-        }
-    }
 }
 
 // --- Candidate Author Ordering ---
@@ -379,24 +332,14 @@ const someNeedOtherSorts = (tree: Map<string, CommentTreeNode>, sort: string, t:
         return created_utc > 0 && (other.sort !== sort || other.t !== t)
     })
 
-function getUserPageSort(
-    created_utc: number,
-    score: number = 1,
-    controversiality: number = 0,
-): { sort: string; t: string } {
+function getUserPageSort(created_utc: number): { sort: string; t: string } {
     const age = Math.floor(Date.now() / 1000) - created_utc
     let sort = 'new'
     let t = ''
 
     if (age > FIVE_MONTHS_SECONDS) {
-        if (score < 2 || controversiality > 0) {
-            sort = 'controversial'
-        } else if (score >= 5) {
-            sort = 'top'
-        }
-        if (sort !== 'new' && age < ONE_YEAR_SECONDS) {
-            t = 'year'
-        }
+        sort = 'controversial'
+        if (age < ONE_YEAR_SECONDS) t = 'year'
     }
 
     return { sort, t }
@@ -760,7 +703,7 @@ const toRecovered = (
 
 // Callback for comments found on author pages that aren't the target but belong
 // to this thread and are removed — the UI fills tombstones or inserts them.
-export type OtherFoundCallback = (comment: RecoveredComment) => void
+type OtherFoundCallback = (comment: RecoveredComment) => void
 
 export async function restoreComment(
     targetCommentId: string,
@@ -1129,11 +1072,11 @@ export interface RecoveredComment {
     kind?: 'context' | 'placeholder'
 }
 
-export type RecoveredCommentCallback = (c: RecoveredComment) => void
+type RecoveredCommentCallback = (c: RecoveredComment) => void
 
 // A comment read through its own feed. `removed` means it's a [deleted] tombstone
 // there, or left out, so its text isn't available from it.
-export interface LookedUpComment {
+interface LookedUpComment {
     id: string
     parent_id: string
     link_id: string

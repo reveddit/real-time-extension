@@ -14,7 +14,6 @@ export const consume = async (stream: ReadableStream) => {
 // monitoring backs off from. Other statuses are about a route or a page.
 export const isRateLimitError = (err: any): boolean => /request failed: 429\b/.test(String(err?.message || err))
 
-export const oldReddit = 'https://old.reddit.com'
 export const newReddit = 'https://www.reddit.com'
 
 // Base URL for reddit's legacy (pre-Shreddit) HTML, fetched logged out. On
@@ -29,7 +28,7 @@ export const newReddit = 'https://www.reddit.com'
 // header from fetch(), so background.ts injects it (DNR on Chrome/Edge,
 // webRequest on Firefox) on background requests carrying this query marker.
 // /api/info needs no cookie and carries no marker.
-export const LEGACY_PAGE_MARKER = 'rv_legacy=1'
+const LEGACY_PAGE_MARKER = 'rv_legacy=1'
 export const legacyPageUrl = (base: string, path: string): string =>
     base + path + (path.includes('?') ? '&' : '?') + LEGACY_PAGE_MARKER
 // The marker as a whole query parameter: the Firefox header rule tests URLs
@@ -43,7 +42,6 @@ export const isLegacyPageUrl = (url: string): boolean => LEGACY_PAGE_MARKER_REGE
 // reddit refuses the legacy pages, not that the page is empty: callers rest
 // them, as after a 403, and try again later.
 export const LEGACY_CHALLENGE_SELECTOR = 'input[name="js_challenge"]'
-export const isLegacyChallengeHtml = (html: string): boolean => /<input[^>]*\bname="js_challenge"/.test(html)
 export const LEGACY_REFUSED_ERROR = 'challenge page: reddit refuses legacy pages'
 
 export const getLegacyBase = async (): Promise<string> => {
@@ -66,7 +64,7 @@ export const redditHTMLRequestOptions: RequestInit = {
     cache: 'reload',
 }
 
-export const REDDIT_HTML_FETCH_TIMEOUT_MS = 15000
+const REDDIT_HTML_FETCH_TIMEOUT_MS = 15000
 
 // fetch() never times out on its own; a stalled old.reddit response would hang
 // the pending-post loop indefinitely (a "stuck scanning" cause). Abort after a

@@ -60,7 +60,7 @@ export function resetScansForPage() {
     }
     setScanButtonsEnabled(!activeScan)
 }
-let currentFilter: 'all' | 'removed' | 'visible' = 'removed'
+let currentFilter: 'all' | 'removed' = 'removed'
 
 // --- Thread Restore: Old Reddit ---
 
@@ -1656,7 +1656,7 @@ function renderFilterControls(container: HTMLElement, results: ScanResult[]) {
     container.prepend(filterBar)
 }
 
-function applyFilter(filter: 'all' | 'removed' | 'visible') {
+function applyFilter(filter: 'all' | 'removed') {
     const isNewReddit = detectIsNewReddit()
 
     // Handle items in the main listing
@@ -1667,32 +1667,13 @@ function applyFilter(filter: 'all' | 'removed' | 'visible') {
         const htmlEl = el as HTMLElement
         const isHighlighted = el.classList.contains('rev-removed-highlight')
 
-        switch (filter) {
-            case 'all':
-                htmlEl.style.display = ''
-                break
-            case 'removed':
-                htmlEl.style.display = isHighlighted ? '' : 'none'
-                break
-            case 'visible':
-                htmlEl.style.display = ''
-                break
-        }
+        htmlEl.style.display = filter === 'removed' && !isHighlighted ? 'none' : ''
     }
 
     // Handle inserted comments
     const insertedEls = document.querySelectorAll('.rev-inserted-comment')
     for (const el of Array.from(insertedEls)) {
-        const htmlEl = el as HTMLElement
-        switch (filter) {
-            case 'all':
-            case 'removed':
-                htmlEl.style.display = ''
-                break
-            case 'visible':
-                htmlEl.style.display = 'none'
-                break
-        }
+        ;(el as HTMLElement).style.display = ''
     }
 }
 

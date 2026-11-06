@@ -266,11 +266,11 @@ class ThreadPageAuthor {
 // because a challenge or login page also answers 200 and would otherwise read
 // as "everything removed". Posts render regardless of removal status, so a
 // post's status needs its own page (getPost_fromOld).
-export interface LegacyInfoResult {
+interface LegacyInfoResult {
     valid: boolean
     items: Record<string, any>[]
 }
-export const getInfoById_fromLegacyHTML = async (ids: string | string[]): Promise<LegacyInfoResult> => {
+const getInfoById_fromLegacyHTML = async (ids: string | string[]): Promise<LegacyInfoResult> => {
     const idsArray = Array.isArray(ids) ? ids : ids.split(',')
     const url = (await getLegacyBase()) + '/api/info?id=' + idsArray.join(',')
     const response = await fetch(url, { ...redditHTMLRequestOptions, credentials: 'omit' })

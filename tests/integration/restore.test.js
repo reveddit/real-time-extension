@@ -4,7 +4,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { __resetStorage } from '../mocks/webextension-polyfill.js'
 import {
     getCandidateAuthors,
-    extractCommentTree_fromJSON,
     commentFullnameFromPermalink,
     RateLimiter,
     monitoringBackoffGate,
@@ -162,87 +161,6 @@ describe('getCandidateAuthors', () => {
         expect(result[4]).toBe('ggc_user')
         // parent_user should come after all deeper ancestor/descendant pairs
         expect(result.indexOf('p_user')).toBeGreaterThan(result.indexOf('ggp_user'))
-    })
-})
-
-describe('extractCommentTree_fromJSON', () => {
-    it('parses standard Reddit thread JSON', () => {
-        const jsonData = [
-            { data: { children: [{ data: { author: 'poster', name: 't3_post1' } }] } },
-            {
-                data: {
-                    children: [
-                        {
-                            kind: 't1',
-                            data: {
-                                name: 't1_a',
-                                author: 'user_a',
-                                parent_id: 't3_post1',
-                                body: 'hello',
-                                created_utc: 1000,
-                                link_id: 't3_post1',
-                                replies: {
-                                    data: {
-                                        children: [
-                                            {
-                                                kind: 't1',
-                                                data: {
-                                                    name: 't1_b',
-                                                    author: 'user_b',
-                                                    parent_id: 't1_a',
-                                                    body: 'reply',
-                                                    created_utc: 2000,
-                                                    link_id: 't3_post1',
-                                                    replies: '',
-                                                },
-                                            },
-                                        ],
-                                    },
-                                },
-                            },
-                        },
-                    ],
-                },
-            },
-        ]
-
-        const { map, postAuthor } = extractCommentTree_fromJSON(jsonData)
-
-        expect(postAuthor).toBe('poster')
-        expect(map.size).toBe(2)
-        expect(map.get('t1_a').author).toBe('user_a')
-        expect(map.get('t1_b').author).toBe('user_b')
-        expect(map.get('t1_a').children).toHaveLength(1)
-        expect(map.get('t1_a').children[0].id).toBe('t1_b')
-    })
-
-    it('skips non-comment items (kind !== t1)', () => {
-        const jsonData = [
-            { data: { children: [{ data: { author: 'poster' } }] } },
-            {
-                data: {
-                    children: [
-                        { kind: 'more', data: { name: 't1_more', children: ['id1'] } },
-                        { kind: 't1', data: { name: 't1_real', author: 'user', parent_id: 't3_p', body: 'hi', created_utc: 1, link_id: 't3_p' } },
-                    ],
-                },
-            },
-        ]
-
-        const { map } = extractCommentTree_fromJSON(jsonData)
-        expect(map.size).toBe(1)
-        expect(map.has('t1_real')).toBe(true)
-    })
-
-    it('handles empty comment listing', () => {
-        const jsonData = [
-            { data: { children: [{ data: { author: 'poster' } }] } },
-            { data: { children: [] } },
-        ]
-
-        const { map, postAuthor } = extractCommentTree_fromJSON(jsonData)
-        expect(map.size).toBe(0)
-        expect(postAuthor).toBe('poster')
     })
 })
 

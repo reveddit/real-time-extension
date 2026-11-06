@@ -27,7 +27,7 @@ import { getChallengeConfig } from '../challenge-config'
 import { getMarkupConfig } from '../markup-config'
 import { isLoginWallMessage } from '../login-wall-config'
 
-export interface PublicItem {
+interface PublicItem {
     name: string
     author: string
     score?: number
@@ -128,7 +128,7 @@ export const buildPartialUrl = (username: string, tab: TabName, cursor: string):
     `${newReddit}/svc/shreddit/profiles/${TAB_CONFIG[tab].partialFeed}/new/` +
     `?sort=new&after=${encodeURIComponent(cursor)}&name=${encodeURIComponent(username)}&feedLength=8`
 
-export interface ParsedPage {
+interface ParsedPage {
     ids: string[]
     rows: Map<string, { score?: number; permalink?: string }>
     cursor: string | null
@@ -206,7 +206,7 @@ export const parseProfileHtml = (html: string, typePrefix: string): ParsedPage =
 // ---------------------------------------------------------------------------
 
 export type PostPageStatus = 'live' | 'held' | 'removed' | 'unknown'
-export interface PostPageResult {
+interface PostPageResult {
     status: PostPageStatus
     // The post carries reddit's banner. The status reads English wording, which
     // monitoring's fetches ask for; a page in the visitor's language has the
@@ -309,7 +309,7 @@ const elementInner = (html: string, from: number, tag: string): string => {
 //   element with author="[deleted]"
 // ---------------------------------------------------------------------------
 
-export type CommentPageStatus = 'live' | 'removed' | 'unknown'
+type CommentPageStatus = 'live' | 'removed' | 'unknown'
 
 export const buildCommentPageUrl = (commentId: string, linkId: string): string =>
     `${newReddit}/comments/${linkId.replace(/^t3_/, '')}/comment/${commentId.replace(/^t1_/, '')}/`

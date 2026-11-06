@@ -197,7 +197,7 @@ const showRemovalStatus = ({
                 )?.textContent ||
                 document.querySelector('span[slot="authorName"]')?.textContent?.trim() ||
                 ''
-            if ((author === '[deleted]' || author === 'u/[deleted]') && postData.removed_by_category !== 'moderator') {
+            if (author === '[deleted]' || author === 'u/[deleted]') {
                 className = USER_DELETED
                 message_1 = `This post was either deleted by the person who posted it, or removed by a moderator and then deleted by the person who posted it.`
             } else {
