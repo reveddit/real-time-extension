@@ -38,7 +38,7 @@ import {
 } from '../../src/src/viewer'
 import {
     storeRedditCookies,
-    lookupItemsByID_withFallback,
+    lookupItemsByID,
     _viewerTiming,
     lookupWarningToKeep,
     ABSENT_VERIFY_UNAVAILABLE,
@@ -158,7 +158,9 @@ describe('the second account cookies', () => {
         const url = viewerUrl('https://www.reddit.com/api/me.json', TOKEN)
         expect(viewerCookieHeaderFor(url, viewer, 1000)).toBe('reddit_session=B-SESSION; token_v2=B-TOKEN')
         expect(viewerCookieHeaderFor(url, viewer, 2000)).toBe('reddit_session=B-SESSION')
-        expect(viewerCookieHeaderFor(viewerUrl('https://www.reddit.com/api/me.json', 'cd'.repeat(16)), viewer, 1000)).toBe('')
+        expect(
+            viewerCookieHeaderFor(viewerUrl('https://www.reddit.com/api/me.json', 'cd'.repeat(16)), viewer, 1000),
+        ).toBe('')
         expect(viewerCookieHeaderFor(url, null)).toBe('')
     })
 })
@@ -300,11 +302,11 @@ describe('connecting a second account', () => {
         await new Promise(resolve => setTimeout(resolve, 20))
         held.answer('bob')
         await Promise.all([finishing, cancelled])
-        expect(__getLocalStorage()[VIEWER_KEY].cookies.map(c => c.value).sort()).toEqual([
-            'B-LOID',
-            'B-SESSION',
-            'B-TOKEN',
-        ])
+        expect(
+            __getLocalStorage()
+                [VIEWER_KEY].cookies.map(c => c.value)
+                .sort(),
+        ).toEqual(['B-LOID', 'B-SESSION', 'B-TOKEN'])
         expect(jarValues()).toBe('csrf_token=A-CSRF; reddit_session=A-SESSION; token_v2=A-TOKEN')
         expect(await isViewerConnecting()).toBe(false)
     })
@@ -413,7 +415,9 @@ describe('connecting a second account', () => {
 
         await cancelViewerConnect('cancelled')
         expect(await storeRedditCookies()).toBe(true)
-        expect(__getLocalStorage().stored_reddit_cookie_objects.find(c => c.name === 'reddit_session').value).toBe('A-SESSION')
+        expect(__getLocalStorage().stored_reddit_cookie_objects.find(c => c.name === 'reddit_session').value).toBe(
+            'A-SESSION',
+        )
     })
 })
 
@@ -493,8 +497,7 @@ describe('checking the user’s items through the second account', () => {
             }
             throw new Error(`unexpected request: ${url}`)
         }))
-    const lookup = (ids, meta = {}) =>
-        lookupItemsByID_withFallback('api/info', '', null, false, ids, 'alice', meta)
+    const lookup = (ids, meta = {}) => lookupItemsByID(ids, null, false, 'alice', meta)
     const meta = ids => Object.fromEntries(ids.map(id => [id, { link_id: 't3_post1', created_utc: 1 }]))
 
     it('makes the header rule again before each lookup, so a cookie that has expired since stays off', async () => {
@@ -620,7 +623,7 @@ describe('checking the user’s items through the second account', () => {
         expect(globalThis.fetch.mock.calls.some(c => c[0].includes('submitted.json'))).toBe(false)
     })
 
-    it("a comment its own permalink leaves out is removed, but only on the right post with nothing else there", async () => {
+    it('a comment its own permalink leaves out is removed, but only on the right post with nothing else there', async () => {
         connect()
         const ids = ['t1_childless', 't1_otherpost', 't1_unfocused']
         answer([
@@ -700,7 +703,7 @@ describe('checking the user’s items through the second account', () => {
         expect(results.map(r => r.data.is_robot_indexable)).toEqual([false])
     })
 
-    it("a later listing page failing only ends the walk: what the first page showed still stands", async () => {
+    it('a later listing page failing only ends the walk: what the first page showed still stands', async () => {
         connect()
         __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
         answer([
@@ -786,14 +789,14 @@ describe('checking the user’s items through the second account', () => {
         globalThis.fetch = vi.fn(async () => {
             throw new TypeError('Failed to fetch')
         })
-        await lookupItemsByID_withFallback('api/info', '', null, false, ['t1_x'], 'alice', {
+        await lookupItemsByID(['t1_x'], null, false, 'alice', {
             t1_x: { author: 'Bob', link_id: 't3_post1' },
         }).catch(() => {})
         __getLocalStorage().viewer_thread_consecutive_failures = { token: TOKEN, failures: 5 }
         __getLocalStorage().absent_verify_consecutive_failures = 7
         expect(await lookupWarningToKeep('alice')).toBe(ABSENT_VERIFY_UNAVAILABLE)
         // A later pass with no items checks through neither view: the usual rule again
-        expect(await lookupItemsByID_withFallback('api/info', '', null, false, [], 'alice', {})).toEqual([])
+        expect(await lookupItemsByID([], null, false, 'alice', {})).toEqual([])
         expect(await lookupWarningToKeep('alice')).toBe(null)
     })
 
@@ -868,9 +871,7 @@ describe('checking the user’s items through the second account', () => {
         globalThis.fetch = vi.fn(async () => {
             throw new TypeError('Failed to fetch')
         })
-        const results = await lookupItemsByID_withFallback('api/info', '', null, false, ['t1_x'], 'Bob', {}).catch(
-            e => e,
-        )
+        const results = await lookupItemsByID(['t1_x'], null, false, 'Bob', {}).catch(e => e)
         expect(results).toBeInstanceOf(Error)
         const urls = globalThis.fetch.mock.calls.map(c => c[0])
         expect(urls.length).toBeGreaterThan(0)
@@ -934,10 +935,14 @@ describe('checking the user’s items through the second account', () => {
     it('a kind with no mode of its own yet starts from the one the account last learned', async () => {
         const viewer = { name: 'bob', token: TOKEN, cookies: [], connectedAt: 1 }
         // Every kind passes in no-cache only, as when reddit refuses a request style everywhere
-        globalThis.fetch = vi.fn(async (url, init) => (init.cache === 'no-cache' ? json({ data: { children: [] } }) : BLOCK))
+        globalThis.fetch = vi.fn(async (url, init) =>
+            init.cache === 'no-cache' ? json({ data: { children: [] } }) : BLOCK,
+        )
         await fetchJsonAsViewer('https://www.reddit.com/user/alice/comments.json', viewer)
         globalThis.fetch.mockClear()
-        expect(await fetchJsonAsViewer('https://www.reddit.com/comments/p/_/c.json', viewer)).toMatchObject({ ok: true })
+        expect(await fetchJsonAsViewer('https://www.reddit.com/comments/p/_/c.json', viewer)).toMatchObject({
+            ok: true,
+        })
         expect(globalThis.fetch.mock.calls.map(c => c[1].cache)).toEqual(['no-cache'])
     })
 
@@ -984,7 +989,7 @@ describe('checking the user’s items through the second account', () => {
         globalThis.fetch = vi.fn(async () => {
             throw new TypeError('Failed to fetch')
         })
-        await lookupItemsByID_withFallback('api/info', '', null, false, ['t1_x'], 'alice', {
+        await lookupItemsByID(['t1_x'], null, false, 'alice', {
             t1_x: { author: 'Bob', link_id: 't3_post1' },
         }).catch(() => {})
         const urls = globalThis.fetch.mock.calls.map(c => c[0])

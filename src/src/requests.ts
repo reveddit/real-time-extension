@@ -297,23 +297,6 @@ export const postRemovedByCategory = (id: string, meta: AuthItemMeta | undefined
 export const publicViewUncheckedReason = (id: string, meta: AuthItemMeta | undefined): string =>
     postRemovedByCategory(id, meta) ? '' : publiclyInvisibleReason(meta)
 
-export const lookupItemsByID = (
-    ids: string | string[],
-    auth: any,
-    monitor_quarantined = false,
-    username = '',
-    authItemsMeta: AuthItemsMeta = {},
-) => {
-    const params: Record<string, any> = { id: ids, raw_json: 1 }
-    const search =
-        '?' +
-        Object.keys(params)
-            .map(k => `${k}=${params[k]}`)
-            .join('&')
-
-    return lookupItemsByID_withFallback('api/info', search, auth, monitor_quarantined, ids, username, authItemsMeta)
-}
-
 // Options every public-view (logged-out) www fetch starts from, whichever
 // route makes it. credentials MUST be omitted: rehydrateStoredRedditCookies()
 // can put the user's real session in the browser jar, and sending it would turn
@@ -2189,13 +2172,12 @@ const queueLegacyPosts = async (ids: string | string[], authItemsMeta: AuthItems
 }
 
 const lookupItemsByID_legacy = (
-    path: string,
-    search: string,
     auth: any,
     monitor_quarantined: boolean,
     ids: string | string[],
     authItemsMeta: AuthItemsMeta = {},
 ) => {
+    const search = `?id=${ids}&raw_json=1`
     return queueLegacyPosts(ids, authItemsMeta)
         .catch(() => {})
         .then(() => throwIfLegacyOff('legacy reddit HTML', 'legacy_info'))
@@ -2210,7 +2192,7 @@ const lookupItemsByID_legacy = (
             noteLegacyRefusal(htmlError, 'legacy_info')
 
             // Second: try www.reddit.com JSON (sometimes works after rate-limit clears)
-            const wwwUrl = www_reddit + path + '.json' + search
+            const wwwUrl = www_reddit + 'api/info.json' + search
             const wwwOptions = { credentials: 'omit' as const }
 
             return throwIfLegacyOff('www.reddit.com JSON', 'legacy_info')
@@ -2235,7 +2217,7 @@ const lookupItemsByID_legacy = (
                     // Fall back to OAuth if available
                     if (auth && auth !== 'none') {
                         console.log('Trying OAuth fallback')
-                        const children = await fetch_forReddit(path + search, auth, monitor_quarantined)
+                        const children = await fetch_forReddit('api/info' + search, auth, monitor_quarantined)
                         // It swallows its own errors (returns undefined), which
                         // monitoring would read as a pass that found nothing
                         if (Array.isArray(children)) {
@@ -2752,7 +2734,7 @@ const restViewer = async (viewer: ViewerAccount) => {
     )
 }
 
-// Which view last checked each user's items (lookupItemsByID_withFallback),
+// Which view last checked each user's items (lookupItemsByID),
 // so the pass's end keeps that view's warnings (lookupWarningToKeep)
 const viewerCheckedLast = new Map<string, boolean>()
 
@@ -3063,17 +3045,15 @@ export const lookupItemsByID_fromViewer = async (
 // deprecation). Falls back to the legacy chain while that still exists. With a
 // second account connected (viewer.ts), it checks the user's items instead,
 // and the logged-out view isn't tried.
-export const lookupItemsByID_withFallback = (
-    path: string,
-    search: string,
+export const lookupItemsByID = (
+    ids: string | string[],
     auth: any,
     monitor_quarantined = false,
-    ids: string | string[] = '',
     username = '',
     authItemsMeta: AuthItemsMeta = {},
 ) => {
     const idsArray = (Array.isArray(ids) ? ids : String(ids).split(',')).filter(x => x)
-    const legacy = () => lookupItemsByID_legacy(path, search, auth, monitor_quarantined, ids, authItemsMeta)
+    const legacy = () => lookupItemsByID_legacy(auth, monitor_quarantined, ids, authItemsMeta)
     if (!idsArray.length) {
         if (username) {
             // None of the user's items left to check: nothing to ask reddit,
