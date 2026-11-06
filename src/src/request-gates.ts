@@ -22,13 +22,16 @@ interface CapabilityRest {
 export const capabilityRestMs = (refusals: number): number =>
     Math.min(CAPABILITY_FIRST_REST_MS * 2 ** Math.max(0, refusals - 1), CAPABILITY_MAX_REST_MS)
 
-const readCapabilityRests = async (): Promise<Partial<Record<RestingCapability, CapabilityRest>>> => {
+// A value from local storage: the fallback when it's missing or storage fails
+export const readLocal = async <T>(key: string, fallback: T): Promise<T> => {
     try {
-        return ((await browser.storage.local.get({ [CAPABILITY_REST_KEY]: {} })) as any)[CAPABILITY_REST_KEY] || {}
+        return ((await browser.storage.local.get({ [key]: fallback })) as any)[key] || fallback
     } catch {
-        return {}
+        return fallback
     }
 }
+
+const readCapabilityRests = () => readLocal<Partial<Record<RestingCapability, CapabilityRest>>>(CAPABILITY_REST_KEY, {})
 
 // A rest further ahead than the longest one (the clock was set back) is
 // ignored, so the next refusal starts a new rest rather than finding the old

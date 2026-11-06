@@ -32,7 +32,7 @@ import {
     PROFILE_PUBLICLY_EMPTY,
 } from './lookup-status'
 import { getWwwHtmlFetcher } from './www-fetcher'
-import { noteRateLimited, isRateLimitedNow, RECENT_RATE_LIMIT_WINDOW_MS } from './request-gates'
+import { noteRateLimited, isRateLimitedNow, RECENT_RATE_LIMIT_WINDOW_MS, readLocal } from './request-gates'
 import {
     verifyFeedPresentPosts,
     isAbsentVerificationDisabled,
@@ -54,7 +54,7 @@ const PROFILE_CONTROL_FAILED_TTL_MS = 30 * 60 * 1000
 const controlProfileLoads = async (fetchHtml: FetchHtml): Promise<boolean> => {
     const now = Date.now()
     try {
-        const stored = ((await browser.storage.local.get({ [PROFILE_CONTROL_KEY]: null })) as any)[PROFILE_CONTROL_KEY]
+        const stored: any = await readLocal(PROFILE_CONTROL_KEY, null)
         const t = Number(stored?.t || 0)
         if (stored?.ok === true && isFresh(t, PROFILE_CONTROL_TTL_MS, now)) {
             return true

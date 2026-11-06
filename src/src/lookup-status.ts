@@ -4,6 +4,7 @@ import { setWarningBadge } from './common'
 import { getPublicLiveKey } from './storage'
 import { VIEWER_FAILURES_KEY, ViewerAccount, getViewer, isSignedInViewer } from './viewer'
 import { isLoginWalled } from './www-fetcher'
+import { readLocal } from './request-gates'
 
 export const www_reddit = 'https://www.reddit.com/'
 
@@ -230,11 +231,7 @@ export const notePublicProfileUnavailable = async (username: string | null) => {
     try {
         if (username) {
             await browser.storage.local.set({ [PUBLIC_PROFILE_UNAVAILABLE_KEY]: { user: username, t: Date.now() } })
-        } else if (
-            ((await browser.storage.local.get({ [PUBLIC_PROFILE_UNAVAILABLE_KEY]: null })) as any)[
-                PUBLIC_PROFILE_UNAVAILABLE_KEY
-            ]
-        ) {
+        } else if (await readLocal(PUBLIC_PROFILE_UNAVAILABLE_KEY, null)) {
             // Removed only when set: this runs on every good lookup
             await browser.storage.local.remove(PUBLIC_PROFILE_UNAVAILABLE_KEY)
         }
@@ -245,9 +242,7 @@ export const notePublicProfileUnavailable = async (username: string | null) => {
 
 export const isPublicProfileUnavailable = async (username: string): Promise<boolean> => {
     try {
-        const stored = ((await browser.storage.local.get({ [PUBLIC_PROFILE_UNAVAILABLE_KEY]: null })) as any)[
-            PUBLIC_PROFILE_UNAVAILABLE_KEY
-        ]
+        const stored: any = await readLocal(PUBLIC_PROFILE_UNAVAILABLE_KEY, null)
         const age = Date.now() - Number(stored?.t)
         return (
             String(stored?.user || '').toLowerCase() === username.toLowerCase() &&
@@ -364,14 +359,8 @@ export const formatPublicViewUnchecked = (stored: any, includeIds = false): stri
     return `${label}: ${list}; as of ${new Date(Number(stored.t) || 0).toISOString()}`
 }
 
-export const getPublicViewUncheckedLine = async (includeIds = false): Promise<string> => {
-    try {
-        const r = (await browser.storage.local.get({ [PUBLIC_VIEW_UNCHECKED_KEY]: null })) as any
-        return formatPublicViewUnchecked(r[PUBLIC_VIEW_UNCHECKED_KEY], includeIds)
-    } catch {
-        return formatPublicViewUnchecked(null)
-    }
-}
+export const getPublicViewUncheckedLine = async (includeIds = false): Promise<string> =>
+    formatPublicViewUnchecked(await readLocal(PUBLIC_VIEW_UNCHECKED_KEY, null), includeIds)
 
 export const threadItemUrl = (id: string, postId: string): string => {
     const post = postId.replace(/^t3_/, '')
@@ -410,9 +399,7 @@ export const VIEWER_THREAD_FAILURES_KEY = 'viewer_thread_consecutive_failures'
 
 const viewerThreadFailures = async (viewer: ViewerAccount): Promise<number> => {
     try {
-        const stored = ((await browser.storage.local.get({ [VIEWER_THREAD_FAILURES_KEY]: null })) as any)[
-            VIEWER_THREAD_FAILURES_KEY
-        ]
+        const stored: any = await readLocal(VIEWER_THREAD_FAILURES_KEY, null)
         return stored?.token === viewer.token ? Number(stored.failures) || 0 : 0
     } catch {
         return 0

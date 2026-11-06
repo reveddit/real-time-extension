@@ -21,7 +21,7 @@ import {
     publiclyInvisibleReason,
     recordViewerThreadOutcome,
 } from './lookup-status'
-import { noteRateLimited } from './request-gates'
+import { noteRateLimited, readLocal } from './request-gates'
 
 // The second account's view of the user's own items (viewer.ts): what other
 // logged-in people see, for when reddit asks for a login before it shows
@@ -145,13 +145,8 @@ const viewerVerdictOf = (id: string, postId: string, json: any): ViewerVerdict =
 }
 
 // l: read while the item was listed
-const readViewerVerdicts = async (): Promise<Record<string, { v: ViewerVerdict; t: number; l?: 1 }>> => {
-    try {
-        return ((await browser.storage.local.get({ [VIEWER_VERDICTS_KEY]: {} })) as any)[VIEWER_VERDICTS_KEY] || {}
-    } catch {
-        return {}
-    }
-}
+const readViewerVerdicts = () =>
+    readLocal<Record<string, { v: ViewerVerdict; t: number; l?: 1 }>>(VIEWER_VERDICTS_KEY, {})
 
 // After both listings come back as the edge's block page in both cache modes,
 // the second account rests half an hour, as the logged-out view's refused
@@ -167,7 +162,7 @@ const VIEWER_BLOCK_REST_MS = 30 * 60 * 1000
 // right
 const viewerRestUntil = async (viewer: ViewerAccount): Promise<number> => {
     try {
-        const stored = ((await browser.storage.local.get({ [VIEWER_REST_KEY]: null })) as any)[VIEWER_REST_KEY]
+        const stored: any = await readLocal(VIEWER_REST_KEY, null)
         const began = Number(stored?.t)
         if (began > Date.now()) {
             // Dated ahead by a clock since put right: removed, so it doesn't

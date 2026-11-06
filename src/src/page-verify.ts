@@ -30,7 +30,7 @@ import {
     ABSENT_VERDICT_LIVE_TTL_MS,
     recordAbsentVerifyOutcome,
 } from './lookup-status'
-import { noteRateLimited, RECENT_RATE_LIMIT_WINDOW_MS } from './request-gates'
+import { noteRateLimited, RECENT_RATE_LIMIT_WINDOW_MS, readLocal } from './request-gates'
 import { legacyTiebreakAbsent } from './legacy-lookup'
 
 // Set per lookup from the remote option; read by the page classifier calls
@@ -86,13 +86,7 @@ export const verifyFeedPresentPosts = async (
 ): Promise<Record<string, PostPageStatus>> => {
     const nowSec = Math.floor(Date.now() / 1000)
     const nowMs = Date.now()
-    let cache: Record<string, PostVerdictEntry> = {}
-    try {
-        cache =
-            ((await browser.storage.local.get({ [POST_VERDICT_CACHE_KEY]: {} })) as any)[POST_VERDICT_CACHE_KEY] || {}
-    } catch {
-        /* ignored */
-    }
+    let cache = await readLocal<Record<string, PostVerdictEntry>>(POST_VERDICT_CACHE_KEY, {})
     const verdicts: Record<string, PostPageStatus> = {}
     const toFetch: string[] = []
     for (const id of ids) {
@@ -342,14 +336,7 @@ export const verifyFeedAbsentItems = async (
     canaryCommentIds: string[] = [],
 ): Promise<Record<string, PostPageStatus>> => {
     const nowMs = Date.now()
-    let cache: Record<string, AbsentVerdictEntry> = {}
-    try {
-        cache =
-            ((await browser.storage.local.get({ [ABSENT_VERDICT_CACHE_KEY]: {} })) as any)[ABSENT_VERDICT_CACHE_KEY] ||
-            {}
-    } catch {
-        /* ignored */
-    }
+    let cache = await readLocal<Record<string, AbsentVerdictEntry>>(ABSENT_VERDICT_CACHE_KEY, {})
     const verdicts: Record<string, PostPageStatus> = {}
     const toFetch: string[] = []
     let recentUnknownSkipped = 0
