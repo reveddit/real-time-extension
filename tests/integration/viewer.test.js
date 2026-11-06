@@ -673,6 +673,118 @@ describe('checking the user’s items through the second account', () => {
         expect(__getLocalStorage().viewer_item_verdicts.t1_blk).toMatchObject({ v: 'unknown' })
     })
 
+    describe('a post the second account lists', () => {
+        const nowSec = () => Math.floor(Date.now() / 1000)
+        const OLD = () => nowSec() - 5 * 86400
+        const post = (name, extra = {}) => ({ name, author: 'alice', title: 'hi', ...extra })
+        const postThread = (name, extra = {}) =>
+            json([{ data: { children: [{ data: post(name, extra) }] } }, { data: { children: [] } }])
+        const threadReads = () => globalThis.fetch.mock.calls.map(c => new URL(c[0]).pathname).filter(p => p.startsWith('/comments/'))
+        const setUp = (listed, threads = []) => {
+            connect()
+            __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
+            answer([
+                ['/user/alice/comments.json', listing([])],
+                ['/user/alice/submitted.json', listing(listed)],
+                ...threads,
+            ])
+        }
+
+        it('an old one is live from the listing alone, with no thread read and no unverified mark', async () => {
+            setUp([post('t3_old')])
+            const results = await lookup(['t3_old'], { t3_old: { created_utc: OLD(), locked: true } })
+            expect(threadReads()).toEqual([])
+            expect(results).toHaveLength(1)
+            expect(results[0].data).toMatchObject({
+                name: 't3_old',
+                is_robot_indexable: true,
+                locked: true,
+                created_utc: expect.any(Number),
+                _public_view: true,
+            })
+            expect(results[0].data._public_view_unverified).toBeUndefined()
+        })
+
+        it('a young one is read on its thread: live there, it carries the listing and no unverified mark', async () => {
+            setUp([post('t3_young')], [['/comments/young.json', postThread('t3_young')]])
+            const results = await lookup(['t3_young'], { t3_young: { created_utc: nowSec() - 3600 } })
+            expect(threadReads()).toEqual(['/comments/young.json'])
+            expect(results).toHaveLength(1)
+            expect(results[0].data).toMatchObject({ name: 't3_young', _public_view: true })
+            expect(results[0].data.is_robot_indexable).toBeUndefined()
+            expect(results[0].data._public_view_unverified).toBeUndefined()
+        })
+
+        it('a young one whose thread has no verdict yet is visible but marked unverified; one with no age is young too', async () => {
+            setUp(
+                [post('t3_young'), post('t3_noage')],
+                [
+                    ['/comments/young.json', thread(null)],
+                    ['/comments/noage.json', thread(null)],
+                ],
+            )
+            const results = await lookup(['t3_young', 't3_noage'], { t3_young: { created_utc: nowSec() - 3600 }, t3_noage: {} })
+            expect(threadReads().sort()).toEqual(['/comments/noage.json', '/comments/young.json'])
+            expect(results.map(r => r.data.name)).toEqual(['t3_young', 't3_noage'])
+            for (const { data } of results) {
+                expect(data).toMatchObject({ is_robot_indexable: true, _public_view: true, _public_view_unverified: true })
+            }
+        })
+
+        it('a young one its thread says removed is a removal', async () => {
+            setUp(
+                [post('t3_young')],
+                [['/comments/young.json', postThread('t3_young', { removed_by_category: 'moderator' })]],
+            )
+            const results = await lookup(['t3_young'], { t3_young: { created_utc: nowSec() - 3600 } })
+            expect(results).toHaveLength(1)
+            expect(results[0].data).toMatchObject({
+                name: 't3_young',
+                author: '[deleted]',
+                body: '[removed]',
+                is_robot_indexable: false,
+                _public_view: true,
+            })
+        })
+
+        it('one listed as removed (not deleted) is a removal at once, with no thread read', async () => {
+            setUp([post('t3_mod', { removed_by_category: 'moderator' }), post('t3_del', { removed_by_category: 'deleted' })])
+            const results = await lookup(['t3_mod', 't3_del'], { t3_mod: { created_utc: OLD() }, t3_del: { created_utc: OLD() } })
+            expect(threadReads()).toEqual([])
+            const byName = Object.fromEntries(results.map(r => [r.data.name, r.data]))
+            expect(byName.t3_mod).toMatchObject({ author: '[deleted]', body: '[removed]', is_robot_indexable: false })
+            expect(byName.t3_del).toMatchObject({ author: 'alice', is_robot_indexable: true })
+        })
+
+        it('one the user’s own check already found removed stays removed, however it is listed', async () => {
+            setUp([post('t3_a'), post('t3_b')])
+            const results = await lookup(['t3_a', 't3_b'], {
+                t3_a: { created_utc: OLD(), is_robot_indexable: false },
+                t3_b: { created_utc: OLD(), removed_by_category: 'reddit' },
+            })
+            expect(threadReads()).toEqual([])
+            expect(results.map(r => r.data.is_robot_indexable)).toEqual([false, false])
+            expect(results.map(r => r.data.body)).toEqual(['[removed]', '[removed]'])
+        })
+
+        it('one recorded as removed is read on its thread: live there is news, no verdict is none', async () => {
+            setUp(
+                [post('t3_back'), post('t3_still')],
+                [
+                    ['/comments/back.json', postThread('t3_back')],
+                    ['/comments/still.json', thread(null)],
+                ],
+            )
+            const results = await lookup(['t3_back', 't3_still'], {
+                t3_back: { created_utc: OLD(), known_removed: true },
+                t3_still: { created_utc: OLD(), known_removed: true },
+            })
+            expect(threadReads().sort()).toEqual(['/comments/back.json', '/comments/still.json'])
+            expect(results.map(r => r.data.name)).toEqual(['t3_back'])
+            expect(results[0].data._public_view_unverified).toBeUndefined()
+        })
+    })
+
     it('a live verdict lasts by the item’s age, and ends when an item read live while listed drops out', async () => {
         connect()
         __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }

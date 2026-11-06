@@ -178,6 +178,45 @@ describe('absent-item verification loop', () => {
         expect(__getLocalStorage().error_status).toBeUndefined()
     })
 
+    it('a check that failed outright (a wall on every route) is paced as unknown, not retried next cycle', async () => {
+        const ids = ['t1_a', 't1_b']
+        const blocked = vi.fn(async () => {
+            throw new Error('www.reddit.com request failed: 403 (refused: background:no-store 403)')
+        })
+        expect(await verifyFeedAbsentItems(ids, meta(ids), blocked)).toEqual({})
+        expect(blocked).toHaveBeenCalledTimes(4)
+        expect(Object.fromEntries(Object.entries(__getLocalStorage()[CACHE_KEY]).map(([id, e]) => [id, e.v]))).toEqual({
+            t1_a: 'unknown',
+            t1_b: 'unknown',
+        })
+        const again = vi.fn(async () => SHELL_HTML)
+        await verifyFeedAbsentItems(ids, meta(ids), again)
+        expect(again).not.toHaveBeenCalled()
+    })
+
+    it('stops at the cycle budget: twenty items a cycle, ten after a recent 429, the rest left for the next cycle', async () => {
+        const pause = vi.spyOn(globalThis, 'setTimeout').mockImplementation(fn => {
+            fn()
+            return 0
+        })
+        try {
+            const ids = Array.from({ length: 22 }, (_, i) => `t1_c${i}`)
+            const fetchHtml = vi.fn(async () => SHELL_HTML)
+            await verifyFeedAbsentItems(ids, meta(ids), fetchHtml)
+            // each unreadable item takes the svc partial and the full page
+            expect(fetchHtml).toHaveBeenCalledTimes(40)
+            expect(Object.keys(__getLocalStorage()[CACHE_KEY]).sort()).toEqual(ids.slice(0, 20).sort())
+
+            __resetStorage({}, { rate_limit_last_hit: Date.now() - 1000 })
+            const slower = vi.fn(async () => SHELL_HTML)
+            await verifyFeedAbsentItems(ids, meta(ids), slower)
+            expect(slower).toHaveBeenCalledTimes(20)
+            expect(Object.keys(__getLocalStorage()[CACHE_KEY])).toHaveLength(10)
+        } finally {
+            pause.mockRestore()
+        }
+    })
+
     it('a cached verdict dated in the future (a clock set back) counts as expired', async () => {
         __getLocalStorage()[CACHE_KEY] = { t1_a: { v: 'live', t: Date.now() + 3600 * 1000 } }
         const fetchHtml = vi.fn(async () => livePage('t1_a'))

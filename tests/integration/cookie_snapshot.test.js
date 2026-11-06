@@ -32,7 +32,7 @@ const startSignIn = () => {
     __getLocalStorage()[VIEWER_CONNECT_KEY] = { started: Date.now(), mainUser: 'alice', main: [] }
 }
 
-const saved = { tabs: globalThis.chrome.tabs.query, cookies: globalThis.chrome.cookies, fetch: globalThis.fetch }
+const saved = { tabsApi: globalThis.chrome.tabs, tabs: globalThis.chrome.tabs.query, cookies: globalThis.chrome.cookies, fetch: globalThis.fetch }
 
 beforeEach(() => {
     __resetStorage()
@@ -45,6 +45,7 @@ beforeEach(() => {
 
 afterEach(() => {
     delete browserMock.cookies
+    globalThis.chrome.tabs = saved.tabsApi
     globalThis.chrome.tabs.query = saved.tabs
     globalThis.chrome.cookies = saved.cookies
     globalThis.fetch = saved.fetch
@@ -152,6 +153,83 @@ describe('the cookie snapshot', () => {
         })
         expect(await rehydrateStoredRedditCookies()).toBe(false)
         expect(jar.size).toBe(0)
+    })
+
+    it('saves nothing, and says so, where the save cannot run or has nothing to save', async () => {
+        const stored = () => __getLocalStorage().stored_reddit_cookie_objects
+        // no Reddit tab open
+        globalThis.chrome.tabs.query = (q, cb) => cb([])
+        expect(await storeRedditCookies()).toBe(false)
+        // only tabs on other Reddit hosts, or whose address cannot be read
+        globalThis.chrome.tabs.query = (q, cb) =>
+            cb([{ id: 1, url: 'https://new.reddit.com/' }, { id: 2, url: 'https://reddit.com/' }, { id: 3, url: 'not a url' }, { id: 4 }])
+        expect(await storeRedditCookies()).toBe(false)
+        // a supported tab, but the browser holds no Reddit cookies
+        globalThis.chrome.tabs.query = (q, cb) => cb([{ id: 1, url: 'https://old.reddit.com/' }])
+        globalThis.chrome.cookies = { getAll: (q, cb) => cb([]) }
+        expect(await storeRedditCookies()).toBe(false)
+        globalThis.chrome.cookies = { getAll: (q, cb) => cb(undefined) }
+        expect(await storeRedditCookies()).toBe(false)
+        // outside the background context (a content script has no tabs or cookies API)
+        globalThis.chrome.cookies = undefined
+        expect(await storeRedditCookies()).toBe(false)
+        globalThis.chrome.cookies = { getAll: jarForChrome }
+        globalThis.chrome.tabs = undefined
+        expect(await storeRedditCookies()).toBe(false)
+        expect(stored()).toBeUndefined()
+    })
+
+    it('finds a supported tab among others, and saves the snapshot over the last one', async () => {
+        __resetStorage({}, { stored_reddit_cookie_objects: [{ name: 'old', value: 'x' }] })
+        globalThis.chrome.tabs.query = (q, cb) =>
+            cb([{ id: 1, url: 'https://new.reddit.com/' }, { id: 2, url: 'https://old.reddit.com/r/x/' }])
+        expect(await storeRedditCookies()).toBe(true)
+        expect(__getLocalStorage().stored_reddit_cookie_objects.map(c => c.name).sort()).toEqual(['csrf_token', 'reddit_session', 'token_v2'])
+    })
+
+    it('puts a login back with its expiry before it saves the snapshot', async () => {
+        const order = []
+        fill([sessionOnly(jwt(inDays(30)))])
+        cookiesApi.set.mockImplementationOnce(async d => {
+            order.push('cookie set')
+            return d
+        })
+        const set = globalThis.chrome.storage.local.set
+        globalThis.chrome.storage.local.set = (items, cb) => {
+            order.push('snapshot saved')
+            return set(items, cb)
+        }
+        try {
+            expect(await storeRedditCookies()).toBe(true)
+        } finally {
+            globalThis.chrome.storage.local.set = set
+        }
+        expect(order).toEqual(['cookie set', 'snapshot saved'])
+    })
+
+    it('puts nothing back where no snapshot, or no usable one, is saved', async () => {
+        cookiesApi.set.mockClear()
+        expect(await rehydrateStoredRedditCookies()).toBe(false)
+        for (const bad of [[], 'cookies', { 0: 1 }, null]) {
+            __resetStorage({}, { stored_reddit_cookie_objects: bad })
+            expect(await rehydrateStoredRedditCookies()).toBe(false)
+        }
+        // entries that are not cookies are skipped, the rest put back
+        __resetStorage({}, { stored_reddit_cookie_objects: [null, { name: 3, domain: '.reddit.com' }, cookie('token_v2', 'T9')] })
+        jar.clear()
+        expect(await rehydrateStoredRedditCookies()).toBe(true)
+        expect(cookiesApi.set.mock.calls.map(([d]) => d.name)).toEqual(['token_v2'])
+    })
+
+    it("says it put nothing back when the browser's cookies cannot be read", async () => {
+        await storeRedditCookies()
+        jar.clear()
+        cookiesApi.set.mockClear()
+        cookiesApi.getAll.mockImplementationOnce(async () => {
+            throw new Error('no cookies')
+        })
+        expect(await rehydrateStoredRedditCookies()).toBe(false)
+        expect(cookiesApi.set).not.toHaveBeenCalled()
     })
 
     // reddit_session is a JWT whose exp is the expiry reddit gave the cookie.
