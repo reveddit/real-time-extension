@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import browserMock, { __resetStorage } from '../mocks/webextension-polyfill.js'
 import { parseHTML, DOMParser } from 'linkedom'
 import { setMarkupConfig } from '../../src/src/markup-config'
-import { POST, NOW, entry, postEntry, feed, listing, withTimers } from '../mocks/feeds.js'
+import { POST, NOW, entry, postEntry, feed, listing, withTimers, threadPath, authorPath, commentPath, answerRead } from '../mocks/feeds.js'
 
 const comment = (id, author, parent, inner = '<div slot="comment"><p>live words</p></div>') =>
     `<shreddit-comment thingid="${id}" author="${author}" ${parent ? `parentid="${parent}"` : ''} ` +
@@ -45,15 +45,7 @@ let pages
 let asked
 // Runs as each read goes out
 let onRead
-const answer = path => {
-    asked.push(path)
-    const page = pages[path]
-    if (page === undefined) return { ok: false, status: 404, text: '' }
-    return typeof page === 'string' ? { ok: true, status: 200, text: page } : page
-}
-const threadPath = '/r/sub/comments/post/.rss?limit=500'
-const authorPath = name => `/user/${name}/comments/.rss?sort=new&limit=100`
-const commentPath = id => `/comments/post/_/${id.slice(3)}/.rss?context=1`
+const answer = path => answerRead(pages, asked, path)
 
 let restore
 const savedSendMessage = browserMock.runtime.sendMessage

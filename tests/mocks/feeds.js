@@ -25,3 +25,16 @@ export const postEntry = (id = POST, author = 'op_user', body = 'the post', extr
 export const feed = (...entries) =>
     `<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"><id>/x/.rss</id>${entries.join('')}</feed>`
 export const listing = (...children) => JSON.stringify({ data: { children } })
+
+// The paths a scan reads, and the background's answer to one from a table of
+// pages (a string is a page that loads, an object is the answer itself, a path
+// missing from the table is a 404). Records each path asked.
+export const threadPath = '/r/sub/comments/post/.rss?limit=500'
+export const authorPath = name => `/user/${name}/comments/.rss?sort=new&limit=100`
+export const commentPath = id => `/comments/post/_/${id.slice(3)}/.rss?context=1`
+export const answerRead = (pages, asked, path) => {
+    asked.push(path)
+    const page = pages[path]
+    if (page === undefined) return { ok: false, status: 404, text: '' }
+    return typeof page === 'string' ? { ok: true, status: 200, text: page } : page
+}

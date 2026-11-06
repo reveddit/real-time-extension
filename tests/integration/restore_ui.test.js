@@ -7,11 +7,8 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { __resetStorage } from '../mocks/webextension-polyfill.js'
 import { parseHTML, DOMParser } from 'linkedom'
-import { POST, NOW, entry, postEntry, feed, listing } from '../mocks/feeds.js'
+import { POST, NOW, entry, postEntry, feed, listing, threadPath, authorPath, commentPath, answerRead } from '../mocks/feeds.js'
 
-const threadPath = '/r/sub/comments/post/.rss?limit=500'
-const authorPath = name => `/user/${name}/comments/.rss?sort=new&limit=100`
-const commentPath = id => `/comments/post/_/${id.slice(3)}/.rss?context=1`
 const refused = { ok: false, status: 403, blockPage: true }
 
 const comment = (id, author, parent = '', children = '') =>
@@ -38,12 +35,7 @@ const oldThreadPage = (count, comments) =>
     `<div class="commentarea"><div class="menuarea"></div><div class="sitetable nestedlisting">${comments}</div></div></body></html>`
 
 let pages, asked, ui
-const answer = path => {
-    asked.push(path)
-    const page = pages[path]
-    if (page === undefined) return { ok: false, status: 404, text: '' }
-    return typeof page === 'string' ? { ok: true, status: 200, text: page } : page
-}
+const answer = path => answerRead(pages, asked, path)
 
 const load = async (html, path = '/r/sub/comments/post/a_title/') => {
     const dom = parseHTML(html)
