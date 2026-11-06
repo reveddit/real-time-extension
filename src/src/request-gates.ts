@@ -1,5 +1,5 @@
 import browser from 'webextension-polyfill'
-import { CAPABILITY_REST_KEY } from './news'
+import { CAPABILITY_REST_KEY, getRemoteMechanism, resolveMechanismDisabled } from './news'
 import { dlogSummary, dlog } from './diaglog'
 import { setWarningBadge } from './common'
 import { recordRateLimitHit, getRateLimitBackoffRemainingMs } from './storage'
@@ -30,6 +30,19 @@ export const readLocal = async <T>(key: string, fallback: T): Promise<T> => {
         return fallback
     }
 }
+
+// Whether a mechanism is switched off: the dev override in local storage wins,
+// then the remote option, then the build default (also the answer if storage
+// fails)
+export const isMechanismDisabled = (devKey: string, mechanism: string, buildDefault: boolean): Promise<boolean> =>
+    browser.storage.local
+        .get({ [devKey]: null })
+        .then(async (r: any) => {
+            const dev = r[devKey]
+            const remote = await getRemoteMechanism(mechanism)
+            return resolveMechanismDisabled(dev === null ? null : !!dev, remote, buildDefault)
+        })
+        .catch(() => buildDefault)
 
 const readCapabilityRests = () => readLocal<Partial<Record<RestingCapability, CapabilityRest>>>(CAPABILITY_REST_KEY, {})
 

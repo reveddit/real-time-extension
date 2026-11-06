@@ -3,11 +3,11 @@ import { dlog } from './diaglog'
 import { setWarningBadge } from './common'
 import { settableCookie, toStoredCookie, hasRedditLoginCookie } from './viewer'
 import { getOptions } from './storage'
-import { getRemoteMechanism, MECHANISM_ME_CHALLENGE, resolveMechanismDisabled } from './news'
+import { MECHANISM_ME_CHALLENGE } from './news'
 import { solveChallenge } from './parse_html/new'
 import { STREAK_WARN_AT, recordStreak } from './lookup-status'
 import { rehydrateStoredRedditCookies } from './reddit-cookies'
-import { flagIfRateLimited } from './request-gates'
+import { flagIfRateLimited, isMechanismDisabled } from './request-gates'
 
 const oauth_reddit = 'https://oauth.reddit.com/'
 
@@ -225,15 +225,8 @@ export interface LoginDetectResult {
 //   chrome.storage.local.remove('dev_disable_me_challenge_solve')       // defaults
 const DEV_DISABLE_ME_CHALLENGE_KEY = 'dev_disable_me_challenge_solve'
 
-const isMeChallengeSolveDisabled = (): Promise<boolean> =>
-    browser.storage.local
-        .get({ [DEV_DISABLE_ME_CHALLENGE_KEY]: null })
-        .then(async (r: any) => {
-            const dev = r[DEV_DISABLE_ME_CHALLENGE_KEY]
-            const remote = await getRemoteMechanism(MECHANISM_ME_CHALLENGE)
-            return resolveMechanismDisabled(dev === null ? null : !!dev, remote, false)
-        })
-        .catch(() => false)
+const isMeChallengeSolveDisabled = () =>
+    isMechanismDisabled(DEV_DISABLE_ME_CHALLENGE_KEY, MECHANISM_ME_CHALLENGE, false)
 
 type MeProbe =
     | { state: 'user'; user: string }

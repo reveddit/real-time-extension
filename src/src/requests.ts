@@ -1,4 +1,4 @@
-import { FetchHtml, PublicProfileData, getPublicProfileItems, fullnameValue } from './parse_html/new'
+import { FetchHtml, PublicProfileData, getPublicProfileItems } from './parse_html/new'
 import browser from 'webextension-polyfill'
 import { dlog } from './diaglog'
 import {
@@ -24,7 +24,9 @@ import {
     notePublicProfileUnavailable,
     recordPaginationOutcome,
     recordAbsentVerifyOutcome,
-    POST_FEED_GRACE_SECONDS,
+    authSaysPostRemoved,
+    isYoungPost,
+    isCovered,
     publicViewUncheckedReason,
     notePublicViewUnchecked,
     viewerCheckedLast,
@@ -155,15 +157,13 @@ export const lookupItemsByID_fromPublicProfile = async (
             return false
         }
         const meta = authItemsMeta[id] || {}
-        if (id.startsWith('t3_') && (meta.is_robot_indexable === false || meta.removed_by_category)) {
+        if (authSaysPostRemoved(id, meta)) {
             return false
         }
         if (publiclyInvisibleReason(meta)) {
             return false
         }
-        const floor = id.startsWith('t3_') ? profile.coverage.t3 : profile.coverage.t1
-        const value = fullnameValue(id)
-        return Number.isFinite(value) && value >= floor
+        return isCovered(id, profile.coverage.t1, profile.coverage.t3)
     })
     const canaryCommentIds = [...profile.items.keys()].filter(id => id.startsWith('t1_')).slice(0, 3)
     // A post page's 429 (verifyFeedPresentPosts) ends this cycle's page
@@ -195,7 +195,7 @@ export const lookupItemsByID_fromPublicProfile = async (
         }
         const isPost = id.startsWith('t3_')
         // The author's own view is authoritative when it already shows removal.
-        const authSaysRemoved = isPost && (meta.is_robot_indexable === false || !!meta.removed_by_category)
+        const authSaysRemoved = authSaysPostRemoved(id, meta)
         const publicItem = profile.items.get(id)
         if (publicItem) {
             if (!isPost) {
@@ -224,23 +224,18 @@ export const lookupItemsByID_fromPublicProfile = async (
                     // it's publicly visible, so treat as live and cache the body.)
                     // A young post without a 'live' verdict may still be held or
                     // spam-filtered, so the bridge isn't told it's publicly live.
-                    const young =
-                        meta.created_utc === undefined ||
-                        Math.floor(Date.now() / 1000) - meta.created_utc <= POST_FEED_GRACE_SECONDS
                     results.push({
                         data: {
                             ...publicItem,
                             is_robot_indexable: true,
                             ...carried,
-                            ...(young && verdict !== 'live' && { _public_view_unverified: true }),
+                            ...(isYoungPost(meta) && verdict !== 'live' && { _public_view_unverified: true }),
                         },
                     })
                 }
             }
         } else {
-            const floor = isPost ? profile.coverage.t3 : profile.coverage.t1
-            const value = fullnameValue(id)
-            const covered = Number.isFinite(value) && value >= floor
+            const covered = isCovered(id, profile.coverage.t1, profile.coverage.t3)
             const publiclyInvisible = !!publiclyInvisibleReason(meta)
             // The synthetic removed shape passes isRemovedComment (author+body
             // start with '[') and isRemovedPost (is_robot_indexable === false).

@@ -17,7 +17,9 @@ import {
     recordPaginationOutcome,
     recordWwwDetectOutcome,
     notePublicProfileUnavailable,
-    POST_FEED_GRACE_SECONDS,
+    authSaysPostRemoved,
+    isYoungPost,
+    isCovered,
     publiclyInvisibleReason,
     recordViewerThreadOutcome,
 } from './lookup-status'
@@ -381,16 +383,9 @@ export const lookupItemsByID_fromViewer = async (
         dlog('feed', `[reveddit] second account: ${all.length - listed.size} listed items read [unavailable] (a block)`)
     }
     const meta = (id: string) => authItemsMeta[id] || {}
-    const covered = (id: string) => {
-        const value = fullnameValue(id)
-        return Number.isFinite(value) && value >= (id.startsWith('t3_') ? posts.floor : comments.floor)
-    }
-    const authSaysRemoved = (id: string) =>
-        id.startsWith('t3_') && (meta(id).is_robot_indexable === false || !!meta(id).removed_by_category)
-    const young = (id: string) => {
-        const created = meta(id).created_utc
-        return created === undefined || Math.floor(Date.now() / 1000) - created <= POST_FEED_GRACE_SECONDS
-    }
+    const covered = (id: string) => isCovered(id, comments.floor, posts.floor)
+    const authSaysRemoved = (id: string) => authSaysPostRemoved(id, meta(id))
+    const young = (id: string) => isYoungPost(meta(id))
     const listedRemoved = (id: string, item: any) =>
         isRemovedItem(item) ||
         (id.startsWith('t3_') && !!item.removed_by_category && item.removed_by_category !== 'deleted')

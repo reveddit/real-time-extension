@@ -1,9 +1,4 @@
-import {
-    getRemoteMechanism,
-    MECHANISM_ABSENT_UNVERIFIED_UNKNOWN,
-    MECHANISM_ABSENT_VERIFICATION,
-    resolveMechanismDisabled,
-} from './news'
+import { getRemoteMechanism, MECHANISM_ABSENT_UNVERIFIED_UNKNOWN, MECHANISM_ABSENT_VERIFICATION } from './news'
 import {
     PostPageStatus,
     FetchHtml,
@@ -24,13 +19,14 @@ import { newReddit } from './parse_html/common'
 import {
     AuthItemsMeta,
     POST_FEED_GRACE_SECONDS,
+    authSaysPostRemoved,
     isFresh,
     AuthItemMeta,
     absentLiveTtl,
     ABSENT_VERDICT_LIVE_TTL_MS,
     recordAbsentVerifyOutcome,
 } from './lookup-status'
-import { noteRateLimited, RECENT_RATE_LIMIT_WINDOW_MS, readLocal } from './request-gates'
+import { noteRateLimited, RECENT_RATE_LIMIT_WINDOW_MS, readLocal, isMechanismDisabled } from './request-gates'
 import { legacyTiebreakAbsent } from './legacy-lookup'
 
 // Set per lookup from the remote option; read by the page classifier calls
@@ -96,7 +92,7 @@ export const verifyFeedPresentPosts = async (
         const m = authItemsMeta[id]
         // Auth view already flags it removed → the caller uses that directly; no
         // page fetch needed.
-        if (m && (m.is_robot_indexable === false || m.removed_by_category)) {
+        if (authSaysPostRemoved(id, m)) {
             continue
         }
         const created = m?.created_utc
@@ -227,15 +223,8 @@ interface AbsentVerdictEntry {
 //   chrome.storage.local.remove('dev_disable_absent_verification')       // defaults
 const DEV_DISABLE_ABSENT_VERIFICATION_KEY = 'dev_disable_absent_verification'
 
-export const isAbsentVerificationDisabled = (): Promise<boolean> =>
-    browser.storage.local
-        .get({ [DEV_DISABLE_ABSENT_VERIFICATION_KEY]: null })
-        .then(async (r: any) => {
-            const dev = r[DEV_DISABLE_ABSENT_VERIFICATION_KEY]
-            const remote = await getRemoteMechanism(MECHANISM_ABSENT_VERIFICATION)
-            return resolveMechanismDisabled(dev === null ? null : !!dev, remote, false)
-        })
-        .catch(() => false)
+export const isAbsentVerificationDisabled = () =>
+    isMechanismDisabled(DEV_DISABLE_ABSENT_VERIFICATION_KEY, MECHANISM_ABSENT_VERIFICATION, false)
 
 // An item's own logged-out page, classified: for feed-absent items of either
 // kind, and for young feed-present posts (verifyFeedPresentPosts)

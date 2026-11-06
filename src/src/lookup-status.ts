@@ -5,6 +5,7 @@ import { getPublicLiveKey } from './storage'
 import { VIEWER_FAILURES_KEY, ViewerAccount, getViewer, isSignedInViewer } from './viewer'
 import { isLoginWalled } from './www-fetcher'
 import { readLocal } from './request-gates'
+import { fullnameValue } from './parse_html/new'
 
 export const www_reddit = 'https://www.reddit.com/'
 
@@ -60,6 +61,20 @@ export const publiclyInvisibleReason = (meta: AuthItemMeta | undefined): string 
 // been checked on NSFW posts that weren't removed.
 export const postRemovedByCategory = (id: string, meta: AuthItemMeta | undefined): boolean =>
     id.startsWith('t3_') && !!meta?.removed_by_category
+
+// The author's own view already shows the post removed, which is final
+export const authSaysPostRemoved = (id: string, meta: AuthItemMeta | undefined): boolean =>
+    id.startsWith('t3_') && (meta?.is_robot_indexable === false || !!meta?.removed_by_category)
+
+// Whether a post is young enough that its listing may still hold it back
+export const isYoungPost = (meta: AuthItemMeta | undefined): boolean =>
+    meta?.created_utc === undefined || Math.floor(Date.now() / 1000) - meta.created_utc <= POST_FEED_GRACE_SECONDS
+
+// Whether a listing was walked far enough to show an item, if it were there
+export const isCovered = (id: string, commentsFloor: number, postsFloor: number): boolean => {
+    const value = fullnameValue(id)
+    return Number.isFinite(value) && value >= (id.startsWith('t3_') ? postsFloor : commentsFloor)
+}
 
 // Why the public view can't judge an item, '' when it can
 export const publicViewUncheckedReason = (id: string, meta: AuthItemMeta | undefined): string =>

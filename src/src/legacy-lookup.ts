@@ -1,5 +1,4 @@
-import browser from 'webextension-polyfill'
-import { getRemoteMechanism, MECHANISM_LEGACY, resolveMechanismDisabled } from './news'
+import { MECHANISM_LEGACY } from './news'
 import { getItemsById_fromOldHTML, getPost_fromOld } from './parse_html/old'
 import { PostPageStatus } from './parse_html/new'
 import { dlogSummary, dlog } from './diaglog'
@@ -11,6 +10,7 @@ import {
     isRateLimitedNow,
     noteCapabilityWorked,
     noteRateLimited,
+    isMechanismDisabled,
 } from './request-gates'
 import { AuthItemsMeta, www_reddit } from './lookup-status'
 import { fetch_forReddit } from './reddit-auth'
@@ -35,15 +35,8 @@ const DEV_SIMULATE_DEPRECATION_KEY = 'dev_simulate_endpoint_deprecation'
 const SIMULATE_DEPRECATION_BUILD_DEFAULT =
     typeof __SIMULATE_DEPRECATION__ !== 'undefined' ? __SIMULATE_DEPRECATION__ : false
 
-const isLegacyDisabled = (): Promise<boolean> =>
-    browser.storage.local
-        .get({ [DEV_SIMULATE_DEPRECATION_KEY]: null })
-        .then(async (r: any) => {
-            const dev = r[DEV_SIMULATE_DEPRECATION_KEY]
-            const remote = await getRemoteMechanism(MECHANISM_LEGACY)
-            return resolveMechanismDisabled(dev === null ? null : !!dev, remote, SIMULATE_DEPRECATION_BUILD_DEFAULT)
-        })
-        .catch(() => SIMULATE_DEPRECATION_BUILD_DEFAULT)
+const isLegacyDisabled = () =>
+    isMechanismDisabled(DEV_SIMULATE_DEPRECATION_KEY, MECHANISM_LEGACY, SIMULATE_DEPRECATION_BUILD_DEFAULT)
 
 // Message shape matches flagIfRateLimited's /request failed: (\d+)/ — a 403 does
 // not trigger rate-limit backoff, mirroring how the real deprecation responds.
