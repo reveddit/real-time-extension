@@ -775,7 +775,7 @@ const checkForChanges_thing_byId = async (
                 // age — feed presence must not flip a recorded removal back to
                 // approved without a page verdict.
                 known_removed: name in knownRemovedHash,
-                // Whoever the browser is signed in as (lookupItemsByID_withFallback)
+                // Whoever the browser is signed in as (lookupItemsByID)
                 author: authItem.author,
             }
         }
