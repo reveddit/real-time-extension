@@ -19,36 +19,13 @@
 // Never launch Firefox from an automated session: on macOS, a Firefox started
 // that way cost the launching session its ~/Desktop access.
 
-const args = process.argv.slice(2)
-const opt = name => {
-    const i = args.indexOf(name)
-    return i >= 0 ? args.splice(i, 2)[1] : undefined
-}
-const flag = name => {
-    const i = args.indexOf(name)
-    return i >= 0 ? (args.splice(i, 1), true) : false
-}
+const { parseArgs, connectBidi } = require('./script-helpers.cjs')
+const { opt, flag } = parseArgs()
 const install = opt('--install')
 const site = opt('--site') || 'http://localhost:8080/about/'
 const redditTab = flag('--reddit-tab')
 
-const ws = new WebSocket('ws://127.0.0.1:9222/session')
-let nextId = 1
-const pending = new Map()
-ws.onmessage = event => {
-    const msg = JSON.parse(event.data)
-    const entry = msg.id && pending.get(msg.id)
-    if (entry) {
-        pending.delete(msg.id)
-        msg.type === 'error' ? entry.reject(new Error(`${msg.error}: ${msg.message}`)) : entry.resolve(msg.result)
-    }
-}
-const send = (method, params = {}) =>
-    new Promise((resolve, reject) => {
-        const id = nextId++
-        pending.set(id, { resolve, reject })
-        ws.send(JSON.stringify({ id, method, params }))
-    })
+const { ws, send } = connectBidi()
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 // One dev action through the page's relay; resolves with the answer's JSON

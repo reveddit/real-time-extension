@@ -35,19 +35,13 @@ const { pageComplaints } = require('./signin-page-text.cjs')
 const os = require('os')
 const http = require('http')
 const path = require('path')
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
+const { parseArgs, connectBidi, checkEnv } = require('./script-helpers.cjs')
 
-const args = process.argv.slice(2)
-const flag = name => {
-    const i = args.indexOf(name)
-    return i >= 0 ? (args.splice(i, 1), true) : false
-}
+const { flag } = parseArgs()
 const noInstall = flag('--no-install')
 const dryRun = flag('--dry-run')
 const build = path.join(__dirname, '..', 'dist-dev-firefox')
-const second = { username: process.env.REDDIT_SECOND_USERNAME || '', password: process.env.REDDIT_SECOND_PASSWORD || '' }
-const main = { username: process.env.REDDIT_MAIN_USERNAME || '', password: process.env.REDDIT_MAIN_PASSWORD || '' }
-const secrets = [second.password, main.password].filter(Boolean)
+const { second, main, secrets } = checkEnv({ dryRun, build, skipBuildCheck: noInstall })
 const RELAY_URL = 'http://localhost:8080/about/'
 
 const logDir = path.join(__dirname, '..', '..', '.test-profiles')
@@ -64,15 +58,6 @@ const results = []
 const check = (ok, what) => {
     results.push(ok)
     log(ok ? 'PASS' : 'FAIL', what)
-}
-
-if (!dryRun && (!second.username || !second.password)) {
-    console.error('Add REDDIT_SECOND_USERNAME and REDDIT_SECOND_PASSWORD to .env first.')
-    process.exit(2)
-}
-if (!noInstall && (!fs.existsSync(path.join(build, 'background.js')) || !fs.readFileSync(path.join(build, 'background.js'), 'utf8').includes('dev-viewer-connect-start'))) {
-    console.error('dist-dev-firefox is missing or too old: run yarn build-firefox-dev first.')
-    process.exit(2)
 }
 
 // A page for the dev build's content-script relay, unless one is up already
@@ -93,38 +78,15 @@ const relayServer = async () => {
 ;(async () => {
     log(`=== viewer-signin-test-firefox${dryRun ? ' (dry run)' : ''}`)
     const server = await relayServer()
-    const ws = await new Promise((resolve, reject) => {
-        const s = new WebSocket('ws://127.0.0.1:9222/session')
-        s.onopen = () => resolve(s)
-        s.onerror = () => reject(new Error('Firefox not answering on 127.0.0.1:9222: start it with its remote-control port open'))
+    const { ws, send } = connectBidi()
+    await new Promise((resolve, reject) => {
+        ws.onopen = resolve
+        ws.onerror = () => reject(new Error('Firefox not answering on 127.0.0.1:9222: start it with its remote-control port open'))
     }).catch(e => {
         log('error', e.message)
         server?.close()
         process.exit(1)
     })
-    let nextId = 1
-    const pending = new Map()
-    ws.onmessage = event => {
-        const msg = JSON.parse(event.data)
-        const entry = msg.id && pending.get(msg.id)
-        if (entry) {
-            pending.delete(msg.id)
-            msg.type === 'error' ? entry.reject(new Error(`${msg.error}: ${msg.message}`)) : entry.resolve(msg.result)
-        }
-    }
-    // Firefox quitting mid-run fails the run rather than leaving it waiting
-    const closed = () => new Error('Firefox closed the connection')
-    ws.onclose = () => {
-        for (const entry of pending.values()) entry.reject(closed())
-        pending.clear()
-    }
-    const send = (method, params = {}) =>
-        new Promise((resolve, reject) => {
-            if (ws.readyState !== WebSocket.OPEN) return reject(closed())
-            const id = nextId++
-            pending.set(id, { resolve, reject })
-            ws.send(JSON.stringify({ id, method, params }))
-        })
     const tree = async () => (await send('browsingContext.getTree', {})).contexts
     const evalIn = async (context, expression) => {
         const { result } = await send('script.evaluate', { expression, target: { context }, awaitPromise: true })

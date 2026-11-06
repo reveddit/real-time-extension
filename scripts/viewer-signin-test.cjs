@@ -31,24 +31,14 @@ const fs = require('fs')
 const { pageComplaints } = require('./signin-page-text.cjs')
 const path = require('path')
 const { chromium } = require('playwright')
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
+const { parseArgs, checkEnv } = require('./script-helpers.cjs')
 
-const args = process.argv.slice(2)
-const opt = name => {
-    const i = args.indexOf(name)
-    return i >= 0 ? args.splice(i, 2)[1] : undefined
-}
-const flag = name => {
-    const i = args.indexOf(name)
-    return i >= 0 ? (args.splice(i, 1), true) : false
-}
+const { opt, flag } = parseArgs()
 const profile = path.resolve(opt('--profile') || path.join(__dirname, '..', '..', '.test-profiles', 'chrome'))
 const keepOpen = flag('--keep-open')
 const dryRun = flag('--dry-run')
 const ext = path.join(__dirname, '..', 'dist-dev-chrome')
-const second = { username: process.env.REDDIT_SECOND_USERNAME || '', password: process.env.REDDIT_SECOND_PASSWORD || '' }
-const main = { username: process.env.REDDIT_MAIN_USERNAME || '', password: process.env.REDDIT_MAIN_PASSWORD || '' }
-const secrets = [second.password, main.password].filter(Boolean)
+const { second, main, secrets } = checkEnv({ dryRun, build: ext })
 
 const logFile = `${profile}-signin-test.log`
 const hide = text => secrets.reduce((t, s) => t.split(s).join('***'), String(text))
@@ -62,15 +52,6 @@ const results = []
 const check = (ok, what) => {
     results.push(ok)
     log(ok ? 'PASS' : 'FAIL', what)
-}
-
-if (!dryRun && (!second.username || !second.password)) {
-    console.error('Add REDDIT_SECOND_USERNAME and REDDIT_SECOND_PASSWORD to .env first.')
-    process.exit(2)
-}
-if (!fs.existsSync(path.join(ext, 'background.js')) || !fs.readFileSync(path.join(ext, 'background.js'), 'utf8').includes('dev-viewer-connect-start')) {
-    console.error('dist-dev-chrome is missing or too old: run yarn build-chrome-dev first.')
-    process.exit(2)
 }
 
 // Fills Reddit's login form and presses Log In. A "Prove your humanity" page

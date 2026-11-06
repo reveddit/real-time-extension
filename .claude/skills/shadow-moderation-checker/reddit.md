@@ -38,7 +38,7 @@ Measurements, not facts. Each line ends with the date it was verified or, where 
 - `new.reddit.com` redirects to www.reddit.com, and the earlier redesign's `.Post` markup was on none of the pages checked, so code keyed to it never runs. (2026-11-04)
 - On a comment's logged-out page, a live comment renders as `<shreddit-comment thingId="t1_…" author="<name>">`, including comments in subreddits hidden from the profile. A removed comment with no replies is absent. A removed comment kept for its replies renders with `author="[deleted]"`. `<shreddit-comment-tree>` carries the focal comment's id even when that comment is removed (2026-07-20). That proves the page is the right one, not that the comment is live, so count a missing comment as removed only when the tree names the requested comment (2026-10-17).
 - Reddit sometimes serves comment-less page shells for long stretches (12 of 12 in one run, 2026-07-26), and once served its front page for a permalink, even after a solved challenge (2026-08-17). Read both as unknown. The front page has `<link rel="canonical" href="https://www.reddit.com/">`, three `<shreddit-post>` feed items and no comment tree, while post pages, comment pages and `/svc` partials have no canonical link at all. So identify a thread page by the ids above, not by a canonical link or its title, which every page now shares. Code that only looked for those elements read the front page as "every comment removed, every post live". (2026-10-17)
-- Lighter routes that Reddit's own scripts load, and legacy pages, carry the same signals. The extension uses them as fallbacks and tiebreakers, each behind a remote switch: see `fetchAndClassifyAbsentItem` and `legacyTiebreakAbsent` in [requests.ts](../../../src/src/requests.ts) and the comments in [parse_html/common.ts](../../../src/src/parse_html/common.ts). (2026-10-17)
+- Lighter routes that Reddit's own scripts load, and legacy pages, carry the same signals. The extension uses them as fallbacks and tiebreakers, each behind a remote switch: see `verifyFeedAbsentItems` and `legacyTiebreakAbsent` in [requests.ts](../../../src/src/requests.ts) and the comments in [parse_html/common.ts](../../../src/src/parse_html/common.ts). (2026-10-17)
 
 ## Feeds
 
@@ -114,7 +114,7 @@ Also worth copying: a closed list of allowed paths, not a URL proxy; requests wa
 
 ## Code map
 
-- `src/src/requests.ts`: `getWwwHtmlFetcher` (paths and handoffs), `PUBLIC_VIEW_FETCH_INIT` and `BACKGROUND_FETCH_INIT`, `lookupItemsByID_fromPublicProfile` (classification), `verifyFeedPresentPosts`, `verifyFeedAbsentItems`, `legacyTiebreakAbsent`, `getLoggedinUserDetailed`.
+- `src/src/requests.ts`: `getWwwHtmlFetcher` (paths and handoffs), `PUBLIC_VIEW_FETCH_INIT`, `lookupItemsByID_fromPublicProfile` (classification), `verifyFeedPresentPosts`, `verifyFeedAbsentItems`, `legacyTiebreakAbsent`, `getLoggedinUserDetailed`.
 - `src/src/parse_html/new.ts`: profile parsing, `classifyPostPage`, `classifyCommentPage`, `solveChallenge`, `describePageForDiag`.
 - `src/src/content-reddit.ts`: `showRemovalStatusOnPostPages`, the note on a post's page.
 - `src/src/challenge-config.ts`, `src/src/bridge.ts`, `src/src/monitoring.ts` (the cycle, confirmation counts, never-public classes) and `src/src/diaglog.ts`.

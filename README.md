@@ -72,7 +72,7 @@ To run one monitoring check in that Firefox and read the diagnostic log it wrote
 
 [Husky](https://typicode.github.io/husky/) pre-commit hooks run automatically on each commit: lint:fix, format, typecheck, and unit tests.
 
-[GitHub Actions](.github/workflows/ci.yml) runs on push/PR to master/main: lint, typecheck, unit tests, and dev builds, followed by Playwright E2E in a separate job.
+[GitHub Actions](.github/workflows/ci.yml) runs on push/PR to master/main: lint, typecheck, unit tests and dev builds. The Playwright E2E tests run locally (`yarn test:e2e`, part of `yarn preflight`).
 
 ## Publishing
 

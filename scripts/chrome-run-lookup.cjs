@@ -23,16 +23,9 @@
 
 const path = require('path')
 const { chromium } = require('playwright')
+const { parseArgs } = require('./script-helpers.cjs')
 
-const args = process.argv.slice(2)
-const opt = name => {
-    const i = args.indexOf(name)
-    return i >= 0 ? args.splice(i, 2)[1] : undefined
-}
-const flag = name => {
-    const i = args.indexOf(name)
-    return i >= 0 ? (args.splice(i, 1), true) : false
-}
+const { opt, flag } = parseArgs()
 const user = opt('--user') || 'GiveUsNetNeutrality'
 const lead = opt('--lead')
 const withTab = flag('--tab')
