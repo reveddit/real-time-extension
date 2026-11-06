@@ -404,7 +404,7 @@ describe('connecting a second account', () => {
         await startViewerConnect('alice')
         signInAs(SECOND)
         expect(await storeRedditCookies()).toBe(false)
-        expect(__getLocalStorage().stored_reddit_cookies).toBeUndefined()
+        expect(__getLocalStorage().stored_reddit_cookie_objects).toBeUndefined()
 
         const syncGet = vi.fn()
         globalThis.chrome.storage.sync.get = syncGet
@@ -413,7 +413,7 @@ describe('connecting a second account', () => {
 
         await cancelViewerConnect('cancelled')
         expect(await storeRedditCookies()).toBe(true)
-        expect(__getLocalStorage().stored_reddit_cookies.reddit_session).toBe('A-SESSION')
+        expect(__getLocalStorage().stored_reddit_cookie_objects.find(c => c.name === 'reddit_session').value).toBe('A-SESSION')
     })
 })
 

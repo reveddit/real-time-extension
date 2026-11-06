@@ -14,7 +14,6 @@ import {
     lookupItemsByID,
     getLoggedinUser,
     getLoggedinUserDetailed,
-    getCookie,
     getAuth,
     storeRedditCookies,
     readWithLogin,
@@ -55,8 +54,6 @@ import {
     isViewerConnecting,
     isLoginTab,
     getViewer,
-    restoreCookies,
-    isExpired,
     viewerCookieHeaderFor,
     ViewerAccount,
     VIEWER_KEY,
@@ -440,11 +437,6 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         console.log('Background script received create-notification request:', request.options)
         createNotification(request.options)
         return true
-    } else if (request.action === 'get-cookie') {
-        getCookie(request.options).then(cookie => {
-            sendResponse({ response: 'done', cookie })
-        })
-        return true
     } else if (
         request.action === 'viewer-connect-start' ||
         request.action === 'viewer-connect-cancel' ||
@@ -500,9 +492,6 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         // Trigger cookie capture in background context
         storeRedditCookies()
         sendResponse({ response: 'done' })
-        return true
-    } else if (request.action == 'get-logged-in-user-items') {
-        // This will be handled by content script, just pass it through
         return true
     } else if (request.action === 'fetch-with-login') {
         if (isOtherIdentity(sender?.tab)) {
@@ -663,11 +652,6 @@ const handleDevAction = __DEV__
                       .then(([local, sync]) => sendResponse({ local, sync }))
                       .catch(err => sendResponse({ error: String(err?.message || err) }))
                   break
-              case 'dev-clear-storage':
-                  Promise.all([browser.storage.local.clear(), browser.storage.sync.clear()])
-                      .then(() => sendResponse({ ok: true }))
-                      .catch(err => sendResponse({ error: String(err?.message || err) }))
-                  break
               case 'dev-run-check':
                   Promise.resolve(checkForChanges())
                       .then(() => sendResponse({ ok: true }))
@@ -676,29 +660,6 @@ const handleDevAction = __DEV__
               case 'dev-reload':
                   sendResponse({ ok: true })
                   setTimeout(() => chrome.runtime.reload(), 200)
-                  break
-              case 'dev-inject':
-                  injectContentScriptIntoExistingRedditTabs()
-                      .then(() => sendResponse({ ok: true }))
-                      .catch((err: any) => sendResponse({ error: String(err?.message || err) }))
-                  break
-              case 'dev-open-page':
-                  // Open an extension page (e.g. src/history.html) as a real tab so
-                  // its rendered output/console can be inspected by automation.
-                  try {
-                      const rel = String(message.page || 'src/history.html')
-                      const url = chrome.runtime.getURL(rel) + (message.query || '')
-                      chrome.tabs.create({ url, active: true }, tab => sendResponse({ ok: true, tabId: tab?.id }))
-                  } catch (err: any) {
-                      sendResponse({ error: String(err?.message || err) })
-                  }
-                  break
-              case 'dev-replay-install':
-                  // Reruns the exact install-time flow (clear storage, detect user,
-                  // subscribe, immediate lookup) — replicates a remove/re-add.
-                  Promise.resolve((globalThis as any).__replayInstall?.())
-                      .then(() => sendResponse({ ok: true }))
-                      .catch((err: any) => sendResponse({ error: String(err?.message || err) }))
                   break
               case 'dev-fetch': {
                   // Fetch an arbitrary reddit URL from the background (host_permissions
@@ -729,24 +690,6 @@ const handleDevAction = __DEV__
                   startViewerConnectAsMain().then(sendResponse, (err: any) =>
                       sendResponse({ error: String(err?.message || err) }),
                   )
-                  break
-              case 'dev-viewer-put-back':
-                  // In place of typing a password in a test sign-in: the saved
-                  // second account's own unexpired cookies go back in the
-                  // browser, so the sign-in finishes as a real one would. Only
-                  // during a sign-in, or they'd replace the user's own login.
-                  // The values never leave the background.
-                  Promise.all([getViewer(), isViewerConnecting()])
-                      .then(async ([viewer, connecting]) => {
-                          if (!connecting) {
-                              sendResponse({ ok: false, error: 'not_connecting' })
-                              return
-                          }
-                          const cookies = (viewer?.cookies || []).filter(c => !isExpired(c))
-                          await restoreCookies(cookies)
-                          sendResponse({ ok: !!viewer, set: cookies.length })
-                      })
-                      .catch(err => sendResponse({ error: String(err?.message || err) }))
                   break
               case 'dev-reddit-cookie-flags':
                   // The reddit cookies the browser holds: names and flags only
@@ -853,6 +796,13 @@ chrome.runtime.onInstalled.addListener(function (details) {
         // Refresh the news feed cache on update.
         fetchNews({ force: true }).catch(() => {})
         applyRemoteConfig().catch(() => {})
+        // Cookie copies from before 0.0.5.31 that nothing reads any more
+        // (stored_reddit_cookie_objects holds the snapshot).
+        try {
+            browser.storage.local.remove(['stored_reddit_cookies', 'stored_reddit_domain']).catch(() => {})
+        } catch {
+            /* ignored */
+        }
     }
 })
 

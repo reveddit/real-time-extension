@@ -62,7 +62,7 @@ describe('the cookie snapshot', () => {
         const csrf = snapshot.find(c => c.name === 'csrf_token')
         expect(csrf.hostOnly).toBe(true)
         expect(csrf.expirationDate).toBeUndefined()
-        expect(__getLocalStorage().stored_reddit_cookies.reddit_session).toBe('S1')
+        expect(__getLocalStorage().stored_reddit_cookie_objects.find(c => c.name === 'reddit_session').value).toBe('S1')
     })
 
     it('puts a missing login back with its expiry, and a host-only cookie host-only', async () => {

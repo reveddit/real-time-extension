@@ -1,7 +1,7 @@
-import { getSubscribedUsers_withSeenAndUnseenIDs, subscribeUser } from './storage'
+import { getSubscribedUsers_withSeenAndUnseenIDs } from './storage'
 import { redditModifications } from './content-reddit'
 import { revdditModifications } from './content-revddit'
-import { getLoggedinUser, pageContextFetch, publicViewInit } from './requests'
+import { pageContextFetch, publicViewInit } from './requests'
 import { isWwwRouteCache } from './www-routes'
 import browser from 'webextension-polyfill'
 ;(function () {
@@ -18,22 +18,7 @@ import browser from 'webextension-polyfill'
     const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
 
     function queryUser(message: any, _sender: any, _response: any) {
-        if (message.action === 'query-user') {
-            return getLoggedinUser().then((user: any): any => {
-                if (user) {
-                    try {
-                        chrome.runtime.sendMessage({ action: 'immediate-user-lookup', user })
-                    } catch {
-                        /* ignored */
-                    }
-                    return subscribeUser(user, () => {
-                        window.location.href = `https://www.reveddit.com/user/${user}?all=true`
-                    })
-                } else {
-                    return Promise.resolve('failed')
-                }
-            })
-        } else if (message.action === 'get-logged-in-user-items') {
+        if (message.action === 'get-logged-in-user-items') {
             // Handle request for logged-in user's items from background script
             const params: Record<string, any> = { limit: 100, sort: 'new', raw_json: 1 }
             const search =
@@ -77,7 +62,7 @@ import browser from 'webextension-polyfill'
             // Runs in a www.reddit.com tab so the fetch is same-origin, which is
             // verified to bypass Reddit's JS challenge (the background worker's
             // fetch may not). Firefox needs the page's own fetch for that (see
-            // pageContextFetch). URLs (profile tabs and /svc/ pagination
+            // pageContextFetch). URLs (profile tabs, permalink pages and /svc/
             // partials) are built by parse_html/new.ts; this handler just
             // fetches. credentials MUST stay omitted (publicViewInit) or the
             // logged-in view comes back and removals become undetectable.

@@ -3423,60 +3423,6 @@ export const getAuth = () => {
     })
 }
 
-// code: https://github.com/toolbox-team/reddit-moderator-toolbox/blob/434ec0bb71ebba2fcf0cb5e4cad529035a1ae742/extension/data/background/handlers/webrequest.js#L34
-// discussion: https://www.reddit.com/r/redditdev/comments/5jf4yg/api_new_modmail/dbfnw98/
-export const getLocalAuth = () => {
-    return fetch('https://mod.reddit.com/mail/all').then(_result => {
-        getCookie({ url: 'https://mod.reddit.com', name: 'token' }).then(cookie => {
-            if (cookie) {
-                // remove invalid chars at the end per discussion
-                const invalidChar = new RegExp('[^A-Za-z0-9+/].*?$')
-                const base64Cookie = cookie.value.replace(invalidChar, '')
-                const tokenData = atob(base64Cookie)
-                const tokens = JSON.parse(tokenData)
-                if ('accessToken' in tokens && tokens.accessToken) {
-                    const auth = {
-                        headers: {
-                            Authorization: `bearer ${tokens.accessToken}`,
-                            'Accept-Language': 'en',
-                        },
-                    }
-                    return auth
-                } else {
-                    return null
-                }
-            } else {
-                return null
-            }
-        })
-    })
-}
-
-export const getCookie = ({ url, name }: { url: string; name: string }) => {
-    if (location.protocol.match(/^http/)) {
-        return browser.runtime
-            .sendMessage({
-                action: 'get-cookie',
-                options: { url, name },
-            })
-            .then((response: any) => {
-                return response.cookie
-            })
-            .catch(() => null)
-    } else {
-        return browser.cookies.get({ url, name })
-    }
-}
-
-export const getLocalOrAppAuth = () => {
-    return getLocalAuth()
-        .then((auth: any) => {
-            if (auth) return auth
-            return getAuth()
-        })
-        .catch(console.log)
-}
-
 // --- Logged-in-user detection ---
 // Tri-state so callers can tell "definitely logged out" from "couldn't
 // determine" (challenge page, 429, network failure). The old boolean-null shape
@@ -3694,14 +3640,11 @@ const storeRedditCookiesNow = () => {
 
                 // Get cookies for the Reddit parent domain so we include domain-scoped and host-only cookies
                 chrome.cookies.getAll({ domain: 'reddit.com' }, cookies => {
-                    const cookieMap: Record<string, string> = {}
                     const cookieObjects: StoredCookie[] = []
                     const repaired: StoredCookie[] = []
                     ;(cookies || [])
                         .filter(c => !isOldDomainCopy(c))
                         .forEach(cookie => {
-                            // Save a simple map for backwards compatibility
-                            cookieMap[cookie.name] = cookie.value
                             // Save each cookie as it was, expiry and host-only flag
                             // included, for rehydration. A login left session-only
                             // gets the expiry its JWT carries, in the browser too
@@ -3718,9 +3661,7 @@ const storeRedditCookiesNow = () => {
                         repairLogins(repaired).then(() =>
                             chrome.storage.local.set(
                                 {
-                                    stored_reddit_cookies: cookieMap,
                                     stored_reddit_cookie_objects: cookieObjects,
-                                    stored_reddit_domain: 'reddit.com',
                                 },
                                 () => {
                                     resolve(true)
@@ -3752,19 +3693,6 @@ const repairLogins = async (logins: StoredCookie[]) => {
         return
     }
     await restoreCookies(todo)
-}
-
-// Retrieve stored Reddit cookies
-export const getStoredRedditCookies = () => {
-    return new Promise(resolve => {
-        chrome.storage.local.get(['stored_reddit_cookies', 'stored_reddit_domain'], result => {
-            if (result.stored_reddit_cookies) {
-                resolve(result.stored_reddit_cookies)
-            } else {
-                resolve(null)
-            }
-        })
-    })
 }
 
 // Rehydrate stored cookies back into the browser's cookie jar for reddit.com:
