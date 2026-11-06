@@ -450,12 +450,6 @@ export const unsubscribeId = (id: string, callback: () => void = () => {}) => {
         setStorageUpdateBadge(result).then(() => callback())
     })
 }
-export const getSubscribedIds = (callback: (ids: string[]) => void = () => {}) => {
-    const key = 'other_subscriptions'
-    chrome.storage.sync.get(key, result => {
-        callback(Object.keys(result[key]))
-    })
-}
 
 export const subscribeUser = (
     user: string,
@@ -720,13 +714,6 @@ export const addToPendingPostQueue = async (postIds: string[]) => {
     const existingQueue = result[PENDING_POSTS_KEY] as string[]
     const newQueue = [...new Set([...existingQueue, ...allowed])]
     await browser.storage.local.set({ [PENDING_POSTS_KEY]: newQueue })
-}
-
-export const getNextPendingPost = async () => {
-    const result = await browser.storage.local.get({ [PENDING_POSTS_KEY]: [] })
-    const queue = result[PENDING_POSTS_KEY] as string[]
-    if (queue.length === 0) return null
-    return queue[0]
 }
 
 export const getNextPendingPosts = async (count: number) => {

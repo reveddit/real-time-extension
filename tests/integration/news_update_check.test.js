@@ -19,7 +19,8 @@ import {
     NEWS_FETCH_FAILED_AT_KEY,
     FAILED_FETCH_RETRY_MS,
 } from '../../src/src/news'
-import { clearDiagLog, getDiagEntries } from '../../src/src/diaglog'
+import { clearDiagLog } from '../../src/src/diaglog'
+import { getDiagEntries } from '../mocks/diag-entries.js'
 
 const loggedLines = async () => (await getDiagEntries()).map(e => e.m)
 

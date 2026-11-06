@@ -11,10 +11,8 @@ import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfil
 import {
     dlog,
     dlogSummary,
-    getDiagEntries,
     getDiagTiers,
     clearDiagLog,
-    formatDiagLog,
     formatTieredDiagLog,
     browserOfUserAgent,
     buildDiagReport,
@@ -28,6 +26,7 @@ import {
     SUMMARY_RETENTION_HOURS,
     summaryChunkKey,
 } from '../../src/src/diaglog'
+import { getDiagEntries } from '../mocks/diag-entries.js'
 
 beforeEach(async () => {
     __resetStorage()
@@ -117,27 +116,27 @@ describe('dlog buffer', () => {
     })
 })
 
-describe('formatDiagLog', () => {
+describe('redaction in formatTieredDiagLog', () => {
     it('redacts given names case-insensitively while keeping ids and subreddits', () => {
         const entries = [{ t: 0, a: 'feed', m: 'www lookup BlueGoliath: t1_abc requested r/somesub', d: 'BLUEGOLIATH' }]
-        const text = formatDiagLog(entries, ['my header'], ['BlueGoliath'])
+        const text = formatTieredDiagLog({ summary: [], details: entries }, ['my header'], ['BlueGoliath'])
         expect(text).not.toMatch(/bluegoliath/i)
         expect(text).toContain('────')
         expect(text).toContain('t1_abc')
         expect(text).toContain('r/somesub')
         expect(text).toContain('my header')
-        expect(text).toContain('entries: 1')
+        expect(text).toContain('1 entries')
     })
 
     it('escapes regex metacharacters in redacted names', () => {
         const entries = [{ t: 0, a: 'feed', m: 'user a.b+c did something' }]
-        const text = formatDiagLog(entries, [], ['a.b+c'])
+        const text = formatTieredDiagLog({ summary: [], details: entries }, [], ['a.b+c'])
         expect(text).toContain('──── did something')
     })
 
     it('renders entries with ISO timestamp and area tag', () => {
         const entries = [{ t: Date.UTC(2026, 7, 7, 12, 0, 0), a: 'ratelimit', m: 'backing off' }]
-        const text = formatDiagLog(entries, [])
+        const text = formatTieredDiagLog({ summary: [], details: entries }, [])
         expect(text).toContain('2026-08-07T12:00:00.000Z [ratelimit] backing off')
     })
 })

@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
 import { applyRemoteConfig, NEWS_CACHE_KEY } from '../../src/src/news'
-import { getChallengeConfig, resetChallengeConfig, DEFAULT_CHALLENGE_CONFIG } from '../../src/src/challenge-config'
+import { getChallengeConfig, setChallengeConfig, DEFAULT_CHALLENGE_CONFIG } from '../../src/src/challenge-config'
 import { flagIfRateLimited } from '../../src/src/requests'
 
 // The worker re-applies the cached feed's solver inputs on every start
@@ -13,7 +13,7 @@ import { flagIfRateLimited } from '../../src/src/requests'
 // next alarm-tick restart instead of reverting to the compiled defaults.
 describe('applyRemoteConfig on worker start', () => {
     beforeEach(() => {
-        resetChallengeConfig()
+        setChallengeConfig({})
         __resetStorage({}, {})
     })
 

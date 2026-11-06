@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { setChallengeConfig, resetChallengeConfig, sanitizeChallengeConfig } from '../../src/src/challenge-config'
+import { setChallengeConfig, sanitizeChallengeConfig } from '../../src/src/challenge-config'
 import { sanitizeMarkupConfig, setMarkupConfig, getMarkupConfig } from '../../src/src/markup-config'
 
 import {

@@ -261,13 +261,6 @@ export const getDiagTiers = async (): Promise<{ summary: DiagEntry[]; details: D
     return { summary: summaries.slice(), details: details.slice() }
 }
 
-// Both tiers merged in time order (back-compat for callers and tests that
-// only care about content).
-export const getDiagEntries = async (): Promise<DiagEntry[]> => {
-    const tiers = await getDiagTiers()
-    return [...tiers.summary, ...tiers.details].sort((a, b) => a.t - b.t)
-}
-
 export const clearDiagLog = async (): Promise<void> => {
     details = []
     detailsDirty = false
@@ -353,14 +346,6 @@ export const idHider = (): ((text: string) => string) => {
             .replace(/\btitle="(?:[^"\\]|\\.)*"/g, 'title=(hidden)')
 }
 
-// Pure formatter, unit-tested. redactNames are replaced (case-insensitive) so
-// the default copy leaves the reporter's username out; item ids and subreddit
-// names stay — they're what makes the log diagnosable.
-export const formatDiagLog = (list: DiagEntry[], headerLines: string[], redactNames: string[] = []): string => {
-    const lines: string[] = [...headerLines, `entries: ${list.length} (oldest first)`, '----', ...list.map(renderEntry)]
-    return redact(lines.join('\n'), redactNames)
-}
-
 const coverageLine = (label: string, list: DiagEntry[], keeps: string): string => {
     if (!list.length) {
         return `${label}: 0 entries (keeps ${keeps})`
@@ -386,7 +371,10 @@ export const browserOfUserAgent = (ua: string): string => {
     return ''
 }
 
-// Pure, unit-tested. Summary first (the history), then the recent per-item
+// Pure, unit-tested. redactNames are replaced (case-insensitive) so the default
+// copy leaves the reporter's username out; item ids and subreddit names stay:
+// they're what makes the log diagnosable.
+// Summary first (the history), then the recent per-item
 // detail, each section oldest first; a coverage line per tier says how much
 // time the paste actually spans, which a reader otherwise had to guess.
 // Each section's heading names the version and browser too: people paste a

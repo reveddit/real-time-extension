@@ -30,7 +30,7 @@ import {
     formatPublicViewUnchecked,
     getPublicViewUncheckedLine,
 } from '../../src/src/requests'
-import { getDiagEntries } from '../../src/src/diaglog'
+import { getDiagEntries } from '../mocks/diag-entries.js'
 import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
 
 // The real legacy parsers run HTMLRewriter (WASM) which cannot load under

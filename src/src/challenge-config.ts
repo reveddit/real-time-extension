@@ -56,5 +56,3 @@ export const setChallengeConfig = (partial: Partial<ChallengeConfig>) => {
         solutionRegex: partial.solutionRegex || DEFAULT_CHALLENGE_CONFIG.solutionRegex,
     }
 }
-
-export const resetChallengeConfig = () => setChallengeConfig({})

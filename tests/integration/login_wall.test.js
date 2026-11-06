@@ -27,10 +27,9 @@ import {
     loginWallLanding,
     sanitizeLoginWallConfig,
     setLoginWallConfig,
-    getLoginWallConfig,
+    isLoginWallPage,
     isLoginWallMessage,
     LOGIN_WALL_MESSAGE,
-    DEFAULT_LOGIN_WALL_CONFIG,
 } from '../../src/src/login-wall-config'
 import { getPublicProfileItems } from '../../src/src/parse_html/new'
 import { fetchNews, applyRemoteConfig, NEWS_CACHE_KEY } from '../../src/src/news'
@@ -122,7 +121,6 @@ describe('options.login_wall in the news feed', () => {
 
     it('adds to the built-in login paths, which always stay', () => {
         setLoginWallConfig({ paths: ['/signin'] })
-        expect(getLoginWallConfig().paths).toEqual(['/signin', ...DEFAULT_LOGIN_WALL_CONFIG.paths])
         expect(loginWallLanding('https://www.reddit.com/signin/?x=1')).toBe('/signin/')
         expect(loginWallLanding(LOGIN)).toBe('/login/?reason=lor2')
     })
@@ -137,10 +135,10 @@ describe('options.login_wall in the news feed', () => {
         )
         await fetchNews({ force: true })
         expect(__getLocalStorage()[NEWS_CACHE_KEY].feed.options.login_wall).toEqual({ markers: ['<auth-flow-modal'] })
-        expect(getLoginWallConfig().markers).toEqual(['<auth-flow-modal'])
+        expect(isLoginWallPage('<auth-flow-modal id=x>')).toBe(true)
         setLoginWallConfig({})
         await applyRemoteConfig()
-        expect(getLoginWallConfig().markers).toEqual(['<auth-flow-modal'])
+        expect(isLoginWallPage('<auth-flow-modal id=x>')).toBe(true)
     })
 })
 

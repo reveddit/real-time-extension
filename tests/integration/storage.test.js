@@ -24,7 +24,6 @@ import {
     unsubscribeUser,
     subscribeId,
     unsubscribeId,
-    getSubscribedIds,
     markThingAsSeen,
     getIDs_thing,
     getUnseenIDs_thing,
@@ -32,7 +31,7 @@ import {
     getScanSettings,
     saveOptions,
     addToPendingPostQueue,
-    getNextPendingPost,
+    getNextPendingPosts,
     removeFromPendingPostQueue,
     clearPendingPostQueue,
     recordPendingPostAttempt,
@@ -54,8 +53,6 @@ const subscribeIdP = (id) =>
     new Promise((resolve) => subscribeId(id, resolve))
 const unsubscribeIdP = (id) =>
     new Promise((resolve) => unsubscribeId(id, resolve))
-const getSubscribedIdsP = () =>
-    new Promise((resolve) => getSubscribedIds(resolve))
 const saveOptionsP = (...args) =>
     new Promise((resolve) => saveOptions(...args, resolve))
 
@@ -208,7 +205,7 @@ describe('subscribeUser / unsubscribeUser', () => {
     })
 })
 
-describe('subscribeId / unsubscribeId / getSubscribedIds', () => {
+describe('subscribeId / unsubscribeId', () => {
     beforeEach(() => __resetStorage(makeStorageInit()))
     afterEach(() => vi.restoreAllMocks())
 
@@ -244,16 +241,6 @@ describe('subscribeId / unsubscribeId / getSubscribedIds', () => {
         vi.spyOn(browserMock.runtime, 'sendMessage').mockRejectedValue(new Error('Receiving end does not exist.'))
         await unsubscribeIdP('t3_abc')
         expect(__getSyncStorage().other_subscriptions['t3_abc']).toBeUndefined()
-    })
-
-    it('getSubscribedIds returns all subscribed IDs', async () => {
-        __resetStorage(
-            makeStorageInit({
-                other_subscriptions: { t3_a: { t: 1 }, t1_b: { t: 2 } },
-            }),
-        )
-        const ids = await getSubscribedIdsP()
-        expect(ids.sort()).toEqual(['t1_b', 't3_a'])
     })
 })
 
@@ -331,20 +318,15 @@ describe('pending post queue', () => {
 
     it('adds to queue and retrieves next', async () => {
         await addToPendingPostQueue(['t3_a', 't3_b'])
-        const next = await getNextPendingPost()
-        expect(next).toBe('t3_a')
+        const { posts } = await getNextPendingPosts(1)
+        expect(posts[0]).toBe('t3_a')
     })
 
     it('removes from queue', async () => {
         await addToPendingPostQueue(['t3_a', 't3_b', 't3_c'])
         await removeFromPendingPostQueue('t3_a')
-        const next = await getNextPendingPost()
-        expect(next).toBe('t3_b')
-    })
-
-    it('returns null for empty queue', async () => {
-        const next = await getNextPendingPost()
-        expect(next).toBeNull()
+        const { posts } = await getNextPendingPosts(1)
+        expect(posts[0]).toBe('t3_b')
     })
 
     it('deduplicates entries', async () => {

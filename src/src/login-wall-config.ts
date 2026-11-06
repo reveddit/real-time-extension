@@ -36,8 +36,6 @@ let current: LoginWallConfig = {
     markers: [...DEFAULT_LOGIN_WALL_CONFIG.markers],
 }
 
-export const getLoginWallConfig = (): LoginWallConfig => current
-
 // Accepts the feed's untrusted object; anything malformed is ignored field by
 // field. A path keeps no trailing slash, so '/login/' and '/login' are one.
 const withoutTrailingSlash = (value: unknown) => (typeof value === 'string' ? value.replace(/\/+$/, '') : value)
