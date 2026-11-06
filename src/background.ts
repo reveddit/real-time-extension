@@ -9,7 +9,7 @@ import {
     showsWhatsNew,
 } from './src/common'
 import { checkForChanges } from './src/monitoring'
-import { lookupItemsByID, readWithLogin, lookupItemsByID_fromPublicProfile } from './src/requests'
+import { lookupItemsByID, readWithLogin } from './src/requests'
 import { getLoggedinUser, getLoggedinUserDetailed, getAuth, isSettledByLogin, whoIsSignedIn } from './src/reddit-auth'
 import { storeRedditCookies } from './src/reddit-cookies'
 import { getPublicViewUncheckedLine } from './src/lookup-status'
@@ -45,17 +45,14 @@ import {
     installViewerHeaderRule,
     isViewerConnecting,
     isLoginTab,
-    getViewer,
-    viewerCookieHeaderFor,
-    ViewerAccount,
-    VIEWER_KEY,
     VIEWER_SETTLE_MS,
     VIEWER_CONNECT_ALARM,
 } from './src/viewer'
 import { loginWallLanding } from './src/login-wall-config'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs, getSyncUsageLine } from './src/storage'
-import { isLegacyPageUrl, LEGACY_PAGE_MARKER_PATTERN } from './src/parse_html/common'
+import { installWebRequestHeaders, installDnrHeaderRules } from './src/header-rules'
+import { installDevLog, createDevActionHandler, installReplayInstall } from './src/background-dev'
 
 // The background context is the diagnostic log's single writer — see diaglog.ts.
 initDiagPersistence()
@@ -67,36 +64,8 @@ const isBridgePage = (url: string) =>
     /^https:\/\/([a-z0-9-]+\.)?reveddit\.com\//.test(url) ||
     (__LOCAL_SITE__ && url.startsWith('http://localhost:8080/'))
 
-// Dev builds keep a ring buffer of background console output, readable from
-// the local dev site (localhost:8080) via the dev-* messages below. The service worker
-// console is otherwise unreachable for automated testing.
 if (__DEV__) {
-    const MAX_DEV_LOG_LINES = 400
-    const devLog: string[] = []
-    ;(globalThis as any).__devLog = devLog
-    for (const level of ['log', 'warn', 'error'] as const) {
-        const original = console[level].bind(console)
-        console[level] = (...args: any[]) => {
-            try {
-                const line = args
-                    .map(a => {
-                        try {
-                            return typeof a === 'string' ? a : JSON.stringify(a)
-                        } catch {
-                            return String(a)
-                        }
-                    })
-                    .join(' ')
-                devLog.push(`${new Date().toISOString()} [${level}] ${line}`)
-                if (devLog.length > MAX_DEV_LOG_LINES) {
-                    devLog.splice(0, devLog.length - MAX_DEV_LOG_LINES)
-                }
-            } catch {
-                /* ignored */
-            }
-            original(...args)
-        }
-    }
+    installDevLog()
 }
 
 // The challenge solver's remote inputs live in the cached news feed, which
@@ -107,185 +76,14 @@ if (__DEV__) {
 const remoteConfigApplied = applyRemoteConfig().catch(() => {})
 setupContextualMenu()
 
-// BEGIN webRequest API code
-// When manifest v3 goes live, this code should only run for firefox
-// It enables viewing quarantined content on reveddit (except user pages which are covered with cloudflare workers)
-
+// BEGIN webRequest API code (header-rules.ts)
 // Can use this to check for firefox build:
 if (__BUILT_FOR__ !== 'chrome') {
-    const opt_extraInfoSpec = ['requestHeaders', 'blocking'] as any
-
-    // The second account (viewer.ts), kept here so the blocking listener can
-    // answer at once; reloaded when the account changes
-    let viewerForHeaders: ViewerAccount | null | undefined
-    const loadViewerForHeaders = async () => (viewerForHeaders = await getViewer())
-    browser.storage.onChanged.addListener((changes, area) => {
-        if (area === 'local' && VIEWER_KEY in changes) {
-            loadViewerForHeaders()
-        }
-    })
-    const ownPrefix = browser.runtime.getURL('')
-
-    browser.webRequest.onBeforeSendHeaders.addListener(
-        function (details): any {
-            // The extension's own GETs as the second account: its cookies
-            // replace the request's, if the marker carries its current token.
-            // Firefox lets a blocking listener answer with a promise.
-            if (
-                details.tabId === -1 &&
-                details.method === 'GET' &&
-                /[?&]rv_viewer=/.test(details.url) &&
-                String(details.originUrl || '').startsWith(ownPrefix)
-            ) {
-                const withViewerCookies = (viewer: ViewerAccount | null) => {
-                    const headers = (details.requestHeaders || []).filter(h => h.name.toLowerCase() !== 'cookie')
-                    const header = viewerCookieHeaderFor(details.url, viewer)
-                    if (header) {
-                        headers.push({ name: 'Cookie', value: header })
-                    }
-                    return { requestHeaders: headers }
-                }
-                return viewerForHeaders === undefined
-                    ? loadViewerForHeaders().then(withViewerCookies)
-                    : withViewerCookies(viewerForHeaders)
-            }
-            // Legacy post pages on www: background requests carrying the
-            // legacy marker get the redesign_optout cookie (see the DNR rule
-            // below for Chrome/Edge and parse_html/common.ts legacyPageUrl).
-            if (
-                details.tabId === -1 &&
-                details.url.startsWith('https://www.reddit.com/') &&
-                isLegacyPageUrl(details.url)
-            ) {
-                const headers = (details.requestHeaders || []).filter(h => h.name.toLowerCase() !== 'cookie')
-                headers.push({ name: 'Cookie', value: 'redesign_optout=true; over18=1' })
-                return { requestHeaders: headers }
-            }
-            //chrome uses details.initiator, but since chrome doesn't support webRequest anymore,
-            //only need to check the value supported by firefox
-            if (
-                details.originUrl &&
-                details.originUrl.match(/^https?:\/\/(www.reveddit.com|localhost:[0-9]*)(\/.*)?$/)
-            ) {
-                let newCookie = '_options={%22pref_quarantine_optin%22:true};'
-                let gotCookie = false
-                for (const n in details.requestHeaders!) {
-                    const headerName = details.requestHeaders![n as any].name.toLowerCase()
-                    if (headerName === 'cookie') {
-                        details.requestHeaders![n as any].value = details.requestHeaders![n as any].value!.replace(
-                            / ?reddit_session[^;]*;/,
-                            '',
-                        )
-                        if (!details.requestHeaders![n as any].value!.match(/pref_quarantine_optin/)) {
-                            details.requestHeaders![n as any].value =
-                                details.requestHeaders![n as any].value + `; ${newCookie}`
-                        }
-                        gotCookie = true
-                    }
-                }
-                if (!gotCookie) {
-                    details.requestHeaders!.push({ name: 'Cookie', value: newCookie })
-                }
-            }
-            return { requestHeaders: details.requestHeaders }
-        },
-        {
-            // The last pattern is the legacy-page marker (match patterns test
-            // the query string too); keeping this list narrow matters because
-            // the listener is blocking and would otherwise run on every request
-            // the user's own reddit tabs make.
-            urls: [
-                'https://oauth.reddit.com/*.json*',
-                'https://*.reddit.com/api/info*',
-                'https://www.reddit.com/*rv_legacy=1',
-                'https://www.reddit.com/*rv_viewer=*',
-            ],
-        },
-        opt_extraInfoSpec,
-    )
+    installWebRequestHeaders()
 }
 // END webRequest API code
 
-// Strip the chrome-extension:// Origin header off the background's reddit
-// requests (legacy page fetches, www.reddit public-profile fetches):
-// Reddit 403s requests carrying that Origin.
-//
-// The Sec-Fetch-* trio is deliberately LEFT INTACT. Earlier versions removed it
-// too (it marks a cross-site programmatic fetch, which Reddit once rejected for
-// these pages), but as of 2026-09-03 the opposite holds: a Chrome User-Agent
-// with no Sec-Fetch headers is a fingerprint no real browser produces, and
-// Reddit's WAF answers it with the "blocked by network security" 403 page.
-// Verified from the built extension's service worker against live Reddit:
-// origin+sec-fetch stripped → 403 block page for both the solved profile page
-// and /api/info; origin-only stripped → 200 with real content for both.
-// Uses declarativeNetRequest (Chrome/Edge MV3); Firefox uses the webRequest
-// handler above. Session rules (not dynamic) because the tabIds condition is
-// session-rule-only; the service worker re-registers them on every start.
-;(() => {
-    // Chrome/Edge builds only. Firefox 153 exposes chrome.declarativeNetRequest
-    // even when the manifest does not request the permission, and its methods
-    // then return undefined instead of a promise: the old existence check
-    // passed, `.catch` on undefined threw at top level, and that exception
-    // aborted the rest of this script before any message listener registered
-    // (popup Connect answered "Could not detect user"). Everything below is also
-    // wrapped so no rule-setup failure can ever take the background down.
-    if (__BUILT_FOR__ !== 'chrome') return
-    const dnr = (chrome as any).declarativeNetRequest
-    if (!dnr?.updateSessionRules || !dnr?.updateDynamicRules) return
-    const stripHeaders = [{ header: 'origin', operation: 'remove' }]
-    const makeRule = (id: number, urlFilter: string) => ({
-        id,
-        priority: 1,
-        action: { type: 'modifyHeaders', requestHeaders: stripHeaders },
-        condition: {
-            urlFilter,
-            resourceTypes: ['xmlhttprequest', 'other'],
-            // Background/service-worker requests only (tabId -1). Without this,
-            // the rule would also strip headers off the Shreddit SPA's own XHRs
-            // in the user's reddit tabs — breaking or fingerprint-flagging their
-            // normal browsing. Content-script fetches are same-origin and don't
-            // carry a problematic Origin header, so they don't need the rule.
-            tabIds: [-1],
-            // A site's own service worker is tabId -1 too, and reddit has one.
-            // This condition is why the manifest asks for Chrome 101.
-            initiatorDomains: [chrome.runtime.id],
-        },
-    })
-    // Legacy post pages on www render old markup only with the
-    // redesign_optout cookie; without it the Shreddit challenge comes back.
-    // fetch() cannot set Cookie, so set it here for background requests that
-    // carry the legacy marker (parse_html/common.ts legacyPageUrl). Scoped to
-    // tabId -1 like the strip rules, so it never touches the user's browsing.
-    const cookieRule = {
-        id: 9003,
-        priority: 2,
-        action: {
-            type: 'modifyHeaders',
-            requestHeaders: [{ header: 'cookie', operation: 'set', value: 'redesign_optout=true; over18=1' }],
-        },
-        condition: {
-            regexFilter: '^https://www\\.reddit\\.com/.*' + LEGACY_PAGE_MARKER_PATTERN,
-            resourceTypes: ['xmlhttprequest', 'other'],
-            tabIds: [-1],
-            initiatorDomains: [chrome.runtime.id],
-        },
-    }
-    try {
-        // Prior versions persisted 9001 as a dynamic rule (no tab scoping) — clean it up
-        Promise.resolve(dnr.updateDynamicRules({ removeRuleIds: [9001, 9002] })).catch(() => {})
-        Promise.resolve(
-            dnr.updateSessionRules({
-                // 9004 was the bridge's loid cookie rule, replaced by the user's login
-                removeRuleIds: [9001, 9002, 9003, 9004],
-                addRules: [makeRule(9001, '||old.reddit.com/'), makeRule(9002, '||www.reddit.com/'), cookieRule],
-            }),
-        )
-            .then(() => console.log('[reveddit] DNR header rules installed for old+www reddit'))
-            .catch((e: any) => console.log('[reveddit] DNR rule setup failed:', e?.message || e))
-    } catch (e: any) {
-        console.log('[reveddit] DNR rule setup threw:', e?.message || e)
-    }
-})()
+installDnrHeaderRules()
 
 console.log('bg script running')
 // Throttle recovery calls that fetch /api/me.json to at most ~2 per minute
@@ -609,90 +407,7 @@ function tryReconnect(sendResponse: (response: any) => void) {
         })
 }
 
-// Dev-only introspection for automated testing (the SW console and
-// chrome://extensions are unreachable for automation): Chrome pages reach it
-// through externally_connectable, Firefox pages through the content script's
-// dev relay. Absent from production builds.
-const handleDevAction = __DEV__
-    ? (message: any, sendResponse: (response: any) => void) => {
-          switch (message.action) {
-              case 'dev-get-log':
-                  sendResponse({ log: (globalThis as any).__devLog || [] })
-                  break
-              case 'dev-get-storage':
-                  // browser.*: Firefox's chrome.* calls take callbacks and return undefined
-                  Promise.all([browser.storage.local.get(null), browser.storage.sync.get(null)])
-                      .then(([local, sync]) => sendResponse({ local, sync }))
-                      .catch(err => sendResponse({ error: String(err?.message || err) }))
-                  break
-              case 'dev-run-check':
-                  Promise.resolve(checkForChanges())
-                      .then(() => sendResponse({ ok: true }))
-                      .catch(err => sendResponse({ error: String(err?.message || err) }))
-                  break
-              case 'dev-reload':
-                  sendResponse({ ok: true })
-                  setTimeout(() => chrome.runtime.reload(), 200)
-                  break
-              case 'dev-fetch': {
-                  // Fetch an arbitrary reddit URL from the background (host_permissions
-                  // CORS bypass) exactly as the detection paths do, and report what
-                  // came back — so background-only fetch behavior is diagnosable.
-                  const credentials = message.credentials === 'include' ? 'include' : 'omit'
-                  fetch(message.url, { credentials, headers: { 'Accept-Language': 'en' } })
-                      .then(async r => {
-                          const text = await r.text()
-                          sendResponse({
-                              status: r.status,
-                              redirected: r.redirected,
-                              finalUrl: r.url,
-                              len: text.length,
-                              hasShredditPost: text.includes('<shreddit-post'),
-                              hasFeed: text.includes('<shreddit-feed'),
-                              head: text.slice(0, message.maxLen || 600),
-                          })
-                      })
-                      .catch(err => sendResponse({ error: String(err?.message || err) }))
-                  break
-              }
-              case 'dev-viewer-connect-start':
-                  // A second-account sign-in, as the options page's continue
-                  // button starts it. Firefox's test runs need this: the relay's
-                  // messages come from a content script, which that page's
-                  // message handler refuses.
-                  startViewerConnectAsMain().then(sendResponse, (err: any) =>
-                      sendResponse({ error: String(err?.message || err) }),
-                  )
-                  break
-              case 'dev-reddit-cookie-flags':
-                  // The reddit cookies the browser holds: names and flags only
-                  browser.cookies
-                      .getAll({ domain: 'reddit.com' })
-                      .then(jar =>
-                          sendResponse({
-                              cookies: jar.map(c => ({ name: c.name, session: !!c.session, hostOnly: !!c.hostOnly })),
-                          }),
-                      )
-                      .catch(err => sendResponse({ error: String(err?.message || err) }))
-                  break
-              case 'dev-www-lookup':
-                  // The public-view lookup monitoring runs, for any user and
-                  // with no Reddit login: the profile feeds through the fetch
-                  // routes, plus page verification of any ids given with
-                  // permalinks ({ username, ids, meta: { [id]: { permalink } } }).
-                  lookupItemsByID_fromPublicProfile(
-                      Array.isArray(message.ids) ? message.ids : [],
-                      String(message.username || ''),
-                      message.meta || {},
-                  )
-                      .then(results => sendResponse({ results: results.map(r => r.data) }))
-                      .catch(err => sendResponse({ error: String(err?.message || err) }))
-                  break
-              default:
-                  sendResponse({ error: 'unknown dev action' })
-          }
-      }
-    : null
+const handleDevAction = __DEV__ ? createDevActionHandler(startViewerConnectAsMain) : null
 
 if (__DEV__) {
     // For automation that holds the service worker itself (Playwright)
@@ -868,20 +583,7 @@ chrome.runtime.onStartup.addListener(() => {
 })
 
 if (__DEV__) {
-    // Dev helper: from devtools console run `__replayInstall()` to rerun the
-    // install-time flow (clears storage, re-detects user, triggers lookup).
-    // Keeps web-ext/ADB session intact — no reconnect needed.
-    ;(globalThis as any).__replayInstall = async () => {
-        console.log('[dev] replaying install flow')
-        await new Promise<void>(r => chrome.storage.sync.clear(() => r()))
-        await new Promise<void>(r => chrome.storage.local.clear(() => r()))
-        initStorage(() => {
-            setAlarm(INTERVAL_DEFAULT)
-            subscribeToLoggedInUser_or_promptForUser()
-            updateBadgeUnseenCount()
-        })
-    }
-    console.log('[dev] __replayInstall() available from devtools console')
+    installReplayInstall(subscribeToLoggedInUser_or_promptForUser)
 }
 
 async function subscribeToLoggedInUser_or_promptForUser() {
