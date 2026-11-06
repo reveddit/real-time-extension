@@ -1,0 +1,1 @@
+(()=>{"use strict";const t=document.currentScript.dataset.page;addEventListener("load",(()=>setTimeout((()=>{for(const e of["vendor",t]){const t=document.createElement("script");t.src=`${e}.js`,t.async=!1,document.body.append(t)}}))))})();

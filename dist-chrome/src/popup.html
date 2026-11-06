@@ -4,10 +4,24 @@
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>reveddit</title>
+        <style>
+            .boot {
+                width: 320px;
+                padding: 16px;
+                box-sizing: border-box;
+                font: 14px system-ui, sans-serif;
+                color: #666;
+            }
+            @media (prefers-color-scheme: dark) {
+                .boot {
+                    background: #1a1b1e;
+                    color: #aaa;
+                }
+            }
+        </style>
     </head>
     <body>
-        <div id="root"></div>
-        <script src="vendor.js"></script>
-        <script src="popup.js"></script>
+        <div id="root"><div class="boot">Loading…</div></div>
+        <script src="page-boot.js" data-page="popup"></script>
     </body>
 </html>
