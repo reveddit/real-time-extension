@@ -46,14 +46,32 @@ interface FetchState {
     preferredCacheMode: Record<string, RequestCache>
     latestMode?: RequestCache
     doubleBlockAt: Record<string, number>
+    // How many double blocks in a row each list has had
+    doubleBlockRun: Record<string, number>
 }
-const freshState = (): FetchState => ({ preferredCacheMode: {}, latestMode: undefined, doubleBlockAt: {} })
+const freshState = (): FetchState => ({
+    preferredCacheMode: {},
+    latestMode: undefined,
+    doubleBlockAt: {},
+    doubleBlockRun: {},
+})
 export const _loggedInFetchState = freshState()
 export const _resetLoggedInFetchState = () => Object.assign(_loggedInFetchState, freshState())
 // A double block is kept per list of modes too: the user's listing and the
 // bridge's profile reads are one kind with different lists, and Firefox's
 // no-store isn't its default on the wire (reddit.md)
 const doubleBlockKey = (kind: string, modes: RequestCache[]) => `${kind} ${modes.join(',')}`
+// The retry is skipped for 5 minutes after a double block, twice as long after
+// each one in a row, up to an hour: while reddit refuses every style, the login
+// check would otherwise send a refused retry every 5 minutes for as long as that
+// lasts (issue #28)
+const DOUBLE_BLOCK_MAX_MS = 60 * 60 * 1000
+const doubleBlockMemoryMs = (run = 1) =>
+    Math.min(DOUBLE_BLOCK_MEMORY_MS * 2 ** Math.max(0, run - 1), DOUBLE_BLOCK_MAX_MS)
+const forgetDoubleBlock = (key: string) => {
+    delete _loggedInFetchState.doubleBlockAt[key]
+    delete _loggedInFetchState.doubleBlockRun[key]
+}
 
 // Session storage, which outlives Chrome's worker. Only the worker, the one
 // context with no window, uses it. A page's reads go out with the page's own
@@ -80,7 +98,7 @@ const keepState = () =>
 // Past the edge after a block page, whatever the resource said: keep this mode
 const learn = (kind: string, modes: RequestCache[], mode: RequestCache) => {
     _loggedInFetchState.preferredCacheMode[kind] = _loggedInFetchState.latestMode = mode
-    delete _loggedInFetchState.doubleBlockAt[doubleBlockKey(kind, modes)]
+    forgetDoubleBlock(doubleBlockKey(kind, modes))
     keepState()
 }
 const firstMode = (kind: string, modes: RequestCache[]): RequestCache =>
@@ -124,16 +142,23 @@ export const fetchLoggedIn = async (
     let response = await fetchInMode(url, first, opts.signal)
     let blockPage = isBlockPage(response)
     let retried = false
-    // Any answer but the block page got through, unlike in viewer.ts: no body is
-    // read here, and a me.json challenge is a way in (reddit-auth.ts solves it)
-    if (!blockPage && doubleBlock in _loggedInFetchState.doubleBlockAt) {
-        delete _loggedInFetchState.doubleBlockAt[doubleBlock]
-        keepState()
+    // The resource's own JSON answer, whatever its status, got through. Not a page
+    // such as me.json's challenge: its solved request is the same kind, and each
+    // check's challenge would reopen the retry that request gets refused in.
+    if (!blockPage && /json/i.test(response.headers?.get?.('content-type') || '')) {
+        if (doubleBlock in _loggedInFetchState.doubleBlockAt) {
+            forgetDoubleBlock(doubleBlock)
+            keepState()
+        }
     }
     // Skipped for a kind with no mode of its own too, unlike in viewer.ts: its
     // retry would double the refused me.json reads the login check makes every
     // cycle (issue #28)
-    const doubleBlocked = isFresh(_loggedInFetchState.doubleBlockAt[doubleBlock], DOUBLE_BLOCK_MEMORY_MS, Date.now())
+    const doubleBlocked = isFresh(
+        _loggedInFetchState.doubleBlockAt[doubleBlock],
+        doubleBlockMemoryMs(_loggedInFetchState.doubleBlockRun[doubleBlock]),
+        Date.now(),
+    )
     if (blockPage && !doubleBlocked && (opts.canRetry?.() ?? true)) {
         const other = otherOf(modes, first)
         opts.onRetry?.()
@@ -145,6 +170,7 @@ export const fetchLoggedIn = async (
             opts.onSwitched?.(first, other, response.status)
         } else {
             _loggedInFetchState.doubleBlockAt[doubleBlock] = Date.now()
+            _loggedInFetchState.doubleBlockRun[doubleBlock] = (_loggedInFetchState.doubleBlockRun[doubleBlock] || 0) + 1
             keepState()
         }
     }

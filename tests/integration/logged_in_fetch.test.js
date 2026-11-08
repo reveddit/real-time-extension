@@ -14,7 +14,7 @@ import {
     WWW_FETCH_TIMEOUT_MS,
     _resetLoggedInFetchState,
 } from '../../src/src/logged-in-fetch'
-import { untilAborted, refusing, blockPage, json } from '../mocks/responses.js'
+import { untilAborted, refusing, blockPage, json, res } from '../mocks/responses.js'
 
 const FAILED = { ok: false, status: 0, blocked: false, refused: false }
 const url = 'https://www.reddit.com/api/info.json?id=t1_c1'
@@ -112,6 +112,45 @@ describe('both modes refused', () => {
         fetch.mockImplementation(refusing('default'))
         expect(await fetchLoggedIn(url)).toMatchObject({ blockPage: false, retried: true })
         expect(modesSent()).toEqual(['default', 'no-cache', 'default', 'default', 'no-cache'])
+    })
+
+    // While every style is refused, a check a minute sends 4 retries in the first
+    // hour of it and 1 an hour after, where a fixed 5 minutes sent 12 an hour
+    it('waits twice as long after each double block in a row, up to an hour', async () => {
+        vi.stubGlobal('fetch', vi.fn(refusing()))
+        const start = Date.now()
+        const retriedAt = []
+        for (let minute = 0; minute < 180; minute++) {
+            vi.setSystemTime(start + minute * 60 * 1000)
+            if ((await fetchLoggedIn(url)).retried) retriedAt.push(minute)
+        }
+        expect(retriedAt).toEqual([0, 5, 15, 35, 75, 135])
+    })
+
+    it('starts the wait at 5 minutes again once that kind gets a JSON answer', async () => {
+        vi.stubGlobal('fetch', vi.fn(refusing()))
+        const start = Date.now()
+        await fetchLoggedIn(url)
+        vi.setSystemTime(start + 5 * 60 * 1000)
+        // A second double block in a row, which a 10-minute wait follows
+        await fetchLoggedIn(url)
+        fetch.mockImplementation(async () => json(200, {}))
+        await fetchLoggedIn(url)
+        fetch.mockImplementation(refusing())
+        await fetchLoggedIn(url)
+        vi.setSystemTime(start + 10 * 60 * 1000)
+        expect(await fetchLoggedIn(url)).toMatchObject({ retried: true })
+    })
+
+    // A challenge answers 200, and the request that solves it is the same kind:
+    // clearing the wait on it would retry that request every check
+    it("keeps the wait through a 200 page that isn't JSON, such as me.json's challenge", async () => {
+        vi.stubGlobal('fetch', vi.fn(refusing()))
+        await fetchLoggedIn(url)
+        fetch.mockImplementation(async () => res(200, '<html>challenge</html>', 'text/html'))
+        expect(await fetchLoggedIn(url)).toMatchObject({ blockPage: false, retried: false })
+        fetch.mockImplementation(refusing())
+        expect(await fetchLoggedIn(url)).toMatchObject({ blockPage: true, retried: false })
     })
 
     // The user's listing and the bridge's profile reads are one kind of request
