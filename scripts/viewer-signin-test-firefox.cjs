@@ -35,7 +35,7 @@ const { pageComplaints } = require('./signin-page-text.cjs')
 const os = require('os')
 const http = require('http')
 const path = require('path')
-const { parseArgs, connectBidi, checkEnv } = require('./script-helpers.cjs')
+const { parseArgs, connectBidi, checkEnv, signinLog, sleep } = require('./script-helpers.cjs')
 
 const { flag } = parseArgs()
 const noInstall = flag('--no-install')
@@ -46,19 +46,7 @@ const RELAY_URL = 'http://localhost:8080/about/'
 
 const logDir = path.join(__dirname, '..', '..', '.test-profiles')
 fs.mkdirSync(logDir, { recursive: true })
-const logFile = path.join(logDir, 'firefox-signin-test.log')
-const hide = text => secrets.reduce((t, s) => t.split(s).join('***'), String(text))
-const log = (...parts) => {
-    const line = hide(`${new Date().toISOString().slice(11, 19)} ${parts.join(' ')}`)
-    fs.appendFileSync(logFile, `${line}\n`)
-    console.log(line)
-}
-const sleep = ms => new Promise(r => setTimeout(r, ms))
-const results = []
-const check = (ok, what) => {
-    results.push(ok)
-    log(ok ? 'PASS' : 'FAIL', what)
-}
+const { hide, log, results, check } = signinLog(path.join(logDir, 'firefox-signin-test.log'), secrets)
 
 // A page for the dev build's content-script relay, unless one is up already
 const relayServer = async () => {

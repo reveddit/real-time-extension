@@ -1,6 +1,6 @@
-// What the scripts in this folder share: --option parsing, the WebDriver BiDi
-// client for a Firefox started with --remote-debugging-port 9222, and the
-// .env and build checks of the two sign-in tests.
+// What the scripts in this folder share: --option parsing, sleep, the WebDriver
+// BiDi client for a Firefox started with --remote-debugging-port 9222, and the
+// .env and build checks and the logging of the two sign-in tests.
 
 const fs = require('fs')
 const path = require('path')
@@ -19,6 +19,8 @@ const parseArgs = () => {
     }
     return { args, opt, flag }
 }
+
+const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 const connectBidi = () => {
     const ws = new WebSocket('ws://127.0.0.1:9222/session')
@@ -69,4 +71,21 @@ const checkEnv = ({ dryRun, build, skipBuildCheck }) => {
     return { second, main, secrets }
 }
 
-module.exports = { parseArgs, connectBidi, checkEnv }
+// The sign-in tests' log: each line stamped, with the passwords hidden, on the
+// screen and in logFile. check logs a PASS or FAIL and keeps it in results.
+const signinLog = (logFile, secrets) => {
+    const hide = text => secrets.reduce((t, s) => t.split(s).join('***'), String(text))
+    const log = (...parts) => {
+        const line = hide(`${new Date().toISOString().slice(11, 19)} ${parts.join(' ')}`)
+        fs.appendFileSync(logFile, `${line}\n`)
+        console.log(line)
+    }
+    const results = []
+    const check = (ok, what) => {
+        results.push(ok)
+        log(ok ? 'PASS' : 'FAIL', what)
+    }
+    return { hide, log, results, check }
+}
+
+module.exports = { parseArgs, sleep, connectBidi, checkEnv, signinLog }

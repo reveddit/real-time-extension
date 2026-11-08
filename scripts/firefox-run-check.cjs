@@ -19,14 +19,13 @@
 // Never launch Firefox from an automated session: on macOS, a Firefox started
 // that way cost the launching session its ~/Desktop access.
 
-const { parseArgs, connectBidi } = require('./script-helpers.cjs')
+const { parseArgs, connectBidi, sleep } = require('./script-helpers.cjs')
 const { opt, flag } = parseArgs()
 const install = opt('--install')
 const site = opt('--site') || 'http://localhost:8080/about/'
 const redditTab = flag('--reddit-tab')
 
 const { ws, send } = connectBidi()
-const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 // One dev action through the page's relay; resolves with the answer's JSON
 const devCall = message => `new Promise(resolve => {

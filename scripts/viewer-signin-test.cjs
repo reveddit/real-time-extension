@@ -31,7 +31,7 @@ const fs = require('fs')
 const { pageComplaints } = require('./signin-page-text.cjs')
 const path = require('path')
 const { chromium } = require('playwright')
-const { parseArgs, checkEnv } = require('./script-helpers.cjs')
+const { parseArgs, checkEnv, signinLog, sleep } = require('./script-helpers.cjs')
 
 const { opt, flag } = parseArgs()
 const profile = path.resolve(opt('--profile') || path.join(__dirname, '..', '..', '.test-profiles', 'chrome'))
@@ -40,19 +40,7 @@ const dryRun = flag('--dry-run')
 const ext = path.join(__dirname, '..', 'dist-dev-chrome')
 const { second, main, secrets } = checkEnv({ dryRun, build: ext })
 
-const logFile = `${profile}-signin-test.log`
-const hide = text => secrets.reduce((t, s) => t.split(s).join('***'), String(text))
-const log = (...parts) => {
-    const line = hide(`${new Date().toISOString().slice(11, 19)} ${parts.join(' ')}`)
-    fs.appendFileSync(logFile, `${line}\n`)
-    console.log(line)
-}
-const sleep = ms => new Promise(r => setTimeout(r, ms))
-const results = []
-const check = (ok, what) => {
-    results.push(ok)
-    log(ok ? 'PASS' : 'FAIL', what)
-}
+const { hide, log, results, check } = signinLog(`${profile}-signin-test.log`, secrets)
 
 // Fills Reddit's login form and presses Log In. A "Prove your humanity" page
 // or anything else in its place waits for the person at the window.

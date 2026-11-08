@@ -23,7 +23,7 @@
 
 const path = require('path')
 const { chromium } = require('playwright')
-const { parseArgs } = require('./script-helpers.cjs')
+const { parseArgs, sleep } = require('./script-helpers.cjs')
 
 const { opt, flag } = parseArgs()
 const user = opt('--user') || 'GiveUsNetNeutrality'
@@ -39,8 +39,6 @@ const extDir = path.join(__dirname, '..', 'dist-dev-chrome')
 
 const CANARY = 't1_ouz0d47'
 const CANARY_META = { permalink: '/r/CantSayAnything/comments/1u1u4am/x/ouz0d47/', link_id: 't3_1u1u4am' }
-
-const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 ;(async () => {
     const context = await chromium.launchPersistentContext('', {
