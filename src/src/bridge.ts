@@ -517,8 +517,9 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
     }
     recentTimes.push(now)
     const run = lane.then(async (): Promise<BridgeResponse> => {
-        // Queued behind other requests past the point an answer could arrive in time
-        if (deadline - Date.now() < MIN_FETCH_MS) {
+        // Queued behind other requests past the point an answer could arrive in
+        // time, or while a second account began signing in
+        if (deadline - Date.now() < MIN_FETCH_MS || (await isViewerConnecting())) {
             return busy()
         }
         return withDeadline(deadline - Date.now(), async signal => {

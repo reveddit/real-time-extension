@@ -117,10 +117,16 @@ async function recoverIfDegraded() {
     const now = Date.now()
     if (recoveringMe) return
     if (now - lastMeRecoverTs < ME_RECOVER_MIN_INTERVAL_MS) return
-    // The browser's login is a second account's while it signs in (viewer.ts)
-    if (await isViewerConnecting()) return
+    // Claimed before anything is awaited, so a burst of cookie changes or tab
+    // loads asks reddit once
     recoveringMe = true
-    getLoggedinUser()
+    // The browser's login is a second account's while it signs in (viewer.ts)
+    if (await isViewerConnecting().catch(() => true)) {
+        recoveringMe = false
+        return
+    }
+    // A miss goes to the console: the next check logs the same one
+    getLoggedinUser(consoleOnly)
         .then(user => {
             if (user) clearWarningALoginSettles()
         })
@@ -165,8 +171,20 @@ chrome.cookies.onChanged.addListener(changeInfo => {
 // The second account (viewer.ts): who the browser is logged in as when its
 // sign-in ends; its header rule, which session rules lose with the browser;
 // and a sign-in this worker stopped in the middle of. A sign-in ends when its
-// tab leaves reddit's login page or closes.
-const whoAmI = whoIsSignedIn
+// tab leaves reddit's login page or closes. A sign-in asks on every page load
+// in its tab, so a miss goes in the saved log at most once a minute, and the
+// rest to the console.
+const WHO_AM_I_LOG_EVERY_MS = 60 * 1000
+let whoAmILoggedAt = -Infinity
+const whoAmI = () =>
+    whoIsSignedIn(
+        Date.now() - whoAmILoggedAt < WHO_AM_I_LOG_EVERY_MS
+            ? consoleOnly
+            : (area, message) => {
+                  whoAmILoggedAt = Date.now()
+                  dlog(area, message)
+              },
+    )
 installViewerHeaderRule().catch(() => {})
 recoverViewerConnect(whoAmI).catch(() => {})
 // A sign-in started for whoever the browser was last logged in as
@@ -571,14 +589,15 @@ chrome.runtime.onUpdateAvailable.addListener(details => {
 
 // On browser startup, if no user is currently tracked, re-check connection and
 // surface a warning badge if Reddit can't be reached.
-chrome.runtime.onStartup.addListener(() => {
+chrome.runtime.onStartup.addListener(async () => {
+    // Not while a second account signs in: the browser's login is its, and it
+    // would be subscribed as the user's
+    if (await isViewerConnecting()) return
     chrome.storage.local.get(['last_logged_in_user'], result => {
         if (!result.last_logged_in_user) {
             getLoggedinUser().then((user: any) => {
                 if (user) {
-                    const done = () => {
-                        chrome.storage.local.remove('error_status', () => updateBadgeUnseenCount())
-                    }
+                    const done = () => clearWarningALoginSettles()
                     subscribeUser(user, done, done)
                 } else {
                     setWarningBadge('needs_user')

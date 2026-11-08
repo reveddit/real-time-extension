@@ -1,6 +1,6 @@
 import browser from 'webextension-polyfill'
 import { dlogSummary, dlog } from './diaglog'
-import { hasRedditLoginCookie } from './viewer'
+import { hasRedditLoginCookie, isViewerConnecting } from './viewer'
 import { getLocalStorageItems } from './storage'
 import { isViewerBlockedItem } from './common'
 import { fetchJsonLoggedIn } from './logged-in-fetch'
@@ -157,6 +157,11 @@ const lookupFollowedItemsByThread = async (ids: string[]): Promise<any[]> => {
     for (const [i, id] of batch.entries()) {
         if (i > 0 && _followedTiming.delayMs > 0) {
             await new Promise(r => setTimeout(r, _followedTiming.delayMs))
+        }
+        // The browser's login is going to be a second account's
+        if (await isViewerConnecting()) {
+            note = ', stopped as a second account signs in'
+            break
         }
         const r = await readThreadItemLoggedIn(id, postOf(id)!)
         if (r.status === 429) {

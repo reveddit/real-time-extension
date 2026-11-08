@@ -413,6 +413,14 @@ const CYCLE_OVERLAP_WINDOW_MS = 3 * 60 * 1000
 export const isCycleInFlight = () =>
     cycleBusySinceMs > cycleEndedAtMs && Date.now() - cycleBusySinceMs < CYCLE_OVERLAP_WINDOW_MS
 
+// A second account began signing in while a check ran. It's recorded before the
+// user's login is set aside (viewer.ts), so what was sent went with the user's
+// login, and the rest of the check waits for the next one.
+const SIGN_IN_STARTED = new Error('a second account started signing in')
+const stopIfSigningIn = async () => {
+    if (await isViewerConnecting()) throw SIGN_IN_STARTED
+}
+
 export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff?: boolean } = {}) => {
     const nowMs = Date.now()
     if (cycleStartedAtMs > cycleEndedAtMs && nowMs - cycleStartedAtMs < CYCLE_OVERLAP_WINDOW_MS) {
@@ -425,60 +433,86 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
     const endCycle = () => {
         if (cycleStartedAtMs === startedAt) cycleEndedAtMs = Date.now()
     }
-    // A second account is signing in (viewer.ts): the browser holds its login,
-    // not the user's, so nothing runs until that's over. A sign-in left too
-    // long, or whose tab is gone, ends here.
-    if (await isViewerConnecting()) {
-        await recoverViewerConnect(whoIsSignedIn)
+    // A first step that fails ends the claim too, so the next trigger runs
+    try {
+        // A second account is signing in (viewer.ts): the browser holds its login,
+        // not the user's, so nothing runs until that's over. A sign-in left too
+        // long, or whose tab is gone, ends here.
         if (await isViewerConnecting()) {
-            dlog('cycle', '[reveddit] checkForChanges: skipping, a second account is signing in')
-            endCycle()
-            return
+            await recoverViewerConnect(whoIsSignedIn)
+            if (await isViewerConnecting()) {
+                dlog('cycle', '[reveddit] checkForChanges: skipping, a second account is signing in')
+                endCycle()
+                return
+            }
         }
-    }
-    // If Reddit recently rate-limited us, skip cycles until the backoff expires
-    // rather than hammering and prolonging the lockout (see recordRateLimitHit).
-    const backoffRemainingMs = await getRateLimitBackoffRemainingMs()
-    if (backoffRemainingMs > 0) {
-        if (!opts.bypassBackoff) {
+        // If Reddit recently rate-limited us, skip cycles until the backoff expires
+        // rather than hammering and prolonging the lockout (see recordRateLimitHit).
+        const backoffRemainingMs = await getRateLimitBackoffRemainingMs()
+        if (backoffRemainingMs > 0) {
+            if (!opts.bypassBackoff) {
+                dlog(
+                    'ratelimit',
+                    `checkForChanges: skipping, rate-limit backoff ${Math.ceil(backoffRemainingMs / 1000)}s remaining`,
+                )
+                endCycle()
+                return
+            }
+            // Manual "check now" from the options page: run anyway, but say so —
+            // a paste showing a bypassed backoff reads very differently from one
+            // showing a clean cycle.
             dlog(
                 'ratelimit',
-                `checkForChanges: skipping, rate-limit backoff ${Math.ceil(backoffRemainingMs / 1000)}s remaining`,
+                `checkForChanges: running despite rate-limit backoff (${Math.ceil(backoffRemainingMs / 1000)}s remaining, manual)`,
             )
-            endCycle()
-            return
         }
-        // Manual "check now" from the options page: run anyway, but say so —
-        // a paste showing a bypassed backoff reads very differently from one
-        // showing a clean cycle.
-        dlog(
-            'ratelimit',
-            `checkForChanges: running despite rate-limit backoff (${Math.ceil(backoffRemainingMs / 1000)}s remaining, manual)`,
-        )
-    }
-    dlog('cycle', `[reveddit] checkForChanges: cycle start${opts.bypassBackoff ? ' (manual)' : ''}`)
-    if (applyJitter) {
-        await new Promise(r => setTimeout(r, Math.floor(Math.random() * POLL_JITTER_MAX_MS)))
+        dlog('cycle', `[reveddit] checkForChanges: cycle start${opts.bypassBackoff ? ' (manual)' : ''}`)
+        if (applyJitter) {
+            await new Promise(r => setTimeout(r, Math.floor(Math.random() * POLL_JITTER_MAX_MS)))
+            // One that began during the wait
+            if (await isViewerConnecting()) {
+                dlog('cycle', '[reveddit] checkForChanges: skipping, a second account is signing in')
+                endCycle()
+                return
+            }
+        }
+    } catch (error: any) {
+        endCycle()
+        dlog('cycle', 'Error in checkForChanges:', String(error?.message || error))
+        return
     }
     cycleBusySinceMs = Date.now()
     chrome.storage.sync.get(undefined as any, function (storage: Record<string, any>) {
-        const other = Object.keys(storage.other_subscriptions)
+        // A read the browser failed gives the check nothing to go on
+        if (!storage) {
+            endCycle()
+            dlog(
+                'cycle',
+                'Error in checkForChanges: the synced data could not be read:',
+                String((chrome.runtime as any)?.lastError?.message || 'no answer'),
+            )
+            return
+        }
+        const other = Object.keys(storage.other_subscriptions || {})
         const now = Math.floor(Date.now() / 1000)
 
         let cachedAuth: any
         getAuth()
-            .then((auth: any) => {
+            .then(async (auth: any) => {
                 cachedAuth = auth
+                await stopIfSigningIn()
                 // Always check for logged-in user, regardless of subscription status
                 return checkForChanges_loggedInUser(auth, storage)
             })
-            .then(() => {
+            .then(async () => {
+                await stopIfSigningIn()
                 // Also check other subscriptions if any exist
                 if (other.length) {
                     return checkForChanges_other(cachedAuth, storage)
                 }
             })
-            .then(() => {
+            .then(async () => {
+                await stopIfSigningIn()
                 // Process one pending post per alarm cycle (throttled)
                 return processPendingPosts(storage)
             })
@@ -490,6 +524,10 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
             })
             .catch(error => {
                 endCycle()
+                if (error === SIGN_IN_STARTED) {
+                    dlog('cycle', '[reveddit] checkForChanges: stopped, a second account started signing in')
+                    return
+                }
                 dlog('cycle', 'Error in checkForChanges:', String(error?.message || error))
                 // Clear warning badge on error
                 updateBadgeUnseenCount()
@@ -519,6 +557,8 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
     // detection channel isn't mistaken for "logged out" and silently skipped.
     return getLoggedinUserDetailed()
         .then(async (detect: LoginDetectResult) => {
+            // A sign-in that began meanwhile: the listing waits for the next check
+            if (await isViewerConnecting()) return
             let loggedInUser: any = detect.user
             let usedGrace = false
             if (!loggedInUser && detect.indeterminate) {

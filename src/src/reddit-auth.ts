@@ -311,13 +311,13 @@ export const getLoggedinUserDetailed = async (log = dlog): Promise<LoginDetectRe
 
 // Back-compat shape for callers that only care about the username (recovery,
 // startup and install): resolves the username or null, never rejects.
-export const getLoggedinUser = (): Promise<string | null> => getLoggedinUserDetailed().then(r => r.user)
+export const getLoggedinUser = (log = dlog): Promise<string | null> => getLoggedinUserDetailed(log).then(r => r.user)
 
 // Who the browser is signed in to reddit as, for the second account's sign-in
 // (viewer.ts): it rejects when reddit gave no clean answer, which isn't the
 // same as nobody being signed in
-export const whoIsSignedIn = (): Promise<string | null> =>
-    getLoggedinUserDetailed().then(detail => {
+export const whoIsSignedIn = (log = dlog): Promise<string | null> =>
+    getLoggedinUserDetailed(log).then(detail => {
         if (detail.indeterminate) {
             throw new Error(`reddit didn't say who's signed in (${detail.reason})`)
         }

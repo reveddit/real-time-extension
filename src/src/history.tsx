@@ -6,6 +6,7 @@ import { mountPage } from './ui/global'
 import { MessageBanner, MiniSpinner, Page } from './ui/components'
 import { tokens } from './ui/tokens'
 import { redditItemUrl } from './ui/links'
+import { isViewerConnecting } from './viewer'
 import { ChangeRow, FilterOption, FilterValue, SortValue, matchesFilter, ChangeCard, toRow } from './history-rows'
 import { FullWelcomeBanner, SlimWelcomeBanner } from './history-welcome'
 import { NotificationLog } from './history-log'
@@ -211,7 +212,12 @@ function History() {
     const apiPageUrl = `https://www.reddit.com/api/info?id=${encodeURIComponent(id)}`
     // Credentialed like lookupOtherItemsByID_authed: the unauthenticated form
     // has 403'd since August 2026, which sent every click to the fallback.
-    fetch(apiJsonUrl, { credentials: 'include' })
+    // Not while a second account signs in: the browser's login is its.
+    isViewerConnecting()
+      .then(connecting => {
+        if (connecting) throw new Error('a second account is signing in')
+        return fetch(apiJsonUrl, { credentials: 'include' })
+      })
       .then(r => r.json())
       .then(json => {
         const children = (json?.data?.children && Array.isArray(json.data.children)) ? json.data.children : []
