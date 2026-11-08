@@ -98,6 +98,21 @@ let lastMeRecoverTs = 0
 const MANUAL_CHECK_MIN_INTERVAL_MS = 60000
 let lastManualCheckTs = 0
 
+// For a look that finds no login every few seconds: the console only
+const consoleOnly: typeof dlog = (_area, message) => console.log(message)
+
+// A login was found: only a warning it settles goes, if it's still the one up.
+// Needing a second account, say, stays until a check finds it gone.
+const clearWarningALoginSettles = (then: () => void = () => {}) =>
+    chrome.storage.local.get(['error_status'], result => {
+        const finish = () => {
+            updateBadgeUnseenCount()
+            then()
+        }
+        if (isSettledByLogin(result?.error_status)) chrome.storage.local.remove('error_status', finish)
+        else finish()
+    })
+
 async function recoverIfDegraded() {
     const now = Date.now()
     if (recoveringMe) return
@@ -107,16 +122,7 @@ async function recoverIfDegraded() {
     recoveringMe = true
     getLoggedinUser()
         .then(user => {
-            if (user) {
-                // Only a warning the login settles, if it's still the one up
-                chrome.storage.local.get(['error_status'], result => {
-                    if (isSettledByLogin(result?.error_status)) {
-                        chrome.storage.local.remove('error_status', () => {
-                            updateBadgeUnseenCount()
-                        })
-                    }
-                })
-            }
+            if (user) clearWarningALoginSettles()
         })
         .finally(() => {
             recoveringMe = false
@@ -374,27 +380,17 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
 // whoever is logged in and look them up. The poll is quiet, as it can find
 // nobody every few seconds for hours: its lines go to the console only.
 function tryReconnect(sendResponse: (response: any) => void, quiet: boolean) {
-    const log: typeof dlog = quiet ? (_area, message) => console.log(message) : dlog
     storeRedditCookies()
-        .then(() => getLoggedinUserDetailed(log))
+        .then(() => getLoggedinUserDetailed(quiet ? consoleOnly : dlog))
         .then(detail => {
             const user = detail.user
             if (user) {
                 chrome.storage.local.set({ last_logged_in_user: user })
                 // A check now, as the user expects one, whether the user was
-                // just subscribed or already was. Only a warning the login
-                // settles goes: needing a second account, say, stays until a
-                // check finds it gone.
+                // just subscribed or already was
                 const done = () => {
                     checkForChanges()
-                    chrome.storage.local.get(['error_status'], result => {
-                        const finish = () => {
-                            updateBadgeUnseenCount()
-                            sendResponse({ success: true, user })
-                        }
-                        if (isSettledByLogin(result?.error_status)) chrome.storage.local.remove('error_status', finish)
-                        else finish()
-                    })
+                    clearWarningALoginSettles(() => sendResponse({ success: true, user }))
                 }
                 subscribeUser(user, done, done)
             } else {
