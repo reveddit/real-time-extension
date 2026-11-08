@@ -29,8 +29,8 @@ import {
     publiclyInvisibleReason,
     recordViewerThreadOutcome,
 } from './lookup-status'
-import { noteRateLimited, readLocal } from './request-gates'
-import { isConfirmingRemoval, removedReads } from './page-verify'
+import { noteRateLimited, readLocal, isFresh } from './request-gates'
+import { isConfirmingRemoval, isConfirmingPaced } from './page-verify'
 
 // The second account's view of the user's own items (viewer.ts): what other
 // logged-in people see, for when reddit asks for a login before it shows
@@ -124,6 +124,10 @@ const readViewerListing = async (
     return { items, floor }
 }
 
+// An item reddit's JSON shows removed, in a listing or its thread
+const showsRemoved = (id: string, item: any): boolean =>
+    isRemovedItem(item) || (id.startsWith('t3_') && isRemovedByCategory(item))
+
 // An item's verdict from its thread's JSON as the second account. Another
 // account doesn't get a removed comment that has no replies at all: its own
 // permalink answers with the post and no comments, where the author's view has
@@ -144,15 +148,18 @@ const viewerVerdictOf = (id: string, postId: string, json: any): ViewerVerdict =
     if (isViewerBlockedItem(data) || (!id.startsWith('t3_') && isUserDeletedComment(data))) {
         return 'unknown'
     }
-    if (isRemovedItem(data) || (id.startsWith('t3_') && isRemovedByCategory(data))) {
-        return 'removed'
-    }
-    return 'live'
+    return showsRemoved(id, data) ? 'removed' : 'live'
 }
 
-// l: read while the item was listed. n: removedReads.
-const readViewerVerdicts = () =>
-    readLocal<Record<string, { v: ViewerVerdict; t: number; l?: 1; n?: number }>>(VIEWER_VERDICTS_KEY, {})
+// l: read while the item was listed. u: see isConfirmingPaced.
+interface ViewerEntry {
+    v: ViewerVerdict
+    t: number
+    l?: 1
+    u?: number
+}
+
+const readViewerVerdicts = () => readLocal<Record<string, ViewerEntry>>(VIEWER_VERDICTS_KEY, {})
 
 // After both listings come back as the edge's block page in both cache modes,
 // the second account rests half an hour, as the logged-out view's refused
@@ -197,8 +204,8 @@ const restViewer = async (viewer: ViewerAccount) => {
 // for recordViewerThreadOutcome. A 'live' lasts as long as the logged-out
 // view's does for a missing item (absentLiveTtl: sooner for young items, when
 // removals happen), and ends when an item read live while listed drops out of
-// the listing, which is how a removal shows. A 'removed' isn't reused until
-// it's recorded (isConfirmingRemoval).
+// the listing, which is how a removal shows. A 'removed' isn't reused while
+// monitoring counts it (isConfirmingRemoval, isConfirmingPaced).
 const readViewerThreads = async (
     viewer: ViewerAccount,
     ids: string[],
@@ -208,7 +215,7 @@ const readViewerThreads = async (
     const cache = await readViewerVerdicts()
     const verdicts: Record<string, ViewerVerdict> = {}
     const now = Date.now()
-    const ttl = (id: string, entry: { v: ViewerVerdict; l?: 1 }) =>
+    const ttl = (id: string, entry: ViewerEntry) =>
         entry.v !== 'live'
             ? (VIEWER_VERDICT_TTL_MS[entry.v] ?? 0)
             : entry.l && !listed.has(id)
@@ -216,8 +223,10 @@ const readViewerThreads = async (
               : absentLiveTtl(authItemsMeta[id]?.created_utc, now)
     const due = ids.filter(id => {
         const entry = cache[id]
-        const age = now - Number(entry?.t)
-        if (entry && age >= 0 && age < ttl(id, entry) && !isConfirmingRemoval(entry, authItemsMeta[id])) {
+        if (isConfirmingPaced(entry, authItemsMeta[id], VIEWER_VERDICT_TTL_MS.unknown, now)) {
+            return false
+        }
+        if (entry && isFresh(Number(entry.t), ttl(id, entry), now) && !isConfirmingRemoval(entry, authItemsMeta[id])) {
             if (entry.v !== 'unknown') {
                 verdicts[id] = entry.v
             }
@@ -228,6 +237,8 @@ const readViewerThreads = async (
     let read = 0
     let resolved = 0
     let note = ''
+    // What each read said, for the log
+    const said: ViewerVerdict[] = []
     for (const id of due) {
         if (read >= VIEWER_THREAD_READS_PER_CYCLE) {
             break
@@ -240,6 +251,12 @@ const readViewerThreads = async (
             await new Promise(r => setTimeout(r, _viewerTiming.delayMs))
         }
         read++
+        // What a read that decides nothing leaves: an 'unknown', or while the
+        // removal is counted the cached verdict, marked (isConfirmingPaced)
+        const undecided = (): ViewerEntry =>
+            isConfirmingRemoval(cache[id], authItemsMeta[id])
+                ? { ...cache[id], u: Date.now() }
+                : { v: 'unknown', t: Date.now() }
         const r = await fetchJsonAsViewer(threadItemUrl(id, postId), viewer)
         if (r.status === 429) {
             noteRateLimited(new Error('www.reddit.com request failed: 429'))
@@ -253,34 +270,35 @@ const readViewerThreads = async (
             // the items after this one instead of asking for it again. A page
             // in place of the JSON (a challenge) stops the reads like the block
             // page, since the next would get the same.
-            cache[id] = { v: 'unknown', t: Date.now() }
+            cache[id] = undecided()
+            said.push('unknown')
             note = r.blocked ? ', stopped on a block page' : ', stopped on a page in place of JSON'
             break
         }
         const v = viewerVerdictOf(id, postId, r.ok ? r.json : undefined)
-        cache[id] = { v, t: Date.now(), ...(listed.has(id) && { l: 1 as const }), ...removedReads(v, cache[id]) }
+        said.push(v)
+        cache[id] = v === 'unknown' ? undecided() : { v, t: Date.now(), ...(listed.has(id) && { l: 1 as const }) }
         if (v !== 'unknown') {
             verdicts[id] = v
             resolved++
         }
     }
     if (read) {
+        // One marked by a read that decided nothing stays until its next read is due
         const kept = Object.entries(cache)
-            .filter(([, entry]) => Date.now() - Number(entry?.t) < (VIEWER_VERDICT_TTL_MS[entry?.v] ?? 0))
+            .filter(
+                ([, entry]) =>
+                    Date.now() - Number(entry?.t) < (VIEWER_VERDICT_TTL_MS[entry?.v] ?? 0) ||
+                    isFresh(Number(entry?.u), VIEWER_VERDICT_TTL_MS.unknown, Date.now()),
+            )
             .sort((a, b) => b[1].t - a[1].t)
             .slice(0, VIEWER_VERDICTS_MAX)
         await browser.storage.local.set({ [VIEWER_VERDICTS_KEY]: Object.fromEntries(kept) }).catch(() => null)
     }
-    const counts = due
-        .slice(0, read)
-        .map(id => cache[id]?.v)
-        .filter(Boolean)
     dlogSummary(
         'verify',
         `[reveddit] second account: ${read} thread reads of ${due.length} due (` +
-            (['live', 'removed', 'unknown'] as const)
-                .map(v => `${counts.filter(c => c === v).length} ${v}`)
-                .join(', ') +
+            (['live', 'removed', 'unknown'] as const).map(v => `${said.filter(s => s === v).length} ${v}`).join(', ') +
             `)${note}`,
     )
     return { verdicts, read, resolved, pending: ids.filter(id => !verdicts[id]).length }
@@ -391,8 +409,6 @@ export const lookupItemsByID_fromViewer = async (
     const covered = (id: string) => isCovered(id, { t1: comments.floor, t3: posts.floor })
     const authSaysRemoved = (id: string) => authSaysPostRemoved(id, meta(id))
     const young = (id: string) => isYoungPost(meta(id))
-    const listedRemoved = (id: string, item: any) =>
-        isRemovedItem(item) || (id.startsWith('t3_') && isRemovedByCategory(item))
     // Missing items first, each a possible removal; then listed posts a
     // listing can't clear
     const threads = await readViewerThreads(
@@ -406,7 +422,7 @@ export const lookupItemsByID_fromViewer = async (
                     id.startsWith('t3_') &&
                     listed.has(id) &&
                     !authSaysRemoved(id) &&
-                    !listedRemoved(id, listed.get(id)) &&
+                    !showsRemoved(id, listed.get(id)) &&
                     (young(id) || meta(id).known_removed),
             ),
         ],
@@ -429,12 +445,12 @@ export const lookupItemsByID_fromViewer = async (
         }
         const item = listed.get(id)
         const verdict = verdicts[id]
-        if (authSaysRemoved(id) || (item && listedRemoved(id, item)) || verdict === 'removed') {
+        if (authSaysRemoved(id) || (item && showsRemoved(id, item)) || verdict === 'removed') {
             results.push(syntheticRemoved)
         } else if (item) {
             if (!id.startsWith('t3_') || verdict === 'live') {
                 results.push({ data: { ...item, ...carried } })
-            } else if (!m.known_removed) {
+            } else if (!m.known_removed && !(m.confirming && young(id))) {
                 // No thread verdict yet: listed, so visible, but a young post
                 // may still be held, so the bridge isn't told it's publicly live
                 results.push({
@@ -446,8 +462,9 @@ export const lookupItemsByID_fromViewer = async (
                     },
                 })
             }
-            // Recorded removed, still listed, no thread verdict: no news, so a
-            // listing alone never flips a recorded removal back
+            // Recorded removed, or young with its removal being counted, still
+            // listed, no thread verdict: no news, so a listing alone never
+            // flips a recorded removal back or starts a count over
         } else if (covered(id) && publiclyInvisibleReason(m)) {
             // Monitoring reads these as unchecked, as for the public view
             results.push(syntheticRemoved)

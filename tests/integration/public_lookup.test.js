@@ -116,8 +116,6 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         expect(__getLocalStorage().www_absent_item_verdicts[HIDDEN].v).toBe('live')
         expect(__getLocalStorage().www_absent_item_verdicts[GONE].v).toBe('removed')
 
-        // By then monitoring has recorded the removal
-        authItemsMeta[GONE].known_removed = true
         const results = await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
         expect(pageFetches()).toBe(2) // cache hit, no new page fetches
         const byId = Object.fromEntries(results.map(r => [r.data.name, r.data]))

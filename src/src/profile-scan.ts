@@ -93,7 +93,8 @@ export async function scanUserProfile(
     } catch (err: any) {
         const stopped = limiter.isCancelled()
         onProgress({
-            status: stopped ? 'cancelled' : 'error',
+            // Only the click's reads ran out: the next click goes on
+            status: stopped ? 'cancelled' : err.outOfReads ? 'partial' : 'error',
             message: stopped
                 ? 'Scan cancelled.'
                 : err.status === 404

@@ -48,7 +48,8 @@ const throwIfLoginRedirect = (redirectedTo: unknown) => {
     }
 }
 
-const withTimeout = async <T>(promise: Promise<T>, what: string): Promise<T> => {
+// Rejects when the promise hasn't settled in WWW_FETCH_TIMEOUT_MS; an answer after that is ignored
+export const withTimeout = async <T>(promise: Promise<T>, what: string): Promise<T> => {
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
         return await Promise.race([
@@ -64,6 +65,12 @@ const withTimeout = async <T>(promise: Promise<T>, what: string): Promise<T> => 
         clearTimeout(timer)
     }
 }
+
+// A tab that can answer a message or run an injected script. A discarded one
+// (Chrome's Memory Saver unloads idle ones) has no page, and a frozen one may
+// never answer, so both tab legs fail on them, likely the "Receiving end does
+// not exist" and "Cannot access contents of the page" pair in issue #27's log.
+export const canTabAnswer = (tab: { discarded?: boolean; frozen?: boolean }): boolean => !tab.discarded && !tab.frozen
 
 // An HTTP failure from any leg. Reddit's block page comes with a 403, so that
 // route was refused. Other statuses say nothing about the route (a 429 is rate
@@ -404,11 +411,7 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
     } catch {
         /* no tabs API in this context */
     }
-    // A discarded tab (Chrome's Memory Saver unloads idle ones) has no page to
-    // message or inject into, and a frozen one may never answer, so both tab
-    // legs fail on them, likely the "Receiving end does not exist" and "Cannot
-    // access contents of the page" pair in issue #27's log.
-    const tab = tabs.find(t => t.id != null && !t.discarded && !t.frozen)
+    const tab = tabs.find(t => t.id != null && canTabAnswer(t))
     let contentScriptAlive = !!tab
     let injectionUsable = !!tab
     const tabUsable = () => contentScriptAlive || injectionUsable

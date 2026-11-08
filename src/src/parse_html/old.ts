@@ -1,5 +1,4 @@
 import {
-    consume,
     getLegacyBase,
     legacyPageUrl,
     redditHTMLRequestOptions,
@@ -255,6 +254,23 @@ class ThingCounter {
 
 const LEGACY_PAGE_TIMEOUT_MS = 15000
 
+// Reads the page through the rewriter's handlers. The rewriter's stream waits for
+// its WASM to load, and so does an abort of that stream, so an abort ends the read
+// here. That throws, as a page cut off isn't one read whole.
+const readToEnd = async (stream: ReadableStream, signal: AbortSignal) => {
+    const reader = stream.getReader()
+    const cancel = () => reader.cancel(signal.reason).catch(() => {})
+    signal.addEventListener('abort', cancel)
+    try {
+        while (!(await reader.read()).done) {
+            /* NOOP */
+        }
+    } finally {
+        signal.removeEventListener('abort', cancel)
+    }
+    if (signal.aborted) throw signal.reason
+}
+
 // Reads a legacy page, logged out, through rewriter if reddit serves it. fetch()
 // never times out on its own, and a response can stall after its headers, so the
 // deadline covers the body too: a stall would hang the pending-post loop (a "stuck
@@ -263,7 +279,7 @@ const readLegacyPage = (url: string, rewriter: HTMLRewriter): Promise<Response> 
     withDeadline(LEGACY_PAGE_TIMEOUT_MS, async signal => {
         const response = await fetch(url, { ...redditHTMLRequestOptions, credentials: 'omit', signal })
         if (response.ok) {
-            await consume(rewriter.transform(response).body!)
+            await readToEnd(rewriter.transform(response).body!, signal)
         }
         return response
     })

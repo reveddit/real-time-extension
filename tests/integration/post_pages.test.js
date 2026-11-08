@@ -5,10 +5,11 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { res } from '../mocks/responses.js'
 import { lookupItemsByID, lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
+import { verifyFeedPresentPosts } from '../../src/src/page-verify'
 import {
     USER,
     thingIdEl,
@@ -204,5 +205,64 @@ describe('post page verdicts and the backoff', () => {
         expect(pageCalls).toHaveLength(1)
         expect(results.find(r => r.data.name === YOUNG).data.is_robot_indexable).toBe(true)
         expect(__getLocalStorage().www_post_page_verdicts[YOUNG]).toMatchObject({ v: 'live', k: 2 })
+    })
+})
+
+describe('a post whose removal monitoring is counting', () => {
+    const POST = 't3_young1'
+    const page = banner =>
+        `<html><body><shreddit-post id="${POST}" author="${USER}" post-title="t" subreddit-name="s">${banner}` +
+        `</shreddit-post></body></html>`
+    const HELD = page('<div slot="post-removed-banner">Post is awaiting moderator approval.</div>')
+    const young = extra => ({ [POST]: { locked: false, created_utc: Math.floor(Date.now() / 1000) - 3600, ...extra } })
+    const verify = (authItemsMeta, fetchHtml) =>
+        verifyFeedPresentPosts([POST], new Set([POST]), authItemsMeta, fetchHtml)
+    const cachedHeld = () =>
+        __resetStorage({}, { www_post_page_verdicts: { [POST]: { v: 'held', t: Date.now(), k: 2 } } })
+
+    it('is read again each cycle, so one held page cannot fill the count', async () => {
+        cachedHeld()
+        const fetchHtml = vi.fn(async () => page(''))
+        expect(await verify(young({ confirming: true }), fetchHtml)).toEqual({ [POST]: 'live' })
+        expect(fetchHtml).toHaveBeenCalledTimes(1)
+    })
+
+    it("a read that decides nothing leaves the cached verdict and gives none, and the next waits as long as an unknown's", async () => {
+        vi.useFakeTimers({ toFake: ['Date'] })
+        const failed = async () => {
+            throw new Error('www.reddit.com request failed: 403')
+        }
+        for (const undecided of [async () => FRONT_PAGE, failed]) {
+            cachedHeld()
+            expect(await verify(young({ confirming: true }), undecided)).toEqual({})
+            expect(__getLocalStorage().www_post_page_verdicts[POST]).toMatchObject({ v: 'held' })
+            const next = vi.fn(async () => HELD)
+            vi.setSystemTime(Date.now() + 30 * 60 * 1000 - 1)
+            expect(await verify(young({ confirming: true }), next)).toEqual({})
+            expect(next).not.toHaveBeenCalled()
+            vi.setSystemTime(Date.now() + 1)
+            expect(await verify(young({ confirming: true }), next)).toEqual({ [POST]: 'held' })
+            expect(next).toHaveBeenCalledTimes(1)
+        }
+    })
+
+    it('in the feed with no page verdict this cycle, gets no result, so the count neither grows nor starts over', async () => {
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
+            [`/user/${USER}/submitted/?sort=new`, thingIdEl(POST)],
+            ['/comments/young1/', FRONT_PAGE],
+        ])
+        expect(await lookupItemsByID_fromPublicProfile([POST], USER, young({ confirming: true }))).toEqual([])
+        // Not counting it: the feed's presence stands
+        __resetStorage()
+        const [result] = await lookupItemsByID_fromPublicProfile([POST], USER, young())
+        expect(result.data).toMatchObject({ name: POST, is_robot_indexable: true, _public_view_unverified: true })
+    })
+
+    it("is reused when monitoring isn't counting it", async () => {
+        cachedHeld()
+        const fetchHtml = vi.fn(async () => page(''))
+        expect(await verify(young(), fetchHtml)).toEqual({ [POST]: 'held' })
+        expect(fetchHtml).not.toHaveBeenCalled()
     })
 })

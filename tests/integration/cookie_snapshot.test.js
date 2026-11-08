@@ -13,7 +13,7 @@ import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webexte
 import { cookie, jar, fill, find, cookiesApi, COOKIE_EXPIRES as EXPIRES } from '../mocks/cookies.js'
 
 import { storeRedditCookies, rehydrateStoredRedditCookies } from '../../src/src/reddit-cookies'
-import { lookupItemsByUser, getLoggedinUser } from '../../src/src/reddit-auth'
+import { fetch_forReddit, getLoggedinUser } from '../../src/src/reddit-auth'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
 
 const CSRF = cookie('csrf_token', 'C1', {
@@ -320,13 +320,13 @@ describe('the cookie snapshot', () => {
             loginDuringRequest = find('reddit_session')
             return { ok: true, json: async () => ({ data: { children: [] } }) }
         })
-        // Its only callers pass OAuth details (the fallback after www fails)
+        // Its callers pass OAuth details: api/info read with a custom client id
         const auth = { headers: { Authorization: 'bearer x' } }
-        await lookupItemsByUser('alice', true, auth)
-        expect(globalThis.fetch).toHaveBeenCalledWith(
-            'https://oauth.reddit.com/user/alice/overview.json?limit=100&sort=new&raw_json=1',
-            { ...auth, cache: 'reload' },
-        )
+        await fetch_forReddit('api/info?id=t1_a&raw_json=1', auth, true)
+        expect(globalThis.fetch).toHaveBeenCalledWith('https://oauth.reddit.com/api/info?id=t1_a&raw_json=1', {
+            ...auth,
+            cache: 'reload',
+        })
         expect(loginDuringRequest).toBeUndefined()
         expect(find('reddit_session')).toMatchObject({
             value: 'S1',

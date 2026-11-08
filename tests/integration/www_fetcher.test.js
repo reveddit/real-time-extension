@@ -7,7 +7,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
-import { res } from '../mocks/responses.js'
+import { res, untilAborted } from '../mocks/responses.js'
 import {
     getWwwHtmlFetcher,
     _fetchViaExecuteScript,
@@ -223,13 +223,7 @@ describe('getWwwHtmlFetcher routes', () => {
         vi.useFakeTimers()
         try {
             globalThis.fetch = vi.fn((_url, init) =>
-                init.cache === 'no-store'
-                    ? new Promise((_, reject) =>
-                          init.signal.addEventListener('abort', () =>
-                              reject(new DOMException('aborted', 'AbortError')),
-                          ),
-                      )
-                    : Promise.resolve(res(200, 'PAGE')),
+                init.cache === 'no-store' ? untilAborted(init.signal) : Promise.resolve(res(200, 'PAGE')),
             )
             const fetcher = await getWwwHtmlFetcher()
             const page = fetcher.fetchHtml(FEED)

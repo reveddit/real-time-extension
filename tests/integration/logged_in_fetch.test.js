@@ -4,15 +4,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 import { fetchJsonLoggedIn, WWW_FETCH_TIMEOUT_MS, _loggedInFetchState } from '../../src/src/logged-in-fetch'
+import { untilAborted } from '../mocks/responses.js'
 
 const FAILED = { ok: false, status: 0, blocked: false, refused: false }
 const url = 'https://www.reddit.com/api/info.json?id=t1_c1'
 const answer = json => ({ ok: true, status: 200, headers: new Headers(), json })
-// Like a real fetch, what's pending fails when the request is aborted
-const untilAborted = signal =>
-    new Promise((_, reject) => {
-        signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
-    })
 
 beforeEach(() => {
     vi.useFakeTimers()

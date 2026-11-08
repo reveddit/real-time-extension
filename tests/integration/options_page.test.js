@@ -1,27 +1,17 @@
 // The options page as a person sees it: the real options.tsx over a fake DOM.
 
 import { describe, it, expect, vi } from 'vitest'
-import { parseHTML } from 'linkedom'
+import { openPage } from '../mocks/extension-page.js'
 
 const FIELD = 'monitor quarantined content'
 const NOTE = 'may appear to cause an occasional logout'
 
 const open = async (stored, local) => {
-    vi.resetModules()
-    const { document, window } = parseHTML('<html><head></head><body><div id="root"></div></body></html>')
-    window.close = vi.fn()
-    // What react and emotion look for when they load
-    document.oninput = null
-    vi.stubGlobal('document', document)
-    vi.stubGlobal('window', window)
-    vi.stubGlobal('HTMLElement', window.HTMLElement)
-    vi.stubGlobal('navigator', { userAgent: '' })
-    // Fresh modules, so chrome and browser share the storage the page will read
-    await import('../mocks/chrome-api.js')
-    const { __resetStorage, __getSyncStorage } = await import('../mocks/webextension-polyfill.js')
-    __resetStorage({ options: stored }, local)
-    chrome.storage.onChanged = { addListener() {}, removeListener() {} }
-    await import('../../src/src/options.tsx')
+    const { document, window, __getSyncStorage } = await openPage(
+        () => import('../../src/src/options.tsx'),
+        { options: stored },
+        local,
+    )
     const text = () => document.body.textContent
     await vi.waitFor(() => expect(text()).toContain('Polling'))
     const type = (input, value) => {

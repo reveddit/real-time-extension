@@ -8,6 +8,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
+import { json } from '../mocks/responses.js'
 
 import { lookupItemsByID } from '../../src/src/requests'
 import { isRemovedItem } from '../../src/src/common'
@@ -29,7 +30,7 @@ describe("followed items in a moderator's view", () => {
             child('t3_modrm2', { removed: true, banned_by: 'a_mod', is_robot_indexable: true }),
             child('t1_live11', { removed: false, spam: false, banned_by: null, approved_by: 'a_mod' }),
         ]
-        globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: { children } }) }))
+        globalThis.fetch = vi.fn(async () => json(200, { data: { children } }))
         const result = await lookupItemsByID(
             children.map(c => c.data.name),
             'none',
@@ -54,7 +55,7 @@ describe('the first check of an item just followed', () => {
         const options = { removal_status: { track: true }, lock_status: { track: true } }
         __resetStorage({ options, user_subscriptions: {}, other_subscriptions: { t1_liveit: { t: 1 } } })
         const children = [child('t1_liveit', { removed: false, link_id: 't3_abc' })]
-        globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: { children } }) }))
+        globalThis.fetch = vi.fn(async () => json(200, { data: { children } }))
         await setCurrentStateForId('t1_liveit', 'https://www.reddit.com/r/x/comments/abc/_/liveit/')
         expect(__getLocalStorage().items_other.t1_liveit.t).toBe('still readable')
         expect(__getSyncStorage()[getObjectNamesForThing('other', false).approved].t1_liveit).toBeDefined()

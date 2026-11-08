@@ -47,7 +47,7 @@ import {
     PROFILE_PUBLICLY_EMPTY,
 } from '../../src/src/lookup-status'
 import { checkForChanges } from '../../src/src/monitoring'
-import { json } from '../mocks/responses.js'
+import { json, untilAborted } from '../mocks/responses.js'
 import { cookie, jar, cookieKey as key, fill, cookiesApi } from '../mocks/cookies.js'
 
 const TOKEN = 'ab'.repeat(16)
@@ -530,14 +530,10 @@ describe('checking the user’s items through the second account', () => {
         expect(byName.t1_live).toMatchObject({ author: 'alice', body: 'hi', _public_view: true })
         expect(byName.t1_gone).toMatchObject({ author: '[deleted]', body: '[removed]', is_robot_indexable: false })
         expect(byName.t1_hidden).toMatchObject({ author: 'alice', is_robot_indexable: true })
-        // verdicts are cached: the next lookup reads no thread, once the removal
-        // is recorded, and only comments are asked about, so the posts listing
-        // isn't walked
+        // verdicts are cached: the next lookup reads no thread, and only comments
+        // are asked about, so the posts listing isn't walked
         globalThis.fetch.mockClear()
-        await lookup(['t1_live', 't1_gone', 't1_hidden'], {
-            ...meta(['t1_live', 't1_gone', 't1_hidden']),
-            t1_gone: { link_id: 't3_post1', created_utc: 1, known_removed: true },
-        })
+        await lookup(['t1_live', 't1_gone', 't1_hidden'], meta(['t1_live', 't1_gone', 't1_hidden']))
         expect(globalThis.fetch.mock.calls.map(c => new URL(c[0]).pathname)).toEqual(['/user/alice/comments.json'])
     })
 
@@ -856,46 +852,91 @@ describe('checking the user’s items through the second account', () => {
         expect(globalThis.fetch.mock.calls.filter(c => c[0].includes('/_/aaa.json'))).toHaveLength(0)
     })
 
-    describe('a removal monitoring has not recorded yet', () => {
-        const threadReads = () => globalThis.fetch.mock.calls.filter(c => c[0].includes('/_/'))
-        const setUp = threadAnswer => {
+    describe('a removal monitoring is counting', () => {
+        const threadReads = () =>
+            globalThis.fetch.mock.calls.filter(c => new URL(c[0]).pathname.startsWith('/comments/'))
+        // As monitoring marks an item whose removal it's counting and can still record
+        const counting = ids => Object.fromEntries(ids.map(id => [id, { ...meta([id])[id], confirming: true }]))
+        const YOUNG = { name: 't3_young', author: 'alice', title: 'hi' }
+        const young = () => ({ t3_young: { created_utc: Math.floor(Date.now() / 1000) - 3600, confirming: true } })
+        const setUp = (threadAnswer, posts = []) => {
             connect()
             __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
             answer([
-                ['/user/alice/', listing([])],
-                ['/_/', threadAnswer],
+                ['/user/alice/comments.json', listing([])],
+                ['/user/alice/submitted.json', listing(posts)],
+                ['/comments/', threadAnswer],
             ])
         }
+        const cachedRemoved = ids => {
+            __getLocalStorage().viewer_item_verdicts = Object.fromEntries(
+                ids.map(id => [id, { v: 'removed', t: Date.now() }]),
+            )
+        }
 
-        it('is read on its thread each cycle, so one read cannot fill the confirmation count', async () => {
-            setUp(thread(null))
-            const [first] = await lookup(['t1_gone'], meta(['t1_gone']))
-            expect(first.data).toMatchObject({ body: '[removed]' })
+        it('is read on its thread each cycle, so one read cannot fill the count', async () => {
             setUp(thread(comment('t1_gone')))
-            const [next] = await lookup(['t1_gone'], meta(['t1_gone']))
-            expect(next.data).toMatchObject({ author: 'alice', is_robot_indexable: true })
+            cachedRemoved(['t1_gone'])
+            const [result] = await lookup(['t1_gone'], counting(['t1_gone']))
+            expect(threadReads()).toHaveLength(1)
+            expect(result.data).toMatchObject({ author: 'alice', is_robot_indexable: true })
         })
 
-        it('goes back to one read per time to live if it never is, as with removal tracking off', async () => {
+        it("is reused when monitoring isn't counting it: recorded already, or one it can't record", async () => {
+            setUp(thread(comment('t1_gone')))
+            cachedRemoved(['t1_gone'])
+            const [result] = await lookup(['t1_gone'], meta(['t1_gone']))
+            expect(threadReads()).toHaveLength(0)
+            expect(result.data).toMatchObject({ body: '[removed]' })
+        })
+
+        it('a listed young post whose read fails keeps its cached verdict and gets no result, so the count neither grows nor starts over', async () => {
+            for (const failure of [json(500, {}), BLOCK]) {
+                setUp(failure, [YOUNG])
+                cachedRemoved(['t3_young'])
+                const log = vi.spyOn(console, 'log')
+                expect(await lookup(['t3_young'], young())).toEqual([])
+                expect(__getLocalStorage().viewer_item_verdicts.t3_young).toMatchObject({ v: 'removed' })
+                expect(log.mock.calls.some(c => String(c[0]).includes('(0 live, 0 removed, 1 unknown)'))).toBe(true)
+                log.mockRestore()
+            }
+        })
+
+        it('after a read that decides nothing, is read again no sooner than an unknown one, though its verdict has expired', async () => {
+            vi.useFakeTimers({ toFake: ['Date'] })
+            setUp(json(500, {}))
+            __getLocalStorage().viewer_item_verdicts = { t1_gone: { v: 'removed', t: Date.now() - 3 * 3600 * 1000 } }
+            expect(await lookup(['t1_gone'], counting(['t1_gone']))).toEqual([])
+            vi.setSystemTime(Date.now() + 30 * 60 * 1000 - 1)
+            expect(await lookup(['t1_gone'], counting(['t1_gone']))).toEqual([])
+            expect(threadReads()).toHaveLength(1)
+            vi.setSystemTime(Date.now() + 1)
             setUp(thread(null))
-            for (let i = 0; i < 8; i++) {
-                expect(await lookup(['t1_gone'], meta(['t1_gone']))).toHaveLength(1)
-            }
-            expect(threadReads()).toHaveLength(5)
-            __getLocalStorage().viewer_item_verdicts.t1_gone.t = Date.now() - 2 * 3600 * 1000 - 1000
-            for (let i = 0; i < 3; i++) {
-                await lookup(['t1_gone'], meta(['t1_gone']))
-            }
-            expect(threadReads()).toHaveLength(6)
+            expect(await lookup(['t1_gone'], counting(['t1_gone']))).toMatchObject([{ data: { body: '[removed]' } }])
+            expect(threadReads()).toHaveLength(1)
+        })
+
+        it("nor does one the cycle's reads don't reach", async () => {
+            const ahead = Array.from({ length: 10 }, (_, i) => `t1_c${i}`)
+            setUp(url => thread(comment(`t1_${url.match(/\/_\/(\w+)\.json/)[1]}`)), [YOUNG])
+            cachedRemoved(['t3_young'])
+            const results = await lookup([...ahead, 't3_young'], { ...meta(ahead), ...young() })
+            expect(threadReads()).toHaveLength(10)
+            expect(results.map(r => r.data.name)).toEqual(ahead)
+        })
+
+        it('an old listed one is still live from the listing alone, which decides for old posts', async () => {
+            setUp(thread(null), [{ name: 't3_old', author: 'alice', title: 'hi' }])
+            const results = await lookup(['t3_old'], { t3_old: { created_utc: 1, confirming: true } })
+            expect(threadReads()).toHaveLength(0)
+            expect(results.map(r => r.data)).toMatchObject([{ name: 't3_old', is_robot_indexable: true }])
         })
 
         it('stays inside the reads of a cycle', async () => {
             setUp(thread(null))
             const ids = Array.from({ length: 12 }, (_, i) => `t1_c${i}`)
-            __getLocalStorage().viewer_item_verdicts = Object.fromEntries(
-                ids.map(id => [id, { v: 'removed', t: Date.now() }]),
-            )
-            await lookup(ids, meta(ids))
+            cachedRemoved(ids)
+            await lookup(ids, counting(ids))
             expect(threadReads()).toHaveLength(10)
         })
     })
@@ -1137,10 +1178,7 @@ describe('checking the user’s items through the second account', () => {
                 ok: true,
                 status: 200,
                 headers: { get: () => 'application/json; charset=UTF-8' },
-                json: () =>
-                    new Promise((resolve, reject) =>
-                        init.signal.addEventListener('abort', () => reject(new Error('aborted'))),
-                    ),
+                json: () => untilAborted(init.signal),
             }))
             const pending = fetchJsonAsViewer('https://www.reddit.com/api/me.json', {
                 name: 'bob',

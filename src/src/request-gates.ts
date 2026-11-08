@@ -45,6 +45,10 @@ export const readLocal = async <T>(key: string, fallback: T): Promise<T> => {
     }
 }
 
+// A cache entry still within its time to live; a time in the future (a clock
+// set back) counts as expired
+export const isFresh = (t: number, ttl: number, now: number): boolean => now - t >= 0 && now - t < ttl
+
 // Whether a mechanism is switched off: the dev override in local storage wins,
 // then the remote option, then the build default (also the answer if storage
 // fails)

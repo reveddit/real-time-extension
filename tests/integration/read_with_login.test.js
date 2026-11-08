@@ -6,8 +6,14 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
+import browserMock, {
+    __resetStorage,
+    __getLocalStorage,
+    __getSyncStorage,
+    makeStorageArea,
+} from '../mocks/webextension-polyfill.js'
 import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
+import { untilAborted } from '../mocks/responses.js'
 
 import { readWithLogin, _scanTurn } from '../../src/src/requests'
 import { RateLimiter, ScanReads } from '../../src/src/scan-reads'
@@ -92,12 +98,7 @@ describe('a read for a scan', () => {
 
     it('gets no answer past its deadline, so a stalled feed ends', async () => {
         vi.useFakeTimers()
-        fetchMock.mockImplementation(
-            (url, { signal }) =>
-                new Promise((resolve, reject) => {
-                    signal.addEventListener('abort', () => reject(new Error('aborted')))
-                }),
-        )
+        fetchMock.mockImplementation((url, { signal }) => untilAborted(signal))
         const reading = readWithLogin(PATH).catch(err => err.message)
         await vi.advanceTimersByTimeAsync(21000)
         expect(await reading).toBe('aborted')
@@ -238,6 +239,39 @@ describe('a page waiting a long gap for its turn', () => {
         await vi.advanceTimersByTimeAsync(60000)
         expect(asks).toHaveLength(2)
         expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+})
+
+// The tests above have no session storage, as Chrome 101 and Firefox before 115
+describe('a worker that stops between reads, where the browser has session storage', () => {
+    beforeEach(() => {
+        vi.useFakeTimers()
+        const session = {}
+        browserMock.storage.session = makeStorageArea(() => session)
+    })
+    afterEach(() => {
+        delete browserMock.storage.session
+    })
+
+    it('holds the next read to the pace all the same', async () => {
+        __getSyncStorage().options = { scan_seconds_between_reads: 60 }
+        expect(await readWithLogin(PATH)).toMatchObject({ ok: true })
+        await vi.advanceTimersByTimeAsync(40000)
+        // What a new worker remembers
+        _scanTurn.next = 0
+        expect(await readWithLogin(PATH)).toEqual({ ok: false, status: 0, waitMs: 20000 })
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('gives two asks at once one turn, and keeps it with one write', async () => {
+        const set = vi.spyOn(browserMock.storage.session, 'set')
+        const get = vi.spyOn(browserMock.storage.session, 'get')
+        const [first, second] = await Promise.all([readWithLogin(PATH), readWithLogin(PATH)])
+        expect(first).toMatchObject({ ok: true })
+        expect(second).toEqual({ ok: false, status: 0, waitMs: 3000 })
+        expect(await readWithLogin(PATH)).toMatchObject({ waitMs: 3000 })
+        expect(set).toHaveBeenCalledTimes(1)
+        expect(get).toHaveBeenCalledTimes(2)
     })
 })
 

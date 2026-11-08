@@ -578,6 +578,12 @@ describe('addLocalStorageItems', () => {
         })
     })
 
+    it("doesn't write the whole object again with nothing to add", async () => {
+        const set = vi.spyOn(browserMock.storage.local, 'set')
+        await addLocalStorageItems({}, 'other', false)
+        expect(set).not.toHaveBeenCalled()
+    })
+
     it('keeps the 1,000 last seen when it goes over', async () => {
         const items = {}
         for (let i = 0; i < 1000; i++) items[`t1_${i}`] = { t: 'x', o: 10 + i }

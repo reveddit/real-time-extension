@@ -1,7 +1,8 @@
 // Paths in checkForChanges_thing_byId that no test pinned: the retry of a
 // pending notification on a cycle with no new changes, the log line left when
 // the browser refuses the cycle's sync save (issue #15), and a save that follows
-// a lookup long enough for the user to have acted.
+// a lookup long enough for the user, a reveddit page or another check to have
+// saved.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
@@ -10,8 +11,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
 import { _checkForChanges_thing_byId } from '../../src/src/monitoring'
-import { getObjectNamesForThing, markThingAsSeen, unsubscribeId } from '../../src/src/storage'
-import { getDiagTiers, clearDiagLog } from '../../src/src/diaglog'
+import {
+    getObjectNamesForThing,
+    markThingAsSeen,
+    markIDsAsSeenIfSubscribed,
+    unsubscribeId,
+} from '../../src/src/storage'
+import { clearDiagLog } from '../../src/src/diaglog'
+import { getDiagEntries } from '../mocks/diag-entries.js'
 
 const USER = 'someuser'
 const keys = getObjectNamesForThing(USER, true)
@@ -153,31 +160,15 @@ describe('retry of a pending notification', () => {
 })
 
 describe('a refused sync save', () => {
-    let realSet
     beforeEach(async () => {
         await clearDiagLog()
         seed()
-        realSet = chrome.storage.sync.set
-    })
-    afterEach(() => {
-        chrome.storage.sync.set = realSet
     })
 
-    const diagLines = async () => {
-        const { summary, details } = await getDiagTiers()
-        return [...summary, ...details].map(entry => entry.m)
-    }
+    const diagLines = async () => (await getDiagEntries()).map(entry => entry.m)
 
     it('logs the message and each list with its size, then goes on to the badge and local items', async () => {
-        chrome.storage.sync.set = (items, callback) => {
-            chrome.runtime.lastError = { message: 'QUOTA_BYTES_PER_ITEM quota exceeded' }
-            try {
-                if (callback) callback()
-            } finally {
-                chrome.runtime.lastError = null
-            }
-            return Promise.resolve()
-        }
+        vi.spyOn(browserMock.storage.sync, 'set').mockRejectedValue(new Error('QUOTA_BYTES_PER_ITEM quota exceeded'))
         await quietCycle()
         const refused = (await diagLines()).filter(line => line.includes('sync save refused'))
         expect(refused).toHaveLength(1)
@@ -198,29 +189,32 @@ describe('a refused sync save', () => {
 describe('the end of a check', () => {
     it('waits for the sync save and then the local copy', async () => {
         seed()
-        const realSet = chrome.storage.sync.set
-        chrome.storage.sync.set = (items, callback) => {
-            setTimeout(() => realSet(items, callback), 1)
-        }
-        try {
-            await _checkForChanges_thing_byId([ID], USER, true, null, structuredClone(__getSyncStorage()), 2, { [ID]: item }, [
-                { data: { ...item } },
-            ])
-        } finally {
-            chrome.storage.sync.set = realSet
-        }
+        const realSet = browserMock.storage.sync.set
+        vi.spyOn(browserMock.storage.sync, 'set').mockImplementation(
+            items => new Promise(resolve => setTimeout(() => resolve(realSet(items)), 1)),
+        )
+        await _checkForChanges_thing_byId(
+            [ID],
+            USER,
+            true,
+            null,
+            structuredClone(__getSyncStorage()),
+            2,
+            { [ID]: item },
+            [{ data: { ...item } }],
+        )
         expect(__getSyncStorage()[keys.approved][ID]).toBeDefined()
         expect(__getLocalStorage()['items_u_' + USER]).toMatchObject({ [ID]: { t: 'my comment' } })
     })
 })
 
-describe('a save after the user acted during the lookup', () => {
+describe('a save after storage changed during the lookup', () => {
     const other = getObjectNamesForThing('other', false)
     const followed = { ...item, name: 't1_followed', author: 'someone' }
     const SEEN = { c: NOW - 600, u: false }
     const UNSEEN = { c: NOW - 600, u: true }
 
-    // A check whose storage was read before the user acted, as every check's is
+    // A check whose storage was read before the change, as every check's is
     const checkFrom = (copy, thing, isUser, view, itemLookup = {}) =>
         _checkForChanges_thing_byId([view.name], thing, isUser, null, copy, 2, itemLookup, [{ data: { ...view } }])
     const checkOfUser = copy => checkFrom(copy, USER, true, item, { [ID]: item })
@@ -304,6 +298,64 @@ describe('a save after the user acted during the lookup', () => {
         await checkOfUser(structuredClone(sync))
         expect(sync[keys.approved][ID]).toBeDefined()
         expect(sync[keys.unlocked][ID]).toBeDefined()
+    })
+
+    it('keeps what a reveddit page marked seen meanwhile, so finding it removed later tells nothing', async () => {
+        const sync = __getSyncStorage()
+        const copy = structuredClone(sync)
+        await new Promise(resolve => markIDsAsSeenIfSubscribed(USER, true, { t1_gone: NOW - 600 }, {}, {}, {}, resolve))
+        await checkOfUser(copy)
+        expect(sync[keys.removed].t1_gone).toEqual({ c: NOW - 600, u: false })
+        const gone = { ...item, name: 't1_gone', author: '[deleted]', body: '[removed]' }
+        await checkFrom(structuredClone(sync), USER, true, gone, { t1_gone: gone })
+        expect(sync[keys.changes]).toEqual([])
+        expect(sync[keys.removed].t1_gone.u).toBe(false)
+    })
+
+    it('keeps what another check saved meanwhile and the change it told of, in the copy the cycle goes on with too', async () => {
+        const sync = __getSyncStorage()
+        sync.other_subscriptions = { [followed.name]: { t: 1 } }
+        Object.assign(sync, {
+            [other.removed]: {},
+            [other.approved]: {},
+            [other.locked]: {},
+            [other.unlocked]: {},
+            [other.changes]: [],
+        })
+        const copy = structuredClone(sync)
+        // Followed while this check's lookup ran, and found removed by its own first check
+        const justFollowed = { ...followed, name: 't1_justfollowed', author: '[deleted]', body: '[removed]' }
+        sync.other_subscriptions[justFollowed.name] = { t: 2 }
+        await checkFrom(structuredClone(sync), 'other', false, justFollowed)
+        await checkFrom(copy, 'other', false, followed)
+        expect(sync[other.removed][justFollowed.name]).toMatchObject({ u: true })
+        expect(sync[other.approved][followed.name]).toBeDefined()
+        expect(sync[other.changes].map(change => change.i)).toEqual([justFollowed.name])
+        // The cycle's later checks size their saves by it
+        expect(copy[other.removed]).toEqual(sync[other.removed])
+        expect(copy[other.changes]).toEqual(sync[other.changes])
+    })
+
+    it('keeps out an item followed and unfollowed during its first check, and tells nothing of it', async () => {
+        const sync = __getSyncStorage()
+        sync.other_subscriptions = { [followed.name]: { t: 1 } }
+        Object.assign(sync, {
+            [other.removed]: {},
+            [other.approved]: {},
+            [other.locked]: {},
+            [other.unlocked]: {},
+            [other.changes]: [],
+        })
+        const copy = structuredClone(sync)
+        await unfollow()
+        const notify = vi.spyOn(chrome.notifications, 'create')
+        await checkFrom(copy, 'other', false, { ...followed, author: '[deleted]', body: '[removed]' })
+        for (const list of [other.removed, other.approved, other.locked, other.unlocked]) {
+            expect(sync[list]).toEqual({})
+        }
+        expect(sync[other.changes]).toEqual([])
+        expect(notify).not.toHaveBeenCalled()
+        expect(__getLocalStorage().items_other).toBeUndefined()
     })
 
     it('saves its copy as it stands when the lists can no longer be read', async () => {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, ReactNode } from 'react'
 import styled from '@emotion/styled'
 import { css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification } from './common'
@@ -17,6 +17,8 @@ import {
 import { setCurrentStateForId } from './monitoring'
 import { fetchNews, getUnreadMessages, getPendingUpdateVersion, markNewsRead, NewsMessage } from './news'
 import { VIEWER_KEY } from './viewer'
+import { WWW_DETECT_FAILURES_KEY } from './lookup-status'
+import { canTabAnswer } from './www-fetcher'
 import { UnseenRow, ToggleSwitch, CurrentUserSection } from './popup-rows'
 import { NewsBanner, UpdateNotice, ReleaseNotice, ErrorNotice } from './popup-notices'
 import { reportProblem } from './popup-report'
@@ -57,7 +59,13 @@ const SubsCard = styled(Card)`
   margin: ${tokens.space.sm} 0;
 `
 
-const ThemeToggleBtn = styled.button`
+const HeaderButtons = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 2px;
+`
+
+const HeaderBtn = styled.button`
   background: none;
   border: none;
   color: var(--text-secondary);
@@ -69,7 +77,42 @@ const ThemeToggleBtn = styled.button`
   &:hover {
     color: var(--text-primary);
   }
+  & svg {
+    display: block;
+  }
 `
+
+// Drawn in the button's text color, so they follow the theme and the hover
+const Icon = ({ children }: { children: ReactNode }) => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    {children}
+  </svg>
+)
+
+const ClockIcon = () => (
+  <Icon>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 2" />
+  </Icon>
+)
+
+// Eight teeth around a hole
+const GearIcon = () => (
+  <Icon>
+    <path d="M10.2 4.4L10.5 1.6A10.5 10.5 0 0 1 13.5 1.6L13.8 4.4A7.8 7.8 0 0 1 16.1 5.4L18.3 3.6A10.5 10.5 0 0 1 20.4 5.7L18.6 7.9A7.8 7.8 0 0 1 19.6 10.2L22.4 10.5A10.5 10.5 0 0 1 22.4 13.5L19.6 13.8A7.8 7.8 0 0 1 18.6 16.1L20.4 18.3A10.5 10.5 0 0 1 18.3 20.4L16.1 18.6A7.8 7.8 0 0 1 13.8 19.6L13.5 22.4A10.5 10.5 0 0 1 10.5 22.4L10.2 19.6A7.8 7.8 0 0 1 7.9 18.6L5.7 20.4A10.5 10.5 0 0 1 3.6 18.3L5.4 16.1A7.8 7.8 0 0 1 4.4 13.8L1.6 13.5A10.5 10.5 0 0 1 1.6 10.5L4.4 10.2A7.8 7.8 0 0 1 5.4 7.9L3.6 5.7A10.5 10.5 0 0 1 5.7 3.6L7.9 5.4A7.8 7.8 0 0 1 10.2 4.4Z" />
+    <circle cx="12" cy="12" r="3" />
+  </Icon>
+)
 
 const SubsCardFooter = styled.div`
   border-top: 1px solid var(--border);
@@ -102,29 +145,6 @@ const MarkSeenLink = styled.a<{ $enabled: boolean }>`
         `}
 `
 
-const PopupActions = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  margin-top: ${tokens.space.sm};
-`
-
-const ActionRowBtn = styled.button`
-  padding: 7px 10px;
-  background: var(--accent);
-  color: var(--text-on-accent);
-  border: 0;
-  border-radius: ${tokens.radius.md};
-  font-size: 0.88em;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s ease;
-  &:hover {
-    background: var(--accent-hover);
-  }
-`
-
 const FooterRow = styled.div`
   display: flex;
   justify-content: space-between;
@@ -144,6 +164,8 @@ const FooterLink = styled.a`
 
 function Popup() {
   const [errorStatus, setErrorStatus] = useState<string | null>(null)
+  const [wwwFailures, setWwwFailures] = useState(0)
+  const [wwwTabOpen, setWwwTabOpen] = useState(false)
   // The connected second account (viewer.ts), if any
   const [viewerName, setViewerName] = useState('')
   const [userData, setUserData] = useState<{
@@ -200,9 +222,10 @@ function Popup() {
     setConnectResult(null)
     setConnectMessage(null)
 
-    chrome.storage.local.get(['error_status', VIEWER_KEY], result => {
+    chrome.storage.local.get(['error_status', VIEWER_KEY, WWW_DETECT_FAILURES_KEY], result => {
       setErrorStatus(result?.error_status || null)
       setViewerName(String(result?.[VIEWER_KEY]?.name || ''))
+      setWwwFailures(Number(result?.[WWW_DETECT_FAILURES_KEY]) || 0)
     })
 
     getSubscribedUsers_withSeenAndUnseenIDs(async (users, storage) => {
@@ -215,14 +238,16 @@ function Popup() {
       })
 
       chrome.tabs.query({ url: ['*://*.reddit.com/*'] }, tabs => {
-        const supported = tabs.filter(tab => {
+        const hostOf = (tab: chrome.tabs.Tab) => {
           try {
-            const h = new URL(tab.url!).hostname
-            return h === 'www.reddit.com' || h === 'old.reddit.com'
+            return new URL(tab.url!).hostname
           } catch {
-            return false
+            return ''
           }
-        })
+        }
+        const supported = tabs.filter(tab => hostOf(tab) === 'www.reddit.com' || hostOf(tab) === 'old.reddit.com')
+        // Only a tab www-fetcher.ts can read through counts
+        setWwwTabOpen(tabs.some(tab => hostOf(tab) === 'www.reddit.com' && canTabAnswer(tab)))
         if (tabs.length > 0 && supported.length === 0) {
           chrome.storage.local.get(['subdomain_warning_shown'], result => {
             if (!result.subdomain_warning_shown) {
@@ -448,9 +473,32 @@ function Popup() {
     <PopupContainer>
       <TopRow>
         <Brand>reveddit real-time</Brand>
-        <ThemeToggleBtn onClick={handleToggleTheme} aria-label="Toggle theme">
-          {theme === 'dark' ? '\u{1F319}' : '\u{2600}\u{FE0F}'}
-        </ThemeToggleBtn>
+        <HeaderButtons>
+          <HeaderBtn
+            title="History"
+            aria-label="History"
+            onClick={() => {
+              chrome.tabs.create({ url: historyUrl })
+              window.close()
+            }}
+          >
+            <ClockIcon />
+          </HeaderBtn>
+          <HeaderBtn
+            title="Options"
+            aria-label="Options"
+            onClick={() => {
+              goToOptions()
+              // Firefox leaves the popup open over the options page
+              window.close()
+            }}
+          >
+            <GearIcon />
+          </HeaderBtn>
+          <HeaderBtn onClick={handleToggleTheme} aria-label="Toggle theme">
+            {theme === 'dark' ? '\u{1F319}' : '\u{2600}\u{FE0F}'}
+          </HeaderBtn>
+        </HeaderButtons>
       </TopRow>
       {diagStatus && <StatusLine>{diagStatus}</StatusLine>}
 
@@ -468,6 +516,8 @@ function Popup() {
             errorStatus={errorStatus}
             viewerName={viewerName}
             currentUser={currentUser}
+            wwwTabOpen={wwwTabOpen}
+            wwwFailures={wwwFailures}
             reconnectSuccess={reconnectSuccess}
             reconnecting={reconnecting}
             onReconnect={handleReconnect}
@@ -535,18 +585,6 @@ function Popup() {
           </MarkSeenLink>
         </SubsCardFooter>
       </SubsCard>
-
-      <PopupActions>
-        <ActionRowBtn
-          onClick={() => {
-            chrome.tabs.create({ url: historyUrl })
-            window.close()
-          }}
-        >
-          History
-        </ActionRowBtn>
-        <ActionRowBtn onClick={() => goToOptions()}>Options</ActionRowBtn>
-      </PopupActions>
 
       <FooterRow>
         <FooterLink

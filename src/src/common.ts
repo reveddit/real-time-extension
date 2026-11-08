@@ -372,20 +372,14 @@ export function setAlarm(periodInMinutes: number) {
     chrome.alarms.create(ALARM_NAME, { delayInMinutes: 1, periodInMinutes: periodInMinutes })
 }
 
+// Leaves closing the popup to the popup: a reddit page's link runs this in the
+// background, and Firefox's background page has a window of its own
 export function goToOptions() {
     const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
-    // A content script's link comes here through a service worker, which has no window
-    const closePopup = () => {
-        if (typeof window !== 'undefined') window.close()
-    }
     if (isAndroid) {
         chrome.tabs.create({ url: chrome.runtime.getURL('src/options.html'), active: true })
-        closePopup()
-    } else if (chrome.runtime.openOptionsPage) {
-        chrome.runtime.openOptionsPage()
-        closePopup() //closes the popup which persists in FF
     } else {
-        window.open(chrome.runtime.getURL('/src/options.html'))
+        chrome.runtime.openOptionsPage()
     }
 }
 

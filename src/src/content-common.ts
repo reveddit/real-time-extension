@@ -110,7 +110,9 @@ const subscribeId_changeText = (id: string, element: HTMLElement, commentBody = 
         if (commentBody) {
             getLocalStorageItems('other', false).then((storedItems: any) => {
                 const item = storedItems[id]
-                if (item) {
+                // Only in place of text reddit no longer gives: what it gave
+                // keeps its markdown, which the page's text has lost
+                if (item && ['[removed]', '[deleted]'].includes(item.t)) {
                     const itemObj = new LocalStorageItem({ object: item })
                     itemObj.setText(commentBody)
                     storedItems[id] = itemObj

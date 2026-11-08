@@ -4,7 +4,7 @@ import { setWarningBadge } from './common'
 import { getPublicLiveKey } from './storage'
 import { VIEWER_FAILURES_KEY, ViewerAccount, getViewer, isSignedInViewer } from './viewer'
 import { isLoginWalled } from './www-fetcher'
-import { readLocal } from './request-gates'
+import { readLocal, isFresh } from './request-gates'
 import { fullnameValue } from './parse_html/new'
 
 export const www_reddit = 'https://www.reddit.com/'
@@ -37,6 +37,9 @@ export interface AuthItemMeta {
     // post, removed a day earlier, still listed), so feed presence must never
     // flip a recorded removal back to approved without a page verdict.
     known_removed?: boolean
+    // Monitoring is counting this item's removal and can still record it, so
+    // each cycle until then needs a fresh page read, not a cached verdict
+    confirming?: boolean
     // Who the author's own view says wrote it: whoever the browser is signed
     // in as, even when login detection fell back to the cached username
     author?: string
@@ -82,7 +85,7 @@ export const publicViewUncheckedReason = (id: string, meta: AuthItemMeta | undef
 
 export const PROFILE_PUBLICLY_EMPTY = 'profile_publicly_empty'
 
-const WWW_DETECT_FAILURES_KEY = 'www_detect_consecutive_failures'
+export const WWW_DETECT_FAILURES_KEY = 'www_detect_consecutive_failures'
 
 // Feed presence is not a liveness signal for POSTS: held ("awaiting moderator
 // approval") and spam-removed posts linger in the author's public feed for a
@@ -94,10 +97,6 @@ const WWW_DETECT_FAILURES_KEY = 'www_detect_consecutive_failures'
 // in place of the post) is paced like the feed-absent path's, and no cycle
 // fetches more than POST_VERIFY_MAX_PER_CYCLE pages.
 const POST_FEED_GRACE_SECONDS = 48 * 3600
-
-// A cache entry still within its time to live; a time in the future (a clock
-// set back) counts as expired
-export const isFresh = (t: number, ttl: number, now: number): boolean => now - t >= 0 && now - t < ttl
 
 export const ABSENT_VERDICT_LIVE_TTL_MS = 6 * 3600 * 1000
 
@@ -145,7 +144,7 @@ const absentVerifyWarning = async () =>
 
 // Streaks of failures kept in storage. One failure is noise; a warning comes
 // after STREAK_WARN_AT in a row.
-const STREAK_WARN_AT = 5
+export const STREAK_WARN_AT = 5
 
 export const isStreakLong = async (key: string): Promise<boolean> => {
     return Number(await readLocal(key, 0)) >= STREAK_WARN_AT
@@ -241,11 +240,9 @@ export const notePublicProfileUnavailable = async (username: string | null) => {
 
 export const isPublicProfileUnavailable = async (username: string): Promise<boolean> => {
     const stored: any = await readLocal(PUBLIC_PROFILE_UNAVAILABLE_KEY, null)
-    const age = Date.now() - Number(stored?.t)
     return (
         String(stored?.user || '').toLowerCase() === username.toLowerCase() &&
-        age >= 0 &&
-        age < PUBLIC_PROFILE_UNAVAILABLE_MAX_AGE_MS
+        isFresh(Number(stored?.t), PUBLIC_PROFILE_UNAVAILABLE_MAX_AGE_MS, Date.now())
     )
 }
 

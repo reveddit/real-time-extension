@@ -1,6 +1,7 @@
 // What the content script writes to a page's own localStorage. The website reads
-// it, and reddit.com can read what's written to its pages, so nothing goes there:
-// it shouldn't learn the extension is installed.
+// it, and reddit.com can read what's written to its pages, so nothing goes there,
+// and what older versions left there goes: it shouldn't learn the extension is
+// installed.
 
 import { describe, it, expect, vi } from 'vitest'
 
@@ -33,6 +34,17 @@ describe('a page the content script runs on', () => {
     it.each([[REDDIT], [OLD_REDDIT]])('leaves %s with nothing in its storage', async href => {
         expect([...(await open(href, {})).keys()]).toEqual([])
         expect([...(await open(href, { alice: true })).keys()]).toEqual([])
+    })
+
+    it.each([[REDDIT], [OLD_REDDIT]])('clears from %s what older versions left there, and only that', async href => {
+        const left = {
+            hasSeenLanguageModal: 'true',
+            extensionSaysNoSubscriptions: 'true',
+            hasNotifierExtension: 'true',
+            notifierExtensionVersion: '0.0.5.20',
+            reddit_own: 'kept',
+        }
+        expect(Object.fromEntries(await open(href, { alice: true }, left))).toEqual({ reddit_own: 'kept' })
     })
 
     it('tells the website the extension is there, and whether it has anyone to follow', async () => {

@@ -15,7 +15,6 @@ import { isLoginWallMessage } from './login-wall-config'
 import { getRemoteMechanism, MECHANISM_SCAN_FEEDS } from './news'
 import { fetchForScan, WWW_FETCH_TIMEOUT_MS, withDeadline } from './logged-in-fetch'
 import {
-    isFresh,
     PROFILE_CONTROL_USER,
     AuthItemsMeta,
     recordWwwDetectOutcome,
@@ -34,7 +33,7 @@ import {
     PROFILE_PUBLICLY_EMPTY,
 } from './lookup-status'
 import { getWwwHtmlFetcher } from './www-fetcher'
-import { noteRateLimited, isRateLimitedNow, RECENT_RATE_LIMIT_WINDOW_MS, readLocal } from './request-gates'
+import { noteRateLimited, isRateLimitedNow, RECENT_RATE_LIMIT_WINDOW_MS, readLocal, isFresh } from './request-gates'
 import {
     verifyFeedPresentPosts,
     isAbsentVerificationDisabled,
@@ -206,12 +205,14 @@ export const lookupItemsByID_fromPublicProfile = async (
                     // The post's own page shows it held/removed even though it
                     // lingers in the feed and the auth view hasn't caught up.
                     results.push({ data: { ...publicItem, is_robot_indexable: false, ...carried } })
-                } else if (meta.known_removed && verdict !== 'live') {
-                    // Recorded as removed, still lingering in the feed, and no
-                    // page verdict landed this cycle (no tab, challenge, shell).
+                } else if ((meta.known_removed || (meta.confirming && isYoungPost(meta))) && verdict !== 'live') {
+                    // Recorded as removed, or young with its removal being
+                    // counted, still lingering in the feed, and no page verdict
+                    // landed this cycle (no tab, challenge, shell, paced).
                     // Omit: feed presence alone must not flip a recorded removal
-                    // back to approved on fetch luck — that oscillates. A real
-                    // re-approval flips it once a 'live' page verdict arrives.
+                    // back to approved or start a count over on fetch luck —
+                    // that oscillates. A real re-approval flips it once a 'live'
+                    // page verdict arrives.
                 } else {
                     // No removal signal from any source → live. (verdict 'live',
                     // 'unknown', or unfetched: the auth view says not-removed and
@@ -423,6 +424,10 @@ const lookupItemsByID_publicThenLegacy = (
 // is taken when a read goes out, so its spacing is between real requests.
 // Mutable for tests, like _wwwRouteTiming.
 export const _scanTurn = { next: 0 }
+// Session storage keeps the turn too, so a worker that stops between reads still
+// holds the pace. Chrome 101 and Firefox before 115 have none, and Firefox's
+// background page keeps its memory anyway.
+const SCAN_TURN_KEY = 'scan_turn_next'
 
 // 0 once the turn is taken, or how long until it comes. The pace is the user's
 // (options), and half that for a while after a 429, mirroring monitoring's own
@@ -431,11 +436,18 @@ const scanTurnIn = async (): Promise<number> => {
     const { gapMs } = await getScanSettings()
     const sinceHit = await getMsSinceLastRateLimitHit().catch(() => null)
     const gap = sinceHit !== null && sinceHit < RECENT_RATE_LIMIT_WINDOW_MS ? gapMs * 2 : gapMs
+    const session = browser.storage.session
+    if (!_scanTurn.next && session) {
+        const stored: Record<string, any> = await session.get(SCAN_TURN_KEY).catch(() => ({}))
+        // Another ask may have taken a turn while this one read
+        _scanTurn.next ||= Number(stored[SCAN_TURN_KEY]) || 0
+    }
     const now = Date.now()
     // Further off than any gap could put it, the clock went back
     const left = _scanTurn.next - now
     if (left > 0 && left <= 2000 * SCAN_SECONDS_MAX) return left
     _scanTurn.next = now + gap
+    session?.set({ [SCAN_TURN_KEY]: _scanTurn.next }).catch(() => {})
     return 0
 }
 

@@ -9,15 +9,9 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import browserMock, { __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
-import {
-    getWwwHtmlFetcher,
-    getLoginWallLine,
-    _wwwRouteTiming,
-    WWW_ROUTE_STATE_KEY,
-    LOGIN_WALL_REST_MS,
-} from '../../src/src/www-fetcher'
+import { getWwwHtmlFetcher, getLoginWallLine, WWW_ROUTE_STATE_KEY, LOGIN_WALL_REST_MS } from '../../src/src/www-fetcher'
 import { lookupItemsByID } from '../../src/src/requests'
 import { lookupWarningToKeep, LOGIN_REQUIRED } from '../../src/src/lookup-status'
 import { verifyFeedAbsentItems } from '../../src/src/page-verify'

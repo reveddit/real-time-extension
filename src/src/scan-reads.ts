@@ -24,8 +24,9 @@ export type ProgressCallback = (progress: RestoreProgress) => void
 const MAX_FAILED_READS_IN_A_ROW = 3
 // How long before a feed that used up its tries gets another, if a click asks
 const RETRY_GIVEN_UP_MS = 5 * 60 * 1000
-// The turn and the cache mode the worker learned are in its memory, which an idle 30
-// seconds ends. Asking again keeps it up, and sends nothing until the turn comes.
+// The cache mode the worker learned is in its memory, which an idle 30 seconds ends,
+// and so is the turn where the browser has no session storage. Asking again keeps it
+// up, and sends nothing until the turn comes.
 const LONGEST_WAIT_MS = 20 * 1000
 
 // --- Rate Limiter ---
@@ -273,7 +274,9 @@ export class ScanReads {
         try {
             return await fetchWithLogin(path, this.limiter)
         } catch (err: any) {
-            if (err.otherMode === undefined || this.left <= 0 || this.refusedInBothModes) throw err
+            if (err.otherMode === undefined || this.refusedInBothModes) throw err
+            // Only the click's reads ran out, so the second try is the next click's
+            if (this.left <= 0) throw Object.assign(err, { outOfReads: true })
             this.left--
             return fetchWithLogin(path, this.limiter, err.otherMode).catch(second => {
                 this.refusedInBothModes ||= Boolean(second.refused)
@@ -310,6 +313,11 @@ export class ScanReads {
                 this.pageReads.set(path, NO_FEED)
                 return undefined
             }
+            // Not tried in both modes, so not a failure: the next click reads it whole
+            if (err.outOfReads) {
+                this.unread++
+                return undefined
+            }
             if (endsScan(err)) {
                 this.unread++
                 this.failure = err
@@ -317,7 +325,8 @@ export class ScanReads {
             }
             const final = err.status === 403 && !err.refused
             this.noAnswer(path, final)
-            if (!final && ++this.failedInARow >= MAX_FAILED_READS_IN_A_ROW) this.failure = err
+            if (final) this.failedInARow = 0
+            else if (++this.failedInARow >= MAX_FAILED_READS_IN_A_ROW) this.failure = err
             return undefined
         }
     }
@@ -328,6 +337,7 @@ export const scanFailure = (err: any, otherwise: string): string => {
     if (err.busy) return 'A second account is signing in. Try again in a moment.'
     if (err.otherIdentity) return "Scans need a regular window: here they'd read as your regular windows' account."
     if (err.resting || isRateLimitError(err)) return RATE_LIMITED
+    if (err.outOfReads) return "This click's reads ran out; scan again to go on."
     if (err.refused) return 'Reddit is refusing the feeds a scan reads. Try again later.'
     return otherwise
 }

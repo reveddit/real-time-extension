@@ -183,63 +183,89 @@ describe('a comment missing from its own thread page', () => {
     })
 })
 
-describe('a removal monitoring has not recorded yet', () => {
-    const recorded = id => ({ [id]: { ...meta([id])[id], known_removed: true } })
+describe('a removal monitoring is counting', () => {
+    // As monitoring marks an item whose removal it's counting and can still record
+    const counting = ids => Object.fromEntries(ids.map(id => [id, { ...meta([id])[id], confirming: true }]))
+    const cachedRemoved = ids => {
+        __getLocalStorage()[CACHE_KEY] = Object.fromEntries(ids.map(id => [id, { v: 'removed', t: Date.now() }]))
+    }
+    const wall = async () => {
+        throw new Error('www.reddit.com request failed: 403 (refused: background:no-store 403)')
+    }
 
-    it('is read again each cycle, so one read cannot fill the confirmation count', async () => {
-        const pages = [removedPage('t1_a'), livePage('t1_a')]
-        const fetchHtml = vi.fn(async () => pages.shift())
-        expect(await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)).toEqual({ t1_a: 'removed' })
-        expect(await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)).toEqual({ t1_a: 'live' })
+    it('is read again each cycle, so one read cannot fill the count', async () => {
+        cachedRemoved(['t1_a'])
+        const fetchHtml = vi.fn(async () => livePage('t1_a'))
+        expect(await verifyFeedAbsentItems(['t1_a'], counting(['t1_a']), fetchHtml)).toEqual({ t1_a: 'live' })
+        expect(fetchHtml).toHaveBeenCalledTimes(1)
     })
 
-    it('keeps its cached verdict once recorded', async () => {
-        __getLocalStorage()[CACHE_KEY] = { t1_a: { v: 'removed', t: Date.now() } }
+    it('so is a post its page showed held', async () => {
+        __getLocalStorage()[CACHE_KEY] = { t3_p: { v: 'held', t: Date.now(), k: 2 } }
+        const live = `<html><body><shreddit-post id="t3_p" author="alice" post-title="t"></shreddit-post></body></html>`
+        const fetchHtml = vi.fn(async () => live)
+        expect(await verifyFeedAbsentItems(['t3_p'], { t3_p: { confirming: true } }, fetchHtml)).toEqual({
+            t3_p: 'live',
+        })
+    })
+
+    it("a read that decides nothing leaves the cached verdict and gives none, and the next waits as long as an unknown's", async () => {
+        vi.useFakeTimers({ toFake: ['Date'] })
+        for (const undecided of [async () => SHELL_HTML, wall]) {
+            cachedRemoved(['t1_a'])
+            expect(await verifyFeedAbsentItems(['t1_a'], counting(['t1_a']), undecided)).toEqual({})
+            expect(__getLocalStorage()[CACHE_KEY].t1_a.v).toBe('removed')
+            const next = vi.fn(async () => removedPage('t1_a'))
+            vi.setSystemTime(Date.now() + 30 * 60 * 1000 - 1)
+            expect(await verifyFeedAbsentItems(['t1_a'], counting(['t1_a']), next)).toEqual({})
+            expect(next).not.toHaveBeenCalled()
+            vi.setSystemTime(Date.now() + 1)
+            expect(await verifyFeedAbsentItems(['t1_a'], counting(['t1_a']), next)).toEqual({ t1_a: 'removed' })
+            expect(next).toHaveBeenCalledTimes(1)
+        }
+    })
+
+    it("is reused when monitoring isn't counting it: recorded already, or one it can't record", async () => {
+        cachedRemoved(['t1_a'])
         const fetchHtml = vi.fn(async () => livePage('t1_a'))
-        expect(await verifyFeedAbsentItems(['t1_a'], recorded('t1_a'), fetchHtml)).toEqual({ t1_a: 'removed' })
+        expect(await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)).toEqual({ t1_a: 'removed' })
         expect(fetchHtml).not.toHaveBeenCalled()
     })
 
-    it('goes back to one read per time to live if it never is, as with removal tracking off', async () => {
-        const fetchHtml = vi.fn(async () => removedPage('t1_a'))
-        for (let i = 0; i < 8; i++) {
-            expect(await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)).toEqual({ t1_a: 'removed' })
-        }
-        expect(fetchHtml).toHaveBeenCalledTimes(5)
-        __getLocalStorage()[CACHE_KEY].t1_a.t = Date.now() - 2 * 3600 * 1000 - 1000
-        for (let i = 0; i < 3; i++) {
-            await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)
-        }
-        expect(fetchHtml).toHaveBeenCalledTimes(6)
+    it('a removal the legacy listing found follows the same rule', async () => {
+        _legacyLookups.commentsById = vi.fn(async () => [{ data: { name: 't1_canary', author: 'bob' } }])
+        const fetchHtml = vi.fn(async () => SHELL_HTML)
+        const verify = m => verifyFeedAbsentItems(['t1_a'], m, fetchHtml, ['t1_canary'])
+        expect(await verify(meta(['t1_a']))).toEqual({ t1_a: 'removed' })
+        expect(await verify(meta(['t1_a']))).toEqual({ t1_a: 'removed' })
+        // the svc partial and the page, once
+        expect(fetchHtml).toHaveBeenCalledTimes(2)
+        expect(_legacyLookups.commentsById).toHaveBeenCalledTimes(1)
+        await verify(counting(['t1_a']))
+        expect(fetchHtml).toHaveBeenCalledTimes(4)
     })
 
-    it('starts over after a live read, since the next removal is a new one to confirm', async () => {
-        const pages = [removedPage('t1_a'), removedPage('t1_a'), livePage('t1_a'), removedPage('t1_a')]
-        const fetchHtml = vi.fn(async () => pages.shift())
-        for (let i = 0; i < 4; i++) {
-            await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)
-            __getLocalStorage()[CACHE_KEY].t1_a.t = 0
-        }
-        expect(__getLocalStorage()[CACHE_KEY].t1_a).toMatchObject({ v: 'removed', n: 1 })
-    })
-
-    it('stays inside the cycle budget, and the items it holds back get theirs in later cycles', async () => {
+    it('stays inside the cycle budget, and the items behind get their first reads in order', async () => {
         const pause = vi.spyOn(globalThis, 'setTimeout').mockImplementation(fn => {
             fn()
             return 0
         })
         try {
             const ids = Array.from({ length: 22 }, (_, i) => `t1_c${i}`)
-            __getLocalStorage()[CACHE_KEY] = Object.fromEntries(ids.map(id => [id, { v: 'removed', t: Date.now() }]))
-            const fetchHtml = vi.fn(async url => removedPage(`t1_${url.match(/\/(c\d+)\?/)[1]}`))
+            const counted = ids.slice(0, 20)
+            cachedRemoved(counted)
+            const read = []
+            const fetchHtml = vi.fn(async url => {
+                const id = `t1_${url.match(/\/(c\d+)\?/)[1]}`
+                read.push(id)
+                return removedPage(id)
+            })
+            await verifyFeedAbsentItems(ids, { ...meta(ids), ...counting(counted) }, fetchHtml)
+            expect(read).toEqual(counted)
+            // Recorded by then, so their cached verdicts stand
+            read.length = 0
             await verifyFeedAbsentItems(ids, meta(ids), fetchHtml)
-            expect(fetchHtml).toHaveBeenCalledTimes(20)
-            await verifyFeedAbsentItems(ids, meta(ids), fetchHtml)
-            await verifyFeedAbsentItems(ids, meta(ids), fetchHtml)
-            await verifyFeedAbsentItems(ids, meta(ids), fetchHtml)
-            expect(fetchHtml).toHaveBeenCalledTimes(80)
-            await verifyFeedAbsentItems(ids, meta(ids), fetchHtml)
-            expect(fetchHtml).toHaveBeenCalledTimes(82)
+            expect(read).toEqual(ids.slice(20))
         } finally {
             pause.mockRestore()
         }

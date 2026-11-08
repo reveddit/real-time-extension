@@ -6,43 +6,17 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
-import browserMock, { __resetStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
-import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
+import { __resetStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
+import { cookie, fill } from '../mocks/cookies.js'
+import { loadBackground } from '../mocks/background.js'
 
-const listeners = []
-const event = () => ({ addListener() {}, removeListener() {}, hasListener: () => false })
+let background
 
 beforeAll(async () => {
-    globalThis.__BUILT_FOR__ = 'firefox'
-    globalThis.__STORE__ = 'firefox'
-    const c = globalThis.chrome
-    for (const name of ['onMessageExternal', 'onInstalled', 'onStartup', 'onUpdateAvailable']) c.runtime[name] = event()
-    c.runtime.onMessage = { addListener: fn => listeners.push(fn) }
-    c.runtime.getManifest = () => ({ version: '0.0.5.30' })
-    for (const name of ['onUpdated', 'onRemoved', 'onActivated']) c.tabs[name] = event()
-    c.alarms.onAlarm = event()
-    c.alarms.get = (name, callback) => callback?.(null)
-    c.alarms.getAll = callback => callback?.([])
-    c.cookies = { onChanged: event(), getAll: (query, callback) => callback([]), get: (query, callback) => callback(null) }
-    c.extension = { inIncognitoContext: false }
-    for (const name of ['onClicked', 'onClosed', 'onButtonClicked']) c.notifications[name] = event()
-    c.action.onClicked = event()
-    c.action.setBadgeTextColor = () => {}
-    c.contextMenus.removeAll = callback => callback?.()
-    c.storage.onChanged = event()
-    browserMock.cookies = cookiesApi
-    browserMock.storage.onChanged = event()
-    browserMock.webRequest = { onBeforeSendHeaders: event(), onHeadersReceived: event() }
-    browserMock.runtime = { ...browserMock.runtime, onInstalled: event() }
-    await import('../../src/background.ts')
+    background = await loadBackground()
 })
 
-const send = sender =>
-    new Promise(resolve => {
-        for (const listener of listeners) {
-            if (listener({ action: 'fetch-with-login', path: '/r/x/comments/abc/.rss' }, sender, resolve)) return
-        }
-    })
+const send = sender => background.send({ action: 'fetch-with-login', path: '/r/x/comments/abc/.rss' }, sender)
 const tab = extra => ({ tab: { id: 7, url: 'https://www.reddit.com/r/x/comments/abc/t/', ...extra } })
 
 beforeEach(() => {
@@ -69,12 +43,7 @@ describe('a scan in Firefox', () => {
 })
 
 describe("a content script's item lookup", () => {
-    const lookup = () =>
-        new Promise(resolve => {
-            for (const listener of listeners) {
-                if (listener({ action: 'get-reddit-items-by-id', ids: ['t1_a'] }, tab(), resolve)) return
-            }
-        })
+    const lookup = () => background.send({ action: 'get-reddit-items-by-id', ids: ['t1_a'] }, tab())
     const urls = () => fetch.mock.calls.map(([url]) => String(url))
 
     beforeEach(() => {

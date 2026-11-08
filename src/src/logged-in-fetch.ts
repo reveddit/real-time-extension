@@ -10,7 +10,7 @@
 // blocked client doesn't send every request twice.
 //
 // Import-free: bridge.ts, requests.ts, www-fetcher.ts, followed-lookup.ts,
-// monitoring.ts, viewer.ts and parse_html/old.ts import it.
+// reddit-auth.ts, viewer.ts and parse_html/old.ts import it.
 
 export const LOGGED_IN_CACHE_MODES: RequestCache[] = ['default', 'no-cache']
 // Feeds send max-age=3600, so a scan's read must never come from the browser's

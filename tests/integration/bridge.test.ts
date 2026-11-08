@@ -8,7 +8,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
-import { json } from '../mocks/responses.js'
+import { json, untilAborted } from '../mocks/responses.js'
 
 // A monitoring cycle in flight, as the bridge sees it
 let cycleBusy = false
@@ -395,12 +395,7 @@ describe('handleBridgeFetch', () => {
 
     it('gives up on a fetch that would answer after the page has given up', async () => {
         vi.useFakeTimers()
-        globalThis.fetch = vi.fn(
-            (_url: string, init: any) =>
-                new Promise((_, reject) =>
-                    init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))),
-                ),
-        )
+        globalThis.fetch = vi.fn((_url: string, init: any) => untilAborted(init.signal))
         const pending = handleBridgeFetch({ url: URL_INFO })
         await vi.advanceTimersByTimeAsync(9000)
         expect(await pending).toMatchObject({ ok: false, error: 'timeout' })

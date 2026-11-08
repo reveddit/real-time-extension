@@ -25,7 +25,7 @@ import browser from 'webextension-polyfill'
 import { dlogSummary } from './diaglog'
 import { isBlockPage, LOGGED_IN_CACHE_MODES, withDeadline } from './logged-in-fetch'
 import { getRemoteLoginCookies } from './news'
-import { readLocal } from './request-gates'
+import { readLocal, isFresh } from './request-gates'
 
 export const VIEWER_KEY = 'viewer_account'
 export const VIEWER_CONNECT_KEY = 'viewer_connect'
@@ -592,12 +592,10 @@ export const checkViewerIdentity = async (viewer: ViewerAccount): Promise<Viewer
         return rememberIdentity(viewer, 'signed_out')
     }
     const stored: any = await readLocal(VIEWER_IDENTITY_KEY, null)
-    const age = Date.now() - Number(stored?.t)
     if (
         stored?.token === viewer.token &&
         (stored?.result === 'ok' || stored?.result === 'unknown') &&
-        age >= 0 &&
-        age < IDENTITY_TTL_MS
+        isFresh(Number(stored?.t), IDENTITY_TTL_MS, Date.now())
     ) {
         return stored.result
     }

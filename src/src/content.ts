@@ -86,6 +86,22 @@ import browser from 'webextension-polyfill'
                 })
         }
     }
+    if (matches?.[1] === 'reddit.com') {
+        // Older versions left these in reddit.com's own storage, where its scripts
+        // can read that the extension is installed
+        try {
+            for (const key of [
+                'hasSeenLanguageModal',
+                'extensionSaysNoSubscriptions',
+                'hasNotifierExtension',
+                'notifierExtensionVersion',
+            ]) {
+                window.localStorage.removeItem(key)
+            }
+        } catch {
+            /* blocked site storage throws, which mustn't stop the rest of this script */
+        }
+    }
     // Bridge relay for the website: Firefox has no externally_connectable, so
     // reveddit.com pages postMessage here and the background does the fetch
     // (typed and allowlisted in bridge.ts). Not registered on reddit.com pages.

@@ -11,7 +11,7 @@ test.describe('Popup page', () => {
         // The root container should exist
         await expect(page.locator('#root')).toBeVisible()
 
-        // Should have History and Options action buttons
+        // Should have History and Options icons in the header, named by their aria-label
         await expect(page.getByRole('button', { name: 'History' })).toBeVisible()
         await expect(page.getByRole('button', { name: 'Options' })).toBeVisible()
 

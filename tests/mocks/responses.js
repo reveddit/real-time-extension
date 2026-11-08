@@ -15,3 +15,10 @@ export const json = (status, data, type = 'application/json; charset=UTF-8') => 
     headers: { get: name => (name.toLowerCase() === 'content-type' ? type : null) },
     json: async () => data,
 })
+
+// A request, or a body, that never answers: like a real fetch's, it fails once
+// the request is aborted, and without a signal it never ends
+export const untilAborted = signal =>
+    new Promise((_, reject) =>
+        signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))),
+    )

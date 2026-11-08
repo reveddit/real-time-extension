@@ -1,7 +1,8 @@
 // Following from a page that knows more than reddit's read does: reveddit shows
 // a removed comment's recovered text, and the record the follow's first check
 // stores has only [removed]. The page's text goes on that record, so the follow
-// has to wait for it.
+// has to wait for it. Only there: a comment reddit still gives keeps its
+// markdown, which the page's text has lost.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
@@ -15,27 +16,44 @@ globalThis.location.hostname = 'www.reveddit.com'
 const { setTextAndFunction_subscribe } = await import('../../src/src/content-common')
 
 const ID = 't1_recover'
-const REMOVED_VIEW = { name: ID, author: '[deleted]', body: '[removed]', created_utc: 1700000000, link_id: 't3_abc' }
+const VIEW = { name: ID, author: 'someone', body: 'its words', created_utc: 1700000000, link_id: 't3_abc' }
 
 const realSendMessage = browserMock.runtime.sendMessage
 afterEach(() => {
     browserMock.runtime.sendMessage = realSendMessage
 })
 
+// Clicks the comment's button on a page that shows pageText, where reddit's read gives view
+const follow = (view, pageText) => {
+    __resetStorage({
+        options: { removal_status: { track: true }, lock_status: { track: true } },
+        other_subscriptions: {},
+    })
+    // In a content script a lookup goes through the background
+    vi.stubGlobal('location', { protocol: 'https:', hostname: 'www.reveddit.com' })
+    vi.stubGlobal('window', { location: { href: 'https://www.reveddit.com/v/x/comments/abc/_/recover/' } })
+    browserMock.runtime.sendMessage = async message =>
+        message.action === 'get-reddit-items-by-id' ? { response: 'done', items: [{ data: view }] } : undefined
+    const { document } = parseHTML('<html><body><a></a></body></html>')
+    const button = setTextAndFunction_subscribe(ID, document.querySelector('a'), pageText, 't3_abc')
+    button.onclick({ preventDefault() {}, stopPropagation() {} })
+}
+const storedText = () => __getLocalStorage().items_other?.[ID]?.t
+
 describe('following a comment from reveddit', () => {
-    it('keeps the text the page shows on the record of a comment already removed', async () => {
-        __resetStorage({
-            options: { removal_status: { track: true }, lock_status: { track: true } },
-            other_subscriptions: {},
-        })
-        // In a content script a lookup goes through the background
-        vi.stubGlobal('location', { protocol: 'https:', hostname: 'www.reveddit.com' })
-        vi.stubGlobal('window', { location: { href: 'https://www.reveddit.com/v/x/comments/abc/_/recover/' } })
-        browserMock.runtime.sendMessage = async message =>
-            message.action === 'get-reddit-items-by-id' ? { response: 'done', items: [{ data: REMOVED_VIEW }] } : undefined
-        const { document } = parseHTML('<html><body><a></a></body></html>')
-        const button = setTextAndFunction_subscribe(ID, document.querySelector('a'), 'the words it recovered', 't3_abc')
-        button.onclick({ preventDefault() {}, stopPropagation() {} })
-        await vi.waitFor(() => expect(__getLocalStorage().items_other?.[ID]?.t).toBe('the words it recovered'))
+    it.each(['[removed]', '[deleted]'])(
+        'keeps the text the page shows on the record of a comment reddit gives as %s',
+        async gone => {
+            follow({ ...VIEW, author: '[deleted]', body: gone }, 'the words it recovered')
+            await vi.waitFor(() => expect(storedText()).toBe('the words it recovered'))
+        },
+    )
+
+    it("keeps reddit's own text, markdown and all, for a comment it still gives", async () => {
+        const body = 'see [the rules](https://example.com/rules) and **read** them'
+        follow({ ...VIEW, body }, 'see the rules and read them')
+        await vi.waitFor(() => expect(storedText()).toBeDefined())
+        await new Promise(resolve => setTimeout(resolve, 0))
+        expect(storedText()).toBe(body)
     })
 })

@@ -649,6 +649,11 @@ const notificationClicked = (rawThing: string) => {
         createTab(chrome.runtime.getURL('src/history.html?filter=removed'))
         return
     }
+    // The link menu's note that it couldn't follow a link, and the popup's test
+    // notification: no account's items to show
+    if (thing === 'subscribe_failed' || thing === 'test') {
+        return
+    }
 
     const isUser = thing === 'other' ? false : true
     chrome.storage.sync.get(undefined as any, storage => {

@@ -8,6 +8,7 @@ import { solveChallenge } from './parse_html/new'
 import { isStreakLong, recordStreak } from './lookup-status'
 import { rehydrateStoredRedditCookies } from './reddit-cookies'
 import { flagIfRateLimited, isMechanismDisabled } from './request-gates'
+import { withDeadline, WWW_FETCH_TIMEOUT_MS } from './logged-in-fetch'
 
 const oauth_reddit = 'https://oauth.reddit.com/'
 
@@ -78,54 +79,37 @@ export const fetch_forReddit = async (pathAndSearch: string, auth: any, monitor_
     return result
 }
 
-export const lookupItemsByUser = (user: string, monitor_quarantined: boolean, auth: any) =>
-    fetch_forReddit(`user/${user}/overview.json${OWN_LISTING_QUERY}`, auth, monitor_quarantined)
-
-// Alternative approach: use the same method as getLoggedinUser but with proper authentication
-export const lookupItemsByLoggedInUserWithAuth = (monitor_quarantined: boolean, auth: any) => {
-    // First try www.reddit.com with rehydrated cookies
-    return rehydrateStoredRedditCookies().then(() => {
+// The logged-in user's own listing, read with their login, which is put back
+// first if the browser lost it. An OAuth token has no user, so nothing else
+// can stand in for this read.
+export const lookupItemsByLoggedInUserWithAuth = () =>
+    rehydrateStoredRedditCookies().then(() => {
         const url = `https://www.reddit.com/user/me.json${OWN_LISTING_QUERY}`
-        const options = { credentials: 'include' as const, cache: 'reload' as const }
-        return fetch(url, options)
-            .then(response => {
-                if (response.ok) {
-                    // A challenge comes with a 200, and it's a refusal all the same
-                    return response.json().catch(() => {
-                        throw new Error('non-JSON listing from www.reddit.com')
-                    })
-                } else {
-                    throw new Error(`www.reddit.com request failed: ${response.status}`)
-                }
-            })
-            .then(data => {
-                if (data && data.data && data.data.children) {
-                    return data.data.children
-                }
-                throw new Error('Invalid data format from www.reddit.com')
-            })
-            .catch(async error => {
-                console.log('www.reddit.com request failed, trying OAuth fallback:', error.message)
-                // Whatever the fallback answers: its token has no user, so it
-                // can't make up for this
-                flagIfRateLimited(error)
-
-                // Fall back to OAuth if www.reddit.com fails and auth is available
-                if (auth && auth !== 'none') {
-                    const children = await lookupItemsByUser('me', monitor_quarantined, auth)
-                    // Without items, www's failure stands: this swallows its own
-                    // errors (returns undefined), and an empty answer says nothing
-                    // about the signed-in user. Monitoring checks whose items they are.
-                    if (children?.length) {
-                        return children
+        // The body too: one that stalls would hold up the cycle
+        return withDeadline(WWW_FETCH_TIMEOUT_MS, signal =>
+            fetch(url, { credentials: 'include', cache: 'reload', signal })
+                .then(response => {
+                    if (response.ok) {
+                        // A challenge comes with a 200, and it's a refusal all
+                        // the same. A body the deadline cut off isn't one.
+                        return response.json().catch(error => {
+                            throw signal.aborted ? error : new Error('non-JSON listing from www.reddit.com')
+                        })
+                    } else {
+                        throw new Error(`www.reddit.com request failed: ${response.status}`)
                     }
-                } else {
-                    console.log('No OAuth auth available for fallback')
-                }
-                throw error
-            })
+                })
+                .then(data => {
+                    if (data && data.data && data.data.children) {
+                        return data.data.children
+                    }
+                    throw new Error('Invalid data format from www.reddit.com')
+                }),
+        ).catch(error => {
+            flagIfRateLimited(error)
+            throw error
+        })
     })
-}
 
 const handleFetchErrors = (response: Response) => {
     if (!response.ok) {
@@ -207,31 +191,33 @@ type MeProbe =
 
 // One fetch of an /api/me.json URL, classified. Logged-out is only concluded
 // from a clean 2xx JSON body without a username; every other shape (non-2xx,
-// HTML/challenge, network error) is indeterminate.
-const probeMeJson = async (url: string): Promise<MeProbe> => {
-    let response: Response
-    try {
-        response = await fetch(url, { credentials: 'include', cache: 'reload' })
-    } catch (err: any) {
-        return { state: 'indeterminate', reason: `network error: ${String(err?.message || err)}` }
-    }
-    if (!response.ok) {
-        return { state: 'indeterminate', reason: `status ${response.status}` }
-    }
-    let text: string
-    try {
-        text = await response.text()
-    } catch (err: any) {
-        return { state: 'indeterminate', reason: `body read failed: ${String(err?.message || err)}` }
-    }
-    try {
-        const data = JSON.parse(text)
-        const name = data?.data?.name
-        return name ? { state: 'user', user: String(name) } : { state: 'loggedOut' }
-    } catch {
-        return { state: 'indeterminate', reason: 'non-JSON response (challenge or HTML page)', html: text }
-    }
-}
+// HTML/challenge, network error, no answer by the deadline) is indeterminate.
+// The deadline covers the body too: one that stalls would hold up the cycle.
+const probeMeJson = (url: string): Promise<MeProbe> =>
+    withDeadline(WWW_FETCH_TIMEOUT_MS, async signal => {
+        let response: Response
+        try {
+            response = await fetch(url, { credentials: 'include', cache: 'reload', signal })
+        } catch (err: any) {
+            return { state: 'indeterminate', reason: `network error: ${String(err?.message || err)}` }
+        }
+        if (!response.ok) {
+            return { state: 'indeterminate', reason: `status ${response.status}` }
+        }
+        let text: string
+        try {
+            text = await response.text()
+        } catch (err: any) {
+            return { state: 'indeterminate', reason: `body read failed: ${String(err?.message || err)}` }
+        }
+        try {
+            const data = JSON.parse(text)
+            const name = data?.data?.name
+            return name ? { state: 'user', user: String(name) } : { state: 'loggedOut' }
+        } catch {
+            return { state: 'indeterminate', reason: 'non-JSON response (challenge or HTML page)', html: text }
+        }
+    })
 
 const probeMeJsonWithChallengeRetry = async (host: string): Promise<MeProbe> => {
     const targetUrl = `https://${host}/api/me.json`
@@ -321,8 +307,8 @@ export const getLoggedinUserDetailed = async (): Promise<LoginDetectResult> => {
     return { user: null, indeterminate: true, reason: lastReason || 'unknown' }
 }
 
-// Back-compat shape for callers that only care about the username (popup
-// reconnect, startup): resolves the username or null, never rejects.
+// Back-compat shape for callers that only care about the username (recovery,
+// startup and install): resolves the username or null, never rejects.
 export const getLoggedinUser = (): Promise<string | null> => getLoggedinUserDetailed().then(r => r.user)
 
 // Who the browser is signed in to reddit as, for the second account's sign-in

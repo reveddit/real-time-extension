@@ -112,7 +112,8 @@ const retireScanAll = (btn: HTMLButtonElement) => {
 // find. After any other finish a row stays plain, as that scan may never have covered
 // it. The scan button keeps this, so it comes and goes with its page.
 const NOTHING_MISSING = 'data-rev-nothing-missing'
-const nothingMissing = () => !!document.querySelector(`.rev-scan-all-btn[${NOTHING_MISSING}]`)
+// The button comes before the comments, so finding it doesn't walk them all
+const nothingMissing = () => !!document.querySelector('.rev-scan-all-btn')?.hasAttribute(NOTHING_MISSING)
 // "Continue scan" goes when another click has nothing to go on with
 function endContinueScan() {
     const btn = document.querySelector('.rev-scan-all-btn')

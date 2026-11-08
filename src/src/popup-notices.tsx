@@ -6,6 +6,7 @@ import { markdownToHTML } from './ui/markdown'
 import { LOGIN_WALL_INFO_URL } from './report'
 import { isSignedInViewer } from './viewer'
 import { NewsMessage } from './news'
+import { STREAK_WARN_AT } from './lookup-status'
 
 const NewsCard = styled(Card)`
   padding: ${tokens.space.sm} ${tokens.space.md};
@@ -103,8 +104,21 @@ const Why = () => (
   </a>
 )
 
-type Warning = { text: ReactNode; button?: [string, () => void]; fallback?: [string, () => void] }
-const OPEN_WWW: [string, () => void] = ['Open www.reddit.com', openWww]
+type Action = [string, () => void]
+type Warning = {
+  // A function of whether a www.reddit.com tab is open, for a text that would ask for one
+  text: ReactNode | ((wwwTabOpen: boolean) => ReactNode)
+  button?: Action
+  fallback?: Action
+  // The buttons once a tab has had time to clear the public view's warning
+  lasting?: Pick<Warning, 'button' | 'fallback'>
+}
+const OPEN_WWW: Action = ['Open www.reddit.com', openWww]
+const CONNECT_SECOND: Action = ['Connect a second account', openSecondAccount]
+
+// The checks a www.reddit.com tab usually takes to clear the public view's
+// warning, after the STREAK_WARN_AT failed lookups that raised it
+const CHECKS_FOR_A_TAB = 3
 
 // login_required or public_view_unavailable, while Reddit is signed in to the second account
 const SIGNED_IN_AS_VIEWER: Warning = {
@@ -120,7 +134,9 @@ const SIGNED_IN_AS_VIEWER: Warning = {
 const WARNINGS: Record<string, Warning> = {
   rate_limited: { text: '⚠ Reddit is rate-limiting requests. Monitoring will resume automatically.' },
   reddit_blocked: {
-    text: "⚠ Reddit blocked the extension's last request (HTTP 403). It keeps retrying; opening a www.reddit.com tab usually clears this.",
+    text: tabOpen =>
+      "⚠ Reddit blocked the extension's last request (HTTP 403). It keeps retrying" +
+      (tabOpen ? '.' : '; opening a www.reddit.com tab usually clears this.'),
   },
   checks_failing: {
     text: "⚠ Your posts and comments aren't being checked right now. Reddit or your connection may be down. The extension keeps trying.",
@@ -135,7 +151,7 @@ const WARNINGS: Record<string, Warning> = {
         second Reddit account. <Why />
       </>
     ),
-    button: ['Connect a second account', openSecondAccount],
+    button: CONNECT_SECOND,
   },
   viewer_signed_out: {
     text: "⚠ Your second Reddit account was signed out, so your posts and comments aren't being checked. Connect it again to pick up where it left off.",
@@ -148,16 +164,25 @@ const WARNINGS: Record<string, Warning> = {
   // Also how a login wall shows up when it doesn't redirect to the
   // login page (login-wall-config.ts), so the second account is here too
   public_view_unavailable: {
-    text: "⚠ Removal monitoring is paused — Reddit's public view isn't loading. Opening a www.reddit.com tab usually restores it. If it keeps up, connect a second Reddit account.",
+    text: tabOpen =>
+      "⚠ Removal monitoring is paused — Reddit's public view isn't loading. " +
+      (tabOpen ? '' : 'Opening a www.reddit.com tab usually restores it. ') +
+      'If it keeps up, connect a second Reddit account.',
     button: OPEN_WWW,
-    fallback: ['Connect a second account', openSecondAccount],
+    fallback: CONNECT_SECOND,
+    lasting: { button: CONNECT_SECOND, fallback: OPEN_WWW },
   },
   absent_verify_unavailable: {
-    text: "⚠ Reddit isn't letting the extension confirm whether missing content was removed, so some removals can't be detected. Keeping a www.reddit.com tab open usually restores this. If it keeps up, use “report a problem” below.",
+    text: tabOpen =>
+      "⚠ Reddit isn't letting the extension confirm whether missing content was removed, so some removals can't be detected. " +
+      (tabOpen ? '' : 'Keeping a www.reddit.com tab open usually restores this. ') +
+      'If it keeps up, use “report a problem” below.',
     button: OPEN_WWW,
   },
   profile_pagination_unavailable: {
-    text: "⚠ Reddit stopped loading the older pages of your public profile, so removals of your older posts and comments can't be checked right now. Keeping a www.reddit.com tab open usually restores this.",
+    text: tabOpen =>
+      "⚠ Reddit stopped loading the older pages of your public profile, so removals of your older posts and comments can't be checked right now." +
+      (tabOpen ? '' : ' Keeping a www.reddit.com tab open usually restores this.'),
     button: OPEN_WWW,
   },
 }
@@ -166,6 +191,8 @@ export function ErrorNotice({
   errorStatus,
   viewerName,
   currentUser,
+  wwwTabOpen,
+  wwwFailures,
   reconnectSuccess,
   reconnecting,
   onReconnect,
@@ -173,6 +200,10 @@ export function ErrorNotice({
   errorStatus: string
   viewerName: string
   currentUser: string | null | undefined
+  // A www.reddit.com tab that can carry the extension's reads is open
+  wwwTabOpen: boolean
+  // The public view's lookups that have failed in a row (lookup-status.ts)
+  wwwFailures: number
   reconnectSuccess: boolean | null
   reconnecting: boolean
   onReconnect: () => void
@@ -206,11 +237,19 @@ export function ErrorNotice({
       </div>
     )
   }
+  const lasting = wwwFailures >= STREAK_WARN_AT + CHECKS_FOR_A_TAB
+  const chosen = (lasting && warning.lasting) || warning
+  // With a tab open, there's none to open
+  const offered = (action?: Action) => (wwwTabOpen && action === OPEN_WWW ? undefined : action)
+  const button = offered(chosen.button)
+  const fallback = offered(chosen.fallback)
   return (
     <div>
-      <MessageBanner variant="warning">{warning.text}</MessageBanner>
-      {warning.button && <ActionBtn onClick={warning.button[1]}>{warning.button[0]}</ActionBtn>}
-      {warning.fallback && <SecondaryActionBtn onClick={warning.fallback[1]}>{warning.fallback[0]}</SecondaryActionBtn>}
+      <MessageBanner variant="warning">
+        {typeof warning.text === 'function' ? warning.text(wwwTabOpen) : warning.text}
+      </MessageBanner>
+      {button && <ActionBtn onClick={button[1]}>{button[0]}</ActionBtn>}
+      {fallback && <SecondaryActionBtn onClick={fallback[1]}>{fallback[0]}</SecondaryActionBtn>}
     </div>
   )
 }

@@ -62,7 +62,7 @@ import {
     getObjectNamesForThing,
     getPublicLiveKey,
 } from './storage'
-import { flagIfRateLimited, RECENT_RATE_LIMIT_WINDOW_MS, readLocal } from './request-gates'
+import { flagIfRateLimited, RECENT_RATE_LIMIT_WINDOW_MS, readLocal, isFresh } from './request-gates'
 import { isPublicProfileUnavailable } from './lookup-status'
 import { isCycleInFlight } from './monitoring'
 import { isRemovedInModView, isViewerBlockedItem } from './common'
@@ -183,8 +183,7 @@ const getPublicViewContext = async (me: string): Promise<PublicViewContext> => {
         if (me) {
             const liveKey = getPublicLiveKey(me)
             const live: any = await readLocal(liveKey, null)
-            const age = Date.now() - Number(live?.t || 0)
-            if (Array.isArray(live?.ids) && age >= 0 && age < PUBLIC_LIVE_MAX_AGE_MS) {
+            if (Array.isArray(live?.ids) && isFresh(Number(live?.t), PUBLIC_LIVE_MAX_AGE_MS, Date.now())) {
                 live.ids.forEach((id: string) => context.verifiedLive.add(id))
             }
         }

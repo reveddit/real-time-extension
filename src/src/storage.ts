@@ -33,7 +33,7 @@ const SYNC_ITEM_MARGIN_BYTES = 256
 const SYNC_QUOTA_BYTES = 102400
 const SYNC_TOTAL_MARGIN_BYTES = 1024
 
-const syncItemBytes = (key: string, value: any) => key.length + (JSON.stringify(value) ?? '').length
+export const syncItemBytes = (key: string, value: any) => key.length + (JSON.stringify(value) ?? '').length
 
 const syncItemValueBudget = (storageKey: string) =>
     SYNC_QUOTA_BYTES_PER_ITEM - SYNC_ITEM_MARGIN_BYTES - storageKey.length
@@ -109,28 +109,6 @@ export const fitStatusLists = (
     }
     Object.assign(toSave, alongside)
     return fitDicts_toSyncTotal(toSave, storage, [keys['approved'], keys['unlocked']], 'c')
-}
-
-// A check saves lists it read before its lookup, and the user can act while
-// that runs. Reading them again keeps the save from undoing that: what was
-// marked seen stays seen, and what's on no list now (an unfollow) stays off.
-// idsBefore: the ids as the check read them, since those it adds are on no list
-// yet. It goes by every list: the check may have moved an item between them.
-export const keepChangesSince = async (idsBefore: Set<string>, lists: Record<string, any>) => {
-    const stored = await browser.storage.sync.get(Object.keys(lists)).catch(() => null)
-    if (!stored) {
-        return
-    }
-    const onSomeList = (id: string) => Object.values(stored).some((list: any) => list && id in list)
-    for (const [key, list] of Object.entries(lists)) {
-        for (const id of Object.keys(list)) {
-            if (idsBefore.has(id) && !onSomeList(id)) {
-                delete list[id]
-            } else if ((stored[key] as any)?.[id]?.u === false) {
-                list[id].u = false
-            }
-        }
-    }
 }
 
 // For the diagnostic log's header: how full sync storage is, and its largest
@@ -569,13 +547,19 @@ export const saveLocalStorageItems = (thing: string, isUser: boolean, itemsToSav
     return browser.storage.local.set({ [key_localStorage]: itemsToSave })
 }
 
-export const addLocalStorageItems = (items: Record<string, any>, thing: string, isUser: boolean) =>
-    updateLocal<Record<string, any>>(getObjectName('items', thing, isUser), {}, storedItems => {
+// A write rewrites the whole object, up to 1,000 items with their text, and
+// most checks have nothing to add
+export const addLocalStorageItems = async (items: Record<string, any>, thing: string, isUser: boolean) => {
+    if (!Object.keys(items).length) {
+        return
+    }
+    await updateLocal<Record<string, any>>(getObjectName('items', thing, isUser), {}, storedItems => {
         Object.assign(storedItems, items)
         if (Object.keys(storedItems).length > MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT) {
             return trimDict_by_numberValuedAttribute(storedItems, MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT, 'o')
         }
     })
+}
 
 export const getItemFromLocalStorage = (
     thing: string,
@@ -639,20 +623,10 @@ export const getOptions = (callback: (options: Record<string, any>) => any) => {
 }
 
 // Every option under its stored name, so the options page can't leave one out:
-// monitoring reads them all without checking
-interface SavedOptions {
-    seen_count: number
-    interval: number
-    custom_clientid: string
-    removal_status: { track: boolean; notify: boolean }
-    lock_status: { track: boolean; notify: boolean }
+// saveOptions replaces the whole stored object, so one left out would be lost.
+// A new default in getStorageInit is one the page has to save too.
+type SavedOptions = ReturnType<typeof getStorageInit>['options'] & {
     hide_subscribe: boolean
-    monitor_quarantined: boolean
-    show_scan_on_own_profile: boolean
-    show_scan_on_other_profiles: boolean
-    show_thread_scan_buttons: boolean
-    highlight_own_profile_status: boolean
-    auto_filter_removed_threads: boolean
     scan_reads_per_click: number
     scan_seconds_between_reads: number
 }

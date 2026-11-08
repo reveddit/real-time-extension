@@ -25,7 +25,7 @@ import {
     flagIfRateLimited,
 } from './request-gates'
 import { readThreadItemLoggedIn, FOLLOWED_POST_IDS_KEY } from './followed-lookup'
-import { WWW_FETCH_TIMEOUT_MS } from './logged-in-fetch'
+import { withTimeout, canTabAnswer } from './www-fetcher'
 import { dlog } from './diaglog'
 import { isViewerConnecting, recoverViewerConnect, hasRedditLoginCookie } from './viewer'
 import {
@@ -56,7 +56,7 @@ import {
     getNotifyFlags,
     getPublicLiveKey,
     fitStatusLists,
-    keepChangesSince,
+    syncItemBytes,
     PendingNotificationData,
     updateBadgeUnseenCount,
 } from './storage'
@@ -90,7 +90,6 @@ const TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE = Math.floor(Math.random(
 // Require multiple consecutive observations of "removed" status before alerting,
 // to prevent false removal notifications from transient API failures or intermittent responses.
 // Randomized per extension instance (3-5 cycles) to thwart potential anti-extension fingerprinting.
-// page-verify.ts's REMOVED_READS_TO_CONFIRM copies the top of this range.
 const REMOVAL_CONFIRMATION_THRESHOLD = Math.floor(Math.random() * 3) + 3
 
 const FULL_RESPONSE_ITEM_COUNT = 100
@@ -149,6 +148,11 @@ const getOldestDateThreshold = (thing: string, isUser: boolean) => {
     const key = getOldestDateKey(thing, isUser)
     return browser.storage.local.get({ [key]: null }).then(result => result[key])
 }
+
+// Older than the oldest item a full listing showed: monitoring doesn't start
+// keeping track of it
+const isTooOld = (createdUtc: number | undefined, oldestDateThreshold: number | null) =>
+    !!(oldestDateThreshold && createdUtc && createdUtc < oldestDateThreshold)
 
 const PENDING_POST_BATCH_SIZE = 3
 const PENDING_POST_DELAY_MS = 2000
@@ -546,16 +550,25 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
             // badge below; a failed or skipped lookup must not read as a clean cycle.
             let processedItems = false
             let listingRefused = false
+            // The listing came back but says nothing either way
+            let noNews = false
             const checkListing = async (listing: any) => {
                 const ids: string[] = []
                 const itemLookup: Record<string, any> = {}
-                // It has to be the user's: the OAuth fallback's token has no
-                // user, and grace mode has only the remembered name, while the
-                // browser may hold another account by now. An empty listing
-                // names nobody, so it's clean only when the login check did.
+                // An empty listing names nobody. That's a clean pass once the
+                // login check names the user, and no news under the remembered
+                // name: a user who has posted nothing gets one too.
+                if (usedGrace && !listing.length) {
+                    dlog('auth', '[reveddit] the listing is empty, which says nothing under the remembered name')
+                    noNews = true
+                    return
+                }
+                // Any other has to be the user's: grace mode has only the
+                // remembered name, and a second account's sign-in can change
+                // the browser's login while the cycle runs
                 const isTheirs = (item: any) =>
                     String((item.data || item).author).toLowerCase() === String(loggedInUser).toLowerCase()
-                if ((usedGrace || listing.length) && !listing.some(isTheirs)) {
+                if (listing.length && !listing.some(isTheirs)) {
                     dlog('auth', "[reveddit] the listing can't be taken for the user's, so it isn't checked")
                     return
                 }
@@ -604,45 +617,24 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     // Store cookies for future use when no tabs are open
                     storeRedditCookies()
 
-                    // Use the first supported Reddit tab that can answer: a
-                    // discarded one has no page, and a frozen one runs nothing
-                    const tab = supportedTabs.find(t => !t.discarded && !t.frozen)
+                    // Use the first supported Reddit tab that can answer
+                    const tab = supportedTabs.find(canTabAnswer)
                     if (!tab) {
                         resolve('use_stored_cookies')
                         return
                     }
 
                     // One that never answers can't hold up the cycle either: it
-                    // may have frozen since, or its fetch may have stalled. An
-                    // answer after this is ignored.
-                    let gaveUp = false
-                    const deadline = setTimeout(() => {
-                        gaveUp = true
-                        dlog('cycle', `No answer from the reddit tab in ${WWW_FETCH_TIMEOUT_MS / 1000} s`)
-                        resolve('use_stored_cookies')
-                    }, WWW_FETCH_TIMEOUT_MS)
-                    ;(chrome.tabs.sendMessage as any)(
-                        tab.id!,
-                        { action: 'get-logged-in-user-items' },
-                        (response: any) => {
-                            // Read even when it's too late, or the browser logs it as unchecked
-                            const sendError = (chrome.runtime as any).lastError
-                            if (gaveUp) {
-                                return
-                            }
-                            clearTimeout(deadline)
-                            if (sendError) {
-                                // Receiving end does not exist: the stored cookies' read decides
-                                dlog(
-                                    'cycle',
-                                    'Error sending message to content script:',
-                                    String(sendError?.message || sendError),
-                                )
-                                resolve('use_stored_cookies')
-                                return
-                            }
-                            resolve(response)
-                        },
+                    // may have frozen since, or its fetch may have stalled
+                    resolve(
+                        withTimeout(
+                            browser.tabs.sendMessage(tab.id!, { action: 'get-logged-in-user-items' }),
+                            'the listing message',
+                        ).catch(err => {
+                            // No receiver, or no answer in time: the stored cookies' read decides
+                            dlog('cycle', 'No answer from the reddit tab:', String(err?.message || err))
+                            return 'use_stored_cookies'
+                        }),
                     )
                 })
             })
@@ -667,9 +659,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     // Handle stored cookies case
                     if (items === 'use_stored_cookies') {
                         // Try to fetch items using stored cookies
-                        return lookupItemsByLoggedInUserWithAuth(storage.options.monitor_quarantined, auth).then(
-                            checkListing,
-                        )
+                        return lookupItemsByLoggedInUserWithAuth().then(checkListing)
                     }
 
                     return checkListing(items)
@@ -705,7 +695,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                         await recordLoginDetectOutcome(true)
                     }
                     // A rate limit already says it's why
-                    if (!processedItems && !(await isRateLimitedNow())) {
+                    if (!processedItems && !noNews && !(await isRateLimitedNow())) {
                         await recordCheckOutcome(false)
                     }
                 })
@@ -806,7 +796,12 @@ const checkForChanges_thing_byId = async (
     const authItemsMeta: Record<string, any> = {}
     if (isUser) {
         const knownRemovedHash = storage[getObjectNamesForThing(thing, isUser)['removed']] || {}
+        const [records, oldestDateThreshold]: [any, any] = await Promise.all([
+            getLocalStorageItems(thing, isUser),
+            getOldestDateThreshold(thing, isUser),
+        ])
         for (const [name, authItem] of Object.entries(itemLookup)) {
+            const recorded = name in knownRemovedHash
             authItemsMeta[name] = {
                 locked: !!authItem.locked,
                 created_utc: authItem.created_utc,
@@ -826,7 +821,14 @@ const checkForChanges_thing_byId = async (
                 // Removed posts can linger in the public feed long past creation
                 // age — feed presence must not flip a recorded removal back to
                 // approved without a page verdict.
-                known_removed: name in knownRemovedHash,
+                known_removed: recorded,
+                // Its removal is being counted (r, markChanges) and isn't
+                // recorded yet, which it still can be
+                confirming:
+                    !!storage.options.removal_status.track &&
+                    !recorded &&
+                    records[name]?.r > 0 &&
+                    !isTooOld(authItem.created_utc, oldestDateThreshold),
                 // Whoever the browser is signed in as (lookupItemsByID)
                 author: authItem.author,
             }
@@ -846,26 +848,32 @@ const checkForChanges_thing_byId = async (
     } else {
         promise = lookupItemsByID(ids, auth, monitor_quarantined, username, authItemsMeta)
     }
-    return promise.then(result => {
+    return promise.then(async result => {
         if (!result) return // handle expected errors
-        const items = Array.isArray(result) ? result : result.items
-        if (!items) return // handle expected errors from obj
+        const found = Array.isArray(result) ? result : result.items
+        if (!found) return // handle expected errors from obj
         const removal_status = storage.options.removal_status
         const lock_status = storage.options.lock_status
         const target_seen_count = storage.options.seen_count || SEEN_COUNT_DEFAULT
         const keys = getObjectNamesForThing(thing, isUser)
+        // The user, a reveddit page or another check may have saved while the
+        // lookup ran. So what this check compares and saves is read again, into
+        // storage, which the cycle's later checks size their saves by. If that
+        // read fails, it goes on with the copy it has.
+        const followedBefore = storage.other_subscriptions || {}
+        const savedKeys = [...Object.values(keys), ...(isUser ? [] : ['other_subscriptions'])]
+        const saved = await browser.storage.sync.get(savedKeys).catch(() => null)
+        if (saved) {
+            for (const key of savedKeys) storage[key] = saved[key]
+        }
+        // Nothing about an item unfollowed since then is saved or told
+        const isUnfollowed = (name: string) => name in followedBefore && !(name in (storage.other_subscriptions || {}))
+        const items = isUser ? found : found.filter((itemWrap: any) => !isUnfollowed(itemWrap.data.name))
 
         const known_removed = storage[keys['removed']] || {}
         const known_approved = storage[keys['approved']] || {}
         const known_locked = storage[keys['locked']] || {}
         const known_unlocked = storage[keys['unlocked']] || {}
-        const lists = {
-            [keys['removed']]: known_removed,
-            [keys['approved']]: known_approved,
-            [keys['locked']]: known_locked,
-            [keys['unlocked']]: known_unlocked,
-        }
-        const idsBefore = new Set(Object.values(lists).flatMap(list => Object.keys(list)))
         const changes = storage[keys['changes']] || []
         if (!isUser) {
             itemLookup = {}
@@ -1023,31 +1031,26 @@ const checkForChanges_thing_byId = async (
                         })
                         .catch(() => {})
                 }
-                await keepChangesSince(idsBefore, lists)
                 const toSave = fitStatusLists(
-                    lists,
+                    {
+                        [keys['removed']]: known_removed,
+                        [keys['approved']]: known_approved,
+                        [keys['locked']]: known_locked,
+                        [keys['unlocked']]: known_unlocked,
+                    },
                     storage,
                     keys,
                     // 100 entries come to about 5 KB, well inside one item
                     { [keys['changes']]: changes.slice(-MAX_SYNC_STORAGE_CHANGES) },
                 )
-                await new Promise<void>(resolve =>
-                    chrome.storage.sync.set(toSave, () => {
-                        // A refused save is otherwise silent, and the next check
-                        // announces its changes again (issue #15)
-                        const saveError = (chrome.runtime as any).lastError
-                        if (saveError) {
-                            const sizes = Object.entries(toSave)
-                                .map(([key, value]) => `${key} ${key.length + JSON.stringify(value).length}`)
-                                .join(', ')
-                            dlog(
-                                'cycle',
-                                `[reveddit] sync save refused (${String(saveError.message || saveError)}): ${sizes}`,
-                            )
-                        }
-                        resolve()
-                    }),
-                )
+                await browser.storage.sync.set(toSave).catch(err => {
+                    // A refused save is otherwise silent, and the next check
+                    // announces its changes again (issue #15)
+                    const sizes = Object.entries(toSave)
+                        .map(([key, value]) => `${key} ${syncItemBytes(key, value)}`)
+                        .join(', ')
+                    dlog('cycle', `[reveddit] sync save refused (${String(err?.message || err)}): ${sizes}`)
+                })
                 updateBadgeUnseenCount()
                 console.log('[debug] addLocalStorageItems', {
                     thing,
@@ -1144,10 +1147,7 @@ function markChanges(
                 return // skip this item — not yet confirmed
             }
         }
-        const itemCreatedUtc = item.created_utc
-        const isTooOld = oldestDateThreshold && itemCreatedUtc && itemCreatedUtc < oldestDateThreshold
-
-        if (!(name in alert_known_hash) && !isTooOld) {
+        if (!(name in alert_known_hash) && !isTooOld(item.created_utc, oldestDateThreshold)) {
             // markUnseen is always true except when subscribing via a reddit (not reveddit) page to a new ID for 'other'
             // subscriptions. As long as the item is not 'removed', the current state is stored as 'seen' (unseen=false).
             // It is assumed that users subscribing from reveddit pages will already have seen all the current mod actions,
@@ -1236,23 +1236,19 @@ function markChanges(
             } else {
                 newLocalStorageItems[name] = this_localStorageItem
             }
-        } else {
-            const itemCreatedUtc = item.created_utc
-            const isTooOld = oldestDateThreshold && itemCreatedUtc && itemCreatedUtc < oldestDateThreshold
-            if (!isTooOld) {
-                // This runs on every check, so it keeps the unseen flag: an
-                // approval or unlock stays unseen until it's viewed
-                normal_known_hash[name] = new ItemForStorage(
-                    item.created_utc,
-                    !!normal_known_hash[name]?.u,
-                    isComment(item.name) && item.link_id ? item.link_id : undefined,
-                )
-                // Cache the body on first observation. The authenticated view (itemLookup) is the
-                // only place the original text is guaranteed to exist — once Reddit removes the
-                // item, no public source can recover it.
-                if (isUser && !existingLocalStorageItems[name]) {
-                    newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
-                }
+        } else if (!isTooOld(item.created_utc, oldestDateThreshold)) {
+            // This runs on every check, so it keeps the unseen flag: an
+            // approval or unlock stays unseen until it's viewed
+            normal_known_hash[name] = new ItemForStorage(
+                item.created_utc,
+                !!normal_known_hash[name]?.u,
+                isComment(item.name) && item.link_id ? item.link_id : undefined,
+            )
+            // Cache the body on first observation. The authenticated view (itemLookup) is the
+            // only place the original text is guaranteed to exist — once Reddit removes the
+            // item, no public source can recover it.
+            if (isUser && !existingLocalStorageItems[name]) {
+                newLocalStorageItems[name] = new LocalStorageItem({ item: item, observed_utc: now })
             }
         }
     })

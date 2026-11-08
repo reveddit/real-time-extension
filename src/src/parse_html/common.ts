@@ -1,15 +1,5 @@
 import { getRemoteLegacyHost, LEGACY_HOST_DEFAULT } from '../news'
 
-// consume() from https://qwtel.com/posts/software/how-to-use-htmlrewriter-for-web-scraping/
-// also handy: https://blog.csdn.net/wk3368/article/details/129483898
-
-export const consume = async (stream: ReadableStream) => {
-    const reader = stream.getReader()
-    while (!(await reader.read()).done) {
-        /* NOOP */
-    }
-}
-
 // Reddit's rate limiting, the one failure every request loop stops on and
 // monitoring backs off from. Other statuses are about a route or a page.
 export const isRateLimitError = (err: any): boolean => /request failed: 429\b/.test(String(err?.message || err))

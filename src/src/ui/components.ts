@@ -43,11 +43,11 @@ export const ActionBtn = styled.button`
     }
 `
 
-// A warning's fallback, under its main ActionBtn
+// A warning's other choice, by its main ActionBtn: an outline, so the main one stands out
 export const SecondaryActionBtn = styled(ActionBtn)`
-    background: var(--button-bg);
-    color: var(--button-text);
-    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-light);
     &:hover {
         background: var(--bg-surface-hover);
     }

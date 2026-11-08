@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import browserMock, { __resetStorage } from '../mocks/webextension-polyfill.js'
 import { parseHTML, DOMParser } from 'linkedom'
 import { setMarkupConfig } from '../../src/src/markup-config'
+import { NEWS_CACHE_KEY } from '../../src/src/news'
 import { POST, NOW, entry, postEntry, feed, listing, withTimers, threadPath, authorPath, commentPath, answerRead } from '../mocks/feeds.js'
 
 const comment = (id, author, parent, inner = '<div slot="comment"><p>live words</p></div>') =>
@@ -622,6 +623,21 @@ describe('reads that fail', () => {
         expect(asked).toEqual(['/b'])
     })
 
+    it("leaves a feed to the next click when its second try won't fit, and doesn't call it refused", async () => {
+        __resetStorage({}, { [NEWS_CACHE_KEY]: { feed: { options: { scan_limits: { reads_per_click: 6 } } } } })
+        const authors = threadOfAuthors(5)
+        for (const name of authors) pages[authorPath(name)] = feed()
+        pages[authorPath(authors[2])] = pages[authorPath(authors[3])] = { ok: false, status: 500 }
+        pages[authorPath(authors[4])] = blocked
+        const pageReads = new Map()
+        const { last } = await scan(pageReads)
+        expect(last).toMatchObject({
+            status: 'partial',
+            message: '0 recovered so far, 4 left to check. Click again to continue.',
+        })
+        expect(pageReads.has(`tried ${authorPath(authors[4])}`)).toBe(false)
+    })
+
     it('waits as long as the background says, and asks again', async () => {
         vi.useFakeTimers()
         const sent = []
@@ -674,6 +690,18 @@ describe('reads that fail', () => {
         const { found, last: said } = await scan()
         expect(found.map(rc => rc.id)).toEqual(['t1_gone'])
         expect(said).toMatchObject({ status: 'noted', message: "1 recovered. 3 feed(s) couldn't be read." })
+    })
+
+    it("doesn't count failures in a row across reddit's own 403, as across a 404", async () => {
+        const authors = threadOfAuthors(4)
+        for (const name of authors) pages[authorPath(name)] = { ok: false, status: 500 }
+        pages[authorPath(authors[2])] = { ok: false, status: 403, blockPage: false }
+        const { last } = await scan()
+        expect(asked).toContain(authorPath('op_user'))
+        expect(last).toMatchObject({
+            status: 'partial',
+            message: '0 recovered so far, 3 left to check. Click again to continue.',
+        })
     })
 
     it('keeps trying a refused feed for two more clicks, stops, then tries again a while later', async () => {
@@ -1261,6 +1289,36 @@ describe('the profile scan', () => {
     it('keeps to the fewest reads the options allow, the ones that open a scan among them', async () => {
         __resetStorage({ options: { scan_reads_per_click: 10 } })
         expect(await scanNextPageOfSixty()).toHaveLength(10)
+    })
+
+    it("says to scan again when the website's fewest reads run out on block pages' second tries", async () => {
+        __resetStorage({}, { [NEWS_CACHE_KEY]: { feed: { options: { scan_limits: { reads_per_click: 6 } } } } })
+        const c = 'sort=new&limit=100&after=t1_x'
+        pages[`/user/someone/comments/.rss?${c}`] = pages[`/user/someone/comments/.rss?${query}`]
+        pages[`/user/someone/comments.json?${c}`] = pages[`/user/someone/comments.json?${query}`]
+        pages[`/user/someone/submitted/.rss?sort=new&limit=1&before=t3_first`] = feed()
+        // Every first try gets the block page, and every second try gets past it
+        browserMock.runtime.sendMessage = async ({ path, secondTryMode }) => {
+            if (secondTryMode !== undefined) return answer(path)
+            asked.push(path)
+            return { ok: false, status: 403, blockPage: true, otherMode: 1 }
+        }
+        const options = { after: 't1_x', firstOnPage: { t3: 't3_first' } }
+        const pageReads = new Map()
+        const first = await scanProfile(options, pageReads)
+        expect(asked).toHaveLength(7)
+        expect(first.last).toMatchObject({
+            status: 'partial',
+            message: "This click's reads ran out; scan again to go on.",
+        })
+
+        asked.length = 0
+        const second = await scanProfile(options, pageReads)
+        expect(asked).not.toContain(`/user/someone/comments/.rss?${c}`)
+        expect(second.last).toMatchObject({
+            status: 'partial',
+            message: 'Found 2 removed item(s). 1 comment(s) not checked yet; scan again to go on.',
+        })
     })
 
     it("says when it's the viewer's own profile, which the page can't know from a stale name", async () => {

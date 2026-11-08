@@ -108,14 +108,6 @@ describe('goToOptions', () => {
         goToOptions()
         expect(opened).toHaveBeenCalledTimes(1)
     })
-
-    it('closes the popup it was opened from', () => {
-        const close = vi.fn()
-        vi.stubGlobal('chrome', { ...chrome, runtime: { ...chrome.runtime, openOptionsPage: vi.fn() } })
-        vi.stubGlobal('window', { close })
-        goToOptions()
-        expect(close).toHaveBeenCalledTimes(1)
-    })
 })
 
 describe('getFullIDsFromURL', () => {

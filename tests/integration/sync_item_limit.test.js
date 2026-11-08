@@ -11,7 +11,7 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import browserMock, { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
 import { _checkForChanges_thing_byId } from '../../src/src/monitoring'
 import {
@@ -127,19 +127,27 @@ const removeApproveRemove = async () => {
 }
 
 // As the browsers do it: one item over the limit, or a store over the total,
-// refuses the whole call
+// refuses the whole call, through chrome.* and browser.* alike
 let refusals
 let restoreSet
+const refusal = items => {
+    const tooBig = Object.entries(items).some(([key, value]) => itemBytes(key, value) > LIMIT)
+    if (!tooBig && storeBytes({ ...__getSyncStorage(), ...items }) <= TOTAL_LIMIT) {
+        return null
+    }
+    const message = tooBig ? 'QUOTA_BYTES_PER_ITEM quota exceeded' : 'QUOTA_BYTES quota exceeded'
+    refusals.push(message)
+    return message
+}
 beforeEach(() => {
     refusals = []
     const set = chrome.storage.sync.set
+    const browserSet = browserMock.storage.sync.set
     chrome.storage.sync.set = (items, callback) => {
-        const tooBig = Object.entries(items).some(([key, value]) => itemBytes(key, value) > LIMIT)
-        if (!tooBig && storeBytes({ ...__getSyncStorage(), ...items }) <= TOTAL_LIMIT) {
+        const message = refusal(items)
+        if (!message) {
             return set(items, callback)
         }
-        const message = tooBig ? 'QUOTA_BYTES_PER_ITEM quota exceeded' : 'QUOTA_BYTES quota exceeded'
-        refusals.push(message)
         chrome.runtime.lastError = { message }
         try {
             if (callback) callback()
@@ -148,8 +156,13 @@ beforeEach(() => {
         }
         return Promise.resolve()
     }
+    browserMock.storage.sync.set = items => {
+        const message = refusal(items)
+        return message ? Promise.reject(new Error(message)) : browserSet(items)
+    }
     restoreSet = () => {
         chrome.storage.sync.set = set
+        browserMock.storage.sync.set = browserSet
     }
 })
 afterEach(() => restoreSet())
