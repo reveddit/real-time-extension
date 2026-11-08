@@ -317,11 +317,17 @@ const addSubscribeButtons_newReddit = async (subscriptions: Record<string, any>)
         document.querySelectorAll(NEW_REDDIT_POST).forEach(addToPost)
     }
     // One document outlasts many pages here, unlike on old reddit, and bells
-    // already on the page should say what's followed now
+    // already on the page should say what's followed now. Firefox reports writes
+    // that change nothing, and monitoring writes the name every cycle.
     browser.storage.onChanged.addListener((changes: any, area: string) => {
-        if (area === 'sync' && changes.other_subscriptions) followed = changes.other_subscriptions.newValue || {}
-        else if (area === 'local' && changes.last_logged_in_user) me = changes.last_logged_in_user.newValue
-        else return
+        if (area === 'sync' && changes.other_subscriptions) {
+            const nowFollowed = changes.other_subscriptions.newValue || {}
+            if (JSON.stringify(nowFollowed) === JSON.stringify(followed)) return
+            followed = nowFollowed
+        } else if (area === 'local' && changes.last_logged_in_user) {
+            if (changes.last_logged_in_user.newValue === me) return
+            me = changes.last_logged_in_user.newValue
+        } else return
         addToAll()
     })
     addToAll()

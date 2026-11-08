@@ -1,7 +1,21 @@
 import { useMemo } from 'react'
 import { getItemFromLocalStorage } from './storage'
 import { ChangeForStorage, LocalStorageItem, getPrettyDate, getPrettyTimeLength, isComment } from './common'
-import { Card, CardHeader, CardMeta, CardBody, CardActions, Badge, Button, BlueLink, MutedLink, Author, Subreddit, PostTitle, MdBody } from './ui/components'
+import {
+  Card,
+  CardHeader,
+  CardMeta,
+  CardBody,
+  CardActions,
+  Badge,
+  Button,
+  BlueLink,
+  MutedLink,
+  Author,
+  Subreddit,
+  PostTitle,
+  MdBody,
+} from './ui/components'
 import { markdownToHTML } from './ui/markdown'
 import { redditItemUrl } from './ui/links'
 
@@ -29,7 +43,7 @@ export type FilterOption = 'removed' | 'deleted' | 'approved' | 'locked' | 'unlo
 export type FilterValue = FilterOption[]
 export type SortValue = 'observed' | 'delta' | 'created'
 
-export const variantFromAction = (action: string): ChangeRow['actionVariant'] => {
+const variantFromAction = (action: string): ChangeRow['actionVariant'] => {
   if (action === 'mod removed') return 'removed'
   if (action === 'user deleted') return 'deleted'
   if (action === 'approved') return 'approved'
@@ -61,13 +75,22 @@ export function ChangeCard({ row, onResolve }: { row: ChangeRow; onResolve: (id:
         <Badge variant={row.actionVariant}>{row.action}</Badge>
         <span style={{ color: 'var(--text-secondary)', fontSize: '0.9em' }}>
           {row.contentType} by <Author>u/{row.user}</Author>
-          {row.subreddit ? <> in <Subreddit>r/{row.subreddit}</Subreddit></> : null}
+          {row.subreddit ? (
+            <>
+              {' '}
+              in <Subreddit>r/{row.subreddit}</Subreddit>
+            </>
+          ) : null}
         </span>
       </CardHeader>
 
       <CardMeta>
         <span title={row.formattedObservedFull}>observed {row.formattedObserved}</span>
-        {row.timeLength !== 'n/a' && <span title={row.formattedCreated}>{row.action} {row.timeLength} after creation</span>}
+        {row.timeLength !== 'n/a' && (
+          <span title={row.formattedCreated}>
+            {row.action} {row.timeLength} after creation
+          </span>
+        )}
         {row.seenCount ? <span>seen {row.seenCount}×</span> : null}
       </CardMeta>
 
@@ -75,9 +98,7 @@ export function ChangeCard({ row, onResolve }: { row: ChangeRow; onResolve: (id:
 
       <CardBody>
         {bodyIsEmpty ? (
-          <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
-            (no body content stored)
-          </span>
+          <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>(no body content stored)</span>
         ) : (
           <MdBody className="md-body" dangerouslySetInnerHTML={{ __html: rendered }} />
         )}
@@ -107,7 +128,10 @@ export function ChangeCard({ row, onResolve }: { row: ChangeRow; onResolve: (id:
   )
 }
 
-export function toRow(change: ChangeForStorage, localStorage: Parameters<typeof getItemFromLocalStorage>[3]): ChangeRow {
+export function toRow(
+  change: ChangeForStorage,
+  localStorage: Parameters<typeof getItemFromLocalStorage>[3],
+): ChangeRow {
   const id = change.getID()
   const observedUTC = change.getObservedUTC() || 0
   const action = change.getChangeType() || ''

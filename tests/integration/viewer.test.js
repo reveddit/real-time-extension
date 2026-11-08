@@ -47,6 +47,7 @@ import {
     PROFILE_PUBLICLY_EMPTY,
 } from '../../src/src/lookup-status'
 import { checkForChanges } from '../../src/src/monitoring'
+import { json } from '../mocks/responses.js'
 import { cookie, jar, cookieKey as key, fill, cookiesApi } from '../mocks/cookies.js'
 
 const TOKEN = 'ab'.repeat(16)
@@ -456,12 +457,6 @@ describe('the header rule (Chrome and Edge)', () => {
     })
 })
 
-const json = (body, status = 200) => ({
-    ok: status >= 200 && status < 300,
-    status,
-    headers: { get: () => 'application/json; charset=UTF-8' },
-    json: async () => body,
-})
 const BLOCK = {
     ok: false,
     status: 403,
@@ -470,12 +465,12 @@ const BLOCK = {
         throw new Error('not json')
     },
 }
-const listing = (names, after = null) => json({ data: { after, children: names.map(name => ({ data: name })) } })
+const listing = (names, after = null) => json(200, { data: { after, children: names.map(name => ({ data: name })) } })
 const comment = (name, extra = {}) => ({ name, author: 'alice', body: 'hi', ...extra })
 // A comment's permalink JSON: its post, then the comment, or nothing at all,
 // which is what another account gets for a removed comment without replies
 const thread = (data, post = 't3_post1') =>
-    json([{ data: { children: [{ data: { name: post } }] } }, { data: { children: data ? [{ data }] : [] } }])
+    json(200, [{ data: { children: [{ data: { name: post } }] } }, { data: { children: data ? [{ data }] : [] } }])
 
 describe('checking the user’s items through the second account', () => {
     const connect = () => {
@@ -510,7 +505,7 @@ describe('checking the user’s items through the second account', () => {
                 connectedAt: 1,
             }
             answer([
-                ['/api/me.json', json({ data: { name: 'bob' } })],
+                ['/api/me.json', json(200, { data: { name: 'bob' } })],
                 ['/user/alice/comments.json', listing([comment('t1_live')])],
             ])
             await lookup(['t1_live'], meta(['t1_live']))
@@ -524,7 +519,7 @@ describe('checking the user’s items through the second account', () => {
     it('reads listings and threads as the second account, never the logged-out view', async () => {
         connect()
         answer([
-            ['/api/me.json', json({ data: { name: 'bob' } })],
+            ['/api/me.json', json(200, { data: { name: 'bob' } })],
             ['/user/alice/comments.json', listing([comment('t1_live')])],
             ['/user/alice/submitted.json', listing([])],
             ['/_/gone.json', thread(comment('t1_gone', { author: '[deleted]', body: '[removed]' }))],
@@ -535,10 +530,14 @@ describe('checking the user’s items through the second account', () => {
         expect(byName.t1_live).toMatchObject({ author: 'alice', body: 'hi', _public_view: true })
         expect(byName.t1_gone).toMatchObject({ author: '[deleted]', body: '[removed]', is_robot_indexable: false })
         expect(byName.t1_hidden).toMatchObject({ author: 'alice', is_robot_indexable: true })
-        // verdicts are cached: the next lookup reads no thread, and only comments
-        // are asked about, so the posts listing isn't walked
+        // verdicts are cached: the next lookup reads no thread, once the removal
+        // is recorded, and only comments are asked about, so the posts listing
+        // isn't walked
         globalThis.fetch.mockClear()
-        await lookup(['t1_live', 't1_gone', 't1_hidden'], meta(['t1_live', 't1_gone', 't1_hidden']))
+        await lookup(['t1_live', 't1_gone', 't1_hidden'], {
+            ...meta(['t1_live', 't1_gone', 't1_hidden']),
+            t1_gone: { link_id: 't3_post1', created_utc: 1, known_removed: true },
+        })
         expect(globalThis.fetch.mock.calls.map(c => new URL(c[0]).pathname)).toEqual(['/user/alice/comments.json'])
     })
 
@@ -600,7 +599,7 @@ describe('checking the user’s items through the second account', () => {
         __getLocalStorage().viewer_thread_consecutive_failures = { token: TOKEN, failures: 4 }
         answer([
             ['/user/alice/comments.json', listing([])],
-            ['/_/', json({}, 429)],
+            ['/_/', json(429, {})],
         ])
         await lookup(['t1_one'], meta(['t1_one']))
         expect(__getLocalStorage().viewer_thread_consecutive_failures).toMatchObject({ failures: 4 })
@@ -609,14 +608,14 @@ describe('checking the user’s items through the second account', () => {
 
     it('a 429 on me.json or a listing enters the backoff at once, sending nothing more', async () => {
         connect()
-        answer([['/api/me.json', json({}, 429)]])
+        answer([['/api/me.json', json(429, {})]])
         await expect(lookup(['t1_live', 't3_post'])).rejects.toThrow('429')
         expect(__getLocalStorage().rate_limit_until).toBeGreaterThan(Date.now())
         expect(globalThis.fetch).toHaveBeenCalledTimes(1)
 
         delete __getLocalStorage().rate_limit_until
         __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
-        answer([['/user/alice/comments.json', json({}, 429)]])
+        answer([['/user/alice/comments.json', json(429, {})]])
         await expect(lookup(['t1_live', 't3_post'])).rejects.toThrow('429')
         expect(globalThis.fetch.mock.calls.some(c => c[0].includes('submitted.json'))).toBe(false)
     })
@@ -625,7 +624,7 @@ describe('checking the user’s items through the second account', () => {
         connect()
         const ids = ['t1_childless', 't1_otherpost', 't1_unfocused']
         answer([
-            ['/api/me.json', json({ data: { name: 'bob' } })],
+            ['/api/me.json', json(200, { data: { name: 'bob' } })],
             ['/user/alice/', listing([])],
             ['/_/childless.json', thread(null)],
             ['/_/otherpost.json', thread(null, 't3_elsewhere')],
@@ -649,7 +648,7 @@ describe('checking the user’s items through the second account', () => {
         // and an earlier missing-profile reading, which the bridge would keep acting on
         __getLocalStorage().public_profile_unavailable = { user: 'alice', t: Date.now() }
         answer([
-            ['/api/me.json', json({ data: { name: 'bob' } })],
+            ['/api/me.json', json(200, { data: { name: 'bob' } })],
             ['/user/alice/', listing([comment('t1_live')])],
         ])
         await lookup(['t1_live'], meta(['t1_live']))
@@ -678,8 +677,9 @@ describe('checking the user’s items through the second account', () => {
         const OLD = () => nowSec() - 5 * 86400
         const post = (name, extra = {}) => ({ name, author: 'alice', title: 'hi', ...extra })
         const postThread = (name, extra = {}) =>
-            json([{ data: { children: [{ data: post(name, extra) }] } }, { data: { children: [] } }])
-        const threadReads = () => globalThis.fetch.mock.calls.map(c => new URL(c[0]).pathname).filter(p => p.startsWith('/comments/'))
+            json(200, [{ data: { children: [{ data: post(name, extra) }] } }, { data: { children: [] } }])
+        const threadReads = () =>
+            globalThis.fetch.mock.calls.map(c => new URL(c[0]).pathname).filter(p => p.startsWith('/comments/'))
         const setUp = (listed, threads = []) => {
             connect()
             __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
@@ -723,11 +723,18 @@ describe('checking the user’s items through the second account', () => {
                     ['/comments/noage.json', thread(null)],
                 ],
             )
-            const results = await lookup(['t3_young', 't3_noage'], { t3_young: { created_utc: nowSec() - 3600 }, t3_noage: {} })
+            const results = await lookup(['t3_young', 't3_noage'], {
+                t3_young: { created_utc: nowSec() - 3600 },
+                t3_noage: {},
+            })
             expect(threadReads().sort()).toEqual(['/comments/noage.json', '/comments/young.json'])
             expect(results.map(r => r.data.name)).toEqual(['t3_young', 't3_noage'])
             for (const { data } of results) {
-                expect(data).toMatchObject({ is_robot_indexable: true, _public_view: true, _public_view_unverified: true })
+                expect(data).toMatchObject({
+                    is_robot_indexable: true,
+                    _public_view: true,
+                    _public_view_unverified: true,
+                })
             }
         })
 
@@ -748,8 +755,14 @@ describe('checking the user’s items through the second account', () => {
         })
 
         it('one listed as removed (not deleted) is a removal at once, with no thread read', async () => {
-            setUp([post('t3_mod', { removed_by_category: 'moderator' }), post('t3_del', { removed_by_category: 'deleted' })])
-            const results = await lookup(['t3_mod', 't3_del'], { t3_mod: { created_utc: OLD() }, t3_del: { created_utc: OLD() } })
+            setUp([
+                post('t3_mod', { removed_by_category: 'moderator' }),
+                post('t3_del', { removed_by_category: 'deleted' }),
+            ])
+            const results = await lookup(['t3_mod', 't3_del'], {
+                t3_mod: { created_utc: OLD() },
+                t3_del: { created_utc: OLD() },
+            })
             expect(threadReads()).toEqual([])
             const byName = Object.fromEntries(results.map(r => [r.data.name, r.data]))
             expect(byName.t3_mod).toMatchObject({ author: '[deleted]', body: '[removed]', is_robot_indexable: false })
@@ -801,7 +814,7 @@ describe('checking the user’s items through the second account', () => {
 
         // A young post read live a minute ago while listed, gone from the listing now
         __getLocalStorage().viewer_item_verdicts = { t3_young: { v: 'live', t: Date.now() - 60 * 1000, l: 1 } }
-        const removedPost = json([
+        const removedPost = json(200, [
             { data: { children: [{ data: { name: 't3_young', removed_by_category: 'moderator' } }] } },
             { data: { children: [] } },
         ])
@@ -817,7 +830,7 @@ describe('checking the user’s items through the second account', () => {
         connect()
         __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
         answer([
-            ['after=', json({}, 503)],
+            ['after=', json(503, {})],
             ['/user/alice/comments.json', listing([comment('t1_zzzz')], 't1_zzzz')],
             ['/user/alice/submitted.json', listing([])],
         ])
@@ -829,19 +842,67 @@ describe('checking the user’s items through the second account', () => {
 
     it('says nothing about an item older than the part of the listing walked', async () => {
         connect()
-        // three pages of newer comments, each with more after it
+        // three pages of newer comments, each with more after it. Every thread
+        // answers as a removal, so reading the older one would report it.
         answer([
-            ['/api/me.json', json({ data: { name: 'bob' } })],
+            ['/api/me.json', json(200, { data: { name: 'bob' } })],
             ['/user/alice/comments.json', listing([comment('t1_zzzz')], 't1_zzzz')],
             ['/user/alice/submitted.json', listing([])],
+            ['/_/', thread(null)],
         ])
-        expect(await lookup(['t1_aaa'], meta(['t1_aaa']))).toEqual([])
+        const results = await lookup(['t1_aaa', 't1_zzzzz'], meta(['t1_aaa', 't1_zzzzz']))
+        expect(results.map(r => r.data.name)).toEqual(['t1_zzzzz'])
         expect(globalThis.fetch.mock.calls.filter(c => c[0].includes('comments.json'))).toHaveLength(3)
+        expect(globalThis.fetch.mock.calls.filter(c => c[0].includes('/_/aaa.json'))).toHaveLength(0)
+    })
+
+    describe('a removal monitoring has not recorded yet', () => {
+        const threadReads = () => globalThis.fetch.mock.calls.filter(c => c[0].includes('/_/'))
+        const setUp = threadAnswer => {
+            connect()
+            __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
+            answer([
+                ['/user/alice/', listing([])],
+                ['/_/', threadAnswer],
+            ])
+        }
+
+        it('is read on its thread each cycle, so one read cannot fill the confirmation count', async () => {
+            setUp(thread(null))
+            const [first] = await lookup(['t1_gone'], meta(['t1_gone']))
+            expect(first.data).toMatchObject({ body: '[removed]' })
+            setUp(thread(comment('t1_gone')))
+            const [next] = await lookup(['t1_gone'], meta(['t1_gone']))
+            expect(next.data).toMatchObject({ author: 'alice', is_robot_indexable: true })
+        })
+
+        it('goes back to one read per time to live if it never is, as with removal tracking off', async () => {
+            setUp(thread(null))
+            for (let i = 0; i < 8; i++) {
+                expect(await lookup(['t1_gone'], meta(['t1_gone']))).toHaveLength(1)
+            }
+            expect(threadReads()).toHaveLength(5)
+            __getLocalStorage().viewer_item_verdicts.t1_gone.t = Date.now() - 2 * 3600 * 1000 - 1000
+            for (let i = 0; i < 3; i++) {
+                await lookup(['t1_gone'], meta(['t1_gone']))
+            }
+            expect(threadReads()).toHaveLength(6)
+        })
+
+        it('stays inside the reads of a cycle', async () => {
+            setUp(thread(null))
+            const ids = Array.from({ length: 12 }, (_, i) => `t1_c${i}`)
+            __getLocalStorage().viewer_item_verdicts = Object.fromEntries(
+                ids.map(id => [id, { v: 'removed', t: Date.now() }]),
+            )
+            await lookup(ids, meta(ids))
+            expect(threadReads()).toHaveLength(10)
+        })
     })
 
     it("a signed-out second account says so at once, and doesn't fall back to the logged-out view", async () => {
         connect()
-        answer([['/api/me.json', json({})]])
+        answer([['/api/me.json', json(200, {})]])
         await expect(lookup(['t1_live'])).rejects.toThrow(VIEWER_SIGNED_OUT)
         expect(__getLocalStorage().error_status).toBe(VIEWER_SIGNED_OUT)
     })
@@ -969,8 +1030,8 @@ describe('checking the user’s items through the second account', () => {
     it('both listings missing while a known profile loads is the shadowban signature: one warning', async () => {
         connect()
         answer([
-            ['/api/me.json', json({ data: { name: 'bob' } })],
-            ['/user/alice/', json({ error: 404 }, 404)],
+            ['/api/me.json', json(200, { data: { name: 'bob' } })],
+            ['/user/alice/', json(404, { error: 404 })],
             ['/user/reddit/comments.json', listing([comment('t1_r')])],
         ])
         await expect(lookup(['t1_live'])).rejects.toThrow(PROFILE_PUBLICLY_EMPTY)
@@ -1000,7 +1061,7 @@ describe('checking the user’s items through the second account', () => {
         expect(await get()).toMatchObject({ ok: false, status: 0 })
         expect(_viewerFetchState.preferredCacheMode).toEqual({})
         // Only no-cache gets past the edge: it's learned, and asked first after that
-        globalThis.fetch = vi.fn(async (url, init) => (init.cache === 'no-cache' ? json({ ok: 1 }) : BLOCK))
+        globalThis.fetch = vi.fn(async (url, init) => (init.cache === 'no-cache' ? json(200, { ok: 1 }) : BLOCK))
         await get()
         expect(await get()).toMatchObject({ ok: true })
         expect(globalThis.fetch.mock.calls.map(c => c[1].cache)).toEqual(['default', 'no-cache', 'no-cache'])
@@ -1018,7 +1079,7 @@ describe('checking the user’s items through the second account', () => {
         // the thread reads are refused for a moment
         let threadsRefused = true
         globalThis.fetch = vi.fn(async (url, init) => {
-            if (url.includes('/comments/p/')) return !threadsRefused && init.cache === 'default' ? json([]) : BLOCK
+            if (url.includes('/comments/p/')) return !threadsRefused && init.cache === 'default' ? json(200, []) : BLOCK
             return init.cache === 'no-cache' ? listing([]) : BLOCK
         })
         await fetchJsonAsViewer('https://www.reddit.com/user/alice/comments.json', viewer)
@@ -1032,7 +1093,7 @@ describe('checking the user’s items through the second account', () => {
         const kind = `${TOKEN}:/api/me.json`
         _viewerFetchState.preferredCacheMode[kind] = 0
         _viewerFetchState.doubleBlockAt[kind] = Date.now() + 24 * 3600 * 1000
-        globalThis.fetch = vi.fn(async (url, init) => (init.cache === 'no-cache' ? json({ ok: 1 }) : BLOCK))
+        globalThis.fetch = vi.fn(async (url, init) => (init.cache === 'no-cache' ? json(200, { ok: 1 }) : BLOCK))
         expect(await fetchJsonAsViewer('https://www.reddit.com/api/me.json', viewer)).toMatchObject({ ok: true })
         expect(_viewerFetchState.doubleBlockAt[kind]).toBeUndefined()
         // Also when the first answer gets through, so the stamp can't start a pause later
@@ -1046,7 +1107,7 @@ describe('checking the user’s items through the second account', () => {
         const viewer = { name: 'bob', token: TOKEN, cookies: [], connectedAt: 1 }
         // Every kind passes in no-cache only, as when reddit refuses a request style everywhere
         globalThis.fetch = vi.fn(async (url, init) =>
-            init.cache === 'no-cache' ? json({ data: { children: [] } }) : BLOCK,
+            init.cache === 'no-cache' ? json(200, { data: { children: [] } }) : BLOCK,
         )
         await fetchJsonAsViewer('https://www.reddit.com/user/alice/comments.json', viewer)
         globalThis.fetch.mockClear()
@@ -1108,7 +1169,7 @@ describe('checking the user’s items through the second account', () => {
     })
 
     it("fetchJsonAsViewer leaves the browser's cookies off and marks the URL", async () => {
-        const fetchSpy = (globalThis.fetch = vi.fn(async () => json({ ok: 1 })))
+        const fetchSpy = (globalThis.fetch = vi.fn(async () => json(200, { ok: 1 })))
         const r = await fetchJsonAsViewer('https://www.reddit.com/api/me.json', {
             name: 'bob',
             token: TOKEN,

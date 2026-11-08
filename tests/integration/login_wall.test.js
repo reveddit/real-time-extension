@@ -34,6 +34,7 @@ import { getPublicProfileItems } from '../../src/src/parse_html/new'
 import { fetchNews, applyRemoteConfig, NEWS_CACHE_KEY } from '../../src/src/news'
 import { newIssueUrl, ISSUES_URL, ISSUE_FORM, LOG_NOT_COPIED } from '../../src/src/report'
 import { readFileSync } from 'node:fs'
+import { routeOrder, useFetcherHooks } from '../mocks/www-fetch-hooks.js'
 
 const FEED = 'https://www.reddit.com/user/u/comments/?sort=new'
 const PARTIAL = 'https://www.reddit.com/svc/shreddit/comments/r/s/abc/x1?render-mode=partial'
@@ -49,33 +50,15 @@ const res = (status, body, redirectedTo = '') => ({
 })
 
 const routeState = () => __getLocalStorage()[WWW_ROUTE_STATE_KEY]
-const leadWithTabRoute = () => {
-    __getLocalStorage().news_cache = {
-        feed: { messages: [], options: { mechanisms: {}, www_route_order: { chrome: ['tab:no-cache'] } } },
-        lastFetched: Date.now(),
-    }
-}
+const leadWithTabRoute = () => routeOrder(['tab:no-cache'])
 
-const savedLookups = { commentsById: _legacyLookups.commentsById, postByPath: _legacyLookups.postByPath }
-const savedTabs = { query: browserMock.tabs.query, sendMessage: browserMock.tabs.sendMessage }
+useFetcherHooks()
 
 beforeEach(() => {
-    __resetStorage()
     setLoginWallConfig({})
-    _wwwRouteTiming.switchDelayMs = 0
-    _legacyLookups.commentsById = vi.fn(async () => [])
-    _legacyLookups.postByPath = vi.fn(async () => null)
-    globalThis.fetch = vi.fn(async () => {
-        throw new Error('unexpected network call')
-    })
 })
 
 afterEach(() => {
-    _legacyLookups.commentsById = savedLookups.commentsById
-    _legacyLookups.postByPath = savedLookups.postByPath
-    browserMock.tabs.query = savedTabs.query
-    browserMock.tabs.sendMessage = savedTabs.sendMessage
-    delete browserMock.scripting
     setLoginWallConfig({})
 })
 

@@ -13,12 +13,12 @@ import {
     INTERVAL_DEFAULT,
     SEEN_COUNT_DEFAULT,
     MAX_SUBSCRIPTIONS,
+    addLocalStorageItems,
     MAX_OTHER_SUBSCRIPTIONS,
     getObjectNamesForThing,
     getUserInit,
     initStorage,
     subscribeUser,
-    unsubscribeUser,
     subscribeId,
     unsubscribeId,
     markThingAsSeen,
@@ -44,8 +44,6 @@ import {
 const initStorageP = () => new Promise((resolve) => initStorage(resolve))
 const subscribeUserP = (user) =>
     new Promise((resolve, reject) => subscribeUser(user, resolve, reject))
-const unsubscribeUserP = (user) =>
-    new Promise((resolve) => unsubscribeUser(user, resolve))
 const subscribeIdP = (id) =>
     new Promise((resolve) => subscribeId(id, resolve))
 const unsubscribeIdP = (id) =>
@@ -165,7 +163,7 @@ describe('initStorage', () => {
     })
 })
 
-describe('subscribeUser / unsubscribeUser', () => {
+describe('subscribeUser', () => {
     beforeEach(() => __resetStorage(makeStorageInit()))
 
     it('subscribes a user and creates tracking keys', async () => {
@@ -204,19 +202,6 @@ describe('subscribeUser / unsubscribeUser', () => {
     it('rejects duplicate subscriptions', async () => {
         __resetStorage(makeStorageInit({ user_subscriptions: { alice: true } }))
         await expect(subscribeUserP('alice')).rejects.toMatch(/already subscribed/)
-    })
-
-    it('unsubscribes a user and records in unsubscriptions', async () => {
-        __resetStorage(
-            makeStorageInit({
-                user_subscriptions: { alice: true },
-                ...getUserInit('alice'),
-            }),
-        )
-        await unsubscribeUserP('alice')
-        const storage = __getSyncStorage()
-        expect(storage.user_subscriptions.alice).toBeUndefined()
-        expect(storage.user_unsubscriptions.alice).toBeGreaterThan(0)
     })
 })
 
@@ -571,5 +556,34 @@ describe('getOptions / saveOptions', () => {
         expect(storage.options.show_thread_scan_buttons).toBe(false)
         expect(storage.options.highlight_own_profile_status).toBe(true)
         expect(storage.options.auto_filter_removed_threads).toBe(false)
+    })
+})
+
+describe('addLocalStorageItems', () => {
+    beforeEach(() => __resetStorage({}, { items_other: { t1_old: { t: 'kept', o: 1 } } }))
+
+    it('adds to what is stored, and settles after the save', async () => {
+        const set = browserMock.storage.local.set
+        let saved = false
+        vi.spyOn(browserMock.storage.local, 'set').mockImplementation(async items => {
+            await new Promise(resolve => setTimeout(resolve, 1))
+            saved = true
+            return set(items)
+        })
+        await addLocalStorageItems({ t1_new: { t: 'added', o: 2 } }, 'other', false)
+        expect(saved).toBe(true)
+        expect(__getLocalStorage().items_other).toEqual({
+            t1_old: { t: 'kept', o: 1 },
+            t1_new: { t: 'added', o: 2 },
+        })
+    })
+
+    it('keeps the 1,000 last seen when it goes over', async () => {
+        const items = {}
+        for (let i = 0; i < 1000; i++) items[`t1_${i}`] = { t: 'x', o: 10 + i }
+        await addLocalStorageItems(items, 'other', false)
+        const stored = __getLocalStorage().items_other
+        expect(Object.keys(stored)).toHaveLength(1000)
+        expect(stored.t1_old).toBeUndefined()
     })
 })

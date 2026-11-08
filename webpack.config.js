@@ -50,9 +50,6 @@ const manifestPath = path.join(distPath,
 
 function modify(buffer) {
     // copy-webpack-plugin passes a buffer
-    // this line, buffer.toString(), causes this error if this filename ends in babel.js:
-    //     Cannot find module 'core-js/modules/es.object.to-string'
-    // maybe babel converts it incorrectly?
     var manifest = JSON.parse(buffer.toString());
     let host_permissions_location = 'host_permissions'
     if (chromelike) {
@@ -72,7 +69,7 @@ function modify(buffer) {
             "gecko_android": {}
         }
         // The cookie header rules run through webRequest on Firefox (the DNR
-        // calls in background.ts are guarded), so the permission is dead weight.
+        // calls in header-rules.ts and viewer.ts are guarded), so the permission is dead weight.
         manifest.permissions = manifest.permissions.filter(p => p !== 'declarativeNetRequestWithHostAccess')
         manifest.permissions.push(
             'activeTab', 'webRequest', 'webRequestBlocking',

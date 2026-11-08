@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
 import { res } from '../mocks/responses.js'
 import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
+import { thingIdEl, emptyStatePage } from '../mocks/public-profile.js'
 
 import {
     getLoggedinUserDetailed,
@@ -25,7 +26,10 @@ import { CHECKS_FAILING } from '../../src/src/lookup-status'
 import { computeAbsentVerifyBudget } from '../../src/src/page-verify'
 import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates'
 import { checkForChanges } from '../../src/src/monitoring'
-import { getUserInit } from '../../src/src/storage'
+import { getUserInit, getObjectNamesForThing } from '../../src/src/storage'
+import { readWithLogin, _scanTurn } from '../../src/src/requests'
+import { WWW_FETCH_TIMEOUT_MS } from '../../src/src/logged-in-fetch'
+import { getDiagTiers, clearDiagLog } from '../../src/src/diaglog'
 
 const USER_JSON = JSON.stringify({ data: { name: 'alice' } })
 
@@ -41,12 +45,15 @@ beforeEach(() => {
     __resetStorage()
     fill([cookie('reddit_session', 'S1')])
     browserMock.cookies = cookiesApi
+    // A check with a reddit tab open saves the cookie snapshot
+    globalThis.chrome.cookies = { getAll: (q, cb) => cb([]) }
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 })
 
 afterEach(() => {
     delete browserMock.cookies
+    delete globalThis.chrome.cookies
 })
 
 describe('whoIsSignedIn, for the second account’s sign-in', () => {
@@ -141,9 +148,29 @@ describe('a browser with no Reddit login', () => {
     })
 })
 
+describe("a scan's read when the count of login refusals can't be read", () => {
+    it('still answers, and a 429 still enters the backoff', async () => {
+        const get = browserMock.storage.local.get
+        vi.spyOn(browserMock.storage.local, 'get').mockImplementation(async keys => {
+            if ('login_detect_consecutive_failures' in Object(keys)) throw new Error('unreadable')
+            return get(keys)
+        })
+        _scanTurn.next = 0
+        fetchMock.mockResolvedValue(new Response('', { status: 429 }))
+        expect(await readWithLogin('/user/bob/comments/.rss')).toMatchObject({ ok: false, status: 429 })
+        await vi.waitFor(() => expect(__getLocalStorage().rate_limit_until).toBeGreaterThan(Date.now()))
+    })
+})
+
 describe('a check for a remembered user', () => {
     const REFUSED = res(403, 'blocked')
     const LISTING = { ok: true, status: 200, json: async () => ({ data: { children: [] } }) }
+    const listingBy = author => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { children: [{ kind: 't1', data: { name: 't1_a', author, body: 'b' } }] } }),
+    })
+    const keys = getObjectNamesForThing('alice', true)
     // The check's work finishes after checkForChanges returns
     const check = async () => {
         const sync = __getSyncStorage()
@@ -155,7 +182,7 @@ describe('a check for a remembered user', () => {
     beforeEach(() => {
         const options = { removal_status: { track: true }, lock_status: { track: true } }
         const subscriptions = { user_subscriptions: {}, other_subscriptions: {} }
-        Object.assign(__getSyncStorage(), subscriptions, { options }, getUserInit('alice'))
+        Object.assign(__getSyncStorage(), subscriptions, { options }, structuredClone(getUserInit('alice')))
         __getLocalStorage().last_logged_in_user = 'alice'
     })
 
@@ -325,6 +352,47 @@ describe('a check for a remembered user', () => {
             expect(local().error_status).toBe('reddit_blocked')
             expect(local().check_consecutive_failures).toBe(2)
         })
+
+        describe('with a custom client id, when www.reddit.com refuses the listing', () => {
+            const answering = (www, oauth) => async url => {
+                if (String(url).includes('access_token')) return token
+                if (String(url).startsWith('https://oauth.reddit.com/')) return oauth
+                return String(url).includes('/user/me.json') ? www : ME
+            }
+            beforeEach(() => {
+                __getSyncStorage().options = { ...__getSyncStorage().options, custom_clientid: 'mine' }
+            })
+
+            it("doesn't take a failed fallback for nobody being logged in", async () => {
+                fetchMock.mockImplementation(answering(res(503, 'down'), res(500, 'oops')))
+                await check()
+                expect(local().error_status).toBeUndefined()
+                expect(local().check_consecutive_failures).toBe(1)
+            })
+
+            it('backs off from a 429 when the fallback failed too', async () => {
+                fetchMock.mockImplementation(answering(res(429, 'slow down'), res(500, 'oops')))
+                await check()
+                expect(local().error_status).toBe('rate_limited')
+                expect(local().rate_limit_until).toBeGreaterThan(Date.now())
+            })
+
+            it("doesn't take the fallback's empty answer for a clean pass: its token has no user", async () => {
+                fetchMock.mockImplementation(answering(res(503, 'down'), LISTING))
+                Object.assign(local(), { error_status: 'reddit_blocked', check_consecutive_failures: 2 })
+                await check()
+                expect(local().error_status).toBe('reddit_blocked')
+                expect(local().check_consecutive_failures).toBe(3)
+            })
+
+            it("doesn't check what the fallback lists, which isn't the user's, and a 429 still backs off", async () => {
+                fetchMock.mockImplementation(answering(res(429, 'slow down'), listingBy('me')))
+                await check()
+                expect(local().rate_limit_until).toBeGreaterThan(Date.now())
+                expect(__getSyncStorage()[keys.approved]).toEqual({})
+                expect(local().items_u_alice).toBeUndefined()
+            })
+        })
     })
 
     it("takes a login check that names the user as the end of the refusals, whatever the listing does", async () => {
@@ -337,11 +405,6 @@ describe('a check for a remembered user', () => {
     })
 
     it("doesn't check another account's listing under the remembered name", async () => {
-        const listingBy = author => ({
-            ok: true,
-            status: 200,
-            json: async () => ({ data: { children: [{ kind: 't1', data: { name: 't1_a', author, body: 'b' } }] } }),
-        })
         const local = __getLocalStorage()
         // The login check doesn't answer, so all there is to go on is the name
         const listing = answer => async url => (String(url).includes('/user/me.json') ? answer : res(503, 'down'))
@@ -352,6 +415,47 @@ describe('a check for a remembered user', () => {
         fetchMock.mockImplementation(listing(listingBy('Alice')))
         await check()
         expect(local.check_consecutive_failures).toBe(1)
+    })
+
+    it("doesn't take an empty listing for a clean pass under the remembered name", async () => {
+        const local = __getLocalStorage()
+        Object.assign(local, {
+            error_status: 'reddit_blocked',
+            check_consecutive_failures: 2,
+            login_detect_consecutive_failures: 3,
+        })
+        // The login check doesn't answer, and this says nothing about whose login it is
+        fetchMock.mockImplementation(async url => (String(url).includes('/user/me.json') ? LISTING : res(503, 'down')))
+        await check()
+        expect(local.check_consecutive_failures).toBe(3)
+        expect(local.login_detect_consecutive_failures).toBe(3)
+        expect(local.error_status).toBe('reddit_blocked')
+    })
+
+    describe('when the login check names the user', () => {
+        const listingIs = answer => async url => (String(url).includes('/user/me.json') ? answer : res(200, USER_JSON))
+
+        it("doesn't check a listing with none of their items", async () => {
+            fetchMock.mockImplementation(listingIs(listingBy('bob')))
+            await check()
+            expect(__getLocalStorage().check_consecutive_failures).toBe(1)
+            expect(__getSyncStorage()[keys.approved]).toEqual({})
+            expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/user/alice/'))).toEqual([])
+        })
+
+        it('checks a listing whose author differs only in letter case', async () => {
+            fetchMock.mockImplementation(listingIs(listingBy('ALICE')))
+            await check()
+            expect(__getLocalStorage().check_consecutive_failures).toBeUndefined()
+            expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/user/alice/'))).not.toEqual([])
+        })
+
+        it('takes an empty listing for a clean pass: a new account has no items', async () => {
+            __getLocalStorage().check_consecutive_failures = 2
+            fetchMock.mockImplementation(listingIs(LISTING))
+            await check()
+            expect(__getLocalStorage().check_consecutive_failures).toBeUndefined()
+        })
     })
 
     it('leaves the stored options alone, so a save during a cycle with a quarantined item stands', async () => {
@@ -405,6 +509,85 @@ describe('a check for a remembered user', () => {
             await check()
             expect(send.mock.calls.map(call => call[0])).toEqual([privateWindow.id])
         })
+
+        it("passes over tabs that can't answer: a discarded one has no page, and a frozen one runs nothing", async () => {
+            withTabs([{ ...regular, id: 4, discarded: true }, { ...regular, id: 5, frozen: true }, regular])
+            await check()
+            expect(send.mock.calls.map(call => call[0])).toEqual([regular.id])
+        })
+
+        it('reads from the background when no tab can answer, and still saves the cookies', async () => {
+            globalThis.chrome.cookies = { getAll: (q, cb) => cb([cookie('reddit_session', 'S1')]) }
+            withTabs([{ ...regular, discarded: true }, { ...regular, id: 5, frozen: true }])
+            await check()
+            expect(send).not.toHaveBeenCalled()
+            expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/user/me.json'))).toBe(true)
+            await vi.waitFor(() => expect(__getLocalStorage().stored_reddit_cookie_objects).toHaveLength(1))
+        })
+
+        it("reads from the background when the browser can't list its tabs", async () => {
+            withTabs(undefined)
+            await check()
+            expect(send).not.toHaveBeenCalled()
+            expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/user/me.json'))).toBe(true)
+        })
+
+        describe('that never answers', () => {
+            let answerLate
+            const listingReads = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/user/me.json'))
+            const logged = async () => {
+                const { summary, details } = await getDiagTiers()
+                return [...summary, ...details].map(entry => entry.m)
+            }
+            const startCheck = async () => {
+                delete __getSyncStorage().last_check
+                await checkForChanges()
+                await vi.waitFor(() => expect(send).toHaveBeenCalled())
+            }
+
+            beforeEach(() => {
+                vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+                send.mockImplementation((id, message, callback) => {
+                    answerLate = callback
+                })
+                withTabs([regular])
+            })
+
+            it('gives up on it in time, and the stored cookies read the listing', async () => {
+                await startCheck()
+                await vi.advanceTimersByTimeAsync(WWW_FETCH_TIMEOUT_MS - 1000)
+                expect(listingReads()).toEqual([])
+                await vi.advanceTimersByTimeAsync(1000)
+                await vi.waitFor(() => expect(__getSyncStorage().last_check).toBeDefined())
+                expect(listingReads()).toHaveLength(1)
+            })
+
+            it('does nothing with an answer that comes after that', async () => {
+                await startCheck()
+                await vi.advanceTimersByTimeAsync(WWW_FETCH_TIMEOUT_MS)
+                await vi.waitFor(() => expect(__getSyncStorage().last_check).toBeDefined())
+                await clearDiagLog()
+                const before = structuredClone(__getSyncStorage())
+                chrome.runtime.lastError = { message: 'The message port closed before a response was received.' }
+                answerLate()
+                chrome.runtime.lastError = null
+                answerLate([{ kind: 't1', data: { name: 't1_late', author: 'alice', body: 'b' } }])
+                await vi.advanceTimersByTimeAsync(0)
+                expect(await logged()).toEqual([])
+                expect(__getSyncStorage()).toEqual(before)
+                expect(listingReads()).toHaveLength(1)
+            })
+
+            it('calls the deadline off when it does answer', async () => {
+                await clearDiagLog()
+                await startCheck()
+                answerLate([])
+                await vi.waitFor(() => expect(__getSyncStorage().last_check).toBeDefined())
+                await vi.advanceTimersByTimeAsync(WWW_FETCH_TIMEOUT_MS)
+                expect(listingReads()).toEqual([])
+                expect((await logged()).filter(line => line.startsWith('No answer'))).toEqual([])
+            })
+        })
     })
 
     it('keeps the warning mark through the pass over followed items', async () => {
@@ -423,7 +606,11 @@ describe('a check for a remembered user', () => {
     it('a listing that comes back ends the count: the login works, whatever the login check says', async () => {
         fetchMock.mockResolvedValue(REFUSED)
         for (let i = 0; i < 4; i++) await check()
-        fetchMock.mockImplementation(async url => (String(url).includes('/user/me.json') ? LISTING : REFUSED))
+        fetchMock.mockImplementation(async url => {
+            if (String(url).includes('/user/me.json')) return listingBy('alice')
+            if (String(url).includes('/user/alice/comments/')) return res(200, thingIdEl('t1_a'))
+            return String(url).includes('/user/alice/submitted/') ? res(200, emptyStatePage('posts')) : REFUSED
+        })
         await check()
         expect(__getLocalStorage().login_detect_consecutive_failures).toBeUndefined()
         fetchMock.mockResolvedValue(REFUSED)

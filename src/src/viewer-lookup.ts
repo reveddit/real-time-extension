@@ -1,7 +1,13 @@
 import { ViewerAccount, fetchJsonAsViewer, installViewerHeaderRule, checkViewerIdentity } from './viewer'
 import { dlog, dlogSummary } from './diaglog'
 import { fullnameValue } from './parse_html/new'
-import { isViewerBlockedItem, isUserDeletedComment, isRemovedItem, setWarningBadge } from './common'
+import {
+    isViewerBlockedItem,
+    isUserDeletedComment,
+    isRemovedByCategory,
+    isRemovedItem,
+    setWarningBadge,
+} from './common'
 import browser from 'webextension-polyfill'
 import {
     www_reddit,
@@ -24,6 +30,7 @@ import {
     recordViewerThreadOutcome,
 } from './lookup-status'
 import { noteRateLimited, readLocal } from './request-gates'
+import { isConfirmingRemoval, removedReads } from './page-verify'
 
 // The second account's view of the user's own items (viewer.ts): what other
 // logged-in people see, for when reddit asks for a login before it shows
@@ -137,18 +144,15 @@ const viewerVerdictOf = (id: string, postId: string, json: any): ViewerVerdict =
     if (isViewerBlockedItem(data) || (!id.startsWith('t3_') && isUserDeletedComment(data))) {
         return 'unknown'
     }
-    if (
-        isRemovedItem(data) ||
-        (id.startsWith('t3_') && data.removed_by_category && data.removed_by_category !== 'deleted')
-    ) {
+    if (isRemovedItem(data) || (id.startsWith('t3_') && isRemovedByCategory(data))) {
         return 'removed'
     }
     return 'live'
 }
 
-// l: read while the item was listed
+// l: read while the item was listed. n: removedReads.
 const readViewerVerdicts = () =>
-    readLocal<Record<string, { v: ViewerVerdict; t: number; l?: 1 }>>(VIEWER_VERDICTS_KEY, {})
+    readLocal<Record<string, { v: ViewerVerdict; t: number; l?: 1; n?: number }>>(VIEWER_VERDICTS_KEY, {})
 
 // After both listings come back as the edge's block page in both cache modes,
 // the second account rests half an hour, as the logged-out view's refused
@@ -193,7 +197,8 @@ const restViewer = async (viewer: ViewerAccount) => {
 // for recordViewerThreadOutcome. A 'live' lasts as long as the logged-out
 // view's does for a missing item (absentLiveTtl: sooner for young items, when
 // removals happen), and ends when an item read live while listed drops out of
-// the listing, which is how a removal shows.
+// the listing, which is how a removal shows. A 'removed' isn't reused until
+// it's recorded (isConfirmingRemoval).
 const readViewerThreads = async (
     viewer: ViewerAccount,
     ids: string[],
@@ -212,7 +217,7 @@ const readViewerThreads = async (
     const due = ids.filter(id => {
         const entry = cache[id]
         const age = now - Number(entry?.t)
-        if (entry && age >= 0 && age < ttl(id, entry)) {
+        if (entry && age >= 0 && age < ttl(id, entry) && !isConfirmingRemoval(entry, authItemsMeta[id])) {
             if (entry.v !== 'unknown') {
                 verdicts[id] = entry.v
             }
@@ -253,7 +258,7 @@ const readViewerThreads = async (
             break
         }
         const v = viewerVerdictOf(id, postId, r.ok ? r.json : undefined)
-        cache[id] = { v, t: Date.now(), ...(listed.has(id) && { l: 1 as const }) }
+        cache[id] = { v, t: Date.now(), ...(listed.has(id) && { l: 1 as const }), ...removedReads(v, cache[id]) }
         if (v !== 'unknown') {
             verdicts[id] = v
             resolved++
@@ -383,12 +388,11 @@ export const lookupItemsByID_fromViewer = async (
         dlog('feed', `[reveddit] second account: ${all.length - listed.size} listed items read [unavailable] (a block)`)
     }
     const meta = (id: string) => authItemsMeta[id] || {}
-    const covered = (id: string) => isCovered(id, comments.floor, posts.floor)
+    const covered = (id: string) => isCovered(id, { t1: comments.floor, t3: posts.floor })
     const authSaysRemoved = (id: string) => authSaysPostRemoved(id, meta(id))
     const young = (id: string) => isYoungPost(meta(id))
     const listedRemoved = (id: string, item: any) =>
-        isRemovedItem(item) ||
-        (id.startsWith('t3_') && !!item.removed_by_category && item.removed_by_category !== 'deleted')
+        isRemovedItem(item) || (id.startsWith('t3_') && isRemovedByCategory(item))
     // Missing items first, each a possible removal; then listed posts a
     // listing can't clear
     const threads = await readViewerThreads(

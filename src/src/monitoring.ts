@@ -25,6 +25,7 @@ import {
     flagIfRateLimited,
 } from './request-gates'
 import { readThreadItemLoggedIn, FOLLOWED_POST_IDS_KEY } from './followed-lookup'
+import { WWW_FETCH_TIMEOUT_MS } from './logged-in-fetch'
 import { dlog } from './diaglog'
 import { isViewerConnecting, recoverViewerConnect, hasRedditLoginCookie } from './viewer'
 import {
@@ -55,6 +56,7 @@ import {
     getNotifyFlags,
     getPublicLiveKey,
     fitStatusLists,
+    keepChangesSince,
     PendingNotificationData,
     updateBadgeUnseenCount,
 } from './storage'
@@ -88,6 +90,7 @@ const TARGET_SEEN_COUNT_FOR_PREVIOUSLY_RECORDED_CHANGE = Math.floor(Math.random(
 // Require multiple consecutive observations of "removed" status before alerting,
 // to prevent false removal notifications from transient API failures or intermittent responses.
 // Randomized per extension instance (3-5 cycles) to thwart potential anti-extension fingerprinting.
+// page-verify.ts's REMOVED_READS_TO_CONFIRM copies the top of this range.
 const REMOVAL_CONFIRMATION_THRESHOLD = Math.floor(Math.random() * 3) + 3
 
 const FULL_RESPONSE_ITEM_COUNT = 100
@@ -337,7 +340,7 @@ export const _pendingPostTiming = { delayMs: PENDING_POST_DELAY_MS }
 // permalink); else the post the URL names. Every follow is of the item its URL
 // names (popup, context menu) or of an item on the page (its buttons), and a
 // thread page shows only its own comments, so that post is the comment's even
-// when the URL focuses on another comment.
+// when the URL focuses on another comment. Settles once the check has saved.
 export const setCurrentStateForId = (id: string, subscribedFromURL: string, postId?: string) => {
     // A followed comment's post: while api/info rests, the comment is read
     // through its thread, which needs it
@@ -356,11 +359,13 @@ export const setCurrentStateForId = (id: string, subscribedFromURL: string, post
     if (subscribedFromURL.match(/^https:\/\/www.reveddit.com/)) {
         subscribedFrom = SUBSCRIBED_FROM_REVEDDIT
     }
-    return chrome.storage.sync.get(undefined as any, function (storage: Record<string, any>) {
-        getAuth().then((auth: any) => {
-            return checkForChanges_thing_byId([id], 'other', false, auth, storage, subscribedFrom, {})
-        })
-    })
+    return browser.storage.sync
+        .get(null)
+        .then((storage: Record<string, any>) =>
+            getAuth().then((auth: any) =>
+                checkForChanges_thing_byId([id], 'other', false, auth, storage, subscribedFrom, {}),
+            ),
+        )
 }
 
 // Random jitter (0–10s) applied to periodic polls so they don't fire at a fixed
@@ -544,12 +549,14 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
             const checkListing = async (listing: any) => {
                 const ids: string[] = []
                 const itemLookup: Record<string, any> = {}
-                // Grace mode has only the remembered name, and the browser may
-                // hold another account by now
+                // It has to be the user's: the OAuth fallback's token has no
+                // user, and grace mode has only the remembered name, while the
+                // browser may hold another account by now. An empty listing
+                // names nobody, so it's clean only when the login check did.
                 const isTheirs = (item: any) =>
                     String((item.data || item).author).toLowerCase() === String(loggedInUser).toLowerCase()
-                if (usedGrace && listing.length && !listing.some(isTheirs)) {
-                    dlog('auth', "[reveddit] the listing isn't the remembered user's, so it isn't checked")
+                if ((usedGrace || listing.length) && !listing.some(isTheirs)) {
+                    dlog('auth', "[reveddit] the listing can't be taken for the user's, so it isn't checked")
                     return
                 }
                 ;(listing as any[]).forEach((item: any) => {
@@ -575,8 +582,8 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
             return new Promise(resolve => {
                 // Try to find a Reddit tab to make the request from
                 chrome.tabs.query({ url: ['*://*.reddit.com/*'] }, tabs => {
-                    if (tabs.length === 0) {
-                        // Use stored cookies as fallback
+                    if (!tabs?.length) {
+                        // Use stored cookies as fallback (also when the query failed)
                         resolve('use_stored_cookies')
                         return
                     }
@@ -594,23 +601,42 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                         return
                     }
 
-                    // Use the first supported Reddit tab
-                    const tab = supportedTabs[0]
-
                     // Store cookies for future use when no tabs are open
                     storeRedditCookies()
+
+                    // Use the first supported Reddit tab that can answer: a
+                    // discarded one has no page, and a frozen one runs nothing
+                    const tab = supportedTabs.find(t => !t.discarded && !t.frozen)
+                    if (!tab) {
+                        resolve('use_stored_cookies')
+                        return
+                    }
+
+                    // One that never answers can't hold up the cycle either: it
+                    // may have frozen since, or its fetch may have stalled. An
+                    // answer after this is ignored.
+                    let gaveUp = false
+                    const deadline = setTimeout(() => {
+                        gaveUp = true
+                        dlog('cycle', `No answer from the reddit tab in ${WWW_FETCH_TIMEOUT_MS / 1000} s`)
+                        resolve('use_stored_cookies')
+                    }, WWW_FETCH_TIMEOUT_MS)
                     ;(chrome.tabs.sendMessage as any)(
                         tab.id!,
                         { action: 'get-logged-in-user-items' },
                         (response: any) => {
-                            if ((chrome.runtime as any).lastError) {
+                            // Read even when it's too late, or the browser logs it as unchecked
+                            const sendError = (chrome.runtime as any).lastError
+                            if (gaveUp) {
+                                return
+                            }
+                            clearTimeout(deadline)
+                            if (sendError) {
                                 // Receiving end does not exist: the stored cookies' read decides
                                 dlog(
                                     'cycle',
                                     'Error sending message to content script:',
-                                    String(
-                                        (chrome.runtime as any).lastError?.message || (chrome.runtime as any).lastError,
-                                    ),
+                                    String(sendError?.message || sendError),
                                 )
                                 resolve('use_stored_cookies')
                                 return
@@ -641,24 +667,9 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     // Handle stored cookies case
                     if (items === 'use_stored_cookies') {
                         // Try to fetch items using stored cookies
-                        return lookupItemsByLoggedInUserWithAuth(
-                            '',
-                            'new',
-                            '',
-                            storage.options.monitor_quarantined,
-                            auth,
-                        ).then(storedItems => {
-                            if (!storedItems) {
-                                // Stored cookies also failed → keep yellow badge to indicate attention needed
-                                dlog(
-                                    'auth',
-                                    '[reveddit] stored-cookie item lookup returned nothing — needs_user badge set',
-                                )
-                                setWarningBadge('needs_user')
-                                return // handle expected errors
-                            }
-                            return checkListing(storedItems)
-                        })
+                        return lookupItemsByLoggedInUserWithAuth(storage.options.monitor_quarantined, auth).then(
+                            checkListing,
+                        )
                     }
 
                     return checkListing(items)
@@ -848,6 +859,13 @@ const checkForChanges_thing_byId = async (
         const known_approved = storage[keys['approved']] || {}
         const known_locked = storage[keys['locked']] || {}
         const known_unlocked = storage[keys['unlocked']] || {}
+        const lists = {
+            [keys['removed']]: known_removed,
+            [keys['approved']]: known_approved,
+            [keys['locked']]: known_locked,
+            [keys['unlocked']]: known_unlocked,
+        }
+        const idsBefore = new Set(Object.values(lists).flatMap(list => Object.keys(list)))
         const changes = storage[keys['changes']] || []
         if (!isUser) {
             itemLookup = {}
@@ -913,7 +931,7 @@ const checkForChanges_thing_byId = async (
             }
         }
         return Promise.all([getLocalStorageItems(thing, isUser), getOldestDateThreshold(thing, isUser)]).then(
-            ([existingLocalStorageItems, oldestDateThreshold]: [any, any]) => {
+            async ([existingLocalStorageItems, oldestDateThreshold]: [any, any]) => {
                 const context: MarkChangesContext = {
                     changes,
                     itemLookup,
@@ -1005,45 +1023,44 @@ const checkForChanges_thing_byId = async (
                         })
                         .catch(() => {})
                 }
+                await keepChangesSince(idsBefore, lists)
                 const toSave = fitStatusLists(
-                    {
-                        [keys['removed']]: known_removed,
-                        [keys['approved']]: known_approved,
-                        [keys['locked']]: known_locked,
-                        [keys['unlocked']]: known_unlocked,
-                    },
+                    lists,
                     storage,
                     keys,
                     // 100 entries come to about 5 KB, well inside one item
                     { [keys['changes']]: changes.slice(-MAX_SYNC_STORAGE_CHANGES) },
                 )
-                return chrome.storage.sync.set(toSave, () => {
-                    // A refused save is otherwise silent, and the next check
-                    // announces its changes again (issue #15)
-                    const saveError = (chrome.runtime as any).lastError
-                    if (saveError) {
-                        const sizes = Object.entries(toSave)
-                            .map(([key, value]) => `${key} ${key.length + JSON.stringify(value).length}`)
-                            .join(', ')
-                        dlog(
-                            'cycle',
-                            `[reveddit] sync save refused (${String(saveError.message || saveError)}): ${sizes}`,
-                        )
-                    }
-                    updateBadgeUnseenCount()
-                    console.log('[debug] addLocalStorageItems', {
-                        thing,
-                        isUser,
-                        keys: Object.keys(newLocalStorageItems),
-                        sample: Object.keys(newLocalStorageItems)
-                            .slice(0, 2)
-                            .map(k => ({
-                                id: k,
-                                t: newLocalStorageItems[k]?.t?.slice(0, 60),
-                            })),
-                    })
-                    return addLocalStorageItems(newLocalStorageItems, thing, isUser)
+                await new Promise<void>(resolve =>
+                    chrome.storage.sync.set(toSave, () => {
+                        // A refused save is otherwise silent, and the next check
+                        // announces its changes again (issue #15)
+                        const saveError = (chrome.runtime as any).lastError
+                        if (saveError) {
+                            const sizes = Object.entries(toSave)
+                                .map(([key, value]) => `${key} ${key.length + JSON.stringify(value).length}`)
+                                .join(', ')
+                            dlog(
+                                'cycle',
+                                `[reveddit] sync save refused (${String(saveError.message || saveError)}): ${sizes}`,
+                            )
+                        }
+                        resolve()
+                    }),
+                )
+                updateBadgeUnseenCount()
+                console.log('[debug] addLocalStorageItems', {
+                    thing,
+                    isUser,
+                    keys: Object.keys(newLocalStorageItems),
+                    sample: Object.keys(newLocalStorageItems)
+                        .slice(0, 2)
+                        .map(k => ({
+                            id: k,
+                            t: newLocalStorageItems[k]?.t?.slice(0, 60),
+                        })),
                 })
+                return addLocalStorageItems(newLocalStorageItems, thing, isUser)
             },
         )
     })

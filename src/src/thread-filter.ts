@@ -121,8 +121,9 @@ function applyFilterToNewRedditComment(el: HTMLElement, filter: ThreadFilter) {
     repliesOf_newReddit(el).forEach(c => applyFilterToNewRedditComment(c as HTMLElement, filter))
 }
 
-export function injectThreadFilter(isNewReddit: boolean) {
-    if (document.querySelector('.rev-thread-filter-bar')) return
+// Whether it added the bar, which is how a caller knows this is the first find
+export function injectThreadFilter(isNewReddit: boolean): boolean {
+    if (document.querySelector('.rev-thread-filter-bar')) return false
     const bar = document.createElement('div')
     bar.className = 'rev-thread-filter-bar'
 
@@ -154,6 +155,7 @@ export function injectThreadFilter(isNewReddit: boolean) {
             : document.querySelector('.commentarea .menuarea') || document.querySelector('.commentarea')
         if (anchor) anchor.prepend(bar)
     }
+    return true
 }
 
 // Unless the user turned it off, and pageEl is still showing by then

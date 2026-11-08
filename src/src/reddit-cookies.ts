@@ -40,16 +40,11 @@ export const storeRedditCookies = (): Promise<unknown> =>
     isViewerConnecting().then(connecting => (connecting ? false : storeRedditCookiesNow()))
 
 const storeRedditCookiesNow = async () => {
-    // Only run this in background script context, not in content scripts
-    if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.cookies) {
-        console.log('storeRedditCookies: Not available in this context (content script)')
-        return false
-    }
-
-    const tabs = await new Promise<chrome.tabs.Tab[]>(resolve =>
+    // undefined when the read fails, as for the cookies below
+    const tabs = await new Promise<chrome.tabs.Tab[] | undefined>(resolve =>
         chrome.tabs.query({ url: ['*://*.reddit.com/*'] }, resolve),
     )
-    const hasSupportedTab = tabs.some(tab => {
+    const hasSupportedTab = tabs?.some(tab => {
         try {
             const hostname = new URL(tab.url!).hostname
             return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
@@ -126,7 +121,7 @@ const rehydrateStoredRedditCookiesNow = async () => {
     const result: any = await new Promise(resolve =>
         chrome.storage.local.get(['stored_reddit_cookie_objects'], resolve),
     )
-    const cookieObjects = result.stored_reddit_cookie_objects
+    const cookieObjects = result?.stored_reddit_cookie_objects
     if (!Array.isArray(cookieObjects) || !cookieObjects.length) {
         return false
     }

@@ -5,6 +5,18 @@ import { setWarningBadge } from './common'
 import { recordRateLimitHit, getRateLimitBackoffRemainingMs } from './storage'
 import { isRateLimitError } from './parse_html/common'
 
+// Methods reddit can refuse outright, each resting on its own: 'api_info'
+// (api/info.json with the user's login, refused everywhere tried on
+// 2026-10-24), 'legacy_info' (the legacy /api/info HTML listing, refused with
+// it), 'legacy' (the legacy post pages, which still answered then, and have
+// answered with a challenge page since 2026-10-28) and 'thread_json' (a
+// thread's JSON with the user's login, which followed items and pending posts
+// read while api/info rests). One kind's refusal says nothing about another's,
+// so they don't share a rest. A refused method rests, and each refusal in a row
+// doubles the rest, up to a week. A blocked method then costs almost nothing,
+// yet is tried again at least weekly, in case reddit restores it; one success
+// ends the rest. Nothing gives up for good. (The remote option legacyOldReddit
+// 'off' is the switch that stops the legacy paths outright.)
 type RestingCapability = 'legacy' | 'legacy_info' | 'api_info' | 'thread_json'
 
 export const CAPABILITY_FIRST_REST_MS = 6 * 3600 * 1000
@@ -22,7 +34,9 @@ interface CapabilityRest {
 export const capabilityRestMs = (refusals: number): number =>
     Math.min(CAPABILITY_FIRST_REST_MS * 2 ** Math.max(0, refusals - 1), CAPABILITY_MAX_REST_MS)
 
-// A value from local storage: the fallback when it's missing or storage fails
+// A value from local storage: the fallback when it's missing or storage fails.
+// storage.ts and news.ts each have their own readLocal: storage's must reject
+// (its callers write back), and news can't import this module.
 export const readLocal = async <T>(key: string, fallback: T): Promise<T> => {
     try {
         return ((await browser.storage.local.get({ [key]: fallback })) as any)[key] || fallback

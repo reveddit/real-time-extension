@@ -18,7 +18,7 @@ import { dlog, dlogSummary } from './diaglog'
 import { newReddit } from './parse_html/common'
 import {
     AuthItemsMeta,
-    POST_FEED_GRACE_SECONDS,
+    isYoungPost,
     authSaysPostRemoved,
     isFresh,
     AuthItemMeta,
@@ -26,12 +26,14 @@ import {
     ABSENT_VERDICT_LIVE_TTL_MS,
     recordAbsentVerifyOutcome,
 } from './lookup-status'
-import { noteRateLimited, RECENT_RATE_LIMIT_WINDOW_MS, readLocal, isMechanismDisabled } from './request-gates'
+import {
+    noteRateLimited,
+    isRateLimitedNow,
+    RECENT_RATE_LIMIT_WINDOW_MS,
+    readLocal,
+    isMechanismDisabled,
+} from './request-gates'
 import { legacyTiebreakAbsent } from './legacy-lookup'
-
-// Set per lookup from the remote option; read by the page classifier calls
-// below so a scaffold-only page can be downgraded to 'unknown' remotely.
-let scaffoldAbsenceVerdict: 'removed' | 'unknown' = 'removed'
 
 export const isAbsentUnverifiedUnknown = async (): Promise<boolean> =>
     (await getRemoteMechanism(MECHANISM_ABSENT_UNVERIFIED_UNKNOWN).catch(() => 'auto')) === 'on'
@@ -80,7 +82,6 @@ export const verifyFeedPresentPosts = async (
     authItemsMeta: AuthItemsMeta,
     fetchHtml: FetchHtml,
 ): Promise<Record<string, PostPageStatus>> => {
-    const nowSec = Math.floor(Date.now() / 1000)
     const nowMs = Date.now()
     let cache = await readLocal<Record<string, PostVerdictEntry>>(POST_VERDICT_CACHE_KEY, {})
     const verdicts: Record<string, PostPageStatus> = {}
@@ -95,15 +96,13 @@ export const verifyFeedPresentPosts = async (
         if (authSaysPostRemoved(id, m)) {
             continue
         }
-        const created = m?.created_utc
-        const isMature = created !== undefined && nowSec - created > POST_FEED_GRACE_SECONDS
         const cached = cache[id]
         // Mature + no adverse history → the feed is trustworthy, skip the page.
         // An adverse cached verdict — or a removal already recorded in storage
         // (which a fresh verdict cache knows nothing about) — forces
         // re-verification at any age so a post once seen as held/removed can't
         // silently flip back to approved.
-        if (isMature && !isAdverseVerdict(cached) && !m?.known_removed) {
+        if (!isYoungPost(m) && !isAdverseVerdict(cached) && !m?.known_removed) {
             continue
         }
         if (cached && !isStalePostVerdict(id, cached)) {
@@ -212,7 +211,30 @@ interface AbsentVerdictEntry {
     t: number // epoch ms of verification
     // POST_CLASSIFIER, for a post
     k?: number
+    // removedReads
+    n?: number
 }
+
+// Monitoring reports a removal once 3 to 5 cycles in a row read it
+// (REMOVAL_CONFIRMATION_THRESHOLD), to ride out a stray answer. That takes a
+// read each cycle, so a cached 'removed' isn't reused until the removal is
+// recorded. The reads stop at this many because some items never are (removal
+// tracking off, older than monitoring's date threshold): those go back to one
+// read per time to live.
+const REMOVED_READS_TO_CONFIRM = 5
+
+// An entry of either view's verdict cache (this one, viewer-lookup.ts)
+interface CachedVerdict {
+    v: string
+    n?: number
+}
+
+export const isConfirmingRemoval = (entry: CachedVerdict, meta: AuthItemMeta | undefined): boolean =>
+    entry.v === 'removed' && !meta?.known_removed && (entry.n ?? 1) < REMOVED_READS_TO_CONFIRM
+
+// For the cache entry of a read that said v: how many in a row said 'removed'
+export const removedReads = (v: string, before: CachedVerdict | undefined) =>
+    v === 'removed' ? { n: before?.v === 'removed' ? (before.n ?? 1) + 1 : 1 } : {}
 
 // Remote gate for the whole feed-absent verification path. Default: enabled
 // (no extension-news.json entry needed). Remotely flipping the mechanism 'off'
@@ -227,11 +249,13 @@ export const isAbsentVerificationDisabled = () =>
     isMechanismDisabled(DEV_DISABLE_ABSENT_VERIFICATION_KEY, MECHANISM_ABSENT_VERIFICATION, false)
 
 // An item's own logged-out page, classified: for feed-absent items of either
-// kind, and for young feed-present posts (verifyFeedPresentPosts)
+// kind, and for young feed-present posts (verifyFeedPresentPosts). scaffoldAbsence
+// is what a comment's thread page without the comment reads as.
 const fetchAndClassifyItemPage = async (
     id: string,
     meta: AuthItemMeta,
     fetchHtml: FetchHtml,
+    scaffoldAbsence: 'removed' | 'unknown' = 'removed',
 ): Promise<PostPageStatus> => {
     // URLs reddit answers without a redirect. A background fetch loses its
     // solved challenge on one and gets a new challenge (2026-10-17), so
@@ -256,7 +280,7 @@ const fetchAndClassifyItemPage = async (
         return 'unknown'
     }
     const classify = (html: string): PostPageStatus =>
-        id.startsWith('t3_') ? classifyPostPage(html, id).status : classifyCommentPage(html, id, scaffoldAbsenceVerdict)
+        id.startsWith('t3_') ? classifyPostPage(html, id).status : classifyCommentPage(html, id, scaffoldAbsence)
     // A page that doesn't decide this item is a route the fetcher should move
     // off (see FetchHtml). Judged on the page itself: a thread served without
     // the comment is a real answer, even while the remote valve
@@ -274,7 +298,7 @@ const fetchAndClassifyItemPage = async (
         if (partialUrl) {
             try {
                 const partial = await fetchHtml(partialUrl, readable)
-                const verdict = classifyCommentPage(partial, id, scaffoldAbsenceVerdict)
+                const verdict = classifyCommentPage(partial, id, scaffoldAbsence)
                 if (verdict !== 'unknown') {
                     return verdict
                 }
@@ -331,7 +355,7 @@ export const verifyFeedAbsentItems = async (
     let recentUnknownSkipped = 0
     for (const id of ids) {
         const cached = cache[id]
-        if (cached && !isStalePostVerdict(id, cached)) {
+        if (cached && !isStalePostVerdict(id, cached) && !isConfirmingRemoval(cached, authItemsMeta[id])) {
             const ttl =
                 cached.v === 'live'
                     ? absentLiveTtl(authItemsMeta[id]?.created_utc, nowMs)
@@ -357,6 +381,7 @@ export const verifyFeedAbsentItems = async (
     if (toFetch.length && budget.maxPerCycle < ABSENT_VERIFY_MAX_PER_CYCLE) {
         dlog('ratelimit', `[reveddit] absent verification budget reduced to ${budget.maxPerCycle}/cycle (recent 429)`)
     }
+    const scaffoldAbsence = (await isAbsentUnverifiedUnknown()) ? 'unknown' : 'removed'
     let fetched = 0
     let freshDefinitive = 0
     for (const id of toFetch) {
@@ -368,9 +393,9 @@ export const verifyFeedAbsentItems = async (
         }
         fetched++
         try {
-            const verdict = await fetchAndClassifyItemPage(id, authItemsMeta[id] || {}, fetchHtml)
+            const verdict = await fetchAndClassifyItemPage(id, authItemsMeta[id] || {}, fetchHtml, scaffoldAbsence)
             dlog('verify', `[reveddit] absent item verdict ${id}: ${verdict}`)
-            cache[id] = { v: verdict, t: nowMs, ...classifierMark(id) }
+            cache[id] = { v: verdict, t: nowMs, ...classifierMark(id), ...removedReads(verdict, cache[id]) }
             if (verdict !== 'unknown') {
                 verdicts[id] = verdict
                 freshDefinitive++
@@ -380,13 +405,17 @@ export const verifyFeedAbsentItems = async (
             // Paced like an unreadable page. A wall on every route (the
             // captcha, the block page) must not be retried every cycle.
             cache[id] = { v: 'unknown', t: nowMs, ...classifierMark(id) }
-            // A 429 enters the shared backoff and ends this cycle's checks:
-            // without this, a rate-limited client burns the whole verification
-            // budget every cycle producing silent unknowns (no alert, no
-            // Paused banner).
-            if (noteRateLimited(err)) {
-                break
+            // One hit an item: a 429 on its partial has already started the
+            // backoff, and two would double the wait
+            if (!(await isRateLimitedNow())) {
+                noteRateLimited(err)
             }
+        }
+        // A 429 on any of the item's reads ends this cycle's checks: without
+        // this, a rate-limited client burns the whole verification budget every
+        // cycle producing silent unknowns (no alert, no Paused banner).
+        if (await isRateLimitedNow()) {
+            break
         }
     }
     let cacheMutated = fetched > 0
@@ -436,8 +465,4 @@ export const verifyFeedAbsentItems = async (
         }
     }
     return verdicts
-}
-
-export const setScaffoldAbsenceVerdict = (v: 'removed' | 'unknown') => {
-    scaffoldAbsenceVerdict = v
 }

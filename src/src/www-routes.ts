@@ -11,9 +11,9 @@
 //
 // Kept import-free: news.ts, www-fetcher.ts and content.ts import it.
 
-export const WWW_ROUTE_LEGS = ['background', 'tab'] as const
-export type WwwLeg = (typeof WWW_ROUTE_LEGS)[number]
-export const WWW_ROUTE_CACHE_MODES = ['default', 'no-store', 'no-cache', 'reload'] as const
+const WWW_ROUTE_LEGS = ['background', 'tab'] as const
+type WwwLeg = (typeof WWW_ROUTE_LEGS)[number]
+const WWW_ROUTE_CACHE_MODES = ['default', 'no-store', 'no-cache', 'reload'] as const
 export type WwwRouteCache = (typeof WWW_ROUTE_CACHE_MODES)[number]
 export type WwwRoute = `${WwwLeg}:${WwwRouteCache}`
 
@@ -65,7 +65,7 @@ export const defaultWwwRoutes = (): WwwRoute[] => [...(engine() === 'firefox' ? 
 // A bare list is an order with nothing skipped. 0.0.5.26 reads a bare list
 // under options.www_routes, for every engine; this build ignores that key, so
 // the feed can set both without one version misreading the other's.
-export interface WwwRouteOrderEntry {
+interface WwwRouteOrderEntry {
     order: WwwRoute[]
     skip: WwwRoute[]
 }

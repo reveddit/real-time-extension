@@ -11,6 +11,8 @@ export interface RestoreProgress {
     own?: boolean
     // Comments on the page that need another sort, as on RestoreResult
     otherSorts?: boolean
+    // A thread scan left nothing missing from the page's count
+    nothingMissing?: boolean
 }
 
 export type ProgressCallback = (progress: RestoreProgress) => void
@@ -22,6 +24,9 @@ export type ProgressCallback = (progress: RestoreProgress) => void
 const MAX_FAILED_READS_IN_A_ROW = 3
 // How long before a feed that used up its tries gets another, if a click asks
 const RETRY_GIVEN_UP_MS = 5 * 60 * 1000
+// The turn and the cache mode the worker learned are in its memory, which an idle 30
+// seconds ends. Asking again keeps it up, and sends nothing until the turn comes.
+const LONGEST_WAIT_MS = 20 * 1000
 
 // --- Rate Limiter ---
 
@@ -69,7 +74,7 @@ export class RateLimiter {
 async function fetchWithLogin(path: string, limiter: RateLimiter, secondTryMode?: number): Promise<string> {
     let res: any
     do {
-        await limiter.wait(res?.waitMs)
+        await limiter.wait(Math.min(res?.waitMs ?? 0, LONGEST_WAIT_MS))
         res = await browser.runtime.sendMessage({ action: 'fetch-with-login', path, secondTryMode })
     } while (res?.waitMs)
     console.log(`[reveddit scan] ${path} -> status ${res?.status ?? 'none'}`)
@@ -182,7 +187,8 @@ const GAVE_UP: any[] = []
 // no click is promised work it can't do. Once nothing else is left it gets a last
 // try, so a feed that never answers can't keep clicks reading it, and the scan says
 // what it couldn't read. That isn't finished, so the buttons stay, and a click a
-// while later tries again.
+// while later tries again. Reddit's own 403 is the exception: it's a final answer, so
+// it isn't a failure in a row, and no click asks that feed again.
 export class ScanReads {
     // Left for the next click
     unread = 0
@@ -309,8 +315,9 @@ export class ScanReads {
                 this.failure = err
                 return undefined
             }
-            this.noAnswer(path, err.status === 403 && !err.refused)
-            if (++this.failedInARow >= MAX_FAILED_READS_IN_A_ROW) this.failure = err
+            const final = err.status === 403 && !err.refused
+            this.noAnswer(path, final)
+            if (!final && ++this.failedInARow >= MAX_FAILED_READS_IN_A_ROW) this.failure = err
             return undefined
         }
     }

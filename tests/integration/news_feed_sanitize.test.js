@@ -38,21 +38,54 @@ beforeEach(async () => {
 
 describe('a feed without a messages array', () => {
     it.each([null, {}, { messages: 'x' }, { messages: { 0: goodMessage } }])(
-        'leaves the cache and the failure marker alone: %j',
+        'leaves the cache alone and counts as a failed fetch: %j',
         async feed => {
             serve(feed)
             await fetchNews({ force: true })
             expect(__getLocalStorage()[NEWS_CACHE_KEY]).toBeUndefined()
-            expect(__getLocalStorage()[NEWS_FETCH_FAILED_AT_KEY]).toBeUndefined()
+            expect(__getLocalStorage()[NEWS_FETCH_FAILED_AT_KEY]).toBeGreaterThan(0)
             expect((await getDiagEntries()).map(e => e.m)).toEqual([])
         },
     )
+
+    it('waits before fetching again, rather than fetching on every alarm', async () => {
+        serve({ error: 'a JSON error body' })
+        await fetchNews()
+        await fetchNews()
+        expect(fetch).toHaveBeenCalledTimes(1)
+    })
 
     it('does not reset a config an earlier feed set', async () => {
         setChallengeConfig({ tokenFields: ['kept_token'] })
         serve({ options: { challenge: {} } })
         await fetchNews({ force: true })
         expect(getChallengeConfig().tokenFields).toEqual(['kept_token'])
+    })
+})
+
+describe('the scan limits', () => {
+    const limitsFrom = async scan_limits => {
+        serve({ messages: [], options: { scan_limits } })
+        await fetchNews({ force: true })
+        return cachedFeed().options.scan_limits
+    }
+
+    it.each([
+        [0, 6],
+        [0.5, 6],
+        [1, 6],
+        [5.9, 6],
+        [7.9, 7],
+    ])('hold reads_per_click %j to %j', async (limit, kept) => {
+        expect(await limitsFrom({ reads_per_click: limit })).toEqual({ reads_per_click: kept })
+    })
+
+    it.each([-1, 'x', null, Infinity])('leave out a reads_per_click of %j', async limit => {
+        expect(await limitsFrom({ reads_per_click: limit })).toBeUndefined()
+    })
+
+    it.each([0, 0.5, -1, 'x'])('leave out seconds_between_reads of %j', async seconds => {
+        expect(await limitsFrom({ seconds_between_reads: seconds })).toBeUndefined()
     })
 })
 

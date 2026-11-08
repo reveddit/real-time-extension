@@ -60,10 +60,6 @@ export const createDevActionHandler =
                     .then(() => sendResponse({ ok: true }))
                     .catch(err => sendResponse({ error: String(err?.message || err) }))
                 break
-            case 'dev-reload':
-                sendResponse({ ok: true })
-                setTimeout(() => chrome.runtime.reload(), 200)
-                break
             case 'dev-fetch': {
                 // Fetch an arbitrary reddit URL from the background (host_permissions
                 // CORS bypass) exactly as the detection paths do, and report what

@@ -18,6 +18,7 @@ import {
     getPublicViewUncheckedLine,
 } from '../../src/src/lookup-status'
 import { getDiagEntries } from '../mocks/diag-entries.js'
+import { res } from '../mocks/responses.js'
 import {
     stubLegacy,
     USER,
@@ -39,6 +40,51 @@ import {
 } from '../mocks/public-profile.js'
 
 useLegacyStub()
+
+describe('an item older than the walked part of the feed', () => {
+    const cursor = id => Buffer.from(id).toString('base64')
+    const more = after =>
+        `<shreddit-feed-load-more-observer cursor="${cursor(after)}"></shreddit-feed-load-more-observer>`
+    const NEWEST = 't1_zz999'
+    const LAST_WALKED = 't1_mm500'
+    const INSIDE = 't1_nn100'
+    const BELOW = 't1_aa100'
+    const itemMeta = id => ({
+        created_utc: 1700000000,
+        locked: false,
+        link_id: 't3_abc123',
+        permalink: `/r/some/comments/abc123/t/${id.slice(3)}/`,
+    })
+    // The walk stops at LAST_WALKED with a cursor still there, so BELOW is under the floor
+    const routes = () => [
+        [
+            `/user/${USER}/comments/?sort=new`,
+            commentsPage('') + thingIdEl(NEWEST) + thingIdEl(LAST_WALKED) + more(LAST_WALKED),
+        ],
+        ['/svc/', thingIdEl(LAST_WALKED) + more(LAST_WALKED)],
+        [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
+        ['/comments/abc123/', commentsPage(commentEl('t1_other11', 'Someone'), BELOW)],
+    ]
+    const remote = mechanisms =>
+        __resetStorage({}, { news_cache: { feed: { messages: [], options: { mechanisms } }, lastFetched: 1 } })
+
+    it('is neither alerted nor reset with page checks off, where one inside it counts as removed', async () => {
+        remote({ absentPageVerification: 'off' })
+        installFetch(routes())
+        const results = await lookupItemsByID_fromPublicProfile([BELOW, INSIDE], USER, {
+            [BELOW]: itemMeta(BELOW),
+            [INSIDE]: itemMeta(INSIDE),
+        })
+        expect(results.map(r => r.data.name)).toEqual([INSIDE])
+    })
+
+    it('gets no page read of its own with page checks on', async () => {
+        remote({})
+        const calls = installFetch(routes())
+        await lookupItemsByID_fromPublicProfile([BELOW], USER, { [BELOW]: itemMeta(BELOW) })
+        expect(calls.filter(u => u.includes('/comments/abc123/'))).toEqual([])
+    })
+})
 
 describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
     it('keeps a profile-hidden comment live and flags a page-absent comment removed', async () => {
@@ -70,6 +116,8 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         expect(__getLocalStorage().www_absent_item_verdicts[HIDDEN].v).toBe('live')
         expect(__getLocalStorage().www_absent_item_verdicts[GONE].v).toBe('removed')
 
+        // By then monitoring has recorded the removal
+        authItemsMeta[GONE].known_removed = true
         const results = await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
         expect(pageFetches()).toBe(2) // cache hit, no new page fetches
         const byId = Object.fromEntries(results.map(r => [r.data.name, r.data]))
@@ -364,6 +412,11 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         )
     })
 
+    it('survives a stored time past the range of a Date', async () => {
+        __resetStorage({}, { [PUBLIC_VIEW_UNCHECKED_KEY]: { ids: {}, t: 1e20 } })
+        expect(await getPublicViewUncheckedLine()).toBe("can't be checked logged out: no lookup recorded")
+    })
+
     it("rewrites the header's set only when it changes, or after half an hour", async () => {
         installFetch(defaultRoutes())
         await mixedLookup()
@@ -450,12 +503,8 @@ describe('publicly empty profile versus NSFW-only accounts', () => {
         return rest(u)
     }
     const calls = { control: 0 }
-    const controlLoads = u => ({
-        ok: true,
-        status: 200,
-        text: async () => emptyStatePage(u.includes('/submitted/') ? 'posts' : 'comments'),
-    })
-    const notFound = () => ({ ok: false, status: 404, text: async () => 'Not Found' })
+    const controlLoads = u => res(200, emptyStatePage(u.includes('/submitted/') ? 'posts' : 'comments'))
+    const notFound = () => res(404, 'Not Found')
 
     it('a missing (404) public profile while the logged-in view lists items is the same signature', async () => {
         calls.control = 0
@@ -491,9 +540,7 @@ describe('publicly empty profile versus NSFW-only accounts', () => {
 
     it("one tab's 404 is no shadowban", async () => {
         globalThis.fetch = withControl(controlLoads, u =>
-            u.includes('/comments/')
-                ? notFound()
-                : { ok: true, status: 200, text: async () => emptyStatePage('posts') },
+            u.includes('/comments/') ? notFound() : res(200, emptyStatePage('posts')),
         )
         await expect(lookupItemsByID_fromPublicProfile([GONE], USER, { [GONE]: meta(GONE) })).rejects.toThrow(
             'answered 404 (the other tab did not)',
@@ -525,7 +572,7 @@ describe('publicly empty profile versus NSFW-only accounts', () => {
 // nothing about why; its last error named only the legacy fallback's 403.
 describe('lookup failure reasons', () => {
     const blockAll = () => {
-        globalThis.fetch = async () => ({ ok: false, status: 403, text: async () => 'BLOCK' })
+        globalThis.fetch = async () => res(403, 'BLOCK')
     }
 
     it('the failure streak line says why the public view failed', async () => {
@@ -580,7 +627,12 @@ describe('a profile that hides its comments from logged-out visitors', () => {
     it('with page verification switched off, a hidden kind is omitted, never reported removed', async () => {
         __resetStorage(
             {},
-            { news_cache: { feed: { messages: [], options: { mechanisms: { absentPageVerification: 'off' } } }, lastFetched: 1 } },
+            {
+                news_cache: {
+                    feed: { messages: [], options: { mechanisms: { absentPageVerification: 'off' } } },
+                    lastFetched: 1,
+                },
+            },
         )
         installFetch([
             [`/user/${USER}/comments/?sort=new`, hiddenStatePage('comments')],
@@ -624,7 +676,7 @@ describe('a profile that hides its comments from logged-out visitors', () => {
         expect(byId[GONE].author).toBe('[deleted]')
     })
 
-    it("gives the legacy tiebreak canaries from comments recently read live, when none is in the feed", async () => {
+    it('gives the legacy tiebreak canaries from comments recently read live, when none is in the feed', async () => {
         const asked = []
         stubLegacy(async ids => {
             asked.push(...ids)
@@ -675,11 +727,11 @@ describe('profile lookup warnings and limits', () => {
         const calls = []
         globalThis.fetch = async url => {
             calls.push(String(url))
-            return { ok: false, status: 429, text: async () => '' }
+            return res(429, '')
         }
-        await expect(
-            lookupItemsByID([GONE, 't3_q1'], 'none', false, USER, { [GONE]: meta(GONE) }),
-        ).rejects.toThrow(/429/)
+        await expect(lookupItemsByID([GONE, 't3_q1'], 'none', false, USER, { [GONE]: meta(GONE) })).rejects.toThrow(
+            /429/,
+        )
         expect(__getLocalStorage().rate_limit_until).toBeGreaterThan(Date.now())
         // the chain would queue the post first, then ask the legacy hosts
         expect(__getLocalStorage().pending_post_lookups).toBeUndefined()
@@ -702,7 +754,7 @@ describe('profile lookup warnings and limits', () => {
         let controlCalls = 0
         globalThis.fetch = async url => {
             if (String(url).includes('/user/reddit/')) controlCalls++
-            return { ok: false, status: 404, text: async () => 'Not Found' }
+            return res(404, 'Not Found')
         }
         await expect(lookupItemsByID_fromPublicProfile([GONE], USER, { [GONE]: meta(GONE) })).rejects.toThrow(/404/)
         const first = controlCalls

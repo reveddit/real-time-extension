@@ -107,7 +107,7 @@ export const Button = styled.button<{ variant?: 'primary' | 'secondary' | 'ghost
     }
 `
 
-export type BannerVariant = 'warning' | 'success' | 'info'
+type BannerVariant = 'warning' | 'success' | 'info'
 
 const BANNER_COLORS: Record<BannerVariant, [string, string, string]> = {
     warning: ['var(--locked-bg)', 'var(--locked-border)', 'var(--text-primary)'],
@@ -194,7 +194,7 @@ export const CardActions = styled.div`
     border-top: 1px solid var(--border);
 `
 
-export type BadgeVariant = 'removed' | 'deleted' | 'approved' | 'locked' | 'unlocked' | 'edited' | 'default'
+type BadgeVariant = 'removed' | 'deleted' | 'approved' | 'locked' | 'unlocked' | 'edited' | 'default'
 
 const BADGE_COLORS: Record<BadgeVariant, [string, string, string]> = {
     removed: ['var(--removed-bg)', 'var(--removed-border)', 'var(--removed-text)'],

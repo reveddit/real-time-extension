@@ -1,4 +1,4 @@
-import { isRemovedInModView, isRemovedPost } from './common'
+import { isRemovedByCategory, isRemovedInModView, isRemovedPost } from './common'
 import {
     type ProgressCallback,
     RateLimiter,
@@ -200,7 +200,3 @@ const isSignedInAs = async (username: string, reads: ScanReads): Promise<boolean
         return undefined
     }
 }
-
-// A post the viewer's listing marks, whoever removed it. 'deleted' is the author's own doing.
-const isRemovedByCategory = (post: any): boolean =>
-    Boolean(post.removed_by_category) && post.removed_by_category !== 'deleted'

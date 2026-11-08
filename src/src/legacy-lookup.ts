@@ -98,7 +98,7 @@ export const legacyTiebreakAbsent = async (
     authItemsMeta: AuthItemsMeta = {},
 ): Promise<void> => {
     const unresolved = ids.filter(id => !(id in verdicts))
-    // Not after a 429 (the verification loop above stops on one)
+    // Not after a 429 (the www verification before this stops on one)
     if (!unresolved.length || (await isRateLimitedNow())) {
         return
     }

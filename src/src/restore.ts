@@ -429,10 +429,10 @@ export async function scanThreadForRemovedComments(
     // are missing. If nothing's missing there's nothing to scan for. A page
     // that doesn't give the count can't say that. A comment posted since the
     // count was shown isn't in it. With no time kept, the document's errs toward
-    // reading more. Past what the feed holds, the rest are only out of reach, so
-    // a count that big doesn't say what's missing either.
+    // reading more. Past what the feed holds, the post being one of those, the rest
+    // are only out of reach, so a count that big doesn't say what's missing either.
     const count = getNumComments(isNewReddit)
-    const total = count !== null && count > THREAD_FEED_LIMIT ? null : count
+    const total = count !== null && count >= THREAD_FEED_LIMIT ? null : count
     const seenAt = Number(countHolder(isNewReddit)?.getAttribute('data-rev-seen')) || performance.timeOrigin / 1000
     const inCount = Array.from(visibleRealIds).filter(id => tree.get(id)!.created_utc <= seenAt)
     // A tombstone posted since is missing on top of what the count has
@@ -443,6 +443,7 @@ export async function scanThreadForRemovedComments(
         onProgress({
             status: 'not_found',
             message: 'All comments are visible — nothing removed.',
+            nothingMissing: true,
         })
         return []
     }
@@ -551,6 +552,7 @@ export async function scanThreadForRemovedComments(
             `Scan complete: ${recoveredCount()} recovered` +
             (counted && stillMissing ? ` (${missingCount - recoveredInCount()} not found)` : ''),
         otherSorts: stillMissing && someNeedOtherSorts(tree, sort, t),
+        nothingMissing: !stillMissing,
     })
 
     return recovered

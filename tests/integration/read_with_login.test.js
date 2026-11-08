@@ -10,6 +10,7 @@ import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from
 import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
 
 import { readWithLogin, _scanTurn } from '../../src/src/requests'
+import { RateLimiter, ScanReads } from '../../src/src/scan-reads'
 import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
 import { NEWS_CACHE_KEY, MECHANISM_SCAN_FEEDS } from '../../src/src/news'
@@ -53,6 +54,7 @@ describe('a read for a scan', () => {
         expect(second).toMatchObject({ ok: false, status: 403, blockPage: true, otherMode: undefined })
         expect(fetchMock.mock.calls.map(call => call[1].cache)).toEqual(['no-store', 'no-cache'])
         expect(_loggedInFetchState.doubleBlockUntil).toBe(0)
+        expect(_loggedInFetchState.preferredCacheMode).toBe(0)
     })
 
     it('keeps the mode a second try got past the edge in', async () => {
@@ -190,6 +192,52 @@ describe('scans in several tabs', () => {
         expect(await readWithLogin(PATH)).toMatchObject({ needsLogin: true })
         fill([cookie('reddit_session', 'S1')])
         expect(await readWithLogin(PATH)).toMatchObject({ ok: true })
+    })
+})
+
+describe('a page waiting a long gap for its turn', () => {
+    const savedSendMessage = browserMock.runtime.sendMessage
+    let asks
+
+    beforeEach(() => {
+        vi.useFakeTimers()
+        __getSyncStorage().options = { scan_seconds_between_reads: 60 }
+        asks = []
+        browserMock.runtime.sendMessage = async ({ path, secondTryMode }) => {
+            asks.push(Date.now())
+            return readWithLogin(path, secondTryMode)
+        }
+    })
+    afterEach(() => {
+        browserMock.runtime.sendMessage = savedSendMessage
+    })
+
+    it('asks again before an idle worker would stop, which takes no turn and sends nothing', async () => {
+        const reads = new ScanReads(new RateLimiter(), 9)
+        await reads.text(PATH)
+        const start = Date.now()
+        asks.length = 0
+        const read = reads.text(PATH)
+        await vi.advanceTimersByTimeAsync(59999)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(1)
+        await read
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+        expect(asks.map(at => at - start)).toEqual([0, 20000, 40000, 60000])
+    })
+
+    it('is taken back by a cancel at once, whichever part of the wait it is in', async () => {
+        const limiter = new RateLimiter()
+        const reads = new ScanReads(limiter, 9)
+        await reads.text(PATH)
+        asks.length = 0
+        const read = reads.text(PATH).catch(err => err.message)
+        await vi.advanceTimersByTimeAsync(25000)
+        limiter.cancel()
+        expect(await read).toBe('Cancelled')
+        await vi.advanceTimersByTimeAsync(60000)
+        expect(asks).toHaveLength(2)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 })
 

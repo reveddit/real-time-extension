@@ -484,7 +484,7 @@ chrome.runtime.onInstalled.addListener(function (details) {
         // Refresh the news feed cache on update.
         fetchNews({ force: true }).catch(() => {})
         applyRemoteConfig().catch(() => {})
-        // Cookie copies from before 0.0.5.31 that nothing reads any more
+        // Cookie copies written by 0.0.5.31 and earlier that nothing reads any more
         // (stored_reddit_cookie_objects holds the snapshot).
         try {
             browser.storage.local.remove(['stored_reddit_cookies', 'stored_reddit_domain']).catch(() => {})

@@ -29,9 +29,11 @@ const BannerActions = styled.div`
   flex-wrap: wrap;
 `
 
-export const getPinInstructions = (): string => {
-  if (__BUILT_FOR__ === 'firefox') return 'Click the extensions puzzle icon in the toolbar, then pin reveddit real-time.'
-  if (navigator.userAgent.includes('Edg/')) return 'Click the extensions icon in the toolbar, then pin reveddit real-time.'
+const getPinInstructions = (): string => {
+  if (__BUILT_FOR__ === 'firefox')
+    return 'Click the extensions puzzle icon in the toolbar, then pin reveddit real-time.'
+  if (navigator.userAgent.includes('Edg/'))
+    return 'Click the extensions icon in the toolbar, then pin reveddit real-time.'
   return 'Click the puzzle piece icon in the toolbar, then pin reveddit real-time.'
 }
 
@@ -39,10 +41,17 @@ export function FullWelcomeBanner({ currentUser, onDismiss }: { currentUser: str
   return (
     <WelcomeBanner>
       <h2>Monitoring is active{currentUser ? ` for u/${currentUser}` : ''}</h2>
-      <p>reveddit real-time is now watching your Reddit comments and posts. You'll be notified whenever content is removed by moderators, reapproved, locked, or unlocked.</p>
+      <p>
+        reveddit real-time is now watching your Reddit comments and posts. You'll be notified whenever content is
+        removed by moderators, reapproved, locked, or unlocked.
+      </p>
       <ul>
-        <li>The extension's toolbar icon displays a badge count of removed comments and posts you haven't viewed yet.</li>
-        <li><strong>Pin the extension to your toolbar</strong> so you can always see this count. {getPinInstructions()}</li>
+        <li>
+          The extension's toolbar icon displays a badge count of removed comments and posts you haven't viewed yet.
+        </li>
+        <li>
+          <strong>Pin the extension to your toolbar</strong> so you can always see this count. {getPinInstructions()}
+        </li>
       </ul>
       {currentUser && (
         <p>
@@ -54,7 +63,9 @@ export function FullWelcomeBanner({ currentUser, onDismiss }: { currentUser: str
         </p>
       )}
       <BannerActions>
-        <Button variant="secondary" onClick={onDismiss}>Got it</Button>
+        <Button variant="secondary" onClick={onDismiss}>
+          Got it
+        </Button>
       </BannerActions>
     </WelcomeBanner>
   )
@@ -64,15 +75,21 @@ export function SlimWelcomeBanner({ currentUser }: { currentUser: string | null 
   return (
     <WelcomeBanner>
       <h2>Monitoring is active{currentUser ? ` for u/${currentUser}` : ''}</h2>
-      <p>No removed or changed content has been observed yet. You'll be notified when any of your comments or posts are removed by moderators.</p>
-      <p>The extension's toolbar icon will display a count of removed items you haven't viewed. Pin the extension to your toolbar to always see it. {getPinInstructions()}</p>
+      <p>
+        No removed or changed content has been observed yet. You'll be notified when any of your comments or posts are
+        removed by moderators.
+      </p>
+      <p>
+        The extension's toolbar icon will display a count of removed items you haven't viewed. Pin the extension to your
+        toolbar to always see it. {getPinInstructions()}
+      </p>
       {currentUser && (
         <p>
           You can also check your{' '}
           <BlueLink href={`https://www.reveddit.com/user/${currentUser}?all=true`} target="_blank" rel="noreferrer">
             reveddit.com user page
-          </BlueLink>
-          {' '}for orphaned and collapsed comments.
+          </BlueLink>{' '}
+          for orphaned and collapsed comments.
         </p>
       )}
     </WelcomeBanner>

@@ -71,9 +71,9 @@ export const isYoungPost = (meta: AuthItemMeta | undefined): boolean =>
     meta?.created_utc === undefined || Math.floor(Date.now() / 1000) - meta.created_utc <= POST_FEED_GRACE_SECONDS
 
 // Whether a listing was walked far enough to show an item, if it were there
-export const isCovered = (id: string, commentsFloor: number, postsFloor: number): boolean => {
+export const isCovered = (id: string, coverage: { t1: number; t3: number }): boolean => {
     const value = fullnameValue(id)
-    return Number.isFinite(value) && value >= (id.startsWith('t3_') ? postsFloor : commentsFloor)
+    return Number.isFinite(value) && value >= (id.startsWith('t3_') ? coverage.t3 : coverage.t1)
 }
 
 // Why the public view can't judge an item, '' when it can
@@ -93,7 +93,7 @@ const WWW_DETECT_FAILURES_KEY = 'www_detect_consecutive_failures'
 // TTL, not per cycle: an unreadable page ('unknown', e.g. the front page served
 // in place of the post) is paced like the feed-absent path's, and no cycle
 // fetches more than POST_VERIFY_MAX_PER_CYCLE pages.
-export const POST_FEED_GRACE_SECONDS = 48 * 3600
+const POST_FEED_GRACE_SECONDS = 48 * 3600
 
 // A cache entry still within its time to live; a time in the future (a clock
 // set back) counts as expired
@@ -136,7 +136,6 @@ export const recordAbsentVerifyOutcome = (ok: boolean) =>
         ok,
         n => dlogSummary('verify', `[reveddit] absent verification resolved nothing — consecutive cycles: ${n}`),
         async () => setWarningBadge(await absentVerifyWarning()),
-        true,
     )
 
 // When the pages it checks (the comment partial, then the page) ask for a
@@ -146,35 +145,23 @@ const absentVerifyWarning = async () =>
 
 // Streaks of failures kept in storage. One failure is noise; a warning comes
 // after STREAK_WARN_AT in a row.
-export const STREAK_WARN_AT = 5
+const STREAK_WARN_AT = 5
 
-const isStreakLong = async (key: string): Promise<boolean> => {
-    try {
-        const stored = (await browser.storage.local.get({ [key]: 0 })) as any
-        return Number(stored[key] || 0) >= STREAK_WARN_AT
-    } catch {
-        return false
-    }
+export const isStreakLong = async (key: string): Promise<boolean> => {
+    return Number(await readLocal(key, 0)) >= STREAK_WARN_AT
 }
 
-// ok ends the streak (clearOnlyIfSet: removing it only when it is there). Else
-// it grows by one, say logs it, and at STREAK_WARN_AT warn raises the warning.
-// A storage failure anywhere in this stops it there, unreported.
+// ok ends the streak. Else it grows by one, say logs it, and at STREAK_WARN_AT
+// warn raises the warning. A storage failure anywhere in this stops it there,
+// unreported.
 export const recordStreak = async (
     key: string,
     ok: boolean,
     say: (failures: number) => void,
     warn: () => void | Promise<void>,
-    clearOnlyIfSet = false,
 ) => {
     try {
         if (ok) {
-            if (clearOnlyIfSet) {
-                const stored = (await browser.storage.local.get({ [key]: 0 })) as any
-                if (!(Number(stored[key] || 0) > 0)) {
-                    return
-                }
-            }
             await browser.storage.local.remove(key)
             return
         }
@@ -183,10 +170,7 @@ export const recordStreak = async (
         await browser.storage.local.set({ [key]: failures })
         say(failures)
         if (failures >= STREAK_WARN_AT) {
-            const raised = warn()
-            if (raised) {
-                await raised
-            }
+            await warn()
         }
     } catch {
         /* ignored */
@@ -256,17 +240,13 @@ export const notePublicProfileUnavailable = async (username: string | null) => {
 }
 
 export const isPublicProfileUnavailable = async (username: string): Promise<boolean> => {
-    try {
-        const stored: any = await readLocal(PUBLIC_PROFILE_UNAVAILABLE_KEY, null)
-        const age = Date.now() - Number(stored?.t)
-        return (
-            String(stored?.user || '').toLowerCase() === username.toLowerCase() &&
-            age >= 0 &&
-            age < PUBLIC_PROFILE_UNAVAILABLE_MAX_AGE_MS
-        )
-    } catch {
-        return false
-    }
+    const stored: any = await readLocal(PUBLIC_PROFILE_UNAVAILABLE_KEY, null)
+    const age = Date.now() - Number(stored?.t)
+    return (
+        String(stored?.user || '').toLowerCase() === username.toLowerCase() &&
+        age >= 0 &&
+        age < PUBLIC_PROFILE_UNAVAILABLE_MAX_AGE_MS
+    )
 }
 
 // The shadowban signature, as one warning instead of N removal alerts. Thrown
@@ -316,7 +296,6 @@ export const recordPaginationOutcome = (stopped: string | undefined) =>
         !stopped,
         n => dlogSummary('feed', `[reveddit] profile pagination stopped short — consecutive lookups: ${n}`),
         async () => setWarningBadge(await paginationWarning()),
-        true,
     )
 
 // When the profile's older pages ask for a login, the warning says so
@@ -418,12 +397,8 @@ export const recordViewerOutcome = (ok: boolean, reason = '') =>
 export const VIEWER_THREAD_FAILURES_KEY = 'viewer_thread_consecutive_failures'
 
 const viewerThreadFailures = async (viewer: ViewerAccount): Promise<number> => {
-    try {
-        const stored: any = await readLocal(VIEWER_THREAD_FAILURES_KEY, null)
-        return stored?.token === viewer.token ? Number(stored.failures) || 0 : 0
-    } catch {
-        return 0
-    }
+    const stored: any = await readLocal(VIEWER_THREAD_FAILURES_KEY, null)
+    return stored?.token === viewer.token ? Number(stored.failures) || 0 : 0
 }
 
 export const recordViewerThreadOutcome = async (

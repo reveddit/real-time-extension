@@ -1,11 +1,11 @@
 import browser from 'webextension-polyfill'
 import { dlog } from './diaglog'
-import { setWarningBadge } from './common'
+import { setWarningBadge, OWN_LISTING_QUERY } from './common'
 import { settableCookie, toStoredCookie, hasRedditLoginCookie } from './viewer'
 import { getOptions } from './storage'
 import { MECHANISM_ME_CHALLENGE } from './news'
 import { solveChallenge } from './parse_html/new'
-import { STREAK_WARN_AT, recordStreak } from './lookup-status'
+import { isStreakLong, recordStreak } from './lookup-status'
 import { rehydrateStoredRedditCookies } from './reddit-cookies'
 import { flagIfRateLimited, isMechanismDisabled } from './request-gates'
 
@@ -14,10 +14,9 @@ const oauth_reddit = 'https://oauth.reddit.com/'
 export const NO_AUTH = 'none'
 
 // Consecutive refusals of the logged-in detection path, mirroring
-// recordWwwDetectOutcome below: one is noise, a streak means reddit isn't
-// accepting the login. Definite outcomes (a username, or a clean logged-out
-// response) reset the streak. Only the monitoring cycle records outcomes —
-// content-script probes have different fetch conditions.
+// recordWwwDetectOutcome in lookup-status.ts: one is noise, a streak means
+// reddit isn't accepting the login. Definite outcomes (a username, or a clean logged-out
+// response) reset the streak. Only the monitoring cycle records outcomes.
 export const LOGGED_IN_VIEW_UNAVAILABLE = 'logged_in_view_unavailable'
 
 // The warnings that finding the user signed in settles: nobody was signed in,
@@ -34,10 +33,7 @@ const LOGIN_DETECT_FAILURES_KEY = 'login_detect_consecutive_failures'
 export const isLoginRefusal = (failure = ''): boolean => /(status|request failed:) 40[13]\b|non-JSON/.test(failure)
 
 // Reddit keeps refusing the login check and the user's listing
-export const isLoginKeptOut = async (): Promise<boolean> => {
-    const stored = (await browser.storage.local.get({ [LOGIN_DETECT_FAILURES_KEY]: 0 })) as any
-    return Number(stored[LOGIN_DETECT_FAILURES_KEY]) >= STREAK_WARN_AT
-}
+export const isLoginKeptOut = () => isStreakLong(LOGIN_DETECT_FAILURES_KEY)
 
 export const recordLoginDetectOutcome = (indeterminate: boolean) =>
     recordStreak(
@@ -82,46 +78,14 @@ export const fetch_forReddit = async (pathAndSearch: string, auth: any, monitor_
     return result
 }
 
-export const lookupItemsByUser = (
-    user: string,
-    after: string,
-    sort: string,
-    timeSpan: string,
-    monitor_quarantined: boolean,
-    auth: any,
-) => {
-    const params: Record<string, any> = { limit: 100, sort, raw_json: 1 }
-    if (after) params.after = after
-    if (timeSpan) params.t = timeSpan
-    const path = `user/${user}/overview.json`
-    const search =
-        '?' +
-        Object.keys(params)
-            .map(k => `${k}=${params[k]}`)
-            .join('&')
-    return fetch_forReddit(path + search, auth, monitor_quarantined)
-}
+export const lookupItemsByUser = (user: string, monitor_quarantined: boolean, auth: any) =>
+    fetch_forReddit(`user/${user}/overview.json${OWN_LISTING_QUERY}`, auth, monitor_quarantined)
 
 // Alternative approach: use the same method as getLoggedinUser but with proper authentication
-export const lookupItemsByLoggedInUserWithAuth = (
-    after: string,
-    sort: string,
-    timeSpan: string,
-    monitor_quarantined: boolean,
-    auth: any,
-) => {
-    const params: Record<string, any> = { limit: 100, sort, raw_json: 1 }
-    if (after) params.after = after
-    if (timeSpan) params.t = timeSpan
-    const search =
-        '?' +
-        Object.keys(params)
-            .map(k => `${k}=${params[k]}`)
-            .join('&')
-
+export const lookupItemsByLoggedInUserWithAuth = (monitor_quarantined: boolean, auth: any) => {
     // First try www.reddit.com with rehydrated cookies
     return rehydrateStoredRedditCookies().then(() => {
-        const url = `https://www.reddit.com/user/me.json${search}`
+        const url = `https://www.reddit.com/user/me.json${OWN_LISTING_QUERY}`
         const options = { credentials: 'include' as const, cache: 'reload' as const }
         return fetch(url, options)
             .then(response => {
@@ -140,17 +104,25 @@ export const lookupItemsByLoggedInUserWithAuth = (
                 }
                 throw new Error('Invalid data format from www.reddit.com')
             })
-            .catch(error => {
+            .catch(async error => {
                 console.log('www.reddit.com request failed, trying OAuth fallback:', error.message)
+                // Whatever the fallback answers: its token has no user, so it
+                // can't make up for this
+                flagIfRateLimited(error)
 
                 // Fall back to OAuth if www.reddit.com fails and auth is available
                 if (auth && auth !== 'none') {
-                    return lookupItemsByUser('me', after, sort, timeSpan, monitor_quarantined, auth)
+                    const children = await lookupItemsByUser('me', monitor_quarantined, auth)
+                    // Without items, www's failure stands: this swallows its own
+                    // errors (returns undefined), and an empty answer says nothing
+                    // about the signed-in user. Monitoring checks whose items they are.
+                    if (children?.length) {
+                        return children
+                    }
                 } else {
                     console.log('No OAuth auth available for fallback')
-                    flagIfRateLimited(error)
-                    throw error
                 }
+                throw error
             })
     })
 }
@@ -280,21 +252,6 @@ const probeMeJsonWithChallengeRetry = async (host: string): Promise<MeProbe> => 
 }
 
 export const getLoggedinUserDetailed = async (): Promise<LoginDetectResult> => {
-    const isContentContext = typeof chrome === 'undefined' || !chrome.tabs || typeof chrome.tabs.query !== 'function'
-    // In a content script, chrome.tabs.query is not available. Use the current
-    // page's host (same-origin fetch; verified to never receive the challenge).
-    if (isContentContext && typeof window !== 'undefined' && window.location && window.location.hostname) {
-        const probe = await probeMeJson(`https://${window.location.hostname}/api/me.json`)
-        if (probe.state === 'user') {
-            return { user: probe.user, indeterminate: false }
-        }
-        return {
-            user: null,
-            indeterminate: probe.state === 'indeterminate',
-            reason: probe.state === 'indeterminate' ? probe.reason : undefined,
-        }
-    }
-
     // Reddit answers a browser with no login with a refusal, not a clean
     // "nobody", so with none there's nothing to ask it. A login the browser
     // lost is put back first.
@@ -364,8 +321,8 @@ export const getLoggedinUserDetailed = async (): Promise<LoginDetectResult> => {
     return { user: null, indeterminate: true, reason: lastReason || 'unknown' }
 }
 
-// Back-compat shape for callers that only care about the username (content
-// scripts, popup reconnect, startup): resolves the username or null, never rejects.
+// Back-compat shape for callers that only care about the username (popup
+// reconnect, startup): resolves the username or null, never rejects.
 export const getLoggedinUser = (): Promise<string | null> => getLoggedinUserDetailed().then(r => r.user)
 
 // Who the browser is signed in to reddit as, for the second account's sign-in

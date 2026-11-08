@@ -50,12 +50,16 @@ const Field = styled.div`
   gap: ${tokens.space.md};
   padding: ${tokens.space.sm} 0;
   border-bottom: 1px solid var(--border);
-  &:last-child { border-bottom: 0; }
+  &:last-child {
+    border-bottom: 0;
+  }
   & > label {
     color: var(--text-primary);
     flex: 1;
   }
-  & > input[type='text'], & > input[type='number'], & > select {
+  & > input[type='text'],
+  & > input[type='number'],
+  & > select {
     width: 90px;
     text-align: right;
   }
@@ -63,7 +67,11 @@ const Field = styled.div`
 
 const FieldStack = styled.div``
 
-const CheckField = ({ label, checked, onChange }: {
+const CheckField = ({
+  label,
+  checked,
+  onChange,
+}: {
   label: string
   checked: boolean
   onChange: (checked: boolean) => void
@@ -199,14 +207,11 @@ function Options() {
     chrome.storage.local.get(['dev_simulate_endpoint_deprecation'], res => {
       setSimulateDeprecation(!!res?.dev_simulate_endpoint_deprecation)
     })
-    sendMessageAny(
-      { action: 'get-diag-status' },
-      (resp: DiagStatus) => {
-        if (runtimeAny.lastError || !resp || resp.error) return
-        const line = formatDiagStatus(resp)
-        if (line) setDiagStatus(line)
-      },
-    )
+    sendMessageAny({ action: 'get-diag-status' }, (resp: DiagStatus) => {
+      if (runtimeAny.lastError || !resp || resp.error) return
+      const line = formatDiagStatus(resp)
+      if (line) setDiagStatus(line)
+    })
     return () => chrome.storage.onChanged.removeListener(onStorageChanged)
   }, [])
 
@@ -237,20 +242,17 @@ function Options() {
   }
 
   const runCheckNow = () => {
-    sendMessageAny(
-      { action: 'run-check-now' },
-      (resp: { started?: boolean; throttled?: boolean }) => {
-        if (runtimeAny.lastError || !resp) {
-          setDiagStatus('could not start a check — try reopening this page')
-          return
-        }
-        setDiagStatus(
-          resp.throttled
-            ? 'a manual check already ran in the last minute'
-            : 'check started — wait about 30 seconds, then copy the log',
-        )
-      },
-    )
+    sendMessageAny({ action: 'run-check-now' }, (resp: { started?: boolean; throttled?: boolean }) => {
+      if (runtimeAny.lastError || !resp) {
+        setDiagStatus('could not start a check — try reopening this page')
+        return
+      }
+      setDiagStatus(
+        resp.throttled
+          ? 'a manual check already ran in the last minute'
+          : 'check started — wait about 30 seconds, then copy the log',
+      )
+    })
   }
 
   // Written straight to local storage (not through saveOptions) so it takes
@@ -290,39 +292,47 @@ function Options() {
       return refuse('"same-status count before alert" must be a positive integer')
     }
     if (!isScanReads(scanReads)) {
-      return refuse(`"most Reddit reads per scan click" must be a whole number from ${SCAN_READS_MIN} to ${SCAN_READS_MAX}`)
+      return refuse(
+        `"most Reddit reads per scan click" must be a whole number from ${SCAN_READS_MIN} to ${SCAN_READS_MAX}`,
+      )
     }
     if (!isScanSeconds(scanSeconds)) {
       return refuse(`"seconds between scan reads" must be from ${SCAN_SECONDS_MIN} to ${SCAN_SECONDS_MAX}`)
     }
 
     setError('')
-    saveOptions({
-      seen_count: seenCountNum,
-      interval: intervalNum,
-      custom_clientid: customClientId,
-      removal_status: { track: removedMode !== 'off', notify: removedMode === 'notify' },
-      lock_status: { track: lockedMode !== 'off', notify: lockedMode === 'notify' },
-      hide_subscribe: hideSubscribe,
-      monitor_quarantined: monitorQuarantined,
-      show_scan_on_own_profile: showScanOnOwnProfile,
-      show_scan_on_other_profiles: showScanOnOtherProfiles,
-      show_thread_scan_buttons: showThreadScanButtons,
-      highlight_own_profile_status: highlightOwnProfileStatus,
-      auto_filter_removed_threads: autoFilterRemovedThreads,
-      scan_reads_per_click: Number(scanReads),
-      scan_seconds_between_reads: Number(scanSeconds),
-    }, () => {
-      setAlarm(intervalNum)
-      chrome.runtime.sendMessage({ action: 'update-badge' })
-      window.close()
-    })
+    saveOptions(
+      {
+        seen_count: seenCountNum,
+        interval: intervalNum,
+        custom_clientid: customClientId,
+        removal_status: { track: removedMode !== 'off', notify: removedMode === 'notify' },
+        lock_status: { track: lockedMode !== 'off', notify: lockedMode === 'notify' },
+        hide_subscribe: hideSubscribe,
+        monitor_quarantined: monitorQuarantined,
+        show_scan_on_own_profile: showScanOnOwnProfile,
+        show_scan_on_other_profiles: showScanOnOtherProfiles,
+        show_thread_scan_buttons: showThreadScanButtons,
+        highlight_own_profile_status: highlightOwnProfileStatus,
+        auto_filter_removed_threads: autoFilterRemovedThreads,
+        scan_reads_per_click: Number(scanReads),
+        scan_seconds_between_reads: Number(scanSeconds),
+      },
+      () => {
+        setAlarm(intervalNum)
+        chrome.runtime.sendMessage({ action: 'update-badge' })
+        window.close()
+      },
+    )
   }
 
   const heldTo = [
     scanLimits.reads_per_click && `at most ${scanLimits.reads_per_click} reads a click`,
-    scanLimits.seconds_between_reads && `at least ${scanLimits.seconds_between_reads} seconds between reads`,
-  ].filter(Boolean).join(' and ')
+    scanLimits.seconds_between_reads &&
+      `at least ${Math.min(scanLimits.seconds_between_reads, SCAN_SECONDS_MAX)} seconds between reads`,
+  ]
+    .filter(Boolean)
+    .join(' and ')
 
   if (!loaded) return <Page>Loading…</Page>
 
@@ -333,14 +343,18 @@ function Options() {
     <Page>
       <TopBar>
         <Title>Options</Title>
-        <Button variant="primary" onClick={saveAndClose}>save</Button>
+        <Button variant="primary" onClick={saveAndClose}>
+          save
+        </Button>
       </TopBar>
 
       <SectionHeader>Subscriptions</SectionHeader>
       <FieldStack>
         <Field>
           <label>other subscriptions</label>
-          <BlueLink target="_blank" href="/src/other.html">manage ↗</BlueLink>
+          <BlueLink target="_blank" href="/src/other.html">
+            manage ↗
+          </BlueLink>
         </Field>
       </FieldStack>
 
@@ -351,41 +365,52 @@ function Options() {
         <Field>
           <label>removed content</label>
           <ModeSelect value={removedMode} onChange={e => setRemovedMode(e.target.value as TrackMode)}>
-            {MODE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {MODE_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </ModeSelect>
         </Field>
         <Field>
           <label>locked content</label>
           <ModeSelect value={lockedMode} onChange={e => setLockedMode(e.target.value as TrackMode)}>
-            {MODE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {MODE_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </ModeSelect>
         </Field>
       </FieldStack>
       {(removedMode === 'notify' || lockedMode === 'notify') && (
         <LinkRow>
-          <BlueLink href="#" onClick={e => {
-            e.preventDefault()
-            // A UI macro, not a setting: drops "badge + notifications" to
-            // "badge only". Never upgrades "off" — that would re-enable
-            // tracking the user turned off.
-            if (removedMode === 'notify') setRemovedMode('badge')
-            if (lockedMode === 'notify') setLockedMode('badge')
-          }}>
+          <BlueLink
+            href="#"
+            onClick={e => {
+              e.preventDefault()
+              // A UI macro, not a setting: drops "badge + notifications" to
+              // "badge only". Never upgrades "off" — that would re-enable
+              // tracking the user turned off.
+              if (removedMode === 'notify') setRemovedMode('badge')
+              if (lockedMode === 'notify') setLockedMode('badge')
+            }}
+          >
             turn off all notifications
           </BlueLink>
         </LinkRow>
       )}
-      <Note>
-        "badge only" counts changes on the toolbar icon and in history, without showing system
-        notifications.
-      </Note>
+      <Note>"badge only" counts changes on the toolbar icon and in history, without showing system notifications.</Note>
 
       <SectionHeader>Polling</SectionHeader>
       <FieldStack>
         <Field>
           <label>
             minutes between Reddit checks
-            <Hint>How often the extension checks Reddit for removed content. Increase this if Reddit rate-limits you (429 errors).</Hint>
+            <Hint>
+              How often the extension checks Reddit for removed content. Increase this if Reddit rate-limits you (429
+              errors).
+            </Hint>
           </label>
           <input type="text" value={interval} onChange={e => setInterval_(e.target.value)} />
         </Field>
@@ -394,20 +419,43 @@ function Options() {
           <input type="text" value={seenCount} onChange={e => setSeenCount(e.target.value)} />
         </Field>
         {hasClientId && (
-          <CheckField label="monitor quarantined content" checked={monitorQuarantined} onChange={setMonitorQuarantined} />
+          <CheckField
+            label="monitor quarantined content"
+            checked={monitorQuarantined}
+            onChange={setMonitorQuarantined}
+          />
         )}
         <CheckField label="hide subscribe button" checked={hideSubscribe} onChange={setHideSubscribe} />
-        <CheckField label="show removed-content scan on other profiles" checked={showScanOnOtherProfiles} onChange={setShowScanOnOtherProfiles} />
-        <CheckField label="show removed-content scan on your own profile" checked={showScanOnOwnProfile} onChange={setShowScanOnOwnProfile} />
-        <CheckField label={'show "scan for removed comments" buttons on threads'} checked={showThreadScanButtons} onChange={setShowThreadScanButtons} />
-        <CheckField label="flag your removed/locked content on your own profile" checked={highlightOwnProfileStatus} onChange={setHighlightOwnProfileStatus} />
-        <CheckField label="auto-filter to show only removed comments after thread scan" checked={autoFilterRemovedThreads} onChange={setAutoFilterRemovedThreads} />
+        <CheckField
+          label="show removed-content scan on other profiles"
+          checked={showScanOnOtherProfiles}
+          onChange={setShowScanOnOtherProfiles}
+        />
+        <CheckField
+          label="show removed-content scan on your own profile"
+          checked={showScanOnOwnProfile}
+          onChange={setShowScanOnOwnProfile}
+        />
+        <CheckField
+          label={'show "scan for removed comments" buttons on threads'}
+          checked={showThreadScanButtons}
+          onChange={setShowThreadScanButtons}
+        />
+        <CheckField
+          label="flag your removed/locked content on your own profile"
+          checked={highlightOwnProfileStatus}
+          onChange={setHighlightOwnProfileStatus}
+        />
+        <CheckField
+          label="auto-filter to show only removed comments after thread scan"
+          checked={autoFilterRemovedThreads}
+          onChange={setAutoFilterRemovedThreads}
+        />
       </FieldStack>
       {hasClientId && monitorQuarantined && (
         <Note>
-          Enabling "monitor quarantined content" may appear to cause an occasional logout.
-          Refreshing the page should show you are still logged in. Increase "minutes between
-          Reddit checks" to 5 or more to reduce this occurrence.
+          Enabling "monitor quarantined content" may appear to cause an occasional logout. Refreshing the page should
+          show you are still logged in. Increase "minutes between Reddit checks" to 5 or more to reduce this occurrence.
         </Note>
       )}
 
@@ -423,9 +471,8 @@ function Options() {
         </Field>
       </FieldStack>
       <Note>
-        Scans read Reddit with your login. More reads or a shorter wait get through big threads
-        sooner, but Reddit may ask you to verify you&apos;re human if it sees what looks like
-        automated activity.
+        Scans read Reddit with your login. More reads or a shorter wait get through big threads sooner, but Reddit may
+        ask you to verify you&apos;re human if it sees what looks like automated activity.
         {heldTo && ` For now, Reveddit holds every scan to ${heldTo}, whatever these say.`}
       </Note>
 
@@ -443,11 +490,11 @@ function Options() {
 
       <SectionHeader>Diagnostics</SectionHeader>
       <Note>
-        If removal detection seems broken, run a check, then copy the log and include it in a GitHub
-        issue or email. The log stays on this device — nothing is sent automatically. Your username is
-        left out unless you include it. The log lists the ids of your recent posts and comments, which
-        let the developer check what happened to them, so leave them in if you can. Hidden, each becomes
-        a stand-in that can&apos;t be traced back, as long as your username stays out too.
+        If removal detection seems broken, run a check, then copy the log and include it in a GitHub issue or email. The
+        log stays on this device — nothing is sent automatically. Your username is left out unless you include it. The
+        log lists the ids of your recent posts and comments, which let the developer check what happened to them, so
+        leave them in if you can. Hidden, each becomes a stand-in that can&apos;t be traced back, as long as your
+        username stays out too.
       </Note>
       <FieldStack>
         <CheckField label="include username in copied log" checked={diagIncludeUser} onChange={setDiagIncludeUser} />
@@ -455,14 +502,22 @@ function Options() {
       </FieldStack>
       <DiagActions>
         <Button onClick={runCheckNow}>check now</Button>
-        <Button onClick={copyDiagLog} disabled={diagBusy}>copy log</Button>
+        <Button onClick={copyDiagLog} disabled={diagBusy}>
+          copy log
+        </Button>
         <Button onClick={clearDiagLogClick}>clear log</Button>
       </DiagActions>
       {diagStatus && <Note>{diagStatus}</Note>}
 
       <AdvancedLink>
         {!showAdvanced && (
-          <BlueLink href="#" onClick={e => { e.preventDefault(); setShowAdvanced(true) }}>
+          <BlueLink
+            href="#"
+            onClick={e => {
+              e.preventDefault()
+              setShowAdvanced(true)
+            }}
+          >
             advanced
           </BlueLink>
         )}
@@ -470,8 +525,8 @@ function Options() {
       <AdvancedSection visible={showAdvanced}>
         <SectionHeader>Advanced</SectionHeader>
         <Note>
-          Takes an "installed app" client id from reddit &gt; preferences &gt; apps. Checks then also use
-          Reddit&apos;s API with it.
+          Takes an "installed app" client id from reddit &gt; preferences &gt; apps. Checks then also use Reddit&apos;s
+          API with it.
         </Note>
         <FieldStack>
           <Field>
@@ -493,9 +548,9 @@ function Options() {
               <label>
                 simulate Reddit endpoint deprecation (dev)
                 <Hint>
-                  Blocks the legacy old.reddit.com HTML and unauthenticated .json paths, as if Reddit
-                  had already removed them. Detection then relies only on the logged-out
-                  www.reddit.com profile view. Applies on the next check — no save needed.
+                  Blocks the legacy old.reddit.com HTML and unauthenticated .json paths, as if Reddit had already
+                  removed them. Detection then relies only on the logged-out www.reddit.com profile view. Applies on the
+                  next check — no save needed.
                 </Hint>
               </label>
               <input
@@ -511,10 +566,18 @@ function Options() {
       {error && <MessageBanner variant="warning">{error}</MessageBanner>}
 
       <Footer>
-        <BlueLink href="#" onClick={e => { e.preventDefault(); resetDefaults() }}>
+        <BlueLink
+          href="#"
+          onClick={e => {
+            e.preventDefault()
+            resetDefaults()
+          }}
+        >
           reset to defaults
         </BlueLink>
-        <Button variant="primary" onClick={saveAndClose}>save</Button>
+        <Button variant="primary" onClick={saveAndClose}>
+          save
+        </Button>
       </Footer>
     </Page>
   )

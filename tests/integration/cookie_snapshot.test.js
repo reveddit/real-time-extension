@@ -13,7 +13,7 @@ import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webexte
 import { cookie, jar, fill, find, cookiesApi, COOKIE_EXPIRES as EXPIRES } from '../mocks/cookies.js'
 
 import { storeRedditCookies, rehydrateStoredRedditCookies } from '../../src/src/reddit-cookies'
-import { lookupItemsByUser } from '../../src/src/reddit-auth'
+import { lookupItemsByUser, getLoggedinUser } from '../../src/src/reddit-auth'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
 
 const CSRF = cookie('csrf_token', 'C1', {
@@ -32,7 +32,7 @@ const startSignIn = () => {
     __getLocalStorage()[VIEWER_CONNECT_KEY] = { started: Date.now(), mainUser: 'alice', main: [] }
 }
 
-const saved = { tabsApi: globalThis.chrome.tabs, tabs: globalThis.chrome.tabs.query, cookies: globalThis.chrome.cookies, fetch: globalThis.fetch }
+const saved = { tabs: globalThis.chrome.tabs.query, cookies: globalThis.chrome.cookies, fetch: globalThis.fetch }
 
 beforeEach(() => {
     __resetStorage()
@@ -45,7 +45,6 @@ beforeEach(() => {
 
 afterEach(() => {
     delete browserMock.cookies
-    globalThis.chrome.tabs = saved.tabsApi
     globalThis.chrome.tabs.query = saved.tabs
     globalThis.chrome.cookies = saved.cookies
     globalThis.fetch = saved.fetch
@@ -170,13 +169,13 @@ describe('the cookie snapshot', () => {
         expect(await storeRedditCookies()).toBe(false)
         globalThis.chrome.cookies = { getAll: (q, cb) => cb(undefined) }
         expect(await storeRedditCookies()).toBe(false)
-        // outside the background context (a content script has no tabs or cookies API)
-        globalThis.chrome.cookies = undefined
-        expect(await storeRedditCookies()).toBe(false)
-        globalThis.chrome.cookies = { getAll: jarForChrome }
-        globalThis.chrome.tabs = undefined
-        expect(await storeRedditCookies()).toBe(false)
         expect(stored()).toBeUndefined()
+    })
+
+    it("saves nothing, and says so, when the browser's tabs can't be read", async () => {
+        globalThis.chrome.tabs.query = (q, cb) => cb(undefined)
+        expect(await storeRedditCookies()).toBe(false)
+        expect(__getLocalStorage().stored_reddit_cookie_objects).toBeUndefined()
     })
 
     it('finds a supported tab among others, and saves the snapshot over the last one', async () => {
@@ -219,6 +218,18 @@ describe('the cookie snapshot', () => {
         jar.clear()
         expect(await rehydrateStoredRedditCookies()).toBe(true)
         expect(cookiesApi.set.mock.calls.map(([d]) => d.name)).toEqual(['token_v2'])
+    })
+
+    it("says it put nothing back when the snapshot can't be read, and the login check goes on", async () => {
+        const get = globalThis.chrome.storage.local.get
+        globalThis.chrome.storage.local.get = (keys, cb) => cb(undefined)
+        try {
+            jar.clear()
+            expect(await rehydrateStoredRedditCookies()).toBe(false)
+            expect(await getLoggedinUser()).toBe(null)
+        } finally {
+            globalThis.chrome.storage.local.get = get
+        }
     })
 
     it("says it put nothing back when the browser's cookies cannot be read", async () => {
@@ -311,7 +322,7 @@ describe('the cookie snapshot', () => {
         })
         // Its only callers pass OAuth details (the fallback after www fails)
         const auth = { headers: { Authorization: 'bearer x' } }
-        await lookupItemsByUser('alice', '', 'new', '', true, auth)
+        await lookupItemsByUser('alice', true, auth)
         expect(globalThis.fetch).toHaveBeenCalledWith(
             'https://oauth.reddit.com/user/alice/overview.json?limit=100&sort=new&raw_json=1',
             { ...auth, cache: 'reload' },

@@ -16,7 +16,7 @@ export const SEEN_COUNT_DEFAULT = 2
 // and for the objects stored by the extension
 export const MAX_SUBSCRIPTIONS = 5
 const MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT = 1000
-export const MAX_SYNC_STORAGE_ITEMS_PER_OBJECT = 130
+const MAX_SYNC_STORAGE_ITEMS_PER_OBJECT = 130
 export const MAX_SYNC_STORAGE_CHANGES = 100
 export const MAX_OTHER_SUBSCRIPTIONS = 100
 
@@ -109,6 +109,28 @@ export const fitStatusLists = (
     }
     Object.assign(toSave, alongside)
     return fitDicts_toSyncTotal(toSave, storage, [keys['approved'], keys['unlocked']], 'c')
+}
+
+// A check saves lists it read before its lookup, and the user can act while
+// that runs. Reading them again keeps the save from undoing that: what was
+// marked seen stays seen, and what's on no list now (an unfollow) stays off.
+// idsBefore: the ids as the check read them, since those it adds are on no list
+// yet. It goes by every list: the check may have moved an item between them.
+export const keepChangesSince = async (idsBefore: Set<string>, lists: Record<string, any>) => {
+    const stored = await browser.storage.sync.get(Object.keys(lists)).catch(() => null)
+    if (!stored) {
+        return
+    }
+    const onSomeList = (id: string) => Object.values(stored).some((list: any) => list && id in list)
+    for (const [key, list] of Object.entries(lists)) {
+        for (const id of Object.keys(list)) {
+            if (idsBefore.has(id) && !onSomeList(id)) {
+                delete list[id]
+            } else if ((stored[key] as any)?.[id]?.u === false) {
+                list[id].u = false
+            }
+        }
+    }
 }
 
 // For the diagnostic log's header: how full sync storage is, and its largest
@@ -250,6 +272,8 @@ export const markEverythingAsSeen = () => {
 }
 
 // One key of local storage, with what it holds when nothing is stored there.
+// Rejects when storage fails, unlike request-gates' readLocal, so a caller
+// that writes back doesn't overwrite what it couldn't read.
 // pick shapes the answer inside the same .then: callers depend on its timing.
 const readLocal = <T, R = T>(
     key: string,
@@ -464,22 +488,6 @@ export const subscribeUser = (
     })
 }
 
-export const unsubscribeUser = (user: string, callback: () => void) => {
-    const userKeys = Object.keys(getUserInit(user))
-    chrome.storage.sync.get(['user_subscriptions', 'user_unsubscriptions'], result => {
-        const { user_subscriptions, user_unsubscriptions = {} } = result
-        delete user_subscriptions[user]
-        user_unsubscriptions[user] = Math.floor(Date.now() / 1000)
-        chrome.storage.sync.set({ user_subscriptions, user_unsubscriptions }, () => {
-            chrome.storage.sync.remove(userKeys, () => {
-                const userKey_localStorage = getObjectName('items', user, true)
-                chrome.runtime.sendMessage({ action: 'update-badge' })
-                chrome.storage.local.remove(userKey_localStorage, callback)
-            })
-        })
-    })
-}
-
 export const initStorage = (callback: () => void) => {
     chrome.storage.sync.get(undefined as any, storage => {
         if (Object.keys(storage).length === 0) {
@@ -509,7 +517,7 @@ export const getSubscribedUsers_withSeenAndUnseenIDs = (
     })
 }
 
-export const getSubscribedUsers_withUnseenIDs = (callback: (users_withIDs: Record<string, any>) => void) => {
+const getSubscribedUsers_withUnseenIDs = (callback: (users_withIDs: Record<string, any>) => void) => {
     chrome.storage.sync.get(undefined as any, storage => {
         const users_withIDs: Record<string, any> = {}
         subscribedThings(storage.user_subscriptions).forEach(({ thing, isUser }) => {
@@ -561,20 +569,13 @@ export const saveLocalStorageItems = (thing: string, isUser: boolean, itemsToSav
     return browser.storage.local.set({ [key_localStorage]: itemsToSave })
 }
 
-export const addLocalStorageItems = (items: Record<string, any>, thing: string, isUser: boolean) => {
-    const key_localStorage = getObjectName('items', thing, isUser)
-    return chrome.storage.local.get({ [key_localStorage]: {} }, localStorageItems => {
-        const storedItems = localStorageItems[key_localStorage]
-        Object.keys(items).forEach(id => {
-            storedItems[id] = items[id]
-        })
-        let itemsToSave = storedItems
+export const addLocalStorageItems = (items: Record<string, any>, thing: string, isUser: boolean) =>
+    updateLocal<Record<string, any>>(getObjectName('items', thing, isUser), {}, storedItems => {
+        Object.assign(storedItems, items)
         if (Object.keys(storedItems).length > MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT) {
-            itemsToSave = trimDict_by_numberValuedAttribute(storedItems, MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT, 'o')
+            return trimDict_by_numberValuedAttribute(storedItems, MAX_LOCAL_STORAGE_ITEMS_PER_OBJECT, 'o')
         }
-        return browser.storage.local.set({ [key_localStorage]: itemsToSave })
     })
-}
 
 export const getItemFromLocalStorage = (
     thing: string,
@@ -593,8 +594,9 @@ export const getItemFromLocalStorage = (
 
 export const getAllChanges = (callback: (changesByUser: Record<string, any[]>) => void) => {
     chrome.storage.sync.get('user_subscriptions', result => {
-        const keys = [getObjectName('changes', 'other', false)]
-        const keyToUser_lookup: Record<string, string> = { changes_other: 'other' }
+        const otherKey = getObjectName('changes', 'other', false)
+        const keys = [otherKey]
+        const keyToUser_lookup: Record<string, string> = { [otherKey]: 'other' }
 
         Object.keys(result.user_subscriptions).forEach(user => {
             const key = getObjectName('changes', user, true)
@@ -636,8 +638,26 @@ export const getOptions = (callback: (options: Record<string, any>) => any) => {
         })
 }
 
-// options holds every option under its stored name
-export const saveOptions = (options: Record<string, any>, callback: () => void) => {
+// Every option under its stored name, so the options page can't leave one out:
+// monitoring reads them all without checking
+interface SavedOptions {
+    seen_count: number
+    interval: number
+    custom_clientid: string
+    removal_status: { track: boolean; notify: boolean }
+    lock_status: { track: boolean; notify: boolean }
+    hide_subscribe: boolean
+    monitor_quarantined: boolean
+    show_scan_on_own_profile: boolean
+    show_scan_on_other_profiles: boolean
+    show_thread_scan_buttons: boolean
+    highlight_own_profile_status: boolean
+    auto_filter_removed_threads: boolean
+    scan_reads_per_click: number
+    scan_seconds_between_reads: number
+}
+
+export const saveOptions = (options: SavedOptions, callback: () => void) => {
     const { scan_reads_per_click, scan_seconds_between_reads, ...rest } = options
     chrome.storage.sync.set(
         {

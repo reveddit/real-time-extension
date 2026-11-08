@@ -9,8 +9,8 @@
 // both modes got the block page, the retry is skipped for a while, so a
 // blocked client doesn't send every request twice.
 //
-// Import-free: bridge.ts, requests.ts, www-fetcher.ts, followed-lookup.ts and
-// viewer.ts import it.
+// Import-free: bridge.ts, requests.ts, www-fetcher.ts, followed-lookup.ts,
+// monitoring.ts, viewer.ts and parse_html/old.ts import it.
 
 export const LOGGED_IN_CACHE_MODES: RequestCache[] = ['default', 'no-cache']
 // Feeds send max-age=3600, so a scan's read must never come from the browser's
@@ -86,6 +86,19 @@ export const fetchForScan = async (url: string, signal: AbortSignal, secondTryMo
 // response, a frozen tab) is given up on, so one stall can't hang a lookup
 export const WWW_FETCH_TIMEOUT_MS = 20 * 1000
 
+// Runs a request under a deadline: its signal aborts after ms, and the timer
+// ends when run does. Whatever run awaits is inside the deadline, so a caller
+// that reads the body in run has the body under it too.
+export const withDeadline = async <T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), ms)
+    try {
+        return await run(controller.signal)
+    } finally {
+        clearTimeout(timer)
+    }
+}
+
 // A JSON read with the user's login from the background, through the bridge's
 // fetch (logged-in-fetch.ts: the cache mode that gets past reddit's edge, one
 // retry in the other mode on its block page). Timed out like the public-view
@@ -99,21 +112,18 @@ interface LoggedInJson {
     json?: any
 }
 
-export const fetchJsonLoggedIn = async (url: string): Promise<LoggedInJson> => {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), WWW_FETCH_TIMEOUT_MS)
-    try {
-        const { response, blockPage, retried } = await fetchLoggedIn(url, { signal: controller.signal })
-        if (blockPage) {
-            return { ok: false, status: 403, blocked: true, refused: retried }
+export const fetchJsonLoggedIn = (url: string): Promise<LoggedInJson> =>
+    withDeadline(WWW_FETCH_TIMEOUT_MS, async signal => {
+        try {
+            const { response, blockPage, retried } = await fetchLoggedIn(url, { signal })
+            if (blockPage) {
+                return { ok: false, status: 403, blocked: true, refused: retried }
+            }
+            if (!response.ok) {
+                return { ok: false, status: response.status, blocked: false, refused: false }
+            }
+            return { ok: true, status: response.status, blocked: false, refused: false, json: await response.json() }
+        } catch {
+            return { ok: false, status: 0, blocked: false, refused: false }
         }
-        if (!response.ok) {
-            return { ok: false, status: response.status, blocked: false, refused: false }
-        }
-        return { ok: true, status: response.status, blocked: false, refused: false, json: await response.json() }
-    } catch {
-        return { ok: false, status: 0, blocked: false, refused: false }
-    } finally {
-        clearTimeout(timer)
-    }
-}
+    })

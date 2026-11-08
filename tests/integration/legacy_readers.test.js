@@ -63,9 +63,13 @@ describe("the legacy readers on reddit's challenge", () => {
 
     it('still reads a legacy thread page', async () => {
         globalThis.fetch = vi.fn(async () => page(legacyThread))
-        const result = await getPost_fromOld('/comments/abc/')
-        expect(result.refused).toBeUndefined()
-        expect(result.is_removed).toBe(false)
+        expect(await getPost_fromOld('/comments/abc/')).toEqual({ is_removed: false })
+    })
+
+    it('reads a post page logged out, like the listing', async () => {
+        globalThis.fetch = vi.fn(async () => page(legacyThread))
+        await getPost_fromOld('/comments/abc/')
+        expect(globalThis.fetch.mock.calls[0][1].credentials).toBe('omit')
     })
 
     it.each([
@@ -95,6 +99,38 @@ describe("the legacy readers on reddit's challenge", () => {
         await expect(lookupItemsByID(['t1_c1'], 'none')).rejects.toThrow('request failed: 403')
         const loggedOut = globalThis.fetch.mock.calls.filter(([, init]) => init?.credentials === 'omit')
         expect(loggedOut).toHaveLength(1)
+    })
+})
+
+describe('a legacy page that stalls after its headers', () => {
+    const savedFetch = globalThis.fetch
+    beforeEach(() => {
+        __resetStorage()
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    })
+    afterEach(() => {
+        globalThis.fetch = savedFetch
+    })
+
+    // Like a real fetch, its body fails when the request is aborted
+    const stalled = async (_, init) =>
+        page(
+            new ReadableStream({
+                start: controller => {
+                    controller.enqueue(new TextEncoder().encode('<html><body>'))
+                    init.signal?.addEventListener('abort', () => controller.error(init.signal.reason))
+                },
+            }),
+        )
+
+    it.each([
+        ['a post page', () => getPost_fromOld('/comments/abc/')],
+        ['the listing', () => getItemsById_fromOldHTML(['t1_c1'])],
+    ])('is given up on: %s', async (_, read) => {
+        globalThis.fetch = vi.fn(stalled)
+        const reading = read().catch(err => err.name)
+        await vi.advanceTimersByTimeAsync(15 * 1000)
+        expect(await reading).toBe('AbortError')
     })
 })
 

@@ -435,10 +435,4 @@ function applyFilter(filter: 'all' | 'removed') {
 
         htmlEl.style.display = filter === 'removed' && !isHighlighted ? 'none' : ''
     }
-
-    // Handle inserted comments
-    const insertedEls = document.querySelectorAll('.rev-inserted-comment')
-    for (const el of Array.from(insertedEls)) {
-        ;(el as HTMLElement).style.display = ''
-    }
 }

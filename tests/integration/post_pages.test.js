@@ -7,6 +7,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import { res } from '../mocks/responses.js'
 import { lookupItemsByID, lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
 import {
     USER,
@@ -115,10 +116,8 @@ describe('post page verdicts and the backoff', () => {
         const pageCalls = []
         globalThis.fetch = async url => {
             const u = String(url)
-            if (u.includes(`/user/${USER}/comments/`))
-                return { ok: true, status: 200, text: async () => emptyStatePage('comments') }
-            if (u.includes(`/user/${USER}/submitted/`))
-                return { ok: true, status: 200, text: async () => POSTS.map(thingIdEl).join('') }
+            if (u.includes(`/user/${USER}/comments/`)) return res(200, emptyStatePage('comments'))
+            if (u.includes(`/user/${USER}/submitted/`)) return res(200, POSTS.map(thingIdEl).join(''))
             pageCalls.push(u)
             return postPage(u)
         }
@@ -126,7 +125,7 @@ describe('post page verdicts and the backoff', () => {
     }
 
     it('a 429 on a post page ends the verification loop', async () => {
-        const pageCalls = servePosts(() => ({ ok: false, status: 429, text: async () => '' }))
+        const pageCalls = servePosts(() => res(429, ''))
         await lookupItemsByID_fromPublicProfile(POSTS, USER, youngMeta())
         expect(pageCalls).toHaveLength(1)
         expect(__getLocalStorage().error_status).toBe('rate_limited')
@@ -134,7 +133,7 @@ describe('post page verdicts and the backoff', () => {
 
     it('a post once seen held keeps that history when its page later reads unknown', async () => {
         __resetStorage({}, { www_post_page_verdicts: { t3_young1: { v: 'held', t: Date.now() - 3 * 3600 * 1000 } } })
-        servePosts(() => ({ ok: true, status: 200, text: async () => '<html><body>please wait</body></html>' }))
+        servePosts(() => res(200, '<html><body>please wait</body></html>'))
         const old = { t3_young1: { locked: false, created_utc: now() - 30 * 86400 } }
         await lookupItemsByID_fromPublicProfile(['t3_young1'], USER, old)
         const entry = __getLocalStorage().www_post_page_verdicts.t3_young1
@@ -165,12 +164,10 @@ describe('post page verdicts and the backoff', () => {
         const pageCalls = []
         globalThis.fetch = async url => {
             const u = String(url)
-            if (u.includes(`/user/${USER}/comments/`))
-                return { ok: true, status: 200, text: async () => commentsPage('') + thingIdEl(FEED_OK) }
-            if (u.includes(`/user/${USER}/submitted/`))
-                return { ok: true, status: 200, text: async () => POSTS.map(thingIdEl).join('') }
+            if (u.includes(`/user/${USER}/comments/`)) return res(200, commentsPage('') + thingIdEl(FEED_OK))
+            if (u.includes(`/user/${USER}/submitted/`)) return res(200, POSTS.map(thingIdEl).join(''))
             pageCalls.push(u)
-            return { ok: false, status: 429, text: async () => '' }
+            return res(429, '')
         }
         const authItemsMeta = {
             [FEED_OK]: meta(FEED_OK),
@@ -192,17 +189,14 @@ describe('post page verdicts and the backoff', () => {
         const pageCalls = []
         globalThis.fetch = async url => {
             const u = String(url)
-            if (u.includes(`/user/${USER}/comments/`))
-                return { ok: true, status: 200, text: async () => emptyStatePage('comments') }
-            if (u.includes(`/user/${USER}/submitted/`)) return { ok: true, status: 200, text: async () => thingIdEl(YOUNG) }
+            if (u.includes(`/user/${USER}/comments/`)) return res(200, emptyStatePage('comments'))
+            if (u.includes(`/user/${USER}/submitted/`)) return res(200, thingIdEl(YOUNG))
             pageCalls.push(u)
-            return {
-                ok: true,
-                status: 200,
-                text: async () =>
-                    `<html><body><shreddit-post id="${YOUNG}" author="${USER}" subreddit-name="s" ` +
+            return res(
+                200,
+                `<html><body><shreddit-post id="${YOUNG}" author="${USER}" subreddit-name="s" ` +
                     `post-title="Why was my post removed by moderators?"></shreddit-post></body></html>`,
-            }
+            )
         }
         const results = await lookupItemsByID_fromPublicProfile([YOUNG], USER, {
             [YOUNG]: { locked: false, created_utc: now() - 3600 },

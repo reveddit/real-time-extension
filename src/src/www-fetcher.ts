@@ -12,8 +12,7 @@ import browser from 'webextension-polyfill'
 import { isCaptchaPage, solveChallenge, isSolvedChallengeUrl, FetchHtml } from './parse_html/new'
 import { getRemoteWwwRouteOrder } from './news'
 import { dlog } from './diaglog'
-import { WWW_FETCH_TIMEOUT_MS } from './logged-in-fetch'
-import { withDeadline } from './parse_html/common'
+import { WWW_FETCH_TIMEOUT_MS, withDeadline } from './logged-in-fetch'
 
 declare const content: { fetch?: typeof fetch } | undefined
 

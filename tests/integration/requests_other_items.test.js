@@ -7,10 +7,12 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { __resetStorage } from '../mocks/webextension-polyfill.js'
+import { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
 
 import { lookupItemsByID } from '../../src/src/requests'
 import { isRemovedItem } from '../../src/src/common'
+import { setCurrentStateForId } from '../../src/src/monitoring'
+import { getObjectNamesForThing } from '../../src/src/storage'
 
 const child = (name, data) => ({
     kind: name.slice(0, 2),
@@ -44,5 +46,17 @@ describe("followed items in a moderator's view", () => {
         })
         // the text comes through, for the history page to keep
         expect(result[0].data.body).toBe('still readable')
+    })
+})
+
+describe('the first check of an item just followed', () => {
+    it('settles once the item is saved, so what the page knows can be added to its record', async () => {
+        const options = { removal_status: { track: true }, lock_status: { track: true } }
+        __resetStorage({ options, user_subscriptions: {}, other_subscriptions: { t1_liveit: { t: 1 } } })
+        const children = [child('t1_liveit', { removed: false, link_id: 't3_abc' })]
+        globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: { children } }) }))
+        await setCurrentStateForId('t1_liveit', 'https://www.reddit.com/r/x/comments/abc/_/liveit/')
+        expect(__getLocalStorage().items_other.t1_liveit.t).toBe('still readable')
+        expect(__getSyncStorage()[getObjectNamesForThing('other', false).approved].t1_liveit).toBeDefined()
     })
 })

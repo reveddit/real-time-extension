@@ -1,3 +1,6 @@
+// The newest 100 items of the signed-in user's own listing (user/me)
+export const OWN_LISTING_QUERY = '?limit=100&sort=new&raw_json=1'
+
 export interface RedditItem {
     name: string
     author: string
@@ -25,7 +28,7 @@ export const REMOVED = 1
 export const APPROVED = 2
 export const LOCKED = 3
 export const UNLOCKED = 4
-export const EDITED = 5
+const EDITED = 5
 export const DELETED = 6
 export const CHANGE_TYPE_TEXT: Record<number, string> = {
     [REMOVED]: 'mod removed',
@@ -100,7 +103,9 @@ export const getFullIDsFromURL = (
     return getFullIDsFromPath(path)
 }
 
-const regex_pc = /^\/(v|r|user)\/([^/]+)\/comments\/([^/]+)\/[^/]*(?:\/([^/?&#]+))?/
+// The id can end the path. It stops at a query or a file ending, so a profile's
+// comments tab (/user/x/comments/?sort=new, /user/x/comments/.rss) reads as no post.
+const regex_pc = /^\/(v|r|user)\/([^/]+)\/comments\/([^/?&#.]+)(?:\/[^/]*(?:\/([^/?&#]+))?)?/
 const regex_user = /^\/(?:user|y|u)\/([^/?&#]+)\/?/
 
 // Updating opens the what's new page when the first 3 segments change (e.g.
@@ -194,6 +199,9 @@ export const isUserDeletedItem = (item: RedditItem): boolean => {
 export const isRemovedPost = (item: RedditItem): boolean => {
     return item.is_robot_indexable === false
 }
+// A post the viewer's listing marks, whoever removed it. 'deleted' is the author's own doing.
+export const isRemovedByCategory = (post: RedditItem): boolean =>
+    Boolean(post.removed_by_category) && post.removed_by_category !== 'deleted'
 
 export const trimDict_by_numberValuedAttribute = (
     dict: Record<string, any>,
@@ -366,12 +374,16 @@ export function setAlarm(periodInMinutes: number) {
 
 export function goToOptions() {
     const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+    // A content script's link comes here through a service worker, which has no window
+    const closePopup = () => {
+        if (typeof window !== 'undefined') window.close()
+    }
     if (isAndroid) {
         chrome.tabs.create({ url: chrome.runtime.getURL('src/options.html'), active: true })
-        window.close()
+        closePopup()
     } else if (chrome.runtime.openOptionsPage) {
         chrome.runtime.openOptionsPage()
-        window.close() //closes the popup which persists in FF
+        closePopup() //closes the popup which persists in FF
     } else {
         window.open(chrome.runtime.getURL('/src/options.html'))
     }

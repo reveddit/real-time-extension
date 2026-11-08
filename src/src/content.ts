@@ -1,5 +1,6 @@
 import { getSubscribedUsers_withSeenAndUnseenIDs } from './storage'
 import { redditModifications } from './content-reddit'
+import { OWN_LISTING_QUERY } from './common'
 import { revdditModifications } from './content-revddit'
 import { pageContextFetch, publicViewInit } from './www-routes'
 import { isWwwRouteCache } from './www-routes'
@@ -17,19 +18,12 @@ import browser from 'webextension-polyfill'
 
     const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
 
-    function queryUser(message: any, _sender: any, _response: any) {
+    function onMessage(message: any, _sender: any, _response: any) {
         if (message.action === 'get-logged-in-user-items') {
             // Handle request for logged-in user's items from background script
-            const params: Record<string, any> = { limit: 100, sort: 'new', raw_json: 1 }
-            const search =
-                '?' +
-                Object.keys(params)
-                    .map(k => `${k}=${params[k]}`)
-                    .join('&')
-
             // Use the same subdomain as the current page to avoid cross-site issues
             const currentHost = window.location.hostname
-            const url = `https://${currentHost}/user/me.json${search}`
+            const url = `https://${currentHost}/user/me.json${OWN_LISTING_QUERY}`
 
             // Ask background to store cookies for future use when no tabs are open
             try {
@@ -92,7 +86,6 @@ import browser from 'webextension-polyfill'
                 })
         }
     }
-    window.localStorage.setItem('hasSeenLanguageModal', 'true')
     // Bridge relay for the website: Firefox has no externally_connectable, so
     // reveddit.com pages postMessage here and the background does the fetch
     // (typed and allowlisted in bridge.ts). Not registered on reddit.com pages.
@@ -163,7 +156,7 @@ import browser from 'webextension-polyfill'
             window.addEventListener('message', onDevRequest)
         }
     }
-    browser.runtime.onMessage.addListener(queryUser as any)
+    browser.runtime.onMessage.addListener(onMessage as any)
 
     const extensionSaysNoSubscriptions = 'extensionSaysNoSubscriptions'
     let user = 'other'
@@ -185,11 +178,6 @@ import browser from 'webextension-polyfill'
             const subscribed_users_lowercase = Object.keys(users)
                 .filter(x => x !== 'other')
                 .map(x => x.toLowerCase())
-            if (subscribed_users_lowercase.length === 0) {
-                window.localStorage.setItem(extensionSaysNoSubscriptions, 'true')
-            } else {
-                window.localStorage.removeItem(extensionSaysNoSubscriptions)
-            }
             if (isReddit) {
                 redditModifications(
                     storage.other_subscriptions,
@@ -198,6 +186,12 @@ import browser from 'webextension-polyfill'
                     Object.keys(storage.user_unsubscriptions || {}).map(x => x.toLowerCase()),
                 )
             } else {
+                // For the website only, like the stamps above
+                if (subscribed_users_lowercase.length === 0) {
+                    window.localStorage.setItem(extensionSaysNoSubscriptions, 'true')
+                } else {
+                    window.localStorage.removeItem(extensionSaysNoSubscriptions)
+                }
                 revdditModifications(storage, user, isUserPage, isInfoPage)
             }
         })

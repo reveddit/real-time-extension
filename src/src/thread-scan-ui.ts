@@ -49,6 +49,7 @@ export function injectRestoreButton_oldReddit(commentEl: HTMLElement) {
     btn.classList.toggle('rev-scan-disabled', !!activeScan)
     btn.textContent = 'scan-rev'
     btn.title = SCAN_TITLE
+    if (nothingMissing()) markExhausted(btn)
     btn.addEventListener('click', e => {
         e.preventDefault()
         e.stopPropagation()
@@ -107,6 +108,11 @@ const retireScanAll = (btn: HTMLButtonElement) => {
     btn.disabled = true
     btn.title = NOTHING_LEFT_TITLE
 }
+// A thread scan that left nothing missing leaves a row reddit stamps later nothing to
+// find. After any other finish a row stays plain, as that scan may never have covered
+// it. The scan button keeps this, so it comes and goes with its page.
+const NOTHING_MISSING = 'data-rev-nothing-missing'
+const nothingMissing = () => !!document.querySelector(`.rev-scan-all-btn[${NOTHING_MISSING}]`)
 // "Continue scan" goes when another click has nothing to go on with
 function endContinueScan() {
     const btn = document.querySelector('.rev-scan-all-btn')
@@ -116,6 +122,8 @@ function endContinueScan() {
     const note = document.querySelector('.rev-scan-all-progress')
     if (note) note.textContent = ''
 }
+// Another click reads nothing more, or may not after a failure
+const promisesNothing = (status: string) => status === 'noted' || status === 'error'
 // With no number on it, for a scan button with no more to say about what's left
 const resetScanBtn = (btn: Element) => {
     resetScanLabel(btn)
@@ -155,6 +163,7 @@ export function injectScanButton_newReddit(row: Element) {
     btn.classList.toggle('rev-scan-disabled', !!activeScan)
     btn.title = SCAN_TITLE
     btn.innerHTML = newRedditScanBtnHTML()
+    if (nothingMissing()) markExhausted(btn)
     btn.addEventListener('click', e => {
         e.preventDefault()
         e.stopPropagation()
@@ -244,8 +253,7 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
         progressEl.remove()
         displayRestoredComment(commentId, container, result, isNewReddit)
         // Show filter and auto-switch if this is the first found comment
-        injectThreadFilter(isNewReddit)
-        autoFilterRemoved(isNewReddit, container)
+        if (injectThreadFilter(isNewReddit)) autoFilterRemoved(isNewReddit, container)
     }
     if (result.found || inserter.placedCount > placedBefore) refreshThreadFilter(isNewReddit)
     if (result.found) return
@@ -279,8 +287,7 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
                 .forEach(b => showScanLeft(b, left))
         }
     }
-    // Another click reads nothing more, so they promise nothing
-    if (lastStatus === 'noted') {
+    if (promisesNothing(lastStatus)) {
         document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)').forEach(resetScanBtn)
         if (result.threadScanDone) endContinueScan()
     }
@@ -351,11 +358,16 @@ function displayRestoredComment(
 // --- Thread Scan All ---
 
 const SCAN_ALL_TEXT = 'Scan for removed comments'
+const OTHER_AGES = 'Scan-Rev can still search comments of other ages'
 
 export function injectScanAllButton(isNewReddit: boolean) {
     const host = document.querySelector(isNewReddit ? 'shreddit-comment-tree' : '.commentarea .menuarea')
     const placed = (isNewReddit ? document : host)?.querySelector('.rev-scan-all-btn')
-    if (isNewReddit && placed && ofThisRun(placed)) readsGoWith(placed)
+    if (isNewReddit && placed && ofThisRun(placed)) {
+        readsGoWith(placed)
+        // Back can bring back what a scan placed before the page was left, with no bar
+        if (recoveredOnPage() > 0) injectThreadFilter(isNewReddit)
+    }
     if (!host || ofThisRun(placed) || orphaned()) return
     placed?.remove()
 
@@ -382,6 +394,7 @@ async function handleScanAll(isNewReddit: boolean) {
 
     const btn = document.querySelector('.rev-scan-all-btn') as HTMLButtonElement
     if (!btn || btn.classList.contains('rev-scan-disabled')) return
+    const labelBefore = btn.textContent
     btn.textContent = 'Scanning...'
     btn.disabled = true
     btn.classList.add('rev-scan-all-loading')
@@ -406,6 +419,7 @@ async function handleScanAll(isNewReddit: boolean) {
 
     let finalStatus = ''
     let otherSorts = false
+    let leftNothingMissing = false
     let recovered: RecoveredComment[] = []
     try {
         recovered = await scanThreadForRemovedComments(
@@ -417,6 +431,7 @@ async function handleScanAll(isNewReddit: boolean) {
                 progressText.textContent = progress.message
                 finalStatus = progress.status
                 otherSorts ||= !!progress.otherSorts
+                leftNothingMissing ||= !!progress.nothingMissing
             },
             rc => {
                 if (btn.isConnected) placeRecovered(inserter, rc, isNewReddit)
@@ -430,6 +445,8 @@ async function handleScanAll(isNewReddit: boolean) {
     const onPage = recoveredOnPage()
     btn.textContent = onPage > 0 ? `${onPage} comment(s) recovered` : SCAN_ALL_TEXT
     if (finalStatus === 'partial') btn.textContent = 'Continue scan'
+    // Back can bring this button back, and the count above was another page's
+    if (!btn.isConnected) btn.textContent = labelBefore
     btn.disabled = false
     btn.classList.remove('rev-scan-all-loading')
     endScan(limiter)
@@ -446,15 +463,19 @@ async function handleScanAll(isNewReddit: boolean) {
     const scanBtns = document.querySelectorAll('.rev-scan-comment-btn:not(.rev-scan-exhausted)')
     const finished = finalStatus === 'found' || finalStatus === 'not_found'
     if (finished) retireScanAll(btn)
-    if (finalStatus === 'noted' || otherSorts) scanBtns.forEach(resetScanBtn)
+    if (promisesNothing(finalStatus) || otherSorts) scanBtns.forEach(resetScanBtn)
     else if (finished) scanBtns.forEach(markExhausted)
     // A comment that needs another sort of feeds has its own search still to come
-    if (otherSorts) btn.title = 'Scan-Rev can still search comments of other ages'
+    if (otherSorts) {
+        btn.title = OTHER_AGES
+        progressText.textContent += ` ${OTHER_AGES}.`
+    }
+    if (leftNothingMissing) btn.setAttribute(NOTHING_MISSING, '1')
 
-    // Show the filter bar and auto-switch to "removed" view if any were found.
+    // Show the filter bar if any were found, and auto-switch to the "removed" view
+    // on the first find.
     if (recovered.length > 0) {
-        injectThreadFilter(isNewReddit)
-        autoFilterRemoved(isNewReddit, btn)
+        if (injectThreadFilter(isNewReddit)) autoFilterRemoved(isNewReddit, btn)
         refreshThreadFilter(isNewReddit)
     }
 }

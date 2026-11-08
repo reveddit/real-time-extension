@@ -62,14 +62,13 @@ import {
     getObjectNamesForThing,
     getPublicLiveKey,
 } from './storage'
-import { flagIfRateLimited, RECENT_RATE_LIMIT_WINDOW_MS } from './request-gates'
+import { flagIfRateLimited, RECENT_RATE_LIMIT_WINDOW_MS, readLocal } from './request-gates'
 import { isPublicProfileUnavailable } from './lookup-status'
 import { isCycleInFlight } from './monitoring'
 import { isRemovedInModView, isViewerBlockedItem } from './common'
-import { withDeadline } from './parse_html/common'
 import { dlog } from './diaglog'
 import { getPublicModlogsFeed } from './bridge-config'
-import { fetchLoggedIn } from './logged-in-fetch'
+import { fetchLoggedIn, withDeadline } from './logged-in-fetch'
 import { isViewerConnecting, hasRedditLoginCookie } from './viewer'
 
 const www_reddit = 'https://www.reddit.com'
@@ -183,7 +182,7 @@ const getPublicViewContext = async (me: string): Promise<PublicViewContext> => {
         keys.forEach(key => Object.keys(stored[key] || {}).forEach(id => context.knownRemoved.add(id)))
         if (me) {
             const liveKey = getPublicLiveKey(me)
-            const live = ((await browser.storage.local.get({ [liveKey]: null })) as any)[liveKey]
+            const live: any = await readLocal(liveKey, null)
             const age = Date.now() - Number(live?.t || 0)
             if (Array.isArray(live?.ids) && age >= 0 && age < PUBLIC_LIVE_MAX_AGE_MS) {
                 live.ids.forEach((id: string) => context.verifiedLive.add(id))

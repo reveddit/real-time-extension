@@ -498,6 +498,7 @@ describe("when a scan ends, the page's Scan-Rev buttons", () => {
         expect(scanBtn().classList.contains('rev-scan-exhausted')).toBe(true)
         expect(scanBtn().title).not.toContain('No more removed comments')
         expect(document.querySelector('.rev-scan-comment-btn.rev-scan-exhausted')).toBeNull()
+        expect(threadNote()).toMatch(/^Scan complete: .+ Scan-Rev can still search comments of other ages\.$/)
     })
 
     it('all go when nothing is missing any more, whatever sorts are left', async () => {
@@ -516,6 +517,160 @@ describe("when a scan ends, the page's Scan-Rev buttons", () => {
         await twoAuthors()
         await scanThread()
         expect(document.querySelector('.rev-scan-comment-btn:not(.rev-scan-exhausted)')).toBeNull()
+        expect(threadNote()).not.toContain('other ages')
+    })
+
+    const clickScanRev = async () => {
+        click(scanRev())
+        await settle(() => document.querySelector('.rev-spinner'))
+    }
+
+    it.each([
+        ["a comment's own search", clickScanRev],
+        ['a thread scan', () => scanThread()],
+    ])('lose their number when the retries it promised fail in %s, as the next click reads nothing', async (_, retry) => {
+        const authors = ['a', 'b', 'c']
+        await loadThread(threadPage(9, authors.map(name => comment(`t1_${name}`, name)).join('')))
+        pages[threadPath] = feed(postEntry(), ...authors.map(name => entry(`t1_${name}`, name, 'live words')))
+        for (const name of authors) pages[authorPath(name)] = { ok: false, status: 500 }
+        for (let click_ = 0; click_ < 3; click_++) await clickScanRev()
+        expect(scanRev().textContent).toBe('Scan-Rev (3)')
+        expect(scanRev().title).toContain('click to continue')
+
+        await retry()
+        expect(scanRev().textContent).toBe('Scan-Rev')
+        expect(scanRev().title).toBe('Search for removed comments in this thread')
+
+        asked.length = 0
+        await clickScanRev()
+        expect(asked).toEqual([])
+    })
+})
+
+describe('a row reddit stamps after a thread scan', () => {
+    const NOTHING_LEFT = 'No more removed comments to find'
+    const live = (...names) => names.map(name => entry(`t1_${name}`, name, 'live words'))
+
+    const stamp = async () => {
+        const { injectScanButton_newReddit } = await import('../../src/src/thread-scan-ui.ts')
+        document.querySelector('section').insertAdjacentHTML('beforeend', comment('t1_later', 'later'))
+        const row = document.querySelector('[thingid="t1_later"] shreddit-comment-action-row')
+        injectScanButton_newReddit(row)
+        return row.querySelector('.rev-scan-comment-btn')
+    }
+
+    it.each([
+        ['was missing nothing', 2, () => {}],
+        [
+            'found all that was missing',
+            3,
+            () => {
+                pages[authorPath('a')] = feed(...live('a'), entry('t1_gone', 'a', 'removed words'))
+                pages[commentPath('t1_gone')] = feed(postEntry())
+            },
+        ],
+    ])('starts with nothing to find, after a scan that %s', async (_, count, setUp) => {
+        await loadThread(threadPage(count, comment('t1_a', 'a') + comment('t1_b', 'b')))
+        pages[threadPath] = feed(postEntry(), ...live('a', 'b'))
+        pages[authorPath('a')] = feed(...live('a'))
+        pages[authorPath('b')] = feed(...live('b'))
+        setUp()
+        await scanThread()
+        const btn = await stamp()
+        expect(btn.classList.contains('rev-scan-exhausted')).toBe(true)
+        expect(btn.title).toBe(NOTHING_LEFT)
+        expect(btn.textContent).toBe('Scan-Rev')
+
+        asked.length = 0
+        click(btn)
+        await settle(() => document.querySelector('.rev-spinner'))
+        expect(asked).toEqual([])
+    })
+
+    it('starts with nothing to find on old reddit too', async () => {
+        await loadThread(oldThreadPage(2, oldComment('t1_a', 'a') + oldComment('t1_b', 'b')), false)
+        pages[threadPath] = feed(postEntry(), ...live('a', 'b'))
+        await scanThread()
+        const { injectRestoreButton_oldReddit } = await import('../../src/src/thread-scan-ui.ts')
+        document.querySelector('.nestedlisting').insertAdjacentHTML('beforeend', oldComment('t1_later', 'later'))
+        const later = document.querySelector('[data-fullname="t1_later"]')
+        injectRestoreButton_oldReddit(later)
+        const btn = later.querySelector('.rev-scan-comment-btn')
+        expect(btn.classList.contains('rev-scan-exhausted')).toBe(true)
+        expect(btn.title).toBe(NOTHING_LEFT)
+        expect(btn.textContent).toBe('scan-rev')
+    })
+
+    it.each([
+        ['left comments missing', 9],
+        ['had too many comments to count', 3000],
+    ])('stays plain after a scan that %s, which may never have covered it', async (_, count) => {
+        await loadThread(threadPage(count, comment('t1_a', 'a') + comment('t1_b', 'b')))
+        pages[threadPath] = feed(postEntry(), ...live('a', 'b'))
+        pages[authorPath('a')] = feed(...live('a'))
+        pages[authorPath('b')] = feed(...live('b'))
+        await scanThread()
+        expect(threadNote()).toContain('Scan complete')
+        const btn = await stamp()
+        expect(btn.classList.contains('rev-scan-exhausted')).toBe(false)
+        expect(btn.title).toBe('Search for removed comments in this thread')
+    })
+
+    it("stays plain after a comment's own search of every author", async () => {
+        await loadThread(threadPage(2, comment('t1_a', 'a') + comment('t1_b', 'b')))
+        pages[threadPath] = feed(postEntry(), ...live('a', 'b'))
+        pages[authorPath('a')] = feed(...live('a'))
+        pages[authorPath('b')] = feed(...live('b'))
+        click(document.querySelector('.rev-scan-comment-btn'))
+        await settle(() => document.querySelector('.rev-spinner'))
+        expect(document.querySelector('.rev-scan-comment-btn').classList.contains('rev-scan-exhausted')).toBe(true)
+        expect((await stamp()).classList.contains('rev-scan-exhausted')).toBe(false)
+    })
+})
+
+describe('a thread scan that ends after its page was left', () => {
+    const start = async () => {
+        await loadThread(threadPage(9, comment('t1_a', 'a') + comment('t1_b', 'b')))
+        pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_b', 'b', 'live words'))
+        pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), entry('t1_gone', 'a', 'the words'))
+        pages[commentPath('t1_gone')] = feed(postEntry(), entry('t1_a', 'a', 'live words'))
+    }
+    // Clicks the thread scan, and leaves while it reads b's feed. Then Back.
+    const leaveMidRead = async () => {
+        const btn = scanBtn()
+        const tree = document.querySelector('shreddit-comment-tree')
+        const home = tree.parentElement
+        let answered
+        pages[authorPath('b')] = new Promise(resolve => (answered = resolve))
+        click(btn)
+        for (let i = 0; i < 20 && !asked.includes(authorPath('b')); i++) await vi.advanceTimersByTimeAsync(500)
+        tree.remove()
+        ui.resetScansForPage()
+        answered(refused)
+        await vi.advanceTimersByTimeAsync(2000)
+        home.append(tree)
+        ui.resetScansForPage()
+        ui.initRestoreOnThread(true)
+        await vi.advanceTimersByTimeAsync(0)
+    }
+
+    it('leaves its button as it was before the click, whatever another page has on it', async () => {
+        await start()
+        pages[authorPath('b')] = refused
+        await scanThread()
+        expect(scanBtn().textContent).toBe('Continue scan')
+        asked.length = 0
+        await leaveMidRead()
+        expect(scanBtn().textContent).toBe('Continue scan')
+        expect(scanBtn().disabled).toBe(false)
+    })
+
+    it('gets its filter bar on Back, for what it placed before the page was left', async () => {
+        await start()
+        await leaveMidRead()
+        expect(revEl('t1_gone')).not.toBeNull()
+        expect(document.querySelector('.rev-thread-filter-bar')).not.toBeNull()
+        expect(document.querySelector('.rev-thread-filter-btn.rev-filter-active').getAttribute('data-filter')).toBe('all')
     })
 })
 
@@ -1350,6 +1505,44 @@ describe('the thread filter bar', () => {
             click(filterBtn('all'))
             expect(unattached().style.display).toBe('')
         }
+    })
+
+    describe('after a find', () => {
+        const foundOnce = async () => {
+            await loadThread(threadPage(9, comment('t1_a', 'a') + comment('t1_b', 'b') + tombstone('t1_tomb')))
+            pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_b', 'b', 'live words'), entry('t1_tomb', null, '[deleted]'))
+            pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), gone)
+            pages[commentPath('t1_gone1')] = feed(postEntry(), entry('t1_a', 'a', 'live words'))
+            pages[authorPath('b')] = refused
+            await scanThread()
+            expect(activeFilter()).toBe('removed')
+            click(filterBtn('all'))
+            pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'), entry('t1_tomb', 'b', 'second words'))
+        }
+
+        it("keeps the viewer's all through what a later scan finds", async () => {
+            await foundOnce()
+            await scanThread()
+            expect(revEl('t1_tomb')).not.toBeNull()
+            expect(activeFilter()).toBe('all')
+        })
+
+        it("keeps the viewer's all through what a comment's own search finds", async () => {
+            await foundOnce()
+            click(document.querySelector('.rev-restore-btn'))
+            await settle(() => document.querySelector('.rev-spinner'))
+            expect(revEl('t1_tomb')).not.toBeNull()
+            expect(activeFilter()).toBe('all')
+        })
+
+        it("switches to removed on the first find, from a comment's own search too", async () => {
+            await loadThread(threadPage(4, comment('t1_a', 'a') + tombstone('t1_tomb')))
+            pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_tomb', null, '[deleted]'))
+            pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), entry('t1_tomb', 'a', 'the words'))
+            click(document.querySelector('.rev-restore-btn'))
+            await settle(() => document.querySelector('.rev-spinner'))
+            expect(activeFilter()).toBe('removed')
+        })
     })
 
     it('goes right after the scan button', async () => {

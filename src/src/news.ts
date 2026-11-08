@@ -78,7 +78,8 @@ interface RemoteOptions {
     login_wall?: Partial<LoginWallConfig>
     // Holds every install to this pace or slower, whatever its options say, so
     // scans can slow down without a release: { reads_per_click?: number,
-    // seconds_between_reads?: number }.
+    // seconds_between_reads?: number }. Scans wait 60 seconds at most
+    // (storage.ts SCAN_SECONDS_MAX), whatever a higher number says.
     scan_limits?: ScanLimits
 }
 export interface ScanLimits {
@@ -135,8 +136,10 @@ interface NewsCache {
 
 const isLegacyHost = (value: unknown): value is string => (LEGACY_HOSTS as readonly unknown[]).includes(value)
 
-// Nothing stored and nothing readable (no chrome in tests, a content script
-// orphaned by an update) both read as {}
+// Not request-gates' or storage's readLocal: this module can't import either.
+// Takes several keys and returns the record. Nothing stored and nothing
+// readable (no chrome in tests, a content script orphaned by an update) both
+// read as {}
 const readLocal = (...keys: string[]): Promise<Record<string, any>> =>
     new Promise(resolve => {
         try {
@@ -361,20 +364,23 @@ const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList(raw, C
 
 // Methods reddit refused outright rest for a while, longer with each refusal
 // in a row (request-gates.ts noteCapabilityRefused), keyed by name ('legacy',
-// 'legacy_info', 'api_info'). Kept here so a feed change to the legacy host or switch can end
-// the legacy rest at once: the new setting deserves a try.
+// 'legacy_info', 'api_info', 'thread_json'). Kept here so a feed change to the
+// legacy host or switch can end the legacy rest at once: the new setting
+// deserves a try.
 export const CAPABILITY_REST_KEY = 'capability_rest'
 
-const isAtLeastOne = (value: unknown): value is number =>
-    typeof value === 'number' && Number.isFinite(value) && value >= 1
-// What a profile scan's first click needs. A limit under it couldn't start one, or
-// leave a block page room for its second try; mechanisms.scanFeeds turns scans off.
+const isNumberFrom = (least: number, value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value) && value >= least
+// The reads that open a profile scan can take 6 (profile-scan.ts), and they go out
+// whatever the limit, so a lower one couldn't hold. A block page's second try comes
+// out of the same reads, so at 6 a blocked scan can stop early. No limit turns
+// scans off, not even 0: mechanisms.scanFeeds does.
 const FEWEST_SCAN_READS = 6
 const sanitizeScanLimits = (raw: any): ScanLimits => ({
-    ...(isAtLeastOne(raw?.reads_per_click)
+    ...(isNumberFrom(0, raw?.reads_per_click)
         ? { reads_per_click: Math.max(Math.floor(raw.reads_per_click), FEWEST_SCAN_READS) }
         : {}),
-    ...(isAtLeastOne(raw?.seconds_between_reads) ? { seconds_between_reads: raw.seconds_between_reads } : {}),
+    ...(isNumberFrom(1, raw?.seconds_between_reads) ? { seconds_between_reads: raw.seconds_between_reads } : {}),
 })
 
 // The feed's limits on scans (storage.ts getScanSettings)
@@ -497,7 +503,10 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
             return
         }
         const feed = (await res.json()) as NewsFeed
-        if (!feed || !Array.isArray(feed.messages)) return
+        if (!feed || !Array.isArray(feed.messages)) {
+            noteFailure()
+            return
+        }
         const sanitized = sanitizeFeed(feed)
         const options = sanitized.options as RemoteOptions
         const newCache: NewsCache = { feed: sanitized, lastFetched: now }

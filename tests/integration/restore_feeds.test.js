@@ -665,6 +665,17 @@ describe('reads that fail', () => {
         expect(asked).toEqual([])
     })
 
+    it("goes on past reddit's own 403s, which are answers, as it goes on past 404s", async () => {
+        const authors = threadOfAuthors(4)
+        const last = authors.pop()
+        for (const name of authors) pages[authorPath(name)] = { ok: false, status: 403, blockPage: false }
+        pages[authorPath(last)] = feed(entry('t1_gone', last, 'the removed text'))
+        pages[commentPath('t1_gone')] = feed(postEntry())
+        const { found, last: said } = await scan()
+        expect(found.map(rc => rc.id)).toEqual(['t1_gone'])
+        expect(said).toMatchObject({ status: 'noted', message: "1 recovered. 3 feed(s) couldn't be read." })
+    })
+
     it('keeps trying a refused feed for two more clicks, stops, then tries again a while later', async () => {
         pages[authorPath('alice')] = refused
         const pageReads = new Map()
@@ -871,8 +882,9 @@ describe("the page's comment count", () => {
     const later = new Date(Date.now() + 3600 * 1000).toISOString()
     const seenAt = at => document.querySelector('shreddit-post').setAttribute('data-rev-seen', String(at))
 
-    it("doesn't say what's missing when the thread is bigger than its feed holds", async () => {
-        globalThis.document = threadOf(3000)
+    // The feed holds 500, and the post is one of them
+    it.each([3000, 500])("doesn't say what's missing when the thread, at %i, is bigger than its feed holds", async count => {
+        globalThis.document = threadOf(count)
         pages[threadPath] = feed(postEntry(), ...onPage)
         const { found, last } = await scan()
         expect(found.map(rc => rc.id)).toEqual(['t1_leaf'])
@@ -880,10 +892,10 @@ describe("the page's comment count", () => {
     })
 
     it('goes by the count up to what the feed holds', async () => {
-        globalThis.document = threadOf(500)
+        globalThis.document = threadOf(499)
         pages[threadPath] = feed(postEntry(), ...onPage)
         const { last } = await scan()
-        expect(last.message).toBe('Scan complete: 1 recovered (497 not found)')
+        expect(last.message).toBe('Scan complete: 1 recovered (496 not found)')
     })
 
     it("isn't taken to include a comment posted since the page loaded", async () => {

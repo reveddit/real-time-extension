@@ -23,9 +23,9 @@
 // No username or cookie value goes into the diagnostic log from here.
 import browser from 'webextension-polyfill'
 import { dlogSummary } from './diaglog'
-import { isBlockPage, LOGGED_IN_CACHE_MODES } from './logged-in-fetch'
+import { isBlockPage, LOGGED_IN_CACHE_MODES, withDeadline } from './logged-in-fetch'
 import { getRemoteLoginCookies } from './news'
-import { withDeadline } from './parse_html/common'
+import { readLocal } from './request-gates'
 
 export const VIEWER_KEY = 'viewer_account'
 export const VIEWER_CONNECT_KEY = 'viewer_connect'
@@ -69,7 +69,7 @@ interface ViewerConnect {
 export interface ViewerConnectResult {
     ok: boolean
     // why it didn't connect: 'same_account', 'not_signed_in', 'unconfirmed'
-    // (reddit didn't say who signed in), 'cancelled', 'timed_out'
+    // (reddit didn't say who signed in), 'cancelled', 'timed_out', 'no_tab'
     error?: string
     t: number
 }
@@ -133,8 +133,7 @@ export const viewerCookieHeaderFor = (
 export const viewerUrl = (url: string, token: string): string =>
     `${url}${url.includes('?') ? '&' : '?'}${MARKER_NAME}=${token}`
 // The token is hex, so it needs no escaping. RE2 syntax, for Chrome's rule too.
-export const viewerUrlPattern = (token: string): string =>
-    `^https://www\\.reddit\\.com/[^#]*[?&]${MARKER_NAME}=${token}(&|$)`
+const viewerUrlPattern = (token: string): string => `^https://www\\.reddit\\.com/[^#]*[?&]${MARKER_NAME}=${token}(&|$)`
 export const isViewerRequestUrl = (url: string, token: string): boolean =>
     /^[0-9a-f]{32}$/.test(token) && new RegExp(viewerUrlPattern(token)).test(url)
 
@@ -148,26 +147,18 @@ export const isSignedInViewer = (viewerName: string, signedIn: string): boolean 
     !!viewerName && !!signedIn && viewerName.toLowerCase() === signedIn.toLowerCase()
 
 export const getViewer = async (): Promise<ViewerAccount | null> => {
-    try {
-        const viewer = ((await browser.storage.local.get({ [VIEWER_KEY]: null })) as any)[VIEWER_KEY]
-        return viewer &&
-            typeof viewer.name === 'string' &&
-            /^[0-9a-f]{32}$/.test(viewer.token) &&
-            Array.isArray(viewer.cookies)
-            ? viewer
-            : null
-    } catch {
-        return null
-    }
+    const viewer: any = await readLocal(VIEWER_KEY, null)
+    return viewer &&
+        typeof viewer.name === 'string' &&
+        /^[0-9a-f]{32}$/.test(viewer.token) &&
+        Array.isArray(viewer.cookies)
+        ? viewer
+        : null
 }
 
 const readConnect = async (): Promise<ViewerConnect | null> => {
-    try {
-        const pending = ((await browser.storage.local.get({ [VIEWER_CONNECT_KEY]: null })) as any)[VIEWER_CONNECT_KEY]
-        return pending && Number(pending.started) > 0 && Array.isArray(pending.main) ? pending : null
-    } catch {
-        return null
-    }
+    const pending: any = await readLocal(VIEWER_CONNECT_KEY, null)
+    return pending && Number(pending.started) > 0 && Array.isArray(pending.main) ? pending : null
 }
 
 // Whether a sign-in is under way. The user's own cookies are out of the
@@ -275,7 +266,7 @@ export const startViewerConnect = async (mainUser: string): Promise<{ ok: boolea
             await browser.storage.local.set({ [VIEWER_CONNECT_KEY]: { ...pending, tabId: tab.id } })
         }
     } catch {
-        await cancelViewerConnect('cancelled')
+        await cancelViewerConnect('no_tab')
         return { ok: false, error: 'no_tab' }
     }
     return { ok: true }
@@ -495,7 +486,7 @@ export const installViewerHeaderRule = async () => {
 // account and kind of request (me.json, each listing, thread reads), so one
 // refused kind doesn't keep another from finding the mode that works. The
 // lookup rests a second account refused outright (restViewer in viewer-lookup.ts).
-export interface ViewerJson {
+interface ViewerJson {
     ok: boolean
     status: number
     blocked: boolean
@@ -592,7 +583,7 @@ export const fetchJsonAsViewer = async (url: string, viewer: ViewerAccount): Pro
 // the shared backoff.
 export const VIEWER_IDENTITY_KEY = 'viewer_identity'
 const IDENTITY_TTL_MS = 30 * 60 * 1000
-export type ViewerIdentity = 'ok' | 'signed_out' | 'unknown'
+type ViewerIdentity = 'ok' | 'signed_out' | 'unknown'
 export const checkViewerIdentity = async (viewer: ViewerAccount): Promise<ViewerIdentity> => {
     // Once its login cookie has expired the account is signed out, though
     // reddit may answer that with a block page rather than a me.json with no user
@@ -600,19 +591,15 @@ export const checkViewerIdentity = async (viewer: ViewerAccount): Promise<Viewer
     if (!viewer.cookies.some(c => loginNames.includes(c.name) && !isExpired(c))) {
         return rememberIdentity(viewer, 'signed_out')
     }
-    try {
-        const stored = ((await browser.storage.local.get({ [VIEWER_IDENTITY_KEY]: null })) as any)[VIEWER_IDENTITY_KEY]
-        const age = Date.now() - Number(stored?.t)
-        if (
-            stored?.token === viewer.token &&
-            (stored?.result === 'ok' || stored?.result === 'unknown') &&
-            age >= 0 &&
-            age < IDENTITY_TTL_MS
-        ) {
-            return stored.result
-        }
-    } catch {
-        /* ignored */
+    const stored: any = await readLocal(VIEWER_IDENTITY_KEY, null)
+    const age = Date.now() - Number(stored?.t)
+    if (
+        stored?.token === viewer.token &&
+        (stored?.result === 'ok' || stored?.result === 'unknown') &&
+        age >= 0 &&
+        age < IDENTITY_TTL_MS
+    ) {
+        return stored.result
     }
     const r = await fetchJsonAsViewer('https://www.reddit.com/api/me.json', viewer)
     if (r.status === 429) {

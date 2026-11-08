@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import styled from '@emotion/styled'
 import { css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification } from './common'
@@ -8,9 +8,11 @@ import { DiagStatus, formatDiagStatus } from './diag-status'
 import { tokens } from './ui/tokens'
 import {
   getSubscribedUsers_withSeenAndUnseenIDs,
-  subscribeId, unsubscribeId,
+  subscribeId,
+  unsubscribeId,
   markEverythingAsSeen,
-  getPendingPostQueueSize, getTestNotificationMessage,
+  getPendingPostQueueSize,
+  getTestNotificationMessage,
 } from './storage'
 import { setCurrentStateForId } from './monitoring'
 import { fetchNews, getUnreadMessages, getPendingUpdateVersion, markNewsRead, NewsMessage } from './news'
@@ -50,7 +52,6 @@ const StatusLine = styled.div`
   margin: -6px 0 8px;
 `
 
-
 const SubsCard = styled(Card)`
   padding: ${tokens.space.xs} ${tokens.space.md};
   margin: ${tokens.space.sm} 0;
@@ -65,7 +66,9 @@ const ThemeToggleBtn = styled.button`
   padding: 2px 4px;
   line-height: 1;
   transition: color 0.15s ease;
-  &:hover { color: var(--text-primary); }
+  &:hover {
+    color: var(--text-primary);
+  }
 `
 
 const SubsCardFooter = styled.div`
@@ -144,7 +147,7 @@ function Popup() {
   // The connected second account (viewer.ts), if any
   const [viewerName, setViewerName] = useState('')
   const [userData, setUserData] = useState<{
-    users: Record<string, {unseen: string[]; seen: string[]}>
+    users: Record<string, { unseen: string[]; seen: string[] }>
     otherUnseen: string[]
     otherTotal: number
   } | null>(null)
@@ -208,7 +211,7 @@ function Popup() {
       setUserData({
         users,
         otherUnseen: other.unseen,
-        otherTotal: Object.keys(storage.other_subscriptions).length
+        otherTotal: Object.keys(storage.other_subscriptions).length,
       })
 
       chrome.tabs.query({ url: ['*://*.reddit.com/*'] }, tabs => {
@@ -216,7 +219,9 @@ function Popup() {
           try {
             const h = new URL(tab.url!).hostname
             return h === 'www.reddit.com' || h === 'old.reddit.com'
-          } catch { return false }
+          } catch {
+            return false
+          }
         })
         if (tabs.length > 0 && supported.length === 0) {
           chrome.storage.local.get(['subdomain_warning_shown'], result => {
@@ -247,7 +252,9 @@ function Popup() {
     getPendingPostQueueSize().then(size => setPendingPostCount(size))
     chrome.storage.local.get(['pending_post_progress'], result => {
       const prog = result?.pending_post_progress
-      setPendingProgress(prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null)
+      setPendingProgress(
+        prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null,
+      )
     })
 
     // News feed: opportunistically refresh (at most hourly, MIN_FETCH_INTERVAL_MS) then read top unread.
@@ -275,7 +282,9 @@ function Popup() {
     })
   }, [])
 
-  useEffect(() => { loadData() }, [loadData])
+  useEffect(() => {
+    loadData()
+  }, [loadData])
 
   useEffect(() => {
     const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
@@ -286,7 +295,9 @@ function Popup() {
       }
       if (area === 'local' && changes.pending_post_progress) {
         const prog = changes.pending_post_progress.newValue
-        setPendingProgress(prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null)
+        setPendingProgress(
+          prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null,
+        )
       }
     }
     chrome.storage.onChanged.addListener(listener)
@@ -329,9 +340,11 @@ function Popup() {
   const handleDismissNews = () => {
     if (!newsMessage) return
     const id = newsMessage.id
-    markNewsRead(id).then(() => getUnreadMessages()).then(unread => {
-      setNewsMessage(unread[0] || null)
-    })
+    markNewsRead(id)
+      .then(() => getUnreadMessages())
+      .then(unread => {
+        setNewsMessage(unread[0] || null)
+      })
   }
 
   const handleDismissUpdateNotice = () => {
@@ -346,15 +359,18 @@ function Popup() {
     chrome.runtime.sendMessage({ action: 'store-reddit-cookies' })
     setTimeout(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(chrome.runtime.sendMessage as any)({ action: 'try-reconnect' }, (response: {success?: boolean; user?: string}) => {
-        if (response?.success) {
-          setReconnectSuccess(true)
-          setTimeout(() => loadData(), 1000)
-        } else {
-          setReconnecting(false)
-          setReconnectSuccess(false)
-        }
-      })
+      ;(chrome.runtime.sendMessage as any)(
+        { action: 'try-reconnect' },
+        (response: { success?: boolean; user?: string }) => {
+          if (response?.success) {
+            setReconnectSuccess(true)
+            setTimeout(() => loadData(), 1000)
+          } else {
+            setReconnecting(false)
+            setReconnectSuccess(false)
+          }
+        },
+      )
     }, 500)
   }
 
@@ -364,28 +380,29 @@ function Popup() {
     ;(chrome.runtime.sendMessage as any)(
       { action: 'try-reconnect' },
       (response: { success?: boolean; user?: string; indeterminate?: boolean; reason?: string }) => {
-      if (response?.success) {
-        setConnectResult({ success: true, user: response.user })
-        setTimeout(() => loadData(), 1000)
-      } else {
-        setConnecting(false)
-        setConnectMessage(
-          response?.indeterminate
-            ? `Couldn't confirm your Reddit login${response.reason ? ` (${response.reason})` : ''}. ` +
-              "If you're already logged in, open www.reddit.com in a tab and try again."
-            : 'Could not detect user. Make sure you are logged in to Reddit.',
-        )
-      }
+        if (response?.success) {
+          setConnectResult({ success: true, user: response.user })
+          setTimeout(() => loadData(), 1000)
+        } else {
+          setConnecting(false)
+          setConnectMessage(
+            response?.indeterminate
+              ? `Couldn't confirm your Reddit login${response.reason ? ` (${response.reason})` : ''}. ` +
+                  "If you're already logged in, open www.reddit.com in a tab and try again."
+              : 'Could not detect user. Make sure you are logged in to Reddit.',
+          )
+        }
       },
     )
   }
 
   const handleToggle = (id: string, subscribe: boolean, url: string) => {
     const fn = subscribe ? subscribeId : unsubscribeId
-    fn(id, async () => {
+    fn(id, () => {
       chrome.runtime.sendMessage({ action: 'update-badge' })
+      // Not waited for: the switch shows the change at once, and a read can stall
       if (subscribe) {
-        await setCurrentStateForId(id, url)
+        setCurrentStateForId(id, url)
       }
       loadData()
     })
@@ -395,7 +412,7 @@ function Popup() {
     createNotification({
       notificationId: 'test',
       title: 'Reveddit test notification',
-      message: getTestNotificationMessage((syncStorage || {}).options || {})
+      message: getTestNotificationMessage((syncStorage || {}).options || {}),
     })
   }
 
@@ -405,21 +422,20 @@ function Popup() {
       switches.push({
         id: activeTab.commentID,
         type: 'comment',
-        subscribed: activeTab.commentID in (syncStorage.other_subscriptions || {})
+        subscribed: activeTab.commentID in (syncStorage.other_subscriptions || {}),
       })
     }
     if (activeTab.postID) {
       switches.push({
         id: activeTab.postID,
         type: 'post',
-        subscribed: activeTab.postID in (syncStorage.other_subscriptions || {})
+        subscribed: activeTab.postID in (syncStorage.other_subscriptions || {}),
       })
     }
   }
 
   const hasAnyUnseen =
-    (userData?.otherUnseen.length ?? 0) > 0 ||
-    Object.values(userData?.users ?? {}).some(u => u.unseen.length > 0)
+    (userData?.otherUnseen.length ?? 0) > 0 || Object.values(userData?.users ?? {}).some(u => u.unseen.length > 0)
 
   const historyUrl = chrome.runtime.getURL('src/history.html')
 
@@ -448,15 +464,15 @@ function Popup() {
 
       {errorStatus &&
         (currentUser || errorStatus === 'logged_in_view_unavailable' || errorStatus === 'checks_failing') && (
-        <ErrorNotice
-          errorStatus={errorStatus}
-          viewerName={viewerName}
-          currentUser={currentUser}
-          reconnectSuccess={reconnectSuccess}
-          reconnecting={reconnecting}
-          onReconnect={handleReconnect}
-        />
-      )}
+          <ErrorNotice
+            errorStatus={errorStatus}
+            viewerName={viewerName}
+            currentUser={currentUser}
+            reconnectSuccess={reconnectSuccess}
+            reconnecting={reconnecting}
+            onReconnect={handleReconnect}
+          />
+        )}
 
       {switches.length > 0 && (
         <Card style={{ padding: `${tokens.space.sm} ${tokens.space.md}`, margin: `${tokens.space.sm} 0` }}>
@@ -476,9 +492,12 @@ function Popup() {
       )}
 
       {pendingPostCount > 0 && (
-        <MessageBanner variant="info"><MiniSpinner />{pendingProgress && pendingProgress.total > 0
-          ? `Scanning ${Math.min(pendingProgress.processed, pendingProgress.total)} of ${pendingProgress.total} posts for removals…`
-          : `Scanning ${pendingPostCount} posts for removals…`}</MessageBanner>
+        <MessageBanner variant="info">
+          <MiniSpinner />
+          {pendingProgress && pendingProgress.total > 0
+            ? `Scanning ${Math.min(pendingProgress.processed, pendingProgress.total)} of ${pendingProgress.total} posts for removals…`
+            : `Scanning ${pendingPostCount} posts for removals…`}
+        </MessageBanner>
       )}
 
       <SubsCard>
@@ -518,19 +537,34 @@ function Popup() {
       </SubsCard>
 
       <PopupActions>
-        <ActionRowBtn onClick={() => { chrome.tabs.create({ url: historyUrl }); window.close() }}>
+        <ActionRowBtn
+          onClick={() => {
+            chrome.tabs.create({ url: historyUrl })
+            window.close()
+          }}
+        >
           History
         </ActionRowBtn>
-        <ActionRowBtn onClick={() => goToOptions()}>
-          Options
-        </ActionRowBtn>
+        <ActionRowBtn onClick={() => goToOptions()}>Options</ActionRowBtn>
       </PopupActions>
 
       <FooterRow>
-        <FooterLink href="#" onClick={e => { e.preventDefault(); handleTestNotification() }}>
+        <FooterLink
+          href="#"
+          onClick={e => {
+            e.preventDefault()
+            handleTestNotification()
+          }}
+        >
           send a test notification
         </FooterLink>
-        <FooterLink href="#" onClick={e => { e.preventDefault(); reportProblem() }}>
+        <FooterLink
+          href="#"
+          onClick={e => {
+            e.preventDefault()
+            reportProblem()
+          }}
+        >
           report a problem
         </FooterLink>
       </FooterRow>

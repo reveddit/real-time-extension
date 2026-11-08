@@ -10,10 +10,10 @@ import {
 } from './storage'
 import { isRemovedItem, RedditItem } from './common'
 import { getViewer, isSignedInViewer, isViewerConnecting, hasRedditLoginCookie } from './viewer'
-import { isRateLimitError, withDeadline } from './parse_html/common'
+import { isRateLimitError } from './parse_html/common'
 import { isLoginWallMessage } from './login-wall-config'
 import { getRemoteMechanism, MECHANISM_SCAN_FEEDS } from './news'
-import { fetchForScan, WWW_FETCH_TIMEOUT_MS } from './logged-in-fetch'
+import { fetchForScan, WWW_FETCH_TIMEOUT_MS, withDeadline } from './logged-in-fetch'
 import {
     isFresh,
     PROFILE_CONTROL_USER,
@@ -39,7 +39,6 @@ import {
     verifyFeedPresentPosts,
     isAbsentVerificationDisabled,
     isAbsentUnverifiedUnknown,
-    setScaffoldAbsenceVerdict,
     verifyFeedAbsentItems,
 } from './page-verify'
 import { lookupItemsByID_legacy } from './legacy-lookup'
@@ -55,17 +54,13 @@ const PROFILE_CONTROL_FAILED_TTL_MS = 30 * 60 * 1000
 
 const controlProfileLoads = async (fetchHtml: FetchHtml): Promise<boolean> => {
     const now = Date.now()
-    try {
-        const stored: any = await readLocal(PROFILE_CONTROL_KEY, null)
-        const t = Number(stored?.t || 0)
-        if (stored?.ok === true && isFresh(t, PROFILE_CONTROL_TTL_MS, now)) {
-            return true
-        }
-        if (stored?.ok === false && isFresh(t, PROFILE_CONTROL_FAILED_TTL_MS, now)) {
-            return false
-        }
-    } catch {
-        /* ignored */
+    const stored: any = await readLocal(PROFILE_CONTROL_KEY, null)
+    const t = Number(stored?.t || 0)
+    if (stored?.ok === true && isFresh(t, PROFILE_CONTROL_TTL_MS, now)) {
+        return true
+    }
+    if (stored?.ok === false && isFresh(t, PROFILE_CONTROL_FAILED_TTL_MS, now)) {
+        return false
     }
     const control: PublicProfileData = await getPublicProfileItems(PROFILE_CONTROL_USER, fetchHtml, [], 0)
     if (!control.valid) {
@@ -148,7 +143,6 @@ export const lookupItemsByID_fromPublicProfile = async (
     // pages are gated logged-out (monitoring exempts those from removal anyway).
     const absentVerificationDisabled = await isAbsentVerificationDisabled()
     const absentUnverifiedIsUnknown = await isAbsentUnverifiedUnknown()
-    setScaffoldAbsenceVerdict(absentUnverifiedIsUnknown ? 'unknown' : 'removed')
     const absentToVerify = ids.filter(id => {
         if (absentVerificationDisabled) {
             return false
@@ -163,7 +157,7 @@ export const lookupItemsByID_fromPublicProfile = async (
         if (publiclyInvisibleReason(meta)) {
             return false
         }
-        return isCovered(id, profile.coverage.t1, profile.coverage.t3)
+        return isCovered(id, profile.coverage)
     })
     const canaryCommentIds = [...profile.items.keys()].filter(id => id.startsWith('t1_')).slice(0, 3)
     // A post page's 429 (verifyFeedPresentPosts) ends this cycle's page
@@ -235,7 +229,7 @@ export const lookupItemsByID_fromPublicProfile = async (
                 }
             }
         } else {
-            const covered = isCovered(id, profile.coverage.t1, profile.coverage.t3)
+            const covered = isCovered(id, profile.coverage)
             const publiclyInvisible = !!publiclyInvisibleReason(meta)
             // The synthetic removed shape passes isRemovedComment (author+body
             // start with '[') and isRemovedPost (is_robot_indexable === false).

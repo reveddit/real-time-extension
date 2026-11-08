@@ -17,7 +17,13 @@ export function __getLocalStorage() {
     return localStorage
 }
 
+// Real storage hands out copies and keeps copies, so a test can't see a save
+// that never happened through an object it shares with the code under test.
 function applyDefaults(keys, storage) {
+    return structuredClone(pick(keys, storage))
+}
+
+function pick(keys, storage) {
     if (keys === null || keys === undefined) return { ...storage }
     if (typeof keys === 'string') {
         return { [keys]: storage[keys] }
@@ -48,7 +54,7 @@ export function makeStorageArea(getStore) {
             return Promise.resolve(result)
         },
         set(items, callback) {
-            Object.assign(getStore(), items)
+            Object.assign(getStore(), structuredClone(items))
             if (callback) callback()
             return Promise.resolve()
         },

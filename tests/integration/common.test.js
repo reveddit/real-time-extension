@@ -5,15 +5,17 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, vi } from 'vitest'
-import browserMock from '../mocks/webextension-polyfill.js'
+import browserMock, { __resetStorage } from '../mocks/webextension-polyfill.js'
 import {
     getFullIDsFromPath,
     getFullIDsFromURL,
+    goToOptions,
     showsWhatsNew,
     reformatRedditText,
     isRemovedItem,
     isRemovedComment,
     isRemovedPost,
+    isRemovedByCategory,
     isUserDeletedComment,
     isUserDeletedPost,
     isComment,
@@ -23,7 +25,7 @@ import {
     ChangeForStorage,
     LocalStorageItem,
 } from '../../src/src/common.ts'
-import { getTestNotificationMessage, updateBadgeUnseenCount } from '../../src/src/storage.ts'
+import { getTestNotificationMessage, updateBadgeUnseenCount, getObjectNamesForThing } from '../../src/src/storage.ts'
 
 describe('getFullIDsFromPath', () => {
     it('extracts post ID from a subreddit post URL', () => {
@@ -68,6 +70,51 @@ describe('getFullIDsFromPath', () => {
         const [postID, commentID, user, subreddit] = getFullIDsFromPath('/v/politics/comments/abc123/title/')
         expect(postID).toBe('t3_abc123')
         expect(subreddit).toBe('politics')
+    })
+
+    it('reads a post link that ends at its id, or has only a query or fragment after it', () => {
+        const post = ['t3_abc123', undefined, undefined, 'pics']
+        expect(getFullIDsFromPath('/r/pics/comments/abc123')).toEqual(post)
+        expect(getFullIDsFromPath('/r/pics/comments/abc123?utm_source=share')).toEqual(post)
+        expect(getFullIDsFromPath('/r/pics/comments/abc123#top')).toEqual(post)
+        expect(getFullIDsFromPath('/r/pics/comments/abc123.json')).toEqual(post)
+        expect(getFullIDsFromPath('/user/bob/comments/abc123')).toEqual(['t3_abc123', undefined, 'bob', undefined])
+    })
+
+    it('reads a post link with a slash after its id as before', () => {
+        const post = ['t3_abc123', undefined, undefined, 'pics']
+        expect(getFullIDsFromPath('/r/pics/comments/abc123/')).toEqual(post)
+        expect(getFullIDsFromPath('/r/pics/comments/abc123/?utm_source=share')).toEqual(post)
+        expect(getFullIDsFromPath('/r/pics/comments/abc123/title/?context=3')).toEqual(post)
+        expect(getFullIDsFromPath('/r/pics/comments/abc123/comment/def456/?context=3')[1]).toBe('t1_def456')
+    })
+
+    it('finds no post in a profile or subreddit comments tab, which has no id', () => {
+        const profile = [undefined, undefined, 'bob', undefined]
+        expect(getFullIDsFromPath('/user/bob/comments')).toEqual(profile)
+        expect(getFullIDsFromPath('/user/bob/comments/')).toEqual(profile)
+        expect(getFullIDsFromPath('/user/bob/comments/?sort=new')).toEqual(profile)
+        expect(getFullIDsFromPath('/user/bob/comments/.rss?sort=new')).toEqual(profile)
+        expect(getFullIDsFromPath('/r/pics/comments/')).toEqual([undefined, undefined, undefined, undefined])
+        expect(getFullIDsFromPath('/r/pics/comments/?sort=new')).toEqual([undefined, undefined, undefined, undefined])
+    })
+})
+
+describe('goToOptions', () => {
+    it("opens the options page from a service worker, which has no window, so a message's answer still goes out", () => {
+        const opened = vi.fn()
+        vi.stubGlobal('chrome', { ...chrome, runtime: { ...chrome.runtime, openOptionsPage: opened } })
+        expect(typeof window).toBe('undefined')
+        goToOptions()
+        expect(opened).toHaveBeenCalledTimes(1)
+    })
+
+    it('closes the popup it was opened from', () => {
+        const close = vi.fn()
+        vi.stubGlobal('chrome', { ...chrome, runtime: { ...chrome.runtime, openOptionsPage: vi.fn() } })
+        vi.stubGlobal('window', { close })
+        goToOptions()
+        expect(close).toHaveBeenCalledTimes(1)
     })
 })
 
@@ -115,6 +162,13 @@ describe('removal detection', () => {
 
     it('does not flag indexable post as removed', () => {
         expect(isRemovedPost({ is_robot_indexable: true })).toBe(false)
+    })
+
+    it("a post's removed_by_category counts unless it says the author deleted it", () => {
+        expect(isRemovedByCategory({ removed_by_category: 'moderator' })).toBe(true)
+        expect(isRemovedByCategory({ removed_by_category: 'deleted' })).toBe(false)
+        expect(isRemovedByCategory({ removed_by_category: null })).toBe(false)
+        expect(isRemovedByCategory({})).toBe(false)
     })
 
     it('detects user-deleted comment', () => {
@@ -373,5 +427,22 @@ describe('updateBadgeUnseenCount', () => {
         const send = vi.spyOn(browserMock.runtime, 'sendMessage')
         updateBadgeUnseenCount()
         expect(send).toHaveBeenCalledWith({ action: 'update-badge' })
+    })
+    it('totals unseen items across an account and followed items', async () => {
+        const USER = 'someuser'
+        const keys = getObjectNamesForThing(USER, true)
+        const other = getObjectNamesForThing('other', false)
+        __resetStorage({
+            options: {},
+            user_subscriptions: { [USER]: true },
+            other_subscriptions: {},
+            [keys.removed]: { t1_a: { u: true }, t1_b: { u: false } },
+            [other.removed]: { t1_c: { u: true } },
+        })
+        vi.stubGlobal('location', { protocol: 'chrome-extension:' })
+        const badge = vi.spyOn(chrome.action, 'setBadgeText')
+        updateBadgeUnseenCount()
+        await vi.waitFor(() => expect(badge).toHaveBeenCalled())
+        expect(badge.mock.calls.at(-1)[0]).toEqual({ text: '2' })
     })
 })

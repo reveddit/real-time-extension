@@ -1,4 +1,4 @@
-import React, { ReactNode } from 'react'
+import { ReactNode } from 'react'
 import styled from '@emotion/styled'
 import { ActionBtn, SecondaryActionBtn, MessageBanner, Card } from './ui/components'
 import { tokens } from './ui/tokens'
@@ -17,7 +17,10 @@ const NewsCard = styled(Card)`
     font-size: 0.92em;
     color: var(--text-primary);
   }
-  & .md-body { font-size: 0.85em; color: var(--text-primary); }
+  & .md-body {
+    font-size: 0.85em;
+    color: var(--text-primary);
+  }
   & .dismiss {
     position: absolute;
     top: 6px;
@@ -29,31 +32,38 @@ const NewsCard = styled(Card)`
     font-size: 16px;
     line-height: 1;
     padding: 2px 6px;
-    &:hover { color: var(--text-primary); }
+    &:hover {
+      color: var(--text-primary);
+    }
   }
 `
 
 export function NewsBanner({ message, onDismiss }: { message: NewsMessage; onDismiss: () => void }) {
   return (
     <NewsCard>
-      <button className="dismiss" onClick={onDismiss} aria-label="Dismiss">×</button>
+      <button className="dismiss" onClick={onDismiss} aria-label="Dismiss">
+        ×
+      </button>
       <h4>{message.title}</h4>
-      <div
-        className="md-body"
-        dangerouslySetInnerHTML={{ __html: markdownToHTML(message.body_markdown) }}
-      />
+      <div className="md-body" dangerouslySetInnerHTML={{ __html: markdownToHTML(message.body_markdown) }} />
     </NewsCard>
   )
 }
 
 export function UpdateNotice({ version, onDismiss }: { version: string; onDismiss: () => void }) {
+  const steps =
+    __STORE__ === 'firefox'
+      ? 'Open about:addons, click the gear icon at the top of the page and choose Check for Updates. ' +
+        'If reveddit real-time then shows under Available Updates, press Install.'
+      : 'Open chrome://extensions, turn on Developer mode (top right), and press Update.'
   return (
     <NewsCard>
-      <button className="dismiss" onClick={onDismiss} aria-label="Dismiss">&times;</button>
+      <button className="dismiss" onClick={onDismiss} aria-label="Dismiss">
+        &times;
+      </button>
       <h4>Update available: v{version}</h4>
       <div className="md-body">
-        Your browser hasn't installed it yet. Open chrome://extensions, turn on
-        Developer mode (top right), and press Update.{' '}
+        Your browser hasn't installed it yet. {steps}{' '}
         <a href="https://www.reveddit.com/update-help" target="_blank" rel="noopener noreferrer">
           Still stuck?
         </a>
@@ -62,10 +72,18 @@ export function UpdateNotice({ version, onDismiss }: { version: string; onDismis
   )
 }
 
-export function ReleaseNotice({ release, onDismiss }: { release: { version: string; description: string }; onDismiss: () => void }) {
+export function ReleaseNotice({
+  release,
+  onDismiss,
+}: {
+  release: { version: string; description: string }
+  onDismiss: () => void
+}) {
   return (
     <NewsCard>
-      <button className="dismiss" onClick={onDismiss} aria-label="Dismiss">&times;</button>
+      <button className="dismiss" onClick={onDismiss} aria-label="Dismiss">
+        &times;
+      </button>
       <h4>v{release.version} released</h4>
       <div className="md-body">{release.description}</div>
     </NewsCard>
@@ -92,9 +110,8 @@ const OPEN_WWW: [string, () => void] = ['Open www.reddit.com', openWww]
 const SIGNED_IN_AS_VIEWER: Warning = {
   text: (
     <>
-      ⚠ You&apos;re signed in to Reddit with your second account, which can&apos;t check its own posts and
-      comments. To keep checking them, connect a different account.{' '}
-      <Why />
+      ⚠ You&apos;re signed in to Reddit with your second account, which can&apos;t check its own posts and comments. To
+      keep checking them, connect a different account. <Why />
     </>
   ),
   button: ['Connect a different account', openSecondAccount],
@@ -114,9 +131,8 @@ const WARNINGS: Record<string, Warning> = {
   login_required: {
     text: (
       <>
-        ⚠ Reddit now asks for a login before it shows profiles. To keep checking your posts and
-        comments, connect a second Reddit account.{' '}
-        <Why />
+        ⚠ Reddit now asks for a login before it shows profiles. To keep checking your posts and comments, connect a
+        second Reddit account. <Why />
       </>
     ),
     button: ['Connect a second account', openSecondAccount],
@@ -146,7 +162,14 @@ const WARNINGS: Record<string, Warning> = {
   },
 }
 
-export function ErrorNotice({ errorStatus, viewerName, currentUser, reconnectSuccess, reconnecting, onReconnect }: {
+export function ErrorNotice({
+  errorStatus,
+  viewerName,
+  currentUser,
+  reconnectSuccess,
+  reconnecting,
+  onReconnect,
+}: {
   errorStatus: string
   viewerName: string
   currentUser: string | null | undefined
@@ -154,7 +177,12 @@ export function ErrorNotice({ errorStatus, viewerName, currentUser, reconnectSuc
   reconnecting: boolean
   onReconnect: () => void
 }) {
-  if (reconnectSuccess) return <div><MessageBanner variant="success">✓ Connected!</MessageBanner></div>
+  if (reconnectSuccess)
+    return (
+      <div>
+        <MessageBanner variant="success">✓ Connected!</MessageBanner>
+      </div>
+    )
   const asViewer =
     (errorStatus === 'login_required' || errorStatus === 'public_view_unavailable') &&
     isSignedInViewer(viewerName, currentUser || '')

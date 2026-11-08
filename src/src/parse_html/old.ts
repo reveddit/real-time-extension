@@ -3,10 +3,10 @@ import {
     getLegacyBase,
     legacyPageUrl,
     redditHTMLRequestOptions,
-    fetchWithTimeout,
     LEGACY_CHALLENGE_SELECTOR,
     LEGACY_REFUSED_ERROR,
 } from './common'
+import { withDeadline } from '../logged-in-fetch'
 import { DOMParser } from 'linkedom/worker'
 import TurndownService from 'turndown'
 import { HTMLRewriter } from '@worker-tools/html-rewriter'
@@ -253,12 +253,20 @@ class ThingCounter {
     }
 }
 
-class ThreadPageAuthor {
-    author = ''
-    text({ text }: { text: string }) {
-        this.author += text.trim()
-    }
-}
+const LEGACY_PAGE_TIMEOUT_MS = 15000
+
+// Reads a legacy page, logged out, through rewriter if reddit serves it. fetch()
+// never times out on its own, and a response can stall after its headers, so the
+// deadline covers the body too: a stall would hang the pending-post loop (a "stuck
+// scanning" cause).
+const readLegacyPage = (url: string, rewriter: HTMLRewriter): Promise<Response> =>
+    withDeadline(LEGACY_PAGE_TIMEOUT_MS, async signal => {
+        const response = await fetch(url, { ...redditHTMLRequestOptions, credentials: 'omit', signal })
+        if (response.ok) {
+            await consume(rewriter.transform(response).body!)
+        }
+        return response
+    })
 
 // Parses the legacy /api/info HTML listing for the given ids. Removed comments
 // are NOT rendered there (verified live), so absence is the removal signal;
@@ -273,10 +281,6 @@ interface LegacyInfoResult {
 const getInfoById_fromLegacyHTML = async (ids: string | string[]): Promise<LegacyInfoResult> => {
     const idsArray = Array.isArray(ids) ? ids : ids.split(',')
     const url = (await getLegacyBase()) + '/api/info?id=' + idsArray.join(',')
-    const response = await fetch(url, { ...redditHTMLRequestOptions, credentials: 'omit' })
-    if (!response.ok) {
-        throw new Error(`legacy reddit HTML request failed: ${response.status}`)
-    }
     const itemsObj = new Items()
     const tableObj = new ThingCounter()
     const rewriter = new HTMLRewriter()
@@ -289,7 +293,10 @@ const getInfoById_fromLegacyHTML = async (ids: string | string[]): Promise<Legac
         .on('#siteTable .thing .tagline .score.unvoted', new Score(itemsObj))
         .on('#siteTable .thing .tagline time', new Times(itemsObj))
         .on('#siteTable .thing .tagline .locked-tagline', new OneField(itemsObj, 'locked', true))
-    await consume(rewriter.transform(response).body!)
+    const response = await readLegacyPage(url, rewriter)
+    if (!response.ok) {
+        throw new Error(`legacy reddit HTML request failed: ${response.status}`)
+    }
     itemsObj.fillInDefaultValues()
     itemsObj.items.forEach(item => {
         if (item.body) {
@@ -320,22 +327,19 @@ export const getItemsById_fromOldHTML = async (ids: string | string[]) => {
 
 export const getPost_fromOld = async (path: string) => {
     const url = legacyPageUrl(await getLegacyBase(), path)
-    const response = await fetchWithTimeout(url, redditHTMLRequestOptions)
+    const metaRobotsObj = new MetaRobots()
+    const thingsObj = new ThingCounter()
+    const challengeObj = new ThingCounter()
+    const rewriter = new HTMLRewriter()
+        .on('meta[name="robots"][content="noindex,nofollow"]', metaRobotsObj)
+        .on('#siteTable .thing', thingsObj)
+        .on(LEGACY_CHALLENGE_SELECTOR, challengeObj)
+    const response = await readLegacyPage(url, rewriter)
     if (!response.ok) {
         // The status lets callers tell a refusal (403: the legacy paths rest)
         // from a missing page
         return { error: `legacy reddit HTML request failed: ${response.status}`, status: response.status }
     }
-    const metaRobotsObj = new MetaRobots()
-    const authorObj = new ThreadPageAuthor()
-    const thingsObj = new ThingCounter()
-    const challengeObj = new ThingCounter()
-    const rewriter = new HTMLRewriter()
-        .on('meta[name="robots"][content="noindex,nofollow"]', metaRobotsObj)
-        .on('#siteTable .thing .tagline span', authorObj)
-        .on('#siteTable .thing', thingsObj)
-        .on(LEGACY_CHALLENGE_SELECTOR, challengeObj)
-    await consume(rewriter.transform(response).body!)
     if (thingsObj.count === 0) {
         // Not a legacy thread page: the JS challenge, now reddit's answer to
         // every legacy page, or something else, such as a login wall's form.
@@ -345,8 +349,5 @@ export const getPost_fromOld = async (path: string) => {
             ? { error: LEGACY_REFUSED_ERROR, refused: true }
             : { error: 'unrecognized page (no thread things)' }
     }
-    return {
-        is_removed: metaRobotsObj.is_removed,
-        ...(authorObj.author && { author: authorObj.author }),
-    }
+    return { is_removed: metaRobotsObj.is_removed }
 }

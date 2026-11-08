@@ -6,7 +6,7 @@ import { parseHTML } from 'linkedom'
 const FIELD = 'monitor quarantined content'
 const NOTE = 'may appear to cause an occasional logout'
 
-const open = async stored => {
+const open = async (stored, local) => {
     vi.resetModules()
     const { document, window } = parseHTML('<html><head></head><body><div id="root"></div></body></html>')
     window.close = vi.fn()
@@ -19,7 +19,7 @@ const open = async stored => {
     // Fresh modules, so chrome and browser share the storage the page will read
     await import('../mocks/chrome-api.js')
     const { __resetStorage, __getSyncStorage } = await import('../mocks/webextension-polyfill.js')
-    __resetStorage({ options: stored })
+    __resetStorage({ options: stored }, local)
     chrome.storage.onChanged = { addListener() {}, removeListener() {} }
     await import('../../src/src/options.tsx')
     const text = () => document.body.textContent
@@ -112,6 +112,13 @@ describe('the scan settings', () => {
         expect(field(page, SECONDS).value).toBe('3')
     })
 
+    it("say the website's limits as they apply, and scans wait no more than 60 seconds", async () => {
+        const scan_limits = { reads_per_click: 12, seconds_between_reads: 120 }
+        const page = await open({ custom_clientid: '' }, { news_cache: { feed: { options: { scan_limits } } } })
+        await vi.waitFor(() => expect(page.text()).toContain('holds every scan to at most 12 reads a click'))
+        expect(page.text()).toContain('at least 60 seconds between reads')
+    })
+
     it('go back to gentle with "reset to defaults"', async () => {
         const page = await open({ scan_reads_per_click: 80, scan_seconds_between_reads: 1 })
         page.resetDefaults()
@@ -133,5 +140,29 @@ describe('the scan settings', () => {
         page.clickSave()
         await vi.waitFor(() => expect(page.text()).toContain(message))
         expect(page.sync.options.scan_reads_per_click).toBeUndefined()
+    })
+})
+
+describe('a save', () => {
+    it('writes every option under its stored name', async () => {
+        const stored = {
+            seen_count: 3,
+            interval: 5,
+            custom_clientid: 'mine',
+            removal_status: { track: true, notify: false },
+            lock_status: { track: false, notify: false },
+            hide_subscribe: true,
+            monitor_quarantined: true,
+            show_scan_on_own_profile: true,
+            show_scan_on_other_profiles: false,
+            show_thread_scan_buttons: false,
+            highlight_own_profile_status: false,
+            auto_filter_removed_threads: false,
+            scan_reads_per_click: 50,
+            scan_seconds_between_reads: 1.5,
+        }
+        const { sync, save } = await open(stored)
+        await save()
+        expect(sync.options).toEqual(stored)
     })
 })

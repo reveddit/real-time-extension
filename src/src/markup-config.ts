@@ -7,8 +7,8 @@
 // can come from the news feed (options.markup) without a store release. The
 // feed only adds names; the built-in ones always stay.
 //
-// Imports only name-list.ts, which is import-free: news.ts and
-// parse_html/new.ts both import this module.
+// Imports only name-list.ts, which is import-free: news.ts, parse_html/new.ts
+// and three content-script modules import this module.
 import { sanitizeNameList } from './name-list'
 
 export interface MarkupConfig {
