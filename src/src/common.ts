@@ -183,6 +183,10 @@ export const VIEWER_BLOCKED = '[unavailable]'
 export const isViewerBlockedItem = (item: any): boolean =>
     Boolean(item) &&
     (item.author === VIEWER_BLOCKED || item.body === VIEWER_BLOCKED || item.selftext === VIEWER_BLOCKED)
+// The text reddit shows in place of an item's own: [removed], [deleted], or
+// its own "[ Removed by Reddit ]"
+export const isPlaceholderText = (text = ''): boolean =>
+    text === '[removed]' || text === '[deleted]' || /^\[ ?removed by reddit.*\]$/i.test(text)
 export const isUserDeletedComment = (item: RedditItem): boolean => {
     return (item.body || '').replace(/\\/g, '') === '[deleted]' && item.author.replace(/\\/g, '') === '[deleted]'
 }

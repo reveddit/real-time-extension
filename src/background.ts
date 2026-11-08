@@ -22,6 +22,7 @@ import {
     getUnseenIDs_thing,
     markThingAsSeen,
     clearPendingNotification,
+    FOLLOWED_NOTIFICATION,
     setBacklogSummaryInstalledAt,
     markBacklogSummarySent,
     updateBadgeUnseenCount,
@@ -362,6 +363,20 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         checkForChanges(false, { bypassBackoff: true })
         sendResponse({ started: true })
         return true
+    } else if (request.action === 'get-logged-in-user') {
+        // The welcome page's check, with the worker's request headers. It's
+        // polled, so unlike try-reconnect it doesn't save the cookies each
+        // time. Not while a second account signs in: the browser's login is its.
+        isViewerConnecting()
+            .then(connecting =>
+                connecting
+                    ? { user: null, indeterminate: true, reason: 'a second account is signing in' }
+                    : getLoggedinUserDetailed(),
+            )
+            .then(sendResponse, (e: any) =>
+                sendResponse({ user: null, indeterminate: true, reason: String(e?.message || e) }),
+            )
+        return true
     } else if (request.action === 'try-reconnect') {
         // Manual reconnect attempt from popup - subscribe user and trigger lookup.
         // Not while a second account signs in: the browser's login is its.
@@ -484,13 +499,19 @@ chrome.runtime.onInstalled.addListener(function (details) {
         // Refresh the news feed cache on update.
         fetchNews({ force: true }).catch(() => {})
         applyRemoteConfig().catch(() => {})
-        // Cookie copies written by 0.0.5.31 and earlier that nothing reads any more
-        // (stored_reddit_cookie_objects holds the snapshot).
+        // What 0.0.5.31 and earlier wrote and nothing reads any more: cookie
+        // copies (stored_reddit_cookie_objects holds the snapshot), and an
+        // oldest date for followed items, which have no listing to show one
         try {
-            browser.storage.local.remove(['stored_reddit_cookies', 'stored_reddit_domain']).catch(() => {})
+            browser.storage.local
+                .remove(['stored_reddit_cookies', 'stored_reddit_domain', 'oldest_date_other'])
+                .catch(() => {})
         } catch {
             /* ignored */
         }
+        // Followed items' pending notification, which they kept under the name
+        // an account can have
+        clearPendingNotification('other').catch(() => {})
     }
 })
 
@@ -642,19 +663,19 @@ function triggerImmediateLookupOnce(user: string, force = false) {
     })
 }
 
-const notificationClicked = (thing: string) => {
-    if (thing === 'reveddit:backlog_summary') {
+const notificationClicked = (name: string) => {
+    if (name === 'reveddit:backlog_summary') {
         createTab(chrome.runtime.getURL('src/history.html?filter=removed'))
         return
     }
-    // The link menu's note that it couldn't follow a link, and the popup's test
-    // notification: no account's items to show. An account's notification is
-    // named for it, and no username has a colon.
-    if (thing === 'reveddit:subscribe_failed' || thing === 'reveddit:test') {
+    const isUser = name !== FOLLOWED_NOTIFICATION
+    // The extension's other notifications, such as the link menu's note that
+    // it couldn't follow a link and the popup's test, have no items to show.
+    // An account's notification is named for it, and no username has a colon.
+    if (isUser && name.startsWith('reveddit:')) {
         return
     }
-
-    const isUser = thing === 'other' ? false : true
+    const thing = isUser ? name : 'other'
     chrome.storage.sync.get(undefined as any, storage => {
         const unseenIDs = getUnseenIDs_thing(thing, isUser, storage)
         let url: string
@@ -666,16 +687,15 @@ const notificationClicked = (thing: string) => {
                 url = `https://www.reveddit.com/info?id=${unseenIDs.join(',')}&removal_status=all`
             }
         }
-        markThingAsSeen(storage, thing, isUser)
         // The page opens even when the save is refused
         browser.storage.sync
-            .set(storage)
+            .set(markThingAsSeen(storage, thing, isUser))
             .catch((e: any) =>
                 dlog('ui', '[reveddit] marking seen on a notification click failed:', String(e?.message || e)),
             )
             .then(() => {
                 updateBadgeUnseenCount()
-                clearPendingNotification(thing).catch(() => {})
+                clearPendingNotification(name).catch(() => {})
                 createTab(url)
             })
     })

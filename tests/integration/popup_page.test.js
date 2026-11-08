@@ -11,8 +11,9 @@ const POST_URL = 'https://www.reddit.com/r/pics/comments/abc123/a_title/'
 
 // tabs: the reddit tabs open, as the popup's query lists them after the
 // storage has answered, or a promise of them for a query that answers later
-// still. active: the address of the tab the popup was opened over.
-const openPopup = ({ sync = {}, local = {}, tabs = [], active } = {}) =>
+// still. active: the address of the tab the popup was opened over. fakes: run
+// over the extension's APIs before the popup loads.
+const openPopup = ({ sync = {}, local = {}, tabs = [], active, fakes = () => {} } = {}) =>
     openPage(
         () => {
             vi.stubGlobal('__LATEST_RELEASE__', null)
@@ -21,6 +22,7 @@ const openPopup = ({ sync = {}, local = {}, tabs = [], active } = {}) =>
                 query.active ? callback(active ? [{ url: active }] : []) : Promise.resolve(tabs).then(callback)
             chrome.tabs.create = vi.fn()
             chrome.runtime.openOptionsPage = vi.fn()
+            fakes()
             return import('../../src/src/popup.tsx')
         },
         { user_subscriptions: {}, other_subscriptions: {}, ...sync },
@@ -65,6 +67,33 @@ describe('the follow switch', () => {
 
         await vi.waitFor(() => expect(text()).toContain('subscribed to post'))
         expect(Object.keys(__getSyncStorage().other_subscriptions)).toEqual(['t3_abc123'])
+    })
+
+    it('asks for the tab without waiting on the storage, which it reads whole once', async () => {
+        let answer
+        const storageAnswers = new Promise(resolve => (answer = resolve))
+        const wholeReads = []
+        let askedForTab = false
+        const { document } = await openPopup({
+            active: POST_URL,
+            fakes: () => {
+                const get = chrome.storage.sync.get
+                chrome.storage.sync.get = (keys, callback) => {
+                    if (keys != null) return get(keys, callback)
+                    wholeReads.push(keys)
+                    return storageAnswers.then(() => get(keys, callback))
+                }
+                const query = chrome.tabs.query
+                chrome.tabs.query = (q, callback) => {
+                    askedForTab ||= !!q.active
+                    return query(q, callback)
+                }
+            },
+        })
+        await vi.waitFor(() => expect(askedForTab).toBe(true))
+        answer()
+        await vi.waitFor(() => expect(document.body.textContent).toContain('subscribe to post'))
+        expect(wholeReads).toHaveLength(1)
     })
 })
 
@@ -119,6 +148,15 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
         expect(document.body.textContent).not.toContain('Open www.reddit.com')
         answer([WWW_TAB])
         await expectButtons(document, [['Connect a second account', 'secondary']])
+    })
+
+    it('holds a notice with no word of a tab until the tab query answers too', async () => {
+        let answer
+        const document = await warning('checks_failing', { tabs: new Promise(resolve => (answer = resolve)) })
+        await vi.waitFor(() => expect(document.body.textContent).toContain('someone'))
+        expect((await warningIn(document)).text).toBeUndefined()
+        answer([])
+        await vi.waitFor(async () => expect((await warningIn(document)).text).toContain("aren't being checked right now"))
     })
 
     it('public view with a www.reddit.com tab open, once it has lasted: the second account is the main choice', async () => {

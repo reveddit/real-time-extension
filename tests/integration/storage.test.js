@@ -492,11 +492,11 @@ describe('getScanSettings', () => {
     it('takes no limit under what a scan needs to start', async () => {
         vi.stubGlobal(
             'fetch',
-            vi.fn(async () => ({ ok: true, json: async () => ({ messages: [], options: { scan_limits: { reads_per_click: 2 } } }) })),
+            vi.fn(async () => ({ ok: true, json: async () => ({ messages: [], options: { scan_limits: { reads_per_click: 1 } } }) })),
         )
         __resetStorage()
         await fetchNews({ force: true })
-        expect(await getScanSettings()).toEqual({ readsPerClick: 6, gapMs: 3000 })
+        expect(await getScanSettings()).toEqual({ readsPerClick: 2, gapMs: 3000 })
     })
 
     it('leaves the defaults unset, so a gentler one later reaches those who never chose', async () => {

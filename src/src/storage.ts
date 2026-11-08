@@ -242,10 +242,10 @@ const getStorageInit = () => {
 
 export const markEverythingAsSeen = () => {
     return (browser.storage.sync.get as any)(null).then((storage: Record<string, any>) => {
-        subscribedThings(storage.user_subscriptions).forEach(({ thing, isUser }) =>
+        const marked = subscribedThings(storage.user_subscriptions).map(({ thing, isUser }) =>
             markThingAsSeen(storage, thing, isUser),
         )
-        return setStorageUpdateBadge(storage)
+        return setStorageUpdateBadge(Object.assign({}, ...marked))
     })
 }
 
@@ -265,6 +265,11 @@ const updateLocal = <T>(key: string, empty: T, update: (value: T) => T | void): 
         const value: T = r[key] || empty
         return browser.storage.local.set({ [key]: update(value) ?? value }) as unknown as void
     })
+
+// Followed items' notification and its pending entry. An account's are named
+// for it, and an account can be named "other".
+export const FOLLOWED_NOTIFICATION = 'reveddit:followed'
+export const notificationName = (thing: string, isUser: boolean) => (isUser ? thing : FOLLOWED_NOTIFICATION)
 
 const PENDING_NOTIFICATIONS_KEY = 'pending_notifications'
 
@@ -350,14 +355,21 @@ export const markBacklogInitialNotified = (notifiedIds: string[]): Promise<void>
 export const markBacklogSummarySent = (): Promise<void> =>
     updateBacklogSummary({ initialBacklogNotified: true, summarySent: true })
 
+// Returns the lists it marked, the only ones to save: a save of all of storage
+// would undo whatever a check saved since it was read, and announce again a
+// removal that save recorded
 export const markThingAsSeen = (storage: Record<string, any>, thing: string, isUser: boolean) => {
+    const marked: Record<string, any> = {}
     // An account unsubscribed since its notification, or since the popup
     // opened, no longer has lists
     Object.values(getStatusListKeys(thing, isUser)).forEach(fullKeyname => {
-        Object.values(storage[fullKeyname] || {}).forEach((item: any) => {
+        if (!storage[fullKeyname]) return
+        Object.values(storage[fullKeyname]).forEach((item: any) => {
             item.u = false
         })
+        marked[fullKeyname] = storage[fullKeyname]
     })
+    return marked
 }
 
 export const setStorageUpdateBadge = (storage: Record<string, any>) => {

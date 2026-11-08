@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import styled from '@emotion/styled'
+import browser from 'webextension-polyfill'
 import { subscribeUser } from './storage'
-import { getLoggedinUserDetailed } from './reddit-auth'
+import type { LoginDetectResult } from './reddit-auth'
 import { mountPage } from './ui/global'
 import { BlueLink, Button, Card } from './ui/components'
 import { tokens } from './ui/tokens'
@@ -77,6 +78,10 @@ const Footer = styled.div`
   border-top: 1px solid var(--border);
 `
 
+// The background's login check, which goes out with its request headers
+const askWhoIsLoggedIn = (): Promise<LoginDetectResult> =>
+  browser.runtime.sendMessage({ action: 'get-logged-in-user' })
+
 function stopPolling(timer: { current: number | null }) {
   if (timer.current !== null) {
     window.clearInterval(timer.current)
@@ -104,7 +109,7 @@ function Welcome() {
       setStatusType('checking')
     }
 
-    getLoggedinUserDetailed()
+    askWhoIsLoggedIn()
       .then((result) => {
         const user = result.user
         inFlight.current = false

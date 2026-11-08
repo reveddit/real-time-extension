@@ -23,7 +23,7 @@
 // No username or cookie value goes into the diagnostic log from here.
 import browser from 'webextension-polyfill'
 import { dlogSummary } from './diaglog'
-import { isBlockPage, LOGGED_IN_CACHE_MODES, withDeadline } from './logged-in-fetch'
+import { isBlockPage, LOGGED_IN_CACHE_MODES, requestKind, withDeadline } from './logged-in-fetch'
 import { getRemoteLoginCookies } from './news'
 import { readLocal, isFresh } from './request-gates'
 
@@ -504,13 +504,6 @@ export const _viewerFetchState = {
     latestMode: {} as Record<string, number>,
     doubleBlockAt: {} as Record<string, number>,
 }
-// A request's kind: its path, with the user and the thread left out
-const requestKind = (url: string): string =>
-    url
-        .replace(/^https?:\/\/[^/]+/, '')
-        .split('?')[0]
-        .replace(/^\/user\/[^/]+/, '/user')
-        .replace(/^\/comments\/.*/, '/comments')
 export const fetchJsonAsViewer = async (url: string, viewer: ViewerAccount): Promise<ViewerJson> => {
     // The body is read under the same deadline as the request, so an answer
     // that stalls partway can't hold up the monitoring cycle

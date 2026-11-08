@@ -47,7 +47,7 @@ import {
     PROFILE_PUBLICLY_EMPTY,
 } from '../../src/src/lookup-status'
 import { checkForChanges } from '../../src/src/monitoring'
-import { json, untilAborted } from '../mocks/responses.js'
+import { json, untilAborted, blockPage, refusing } from '../mocks/responses.js'
 import { cookie, jar, cookieKey as key, fill, cookiesApi } from '../mocks/cookies.js'
 
 const TOKEN = 'ab'.repeat(16)
@@ -457,14 +457,6 @@ describe('the header rule (Chrome and Edge)', () => {
     })
 })
 
-const BLOCK = {
-    ok: false,
-    status: 403,
-    headers: { get: () => 'text/html' },
-    json: async () => {
-        throw new Error('not json')
-    },
-}
 const listing = (names, after = null) => json(200, { data: { after, children: names.map(name => ({ data: name })) } })
 const comment = (name, extra = {}) => ({ name, author: 'alice', body: 'hi', ...extra })
 // A comment's permalink JSON: its post, then the comment, or nothing at all,
@@ -542,7 +534,7 @@ describe('checking the user’s items through the second account', () => {
         __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
         // The posts listing is refused; only comments are checked
         answer([
-            ['/user/alice/submitted.json', BLOCK],
+            ['/user/alice/submitted.json', blockPage()],
             ['/user/alice/comments.json', listing([comment('t1_live')])],
             ['/_/gone.json', thread(null)],
         ])
@@ -554,7 +546,7 @@ describe('checking the user’s items through the second account', () => {
     it("a me.json reddit won't answer is asked again in half an hour, not every cycle", async () => {
         connect()
         answer([
-            ['/api/me.json', BLOCK],
+            ['/api/me.json', blockPage()],
             ['/user/alice/', listing([comment('t1_live')])],
         ])
         await lookup(['t1_live'], meta(['t1_live']))
@@ -903,7 +895,7 @@ describe('checking the user’s items through the second account', () => {
         })
 
         it('a listed young post whose read fails gets no result, so the count neither grows nor starts over', async () => {
-            for (const failure of [json(500, {}), BLOCK]) {
+            for (const failure of [json(500, {}), blockPage()]) {
                 setUp(failure, [YOUNG])
                 cachedRemoved(['t3_young'])
                 const log = vi.spyOn(console, 'log')
@@ -975,7 +967,7 @@ describe('checking the user’s items through the second account', () => {
             connectedAt: 1,
         }
         __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
-        answer([['.json', BLOCK]])
+        answer([['.json', blockPage()]])
         await expect(lookup(['t1_live'])).rejects.toThrow(VIEWER_SIGNED_OUT)
         expect(__getLocalStorage().error_status).toBe(VIEWER_SIGNED_OUT)
         expect(__getLocalStorage().viewer_identity).toMatchObject({ token: TOKEN, result: 'signed_out' })
@@ -985,7 +977,7 @@ describe('checking the user’s items through the second account', () => {
     it('refused listings rest the second account half an hour, and the warning comes up all the same', async () => {
         connect()
         __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
-        answer([['.json', BLOCK]])
+        answer([['.json', blockPage()]])
         await expect(lookup(['t1_live'])).rejects.toThrow('second-account lookup failed: block page')
         // the block page is retried once in the other cache mode
         expect(globalThis.fetch.mock.calls.slice(0, 2).map(c => c[1].cache)).toEqual(['default', 'no-cache'])
@@ -1037,7 +1029,7 @@ describe('checking the user’s items through the second account', () => {
         const ids = ['t1_blocked', 't1_gone']
         answer([
             ['/user/alice/', listing([])],
-            ['/_/blocked.json', BLOCK],
+            ['/_/blocked.json', blockPage()],
             ['/_/gone.json', thread(null)],
         ])
         expect(await lookup(ids, meta(ids))).toEqual([])
@@ -1053,7 +1045,7 @@ describe('checking the user’s items through the second account', () => {
         __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
         answer([
             ['/user/alice/', listing([comment('t1_live')])],
-            ['/_/', BLOCK],
+            ['/_/', blockPage()],
         ])
         for (let i = 1; i <= 5; i++) {
             const ids = ['t1_live', `t1_gone${i}`]
@@ -1116,17 +1108,17 @@ describe('checking the user’s items through the second account', () => {
         // A retry with no answer at all says nothing about its mode
         globalThis.fetch = vi.fn(async (url, init) => {
             if (init.cache === 'no-cache') throw new TypeError('Failed to fetch')
-            return BLOCK
+            return blockPage()
         })
         expect(await get()).toMatchObject({ ok: false, status: 0 })
         expect(_viewerFetchState.preferredCacheMode).toEqual({})
         // Only no-cache gets past the edge: it's learned, and asked first after that
-        globalThis.fetch = vi.fn(async (url, init) => (init.cache === 'no-cache' ? json(200, { ok: 1 }) : BLOCK))
+        globalThis.fetch = vi.fn(refusing('default', () => json(200, { ok: 1 })))
         await get()
         expect(await get()).toMatchObject({ ok: true })
         expect(globalThis.fetch.mock.calls.map(c => c[1].cache)).toEqual(['default', 'no-cache', 'no-cache'])
         // Blocked in both modes: that kind of request skips the retry for a while
-        globalThis.fetch = vi.fn(async () => BLOCK)
+        globalThis.fetch = vi.fn(refusing())
         expect(await get()).toMatchObject({ ok: false, blocked: true })
         expect(await get()).toMatchObject({ ok: false, blocked: true })
         expect(globalThis.fetch.mock.calls.map(c => c[1].cache)).toEqual(['no-cache', 'default', 'no-cache'])
@@ -1139,8 +1131,9 @@ describe('checking the user’s items through the second account', () => {
         // the thread reads are refused for a moment
         let threadsRefused = true
         globalThis.fetch = vi.fn(async (url, init) => {
-            if (url.includes('/comments/p/')) return !threadsRefused && init.cache === 'default' ? json(200, []) : BLOCK
-            return init.cache === 'no-cache' ? listing([]) : BLOCK
+            if (url.includes('/comments/p/'))
+                return !threadsRefused && init.cache === 'default' ? json(200, []) : blockPage()
+            return init.cache === 'no-cache' ? listing([]) : blockPage()
         })
         await fetchJsonAsViewer('https://www.reddit.com/user/alice/comments.json', viewer)
         expect(await fetchJsonAsViewer(thread, viewer)).toMatchObject({ blocked: true })
@@ -1150,10 +1143,10 @@ describe('checking the user’s items through the second account', () => {
 
     it('a pause recorded while the clock ran ahead ends once the clock is put right, and is dropped', async () => {
         const viewer = { name: 'bob', token: TOKEN, cookies: [], connectedAt: 1 }
-        const kind = `${TOKEN}:/api/me.json`
+        const kind = `${TOKEN}:www.reddit.com/api/me.json`
         _viewerFetchState.preferredCacheMode[kind] = 0
         _viewerFetchState.doubleBlockAt[kind] = Date.now() + 24 * 3600 * 1000
-        globalThis.fetch = vi.fn(async (url, init) => (init.cache === 'no-cache' ? json(200, { ok: 1 }) : BLOCK))
+        globalThis.fetch = vi.fn(refusing('default', () => json(200, { ok: 1 })))
         expect(await fetchJsonAsViewer('https://www.reddit.com/api/me.json', viewer)).toMatchObject({ ok: true })
         expect(_viewerFetchState.doubleBlockAt[kind]).toBeUndefined()
         // Also when the first answer gets through, so the stamp can't start a pause later
@@ -1166,9 +1159,7 @@ describe('checking the user’s items through the second account', () => {
     it('a kind with no mode of its own yet starts from the one the account last learned', async () => {
         const viewer = { name: 'bob', token: TOKEN, cookies: [], connectedAt: 1 }
         // Every kind passes in no-cache only, as when reddit refuses a request style everywhere
-        globalThis.fetch = vi.fn(async (url, init) =>
-            init.cache === 'no-cache' ? json(200, { data: { children: [] } }) : BLOCK,
-        )
+        globalThis.fetch = vi.fn(refusing('default', () => json(200, { data: { children: [] } })))
         await fetchJsonAsViewer('https://www.reddit.com/user/alice/comments.json', viewer)
         globalThis.fetch.mockClear()
         expect(await fetchJsonAsViewer('https://www.reddit.com/comments/p/_/c.json', viewer)).toMatchObject({
@@ -1181,7 +1172,7 @@ describe('checking the user’s items through the second account', () => {
         connect()
         // me.json is refused in both modes; the listings answer in no-cache only
         globalThis.fetch = vi.fn(async (url, init) => {
-            if (url.includes('/api/me.json') || init.cache !== 'no-cache') return BLOCK
+            if (url.includes('/api/me.json') || init.cache !== 'no-cache') return blockPage()
             return url.includes('/comments.json') ? listing([comment('t1_live')]) : listing([])
         })
         const results = await lookup(['t1_live'], meta(['t1_live']))

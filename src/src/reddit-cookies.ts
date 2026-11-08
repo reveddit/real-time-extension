@@ -37,8 +37,29 @@ const isOldDomainCopy = (c: { domain: string }) => /^\.[^.]+\.reddit\.com$/.test
 // Store Reddit cookies for later use when no tabs are open. Not while a second
 // account signs in (viewer.ts): the browser holds that account's cookies then,
 // which must never be saved as the user's.
-export const storeRedditCookies = (): Promise<unknown> =>
-    isViewerConnecting().then(connecting => (connecting ? false : storeRedditCookiesNow()))
+//
+// Cookie changes and tab loads ask for saves in bursts. One runs at a time, and
+// the calls made meanwhile share one more after it, which reads the cookies as
+// they are by then.
+let latestSave: Promise<unknown> = Promise.resolve()
+let queuedSave: Promise<unknown> | undefined
+
+export const storeRedditCookies = (): Promise<unknown> => {
+    if (!queuedSave) {
+        const save = () => {
+            queuedSave = undefined
+            return isViewerConnecting().then(connecting => (connecting ? false : storeRedditCookiesNow()))
+        }
+        queuedSave = latestSave = latestSave.then(save, save)
+    }
+    return queuedSave
+}
+
+const SNAPSHOT_KEY = 'stored_reddit_cookie_objects'
+const readSnapshot = (): Promise<unknown> =>
+    new Promise(resolve => chrome.storage.local.get([SNAPSHOT_KEY], result => resolve(result?.[SNAPSHOT_KEY])))
+// By content: storage needn't hand a cookie's fields back in the order they were saved
+const snapshotText = (cookies: any[]) => JSON.stringify(cookies.map(c => Object.entries(c ?? {}).sort()))
 
 const storeRedditCookiesNow = async () => {
     // undefined when the read fails, as for the cookies below
@@ -74,16 +95,20 @@ const storeRedditCookiesNow = async () => {
         return false
     }
     await repairLogins(repaired)
+    const stored = await readSnapshot()
+    if (Array.isArray(stored) && snapshotText(stored) === snapshotText(cookieObjects)) {
+        return true
+    }
     return new Promise<boolean>(resolve =>
-        chrome.storage.local.set({ stored_reddit_cookie_objects: cookieObjects }, () => resolve(true)),
+        chrome.storage.local.set({ [SNAPSHOT_KEY]: cookieObjects }, () => resolve(true)),
     )
 }
 
 // Puts logins back with the expiry their JWT carries (storeRedditCookiesNow).
-// Each login once per worker: the store runs that start together, and those
-// its own writes set off, would each repeat it, and against anything that
-// keeps the cookie session-only they'd never stop. Not once a second account's
-// sign-in has started, which owns the jar.
+// Each login once per worker: the saves its own writes set off would each
+// repeat it, and against anything that keeps the cookie session-only they'd
+// never stop. Not once a second account's sign-in has started, which owns the
+// jar.
 const repairedLogins = new Set<string>()
 
 const repairLogins = async (logins: StoredCookie[]) => {
@@ -111,10 +136,7 @@ const fromSnapshot = (c: any): StoredCookie =>
     )
 
 const rehydrateStoredRedditCookiesNow = async () => {
-    const result: any = await new Promise(resolve =>
-        chrome.storage.local.get(['stored_reddit_cookie_objects'], resolve),
-    )
-    const cookieObjects = result?.stored_reddit_cookie_objects
+    const cookieObjects = await readSnapshot()
     if (!Array.isArray(cookieObjects) || !cookieObjects.length) {
         return false
     }

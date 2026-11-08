@@ -10,7 +10,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
-import { json, res, untilAborted } from '../mocks/responses.js'
+import { json, res, untilAborted, blockPage, refusing } from '../mocks/responses.js'
 import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
 import { thingIdEl, emptyStatePage } from '../mocks/public-profile.js'
 import { getDiagEntries } from '../mocks/diag-entries.js'
@@ -30,7 +30,7 @@ import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates'
 import { checkForChanges } from '../../src/src/monitoring'
 import { getUserInit, getObjectNamesForThing } from '../../src/src/storage'
 import { readWithLogin, _scanTurn } from '../../src/src/requests'
-import { WWW_FETCH_TIMEOUT_MS, _loggedInFetchState } from '../../src/src/logged-in-fetch'
+import { WWW_FETCH_TIMEOUT_MS, _resetLoggedInFetchState } from '../../src/src/logged-in-fetch'
 import { clearDiagLog } from '../../src/src/diaglog'
 
 const USER_JSON = JSON.stringify({ data: { name: 'alice' } })
@@ -50,7 +50,7 @@ beforeEach(() => {
     // A check with a reddit tab open saves the cookie snapshot
     globalThis.chrome.cookies = { getAll: (q, cb) => cb([]) }
     // The request style the login check and the listing learned
-    Object.assign(_loggedInFetchState, { preferredCacheMode: undefined, doubleBlockUntil: 0 })
+    _resetLoggedInFetchState()
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 })
@@ -145,10 +145,8 @@ describe("the login check and the user's listing, where reddit's edge refuses on
         'who is signed in': [getLoggedinUserDetailed, { user: 'alice', indeterminate: false }],
         "the user's listing": [lookupItemsByLoggedInUserWithAuth, []],
     }
-    const refusing = style => async (url, init) => {
-        if (init.cache === style) return res(403, 'network security', 'text/html')
-        return String(url).includes('/user/me.json') ? json(200, { data: { children: [] } }) : res(200, USER_JSON)
-    }
+    const answer = url =>
+        String(url).includes('/user/me.json') ? json(200, { data: { children: [] } }) : res(200, USER_JSON)
 
     it.each([
         ['who is signed in', 'reload', ['no-store']],
@@ -156,10 +154,27 @@ describe("the login check and the user's listing, where reddit's edge refuses on
         ["the user's listing", 'reload', ['no-store']],
         ["the user's listing", 'no-store', ['no-store', 'no-cache']],
     ])('reads %s past a block page for %s', async (read, style, sent) => {
-        const [run, answer] = reads[read]
-        fetchMock.mockImplementation(refusing(style))
-        expect(await run()).toEqual(answer)
+        const [run, expected] = reads[read]
+        fetchMock.mockImplementation(refusing(style, answer))
+        expect(await run()).toEqual(expected)
         expect(fetchMock.mock.calls.map(([, init]) => init.cache)).toEqual(sent)
+    })
+
+    // Its edge may refuse what www's lets through
+    it('reads who is signed in from www when old.reddit.com, asked first for its open tab, refuses both', async () => {
+        vi.spyOn(chrome.tabs, 'query').mockImplementation((query, callback) =>
+            callback([{ id: 1, url: 'https://old.reddit.com/' }]),
+        )
+        const old = refusing()
+        const www = refusing('no-store', answer)
+        fetchMock.mockImplementation((url, init) => (String(url).startsWith('https://old.') ? old : www)(url, init))
+        expect(await getLoggedinUserDetailed()).toEqual({ user: 'alice', indeterminate: false })
+        expect(fetchMock.mock.calls.map(([url, init]) => `${new URL(url).host} ${init.cache}`)).toEqual([
+            'old.reddit.com no-store',
+            'old.reddit.com no-cache',
+            'www.reddit.com no-store',
+            'www.reddit.com no-cache',
+        ])
     })
 })
 
@@ -193,8 +208,6 @@ describe("a scan's read when the count of login refusals can't be read", () => {
 })
 
 describe('a check for a remembered user', () => {
-    // The edge's block page
-    const REFUSED = res(403, 'blocked', 'text/html')
     const LISTING = { ok: true, status: 200, json: async () => ({ data: { children: [] } }) }
     const listingBy = author => ({
         ok: true,
@@ -226,7 +239,7 @@ describe('a check for a remembered user', () => {
     })
 
     it("says the login isn't working once reddit has refused the login check and the listing five times", async () => {
-        fetchMock.mockResolvedValue(REFUSED)
+        fetchMock.mockResolvedValue(blockPage())
         for (let i = 0; i < 4; i++) await check()
         expect(__getLocalStorage().error_status).toBe('reddit_blocked')
         await check()
@@ -397,7 +410,7 @@ describe('a check for a remembered user', () => {
             })
 
             it("still says the login isn't working after reddit refuses the login check and the listing five times", async () => {
-                fetchMock.mockImplementation(answering(async () => REFUSED, listingBy('someone')))
+                fetchMock.mockImplementation(answering(async () => blockPage(), listingBy('someone')))
                 for (let i = 0; i < 5; i++) await check()
                 expect(local().error_status).toBe(LOGGED_IN_VIEW_UNAVAILABLE)
                 expect(oauthPaths()).toEqual([])
@@ -630,16 +643,16 @@ describe('a check for a remembered user', () => {
     })
 
     it('a listing that comes back ends the count: the login works, whatever the login check says', async () => {
-        fetchMock.mockResolvedValue(REFUSED)
+        fetchMock.mockResolvedValue(blockPage())
         for (let i = 0; i < 4; i++) await check()
         fetchMock.mockImplementation(async url => {
             if (String(url).includes('/user/me.json')) return listingBy('alice')
             if (String(url).includes('/user/alice/comments/')) return res(200, thingIdEl('t1_a'))
-            return String(url).includes('/user/alice/submitted/') ? res(200, emptyStatePage('posts')) : REFUSED
+            return String(url).includes('/user/alice/submitted/') ? res(200, emptyStatePage('posts')) : blockPage()
         })
         await check()
         expect(__getLocalStorage().login_detect_consecutive_failures).toBeUndefined()
-        fetchMock.mockResolvedValue(REFUSED)
+        fetchMock.mockResolvedValue(blockPage())
         await check()
         expect(__getLocalStorage().error_status).not.toBe(LOGGED_IN_VIEW_UNAVAILABLE)
     })

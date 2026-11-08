@@ -41,6 +41,7 @@ import {
     getUserInit,
     subscribedThings,
     getOldestDateKey,
+    notificationName,
     getNextPendingPosts,
     addToPendingPostQueue,
     removeFromPendingPostQueue,
@@ -121,15 +122,17 @@ interface MarkChangesResult {
     backlogCount: number
 }
 
-// Stores a full listing's oldest date as the threshold and returns it, else
-// null: the check has read local storage already, so it doesn't read it back
+// Stores the oldest date a full listing of the user's items showed as the
+// threshold and returns it, else null. Followed items have no listing. The
+// check has read the stored date already, and most find it unchanged.
 const updateOldestDateThreshold = (
     items: any[],
     itemLookup: Record<string, any>,
     thing: string,
     isUser: boolean,
+    storedOldestDate: number | null,
 ): number | null => {
-    if (items.length < FULL_RESPONSE_ITEM_COUNT) {
+    if (!isUser || items.length < FULL_RESPONSE_ITEM_COUNT) {
         return null
     }
 
@@ -147,14 +150,18 @@ const updateOldestDateThreshold = (
     timestamps.sort((a, b) => a - b)
     const oldestDate = timestamps[0]
 
-    const key = getOldestDateKey(thing, isUser)
-    browser.storage.local.set({ [key]: oldestDate })
+    if (oldestDate !== storedOldestDate) {
+        browser.storage.local.set({ [getOldestDateKey(thing, isUser)]: oldestDate })
+    }
     return oldestDate
 }
 
-const getOldestDateThreshold = (thing: string, isUser: boolean) => {
+const getOldestDateThreshold = async (thing: string, isUser: boolean): Promise<number | null> => {
+    if (!isUser) {
+        return null
+    }
     const key = getOldestDateKey(thing, isUser)
-    return browser.storage.local.get({ [key]: null }).then(result => result[key])
+    return ((await browser.storage.local.get({ [key]: null })) as any)[key]
 }
 
 // Older than the oldest item a full listing showed: monitoring doesn't start
@@ -437,7 +444,11 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
             `checkForChanges: running despite rate-limit backoff (${Math.ceil(backoffRemainingMs / 1000)}s remaining, manual)`,
         )
     }
-    cycleStartedAtMs = Date.now()
+    const startedAt = (cycleStartedAtMs = Date.now())
+    // A cycle that a newer one overlapped doesn't end that one when it ends
+    const endCycle = () => {
+        if (cycleStartedAtMs === startedAt) cycleEndedAtMs = Date.now()
+    }
     dlog('cycle', `[reveddit] checkForChanges: cycle start${opts.bypassBackoff ? ' (manual)' : ''}`)
     if (applyJitter) {
         await new Promise(r => setTimeout(r, Math.floor(Math.random() * POLL_JITTER_MAX_MS)))
@@ -466,12 +477,12 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
             })
             .then(() => {
                 chrome.storage.sync.set({ last_check: now })
-                cycleEndedAtMs = Date.now()
+                endCycle()
                 dlog('cycle', '[reveddit] checkForChanges: cycle done')
                 return maybeFireBacklogSummary(storage)
             })
             .catch(error => {
-                cycleEndedAtMs = Date.now()
+                endCycle()
                 dlog('cycle', 'Error in checkForChanges:', String(error?.message || error))
                 // Clear warning badge on error
                 updateBadgeUnseenCount()
@@ -748,16 +759,16 @@ export const readLookupResult = (
 }
 
 // Shows a notification of changes, keeps it as pending until it shows, and logs it either way
-const announce = (thing: string, pending: PendingNotificationData, source: 'recent' | 'retry') => {
+const announce = (thing: string, name: string, pending: PendingNotificationData, source: 'recent' | 'retry') => {
     const message = `${pending.count} new [${pending.types.join(', ')}] actions, click to view`
     createNotification({
-        notificationId: thing,
+        notificationId: name,
         title: thing,
         message,
     }).then(success => {
-        if (success) clearPendingNotification(thing).catch(() => {})
+        if (success) clearPendingNotification(name).catch(() => {})
     })
-    setPendingNotification(thing, pending).catch(() => {})
+    setPendingNotification(name, pending).catch(() => {})
     appendNotificationLog({
         ts: Date.now(),
         id: thing,
@@ -798,12 +809,12 @@ const checkForChanges_thing_byId = async (
     // so carry those per-item from the authenticated view (itemLookup).
     const username = isUser ? thing : ''
     const authItemsMeta: Record<string, any> = {}
-    // The user's records, read when the lookup is told which removals are
-    // being confirmed. Only this check's save writes them, so the check goes
-    // on with them after the lookup.
-    let records: Record<string, any> | undefined
     if (isUser) {
         const knownRemovedHash = storage[getObjectNamesForThing(thing, isUser)['removed']] || {}
+        // The user's records, read to tell the lookup which removals are being
+        // confirmed. A check that overlaps this one may save them while the
+        // lookup runs, so they're read again after it.
+        let records: Record<string, any> | undefined
         let oldestDateThreshold: number | null = null
         if (!preFetchedItems && storage.options.removal_status.track) {
             ;[records, oldestDateThreshold] = (await Promise.all([
@@ -835,11 +846,7 @@ const checkForChanges_thing_byId = async (
                 known_removed: recorded,
                 // Its removal is being counted (r, markChanges) and isn't
                 // recorded yet, which it still can be
-                confirming:
-                    !!storage.options.removal_status.track &&
-                    !recorded &&
-                    records?.[name]?.r > 0 &&
-                    !isTooOld(authItem.created_utc, oldestDateThreshold),
+                confirming: !recorded && records?.[name]?.r > 0 && !isTooOld(authItem.created_utc, oldestDateThreshold),
                 // Whoever the browser is signed in as (lookupItemsByID)
                 author: authItem.author,
             }
@@ -867,11 +874,12 @@ const checkForChanges_thing_byId = async (
         const lock_status = storage.options.lock_status
         const target_seen_count = storage.options.seen_count || SEEN_COUNT_DEFAULT
         const keys = getObjectNamesForThing(thing, isUser)
+        const notification = notificationName(thing, isUser)
         // Local storage is read first, so that nothing waits between the
         // lists' re-read below and their save: a save made elsewhere in
         // between would be lost
         const [existingLocalStorageItems, storedOldestDate]: [any, any] = await Promise.all([
-            records || getLocalStorageItems(thing, isUser),
+            getLocalStorageItems(thing, isUser),
             getOldestDateThreshold(thing, isUser),
         ])
         // The user, a reveddit page or another check may have saved while the
@@ -932,7 +940,8 @@ const checkForChanges_thing_byId = async (
             notePubliclyLive(thing, publiclyLive).catch(() => {})
         }
 
-        const oldestDateThreshold = updateOldestDateThreshold(items, itemLookup, thing, isUser) ?? storedOldestDate
+        const oldestDateThreshold =
+            updateOldestDateThreshold(items, itemLookup, thing, isUser, storedOldestDate) ?? storedOldestDate
 
         // mark items that do not exist in arrays
         // change happens if:
@@ -1008,6 +1017,7 @@ const checkForChanges_thing_byId = async (
             )
             announce(
                 thing,
+                notification,
                 {
                     count: mergedRealtime.count,
                     types: mergedRealtime.changeTypes,
@@ -1025,7 +1035,7 @@ const checkForChanges_thing_byId = async (
             // No new changes this cycle — but retry any pending
             // notification from a prior cycle that may have silently
             // failed to display (e.g. install-time on Firefox Android).
-            getPendingNotification(thing)
+            getPendingNotification(notification)
                 .then(pending => {
                     if (!pending) return
                     // The user turned notifications off after this entry
@@ -1033,7 +1043,7 @@ const checkForChanges_thing_byId = async (
                     // notification they opted out of. The badge still
                     // counts the items.
                     if (!removal_status.notify && !lock_status.notify) {
-                        clearPendingNotification(thing).catch(() => {})
+                        clearPendingNotification(notification).catch(() => {})
                         return
                     }
                     const MAX_RETRY_ATTEMPTS = 5
@@ -1041,7 +1051,7 @@ const checkForChanges_thing_byId = async (
                     const MIN_RETRY_DELAY_MS = 2 * 60 * 1000
                     if (Date.now() - pending.firstAttemptAt < MIN_RETRY_DELAY_MS) return
                     console.log(`Retrying pending notification for ${thing} (attempt ${pending.attempts + 1})`)
-                    announce(thing, { ...pending, attempts: pending.attempts + 1 }, 'retry')
+                    announce(thing, notification, { ...pending, attempts: pending.attempts + 1 }, 'retry')
                 })
                 .catch(() => {})
         }

@@ -200,8 +200,8 @@ export function ErrorNotice({
   errorStatus: string
   viewerName: string
   currentUser: string | null | undefined
-  // A www.reddit.com tab that can carry the extension's reads is open, null until the popup knows
-  wwwTabOpen: boolean | null
+  // A www.reddit.com tab that can carry the extension's reads is open
+  wwwTabOpen: boolean
   // The public view's lookups that have failed in a row (lookup-status.ts)
   wwwFailures: number
   reconnectSuccess: boolean | null
@@ -237,9 +237,6 @@ export function ErrorNotice({
       </div>
     )
   }
-  // A notice that would ask for a tab waits until the popup knows whether one
-  // is open, rather than offer one and take it back
-  if (typeof warning.text === 'function' && wwwTabOpen === null) return null
   const lasting = wwwFailures >= STREAK_WARN_AT + CHECKS_FOR_A_TAB
   const chosen = (lasting && warning.lasting) || warning
   // With a tab open, there's none to open
@@ -249,7 +246,7 @@ export function ErrorNotice({
   return (
     <div>
       <MessageBanner variant="warning">
-        {typeof warning.text === 'function' ? warning.text(Boolean(wwwTabOpen)) : warning.text}
+        {typeof warning.text === 'function' ? warning.text(wwwTabOpen) : warning.text}
       </MessageBanner>
       {button && <ActionBtn onClick={button[1]}>{button[0]}</ActionBtn>}
       {fallback && <SecondaryActionBtn onClick={fallback[1]}>{fallback[0]}</SecondaryActionBtn>}

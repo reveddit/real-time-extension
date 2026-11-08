@@ -223,15 +223,24 @@ function Popup() {
     setConnectResult(null)
     setConnectMessage(null)
 
+    // The tab the popup opened over, beside the sync read: the follow switches wait for both
+    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+      const url = tabs[0]?.url
+      if (url) {
+        const [postID, commentID] = getFullIDsFromURL(url)
+        setActiveTab({ url, postID, commentID })
+      }
+    })
+
     chrome.storage.local.get(['error_status', VIEWER_KEY, WWW_DETECT_FAILURES_KEY], result => {
       setErrorStatus(result?.error_status || null)
       setViewerName(String(result?.[VIEWER_KEY]?.name || ''))
       setWwwFailures(Number(result?.[WWW_DETECT_FAILURES_KEY]) || 0)
     })
 
-    // Beside the sync read, not after it: the notices that depend on a tab wait for this
+    // Beside the sync read, not after it: the notices wait for this
     chrome.tabs.query({ url: ['*://*.reddit.com/*'] }, found => {
-      // undefined when the query fails, which must still answer those notices
+      // undefined when the query fails, which must still answer the notices
       const tabs = found || []
       const supported = tabs.filter(isSupportedRedditTab)
       // Only a tab www-fetcher.ts can read through counts. A supported tab's address parses.
@@ -247,6 +256,7 @@ function Popup() {
     })
 
     getSubscribedUsers_withSeenAndUnseenIDs(async (users, storage) => {
+      setSyncStorage(storage)
       const other = users['other']
       delete users['other']
       setUserData({
@@ -257,17 +267,6 @@ function Popup() {
 
       chrome.storage.local.get(['last_logged_in_user'], result => {
         setCurrentUser(result?.last_logged_in_user || null)
-      })
-    })
-
-    chrome.storage.sync.get(undefined, sync => {
-      setSyncStorage(sync)
-      chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-        const url = tabs[0]?.url
-        if (url) {
-          const [postID, commentID] = getFullIDsFromURL(url)
-          setActiveTab({ url, postID, commentID })
-        }
       })
     })
 
@@ -507,7 +506,10 @@ function Popup() {
 
       {newsMessage && <NewsBanner message={newsMessage} onDismiss={handleDismissNews} />}
 
+      {/* A notice waits until the popup knows whether a tab is open, rather
+          than offer one and take it back */}
       {errorStatus &&
+        wwwTabOpen !== null &&
         (currentUser || errorStatus === 'logged_in_view_unavailable' || errorStatus === 'checks_failing') && (
           <ErrorNotice
             errorStatus={errorStatus}

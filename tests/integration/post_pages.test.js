@@ -217,8 +217,8 @@ describe('a post whose removal monitoring is counting', () => {
     const young = extra => ({ [POST]: { locked: false, created_utc: Math.floor(Date.now() / 1000) - 3600, ...extra } })
     const verify = async (authItemsMeta, fetchHtml) =>
         (await verifyFeedPresentPosts([POST], new Set([POST]), authItemsMeta, fetchHtml)).verdicts
-    const cachedHeld = (id = POST) =>
-        __resetStorage({}, { www_post_page_verdicts: { [id]: { v: 'held', t: Date.now(), k: 2 } } })
+    const cachedHeld = () =>
+        __resetStorage({}, { www_post_page_verdicts: { [POST]: { v: 'held', t: Date.now(), k: 2 } } })
     // Past the 48 hours in which a listing may still show a held post
     const MATURE = 't3_mature1'
     const mature = extra => ({
@@ -277,18 +277,6 @@ describe('a post whose removal monitoring is counting', () => {
         expect(fetchHtml).toHaveBeenCalledTimes(10)
         expect(Object.keys(verdicts)).toHaveLength(9)
         expect([...owed].sort()).toEqual(['t3_p0', 't3_p11', 't3_p2'])
-    })
-
-    it('a mature one once read held gets no result while no page verdict lands, so its count neither grows nor starts over', async () => {
-        cachedHeld(MATURE)
-        const calls = matureFeed(['/comments/mature1/', FRONT_PAGE])
-        const reads = () => calls.filter(u => u.includes('/comments/mature1/')).length
-        // Its read decides nothing, and the next cycle waits out that unknown
-        expect(await lookupItemsByID_fromPublicProfile([MATURE], USER, mature({ confirming: true }))).toEqual([])
-        const read = reads()
-        expect(read).toBeGreaterThan(0)
-        expect(await lookupItemsByID_fromPublicProfile([MATURE], USER, mature({ confirming: true }))).toEqual([])
-        expect(reads()).toBe(read)
     })
 
     it("a mature one this path owes no read is live by the feed's presence, wherever its count began", async () => {

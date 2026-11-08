@@ -19,6 +19,17 @@ export const json = (status, data, type = 'application/json; charset=UTF-8') => 
     json: async () => data,
 })
 
+// Reddit's edge turning a request away: its "network security" page, a 403
+// that isn't JSON
+export const blockPage = () => res(403, 'network security', 'text/html; charset=utf-8')
+
+// A fetch whose requests reddit's edge turns away in one cache mode, or in every
+// one when none is named. The rest get answer(url).
+export const refusing =
+    (mode, answer = () => json(200, {})) =>
+    async (url, init) =>
+        !mode || init?.cache === mode ? blockPage() : answer(url)
+
 // A request, or a body, that never answers: like a real fetch's, it fails once
 // the request is aborted, and without a signal it never ends
 export const untilAborted = signal =>

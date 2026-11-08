@@ -13,7 +13,7 @@ import { getViewer, isSignedInViewer, isViewerConnecting, hasRedditLoginCookie }
 import { isRateLimitError } from './parse_html/common'
 import { isLoginWallMessage } from './login-wall-config'
 import { getRemoteMechanism, MECHANISM_SCAN_FEEDS } from './news'
-import { fetchForScan, WWW_FETCH_TIMEOUT_MS, withDeadline } from './logged-in-fetch'
+import { fetchForScan, UNCACHED_MODES, WWW_FETCH_TIMEOUT_MS, withDeadline, workerSession } from './logged-in-fetch'
 import {
     PROFILE_CONTROL_USER,
     AuthItemsMeta,
@@ -24,7 +24,6 @@ import {
     recordPaginationOutcome,
     recordAbsentVerifyOutcome,
     authSaysPostRemoved,
-    isYoungPost,
     isCovered,
     publicViewUncheckedReason,
     notePublicViewUnchecked,
@@ -223,14 +222,15 @@ export const lookupItemsByID_fromPublicProfile = async (
                     // No removal signal from any source → live. (verdict 'live',
                     // 'unknown', or unfetched: the auth view says not-removed and
                     // it's publicly visible, so treat as live and cache the body.)
-                    // A young post without a 'live' verdict may still be held or
-                    // spam-filtered, so the bridge isn't told it's publicly live.
+                    // A post owed a page read that didn't land, young or once seen
+                    // held, may still be held or spam-filtered, so the bridge isn't
+                    // told it's publicly live.
                     results.push({
                         data: {
                             ...publicItem,
                             is_robot_indexable: true,
                             ...carried,
-                            ...(isYoungPost(meta) && verdict !== 'live' && { _public_view_unverified: true }),
+                            ...(postsOwed.has(id) && { _public_view_unverified: true }),
                         },
                     })
                 }
@@ -431,8 +431,7 @@ const lookupItemsByID_publicThenLegacy = (
 // Mutable for tests, like _wwwRouteTiming.
 export const _scanTurn = { next: 0 }
 // Session storage keeps the turn too, so a worker that stops between reads still
-// holds the pace. Chrome 101 and Firefox before 115 have none, and Firefox's
-// background page keeps its memory anyway.
+// holds the pace. Only the worker uses it (workerSession).
 const SCAN_TURN_KEY = 'scan_turn_next'
 
 // 0 once the turn is taken, or how long until it comes. The pace is the user's
@@ -442,7 +441,7 @@ const scanTurnIn = async (): Promise<number> => {
     const { gapMs } = await getScanSettings()
     const sinceHit = await getMsSinceLastRateLimitHit().catch(() => null)
     const gap = sinceHit !== null && sinceHit < RECENT_RATE_LIMIT_WINDOW_MS ? gapMs * 2 : gapMs
-    const session = browser.storage.session
+    const session = workerSession()
     if (!_scanTurn.next && session) {
         const stored: Record<string, any> = await session.get(SCAN_TURN_KEY).catch(() => ({}))
         // Another ask may have taken a turn while this one read
@@ -462,7 +461,7 @@ const scanTurnIn = async (): Promise<number> => {
 // Every scan comes through here, so they share one pace and the backoff that
 // monitoring and the bridge honor, whichever tab they run in. Too soon, it answers
 // with waitMs: the page waits and asks again, where a cancel can take the read back.
-export const readWithLogin = async (path: string, secondTryMode?: number) => {
+export const readWithLogin = async (path: string, secondTryMode?: unknown) => {
     if ((await getRemoteMechanism(MECHANISM_SCAN_FEEDS)) === 'off') {
         return { ok: false, status: 0, blockPage: true }
     }
@@ -480,9 +479,12 @@ export const readWithLogin = async (path: string, secondTryMode?: number) => {
     if (waitMs > 0) {
         return { ok: false, status: 0, waitMs }
     }
+    // A second try's mode comes from the page's message, and only one that
+    // skips the browser's cache is taken
+    const secondTry = UNCACHED_MODES.find(mode => mode === secondTryMode)
     return withDeadline(WWW_FETCH_TIMEOUT_MS, async signal => {
         const url = `https://www.reddit.com${path}`
-        const { response, blockPage, otherMode } = await fetchForScan(url, signal, secondTryMode)
+        const { response, blockPage, otherMode } = await fetchForScan(url, signal, secondTry)
         // Reddit's logout leaves a short cookie of the login's name, so holding one
         // settles nothing, and no wait helps. Its answers to the login check do. A
         // block page with a second try to come says nothing yet.

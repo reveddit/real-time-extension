@@ -93,14 +93,31 @@ describe('the removals monitoring is confirming', () => {
         expect(confirming()).toEqual({ t1_a: true })
     })
 
-    it('come from the one read of the records the check makes', async () => {
+    it('come from a read of the records before the lookup, which the check reads again after it', async () => {
         seed({ records: { t1_a: record(1) } })
         // Its result held back, so there's nothing to save either
         answer = { items: [] }
         const get = vi.spyOn(browserMock.storage.local, 'get')
         await check(['t1_a'])
         expect(confirming()).toEqual({ t1_a: true })
-        expect(get.mock.calls.filter(([keys]) => 'items_u_' + USER in Object(keys))).toHaveLength(1)
+        expect(get.mock.calls.filter(([keys]) => 'items_u_' + USER in Object(keys))).toHaveLength(2)
+    })
+
+    it('are counted from the records as an overlapping check saved them', async () => {
+        seed({ records: { t1_a: record(4) } })
+        const answers = []
+        answer = () => new Promise(resolve => answers.push(resolve))
+        const first = check(['t1_a'])
+        const second = check(['t1_a'])
+        await vi.waitFor(() => expect(answers).toHaveLength(2))
+        // The first reads it live, which starts its count over, and the second reads it removed
+        answers[0]({ items: [{ data: item('t1_a') }] })
+        await first
+        answers[1]({ items: [{ data: { ...item('t1_a'), author: '[deleted]', body: '[removed]' } }] })
+        await second
+        expect(__getSyncStorage()[keys.removed]).toEqual({})
+        expect(__getSyncStorage()[keys.changes]).toEqual([])
+        expect(__getLocalStorage()['items_u_' + USER].t1_a.r).toBe(1)
     })
 
     it.each([
@@ -128,18 +145,23 @@ describe('a post more than two days old whose removal is counted', () => {
         seed({ records: { [POST]: { ...record(1), o: OLD, c: OLD } } })
         // Its page read it held a cycle ago
         __getLocalStorage().www_post_page_verdicts = { [POST]: { v: 'held', t: Date.now(), k: 2 } }
-        installFetch([
+        const calls = installFetch([
             [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
             [`/user/${USER}/submitted/?sort=new`, thingIdEl(POST)],
             ['/comments/mature1/', FRONT_PAGE],
         ])
+        const pageReads = []
         answer = message => lookupItemsByID_fromPublicProfile(message.ids, message.username, message.authItemsMeta)
         // A read that decides nothing, then a cycle that waits it out
         for (let cycle = 0; cycle < 2; cycle++) {
             await check([POST], { [POST]: post })
             expect(confirming()).toEqual({ [POST]: true })
             expect(__getLocalStorage()['items_u_' + USER][POST].r).toBe(1)
+            pageReads.push(calls.filter(url => url.includes('/comments/mature1/')).length)
         }
+        // The second cycle sends no page read
+        expect(pageReads[0]).toBeGreaterThan(0)
+        expect(pageReads[1]).toBe(pageReads[0])
         expect(__getLocalStorage()[getPublicLiveKey(USER)]).toBeUndefined()
     })
 })

@@ -71,10 +71,10 @@ describe('the scan limits', () => {
     }
 
     it.each([
-        [0, 6],
-        [0.5, 6],
-        [1, 6],
-        [5.9, 6],
+        [0, 2],
+        [0.5, 2],
+        [1, 2],
+        [2.9, 2],
         [7.9, 7],
     ])('hold reads_per_click %j to %j', async (limit, kept) => {
         expect(await limitsFrom({ reads_per_click: limit })).toEqual({ reads_per_click: kept })
@@ -142,7 +142,7 @@ describe('the messages and fields it keeps', () => {
                 markup: { comment_id_attributes: ['a-b', '1bad'] },
                 login_cookies: ['sess', 'bad name'],
                 login_wall: { paths: ['/signin/', 'nope'], markers: ['<auth-flow-modal'] },
-                scan_limits: { reads_per_click: 3, seconds_between_reads: 4, junk: 1 },
+                scan_limits: { reads_per_click: 1, seconds_between_reads: 4, junk: 1 },
                 publicmodlogs_feed: 'a'.repeat(40),
                 unknown_option: 1,
             },
@@ -164,7 +164,7 @@ describe('the messages and fields it keeps', () => {
         )
         expect(options.mechanisms).toEqual({ legacyOldReddit: 'off', scanFeeds: 'auto', other: 'on' })
         expect(options.legacy_host).toBe('old.reddit.com')
-        expect(options.scan_limits).toEqual({ reads_per_click: 6, seconds_between_reads: 4 })
+        expect(options.scan_limits).toEqual({ reads_per_click: 2, seconds_between_reads: 4 })
         expect(options.markup).toEqual({ commentIdAttributes: ['a-b'] })
         expect(options.www_route_order).toEqual({ chrome: { order: ['tab:reload'], skip: [] } })
         expect(options.challenge).toEqual({ tokenFields: ['abc_token'], solutionRegex: 'a(b)' })

@@ -186,6 +186,41 @@ describe('the cookie snapshot', () => {
         expect(__getLocalStorage().stored_reddit_cookie_objects.map(c => c.name).sort()).toEqual(['csrf_token', 'reddit_session', 'token_v2'])
     })
 
+    it('runs one save at a time, then one more for the calls made meanwhile, which reads what changed', async () => {
+        let reads = 0
+        const meanwhile = []
+        globalThis.chrome.cookies = {
+            getAll: (q, cb) => {
+                jarForChrome(q, cb)
+                if (++reads === 1) {
+                    // reddit changes a cookie once this save has read them, and each change asks for a save
+                    fill([cookie('reddit_session', 'S2'), CSRF])
+                    meanwhile.push(storeRedditCookies(), storeRedditCookies())
+                }
+            },
+        }
+        await storeRedditCookies()
+        await Promise.all(meanwhile)
+        expect(reads).toBe(2)
+        expect(__getLocalStorage().stored_reddit_cookie_objects.find(c => c.name === 'reddit_session').value).toBe('S2')
+    })
+
+    it("doesn't save the snapshot again while the cookies are the same, whatever order their fields come back in", async () => {
+        await storeRedditCookies()
+        const local = __getLocalStorage()
+        local.stored_reddit_cookie_objects = local.stored_reddit_cookie_objects.map(c => Object.fromEntries(Object.entries(c).reverse()))
+        const set = vi.spyOn(globalThis.chrome.storage.local, 'set')
+        try {
+            expect(await storeRedditCookies()).toBe(true)
+            expect(set).not.toHaveBeenCalled()
+            fill([cookie('reddit_session', 'S2'), CSRF])
+            expect(await storeRedditCookies()).toBe(true)
+            expect(set).toHaveBeenCalledTimes(1)
+        } finally {
+            set.mockRestore()
+        }
+    })
+
     it('puts a login back with its expiry before it saves the snapshot', async () => {
         const order = []
         fill([sessionOnly(jwt(inDays(30)))])
@@ -260,10 +295,12 @@ describe('the cookie snapshot', () => {
         expect(find('csrf_token').session).toBe(true)
     })
 
-    it('gives a login its expiry back once, though several saves run together', async () => {
+    it('gives a login its expiry back once, though something keeps it session-only', async () => {
         fill([sessionOnly(jwt(inDays(30)))])
         cookiesApi.set.mockClear()
-        await Promise.all([storeRedditCookies(), storeRedditCookies(), storeRedditCookies()])
+        // set, and left session-only
+        cookiesApi.set.mockImplementationOnce(async d => d)
+        for (let i = 0; i < 3; i++) await storeRedditCookies()
         expect(cookiesApi.set).toHaveBeenCalledTimes(1)
     })
 

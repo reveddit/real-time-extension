@@ -10,7 +10,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
-import { json } from '../mocks/responses.js'
+import { blockPage } from '../mocks/responses.js'
 
 // The legacy page reader runs HTMLRewriter (WASM), which can't load here
 const legacyPages = {}
@@ -22,11 +22,10 @@ vi.mock('../../src/src/parse_html/old', () => ({
 import { _processPendingPosts, _pendingPostTiming } from '../../src/src/monitoring'
 import { isCapabilityResting } from '../../src/src/request-gates'
 import { CAPABILITY_REST_KEY } from '../../src/src/news'
-import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
+import { _resetLoggedInFetchState } from '../../src/src/logged-in-fetch'
 import { getRateLimitBackoffRemainingMs } from '../../src/src/storage'
 
 const page = id => `/comments/${id.slice(3)}/`
-const blockPage = () => json(403, null, 'text/html; charset=utf-8')
 
 describe('the pending-post queue', () => {
     const savedCookies = browserMock.cookies
@@ -35,8 +34,7 @@ describe('the pending-post queue', () => {
     beforeEach(() => {
         for (const key of Object.keys(legacyPages)) delete legacyPages[key]
         _pendingPostTiming.delayMs = 0
-        _loggedInFetchState.preferredCacheMode = undefined
-        _loggedInFetchState.doubleBlockUntil = 0
+        _resetLoggedInFetchState()
         loggedIn = true
         browserMock.cookies = { get: async ({ name }) => (loggedIn ? { name, value: 'x' } : null) }
         fetches = []

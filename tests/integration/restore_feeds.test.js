@@ -594,7 +594,7 @@ describe('reads that fail', () => {
         expect(pageReads.has(authorPath('alice'))).toBe(false)
     })
 
-    const blocked = { ...refused, otherMode: 1 }
+    const blocked = { ...refused, otherMode: 'no-cache' }
 
     it("sends a block page's second try in the mode it names, if the click has room for it", async () => {
         const sent = []
@@ -604,7 +604,7 @@ describe('reads that fail', () => {
         await withTimers(() => reads.feed('/a'))
         expect(sent).toEqual([
             ['/a', undefined],
-            ['/a', 1],
+            ['/a', 'no-cache'],
         ])
         expect(reads.canRead('/c')).toBe(false)
 
@@ -1301,7 +1301,7 @@ describe('the profile scan', () => {
         browserMock.runtime.sendMessage = async ({ path, secondTryMode }) => {
             if (secondTryMode !== undefined) return answer(path)
             asked.push(path)
-            return { ok: false, status: 403, blockPage: true, otherMode: 1 }
+            return { ok: false, status: 403, blockPage: true, otherMode: 'no-cache' }
         }
         const options = { after: 't1_x', firstOnPage: { t3: 't3_first' } }
         const pageReads = new Map()

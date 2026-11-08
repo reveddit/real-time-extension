@@ -8,7 +8,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
-import { json, untilAborted } from '../mocks/responses.js'
+import { json, untilAborted, refusing } from '../mocks/responses.js'
 
 // A monitoring cycle in flight, as the bridge sees it
 let cycleBusy = false
@@ -21,7 +21,7 @@ import {
     waitUntilIdle,
     handleBridgeFetch,
 } from '../../src/src/bridge.ts'
-import { _loggedInFetchState } from '../../src/src/logged-in-fetch.ts'
+import { _resetLoggedInFetchState } from '../../src/src/logged-in-fetch.ts'
 import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates.ts'
 import { PUBLIC_PROFILE_UNAVAILABLE_KEY } from '../../src/src/lookup-status.ts'
 
@@ -282,8 +282,7 @@ describe('handleBridgeFetch', () => {
             { last_logged_in_user: 'alice' },
         )
         cycleBusy = false
-        _loggedInFetchState.preferredCacheMode = undefined
-        _loggedInFetchState.doubleBlockUntil = 0
+        _resetLoggedInFetchState()
         loggedIn()
         globalThis.fetch = vi.fn(async () => json(200, listingOf(['t1_a', 'alice'], ['t1_b', 'bob'])))
     })
@@ -359,11 +358,7 @@ describe('handleBridgeFetch', () => {
     })
 
     it('retries a block page once in the other cache mode, and keeps the mode that answered', async () => {
-        globalThis.fetch = vi.fn(async (_url: string, init: any) =>
-            init.cache === 'default'
-                ? json(403, null, 'text/html; charset=utf-8')
-                : json(200, listingOf(['t1_c', 'carol'])),
-        )
+        globalThis.fetch = vi.fn(refusing('default', () => json(200, listingOf(['t1_c', 'carol']))))
         expect((await handleBridgeFetch({ url: URL_INFO })).ok).toBe(true)
         expect((globalThis.fetch as any).mock.calls.map((c: any) => c[1].cache)).toEqual(['default', 'no-cache'])
         ;(globalThis.fetch as any).mockClear()
@@ -410,8 +405,7 @@ describe('0.0.5.27 review fixes: the bridge', () => {
     beforeEach(() => {
         __resetStorage({}, { last_logged_in_user: 'alice' })
         cycleBusy = false
-        _loggedInFetchState.preferredCacheMode = undefined
-        _loggedInFetchState.doubleBlockUntil = 0
+        _resetLoggedInFetchState()
         ;(browserMock as any).cookies = { get: vi.fn(async () => ({ name: 'reddit_session', value: 'x' })) }
     })
     afterEach(() => {
@@ -473,23 +467,23 @@ describe('0.0.5.27 review fixes: the bridge', () => {
     it('counts the block-page retry as a request, remembers a double block, and keeps a mode that got past the edge', async () => {
         const URL = 'https://www.reddit.com/r/sub/about.json'
         // both modes blocked: the retry is skipped for a while
-        globalThis.fetch = vi.fn(async () => json(403, null, 'text/html'))
+        globalThis.fetch = vi.fn(refusing())
         expect(await handleBridgeFetch({ url: URL })).toMatchObject({ ok: false, status: 403 })
         expect(globalThis.fetch).toHaveBeenCalledTimes(2)
-        expect(_loggedInFetchState.doubleBlockUntil).toBeGreaterThan(Date.now())
         ;(globalThis.fetch as any).mockClear()
         await new Promise(r => setTimeout(r, 350))
         await handleBridgeFetch({ url: URL })
         expect(globalThis.fetch).toHaveBeenCalledTimes(1)
 
         // the other mode gets the resource's own JSON 403: past the edge, so that mode stays
-        _loggedInFetchState.doubleBlockUntil = 0
-        globalThis.fetch = vi.fn(async (_u: string, init: any) =>
-            init.cache === 'default' ? json(403, null, 'text/html') : json(403, { reason: 'private' }),
-        )
+        _resetLoggedInFetchState()
+        globalThis.fetch = vi.fn(refusing('default', () => json(403, { reason: 'private' })))
         await new Promise(r => setTimeout(r, 350))
         expect(await handleBridgeFetch({ url: URL })).toMatchObject({ ok: false, status: 403 })
-        expect(_loggedInFetchState.preferredCacheMode).toBe('no-cache')
+        ;(globalThis.fetch as any).mockClear()
+        await new Promise(r => setTimeout(r, 350))
+        await handleBridgeFetch({ url: URL })
+        expect((globalThis.fetch as any).mock.calls.map((c: any) => c[1].cache)).toEqual(['no-cache'])
     })
 
     it('says the answer is the logged-in view rewritten', async () => {

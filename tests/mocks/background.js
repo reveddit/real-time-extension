@@ -1,7 +1,7 @@
 // The background script as built for Firefox, over the extension API fakes.
-// It returns what the script listens to, so a test can send it messages and
-// click its notifications. Call it once per file, before anything imports
-// the script.
+// It returns what the script listens to, so a test can send it messages, click
+// its notifications and install or update it. Call it once per file, before
+// anything imports the script.
 import browserMock from './webextension-polyfill.js'
 import { cookiesApi } from './cookies.js'
 
@@ -13,7 +13,9 @@ export const loadBackground = async () => {
     const c = globalThis.chrome
     const messages = []
     const clicks = []
-    for (const name of ['onMessageExternal', 'onInstalled', 'onStartup', 'onUpdateAvailable']) c.runtime[name] = event()
+    const installs = []
+    for (const name of ['onMessageExternal', 'onStartup', 'onUpdateAvailable']) c.runtime[name] = event()
+    c.runtime.onInstalled = event(installs)
     c.runtime.onMessage = event(messages)
     c.runtime.getManifest = () => ({ version: '0.0.5.30' })
     for (const name of ['onUpdated', 'onRemoved', 'onActivated']) c.tabs[name] = event()
@@ -50,5 +52,6 @@ export const loadBackground = async () => {
                 }
             }),
         clickNotification: id => clicks.forEach(listener => listener(id)),
+        install: details => installs.forEach(listener => listener(details)),
     }
 }

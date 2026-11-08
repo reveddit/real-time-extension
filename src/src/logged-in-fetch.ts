@@ -8,11 +8,12 @@
 // A block page, unlike a resource's own JSON 403, gets one retry in the other
 // cache mode, and the mode that answers is kept. After both modes got the block
 // page, the retry is skipped for a while, so a blocked client doesn't send every
-// request twice.
+// request twice. Both are kept per kind of request, as reddit has refused one
+// kind (api/info) while the rest answered.
 //
 // It imports none of the extension's own modules: bridge.ts, requests.ts,
-// www-fetcher.ts, followed-lookup.ts, reddit-auth.ts, viewer.ts and
-// parse_html/old.ts import it.
+// www-fetcher.ts, followed-lookup.ts, reddit-auth.ts, viewer.ts, request-gates.ts
+// and parse_html/old.ts import it.
 import browser from 'webextension-polyfill'
 
 export const LOGGED_IN_CACHE_MODES: RequestCache[] = ['default', 'no-cache']
@@ -21,38 +22,68 @@ export const LOGGED_IN_CACHE_MODES: RequestCache[] = ['default', 'no-cache']
 // no-store is the same as default (reddit.md).
 export const UNCACHED_MODES: RequestCache[] = ['no-store', 'no-cache']
 const DOUBLE_BLOCK_MEMORY_MS = 5 * 60 * 1000
-// The mode that last got past the edge after a block page, by name, so a list of
-// modes without it starts at its own first. Mutable for tests, like _wwwRouteTiming.
-export const _loggedInFetchState: { preferredCacheMode?: RequestCache; doubleBlockUntil: number } = {
-    doubleBlockUntil: 0,
+
+// A cache entry still within its time to live; a time in the future (a clock
+// set back) counts as expired
+export const isFresh = (t: number, ttl: number, now: number): boolean => now - t >= 0 && now - t < ttl
+
+// A request's kind: its host and path, with any user, subreddit, thread and
+// query left out. The host counts, as the login check asks old.reddit.com too.
+export const requestKind = (url: string): string =>
+    url
+        .replace(/^https?:\/\//, '')
+        .split('?')[0]
+        .replace(/\/(user|r)\/[^/.]+/, '/$1/_')
+        .replace(/\/comments\/[^.]+/, '/comments/_')
+
+// Per kind of request: the mode that last got past the edge after a block page,
+// by name, and when both modes last got the block page (a time it happened, so a
+// clock put right can't stretch it). A kind with no mode of its own starts in the
+// latest one learned, where its list has it, since reddit has refused a request
+// style across every kind at once. Mutable for tests, like _wwwRouteTiming.
+interface FetchState {
+    preferredCacheMode: Record<string, RequestCache>
+    latestMode?: RequestCache
+    doubleBlockAt: Record<string, number>
 }
-// Session storage keeps it too, so Chrome's worker, which stops between requests,
-// doesn't spend a refused request learning the mode again. It's read once, before
-// the worker's first request. Only the worker, the one context with no window,
-// uses it: an extension page's reads (the welcome page's login check) go out with
-// the page's own headers, so what they learn stays with the page. Chrome 101 has
-// no session storage, and Firefox's background page keeps its memory.
+const freshState = (): FetchState => ({ preferredCacheMode: {}, latestMode: undefined, doubleBlockAt: {} })
+export const _loggedInFetchState = freshState()
+export const _resetLoggedInFetchState = () => Object.assign(_loggedInFetchState, freshState())
+
+// Session storage, which outlives Chrome's worker. Only the worker, the one
+// context with no window, uses it: a page's reads would go out with the page's
+// own headers, so what they learned mustn't reach the worker's (the welcome page
+// asks the worker instead), and Firefox's background page keeps its memory.
+// Chrome 101 has none.
+export const workerSession = () => (typeof window === 'undefined' ? browser.storage.session : undefined)
+// The state is kept there, so the worker, which stops between requests, doesn't
+// spend a refused request learning a mode again. It's read once, before the
+// worker's first request.
 const STATE_KEY = 'logged_in_fetch'
-const session = () => (typeof window === 'undefined' ? browser.storage.session : undefined)
 let loaded: Promise<void> | undefined
 const loadState = () =>
     (loaded ??= (async () => {
-        const stored: Record<string, any> | undefined = await session()
+        const stored: Record<string, any> | undefined = await workerSession()
             ?.get(STATE_KEY)
             .catch(() => undefined)
         Object.assign(_loggedInFetchState, stored?.[STATE_KEY])
     })())
-const keepState = (change: Partial<typeof _loggedInFetchState>) => {
-    Object.assign(_loggedInFetchState, change)
-    session()
-        ?.set({ [STATE_KEY]: { ..._loggedInFetchState } })
+const keepState = () =>
+    workerSession()
+        ?.set({ [STATE_KEY]: _loggedInFetchState })
         .catch(() => {})
+// Past the edge after a block page, whatever the resource said: keep this mode
+const learn = (kind: string, mode: RequestCache) => {
+    _loggedInFetchState.preferredCacheMode[kind] = _loggedInFetchState.latestMode = mode
+    delete _loggedInFetchState.doubleBlockAt[kind]
+    keepState()
 }
-const firstMode = (modes: RequestCache[]) =>
-    Math.max(
-        0,
-        modes.findIndex(mode => mode === _loggedInFetchState.preferredCacheMode),
-    )
+const firstMode = (kind: string, modes: RequestCache[]): RequestCache =>
+    [_loggedInFetchState.preferredCacheMode[kind], _loggedInFetchState.latestMode].find(
+        mode => mode && modes.includes(mode),
+    ) ?? modes[0]
+// Each list has two modes
+const otherOf = (modes: RequestCache[], mode: RequestCache) => (mode === modes[0] ? modes[1] : modes[0])
 
 // A resource's own 403 (private subreddit) is JSON; the edge's block page isn't
 export const isBlockPage = (res: Response): boolean =>
@@ -81,44 +112,43 @@ export const fetchLoggedIn = async (
     opts: LoggedInFetchOptions = {},
 ): Promise<{ response: Response; blockPage: boolean; retried: boolean }> => {
     const modes = opts.modes ?? LOGGED_IN_CACHE_MODES
-    const fetchIn = (mode: number) => fetchInMode(url, modes[mode], opts.signal)
+    const kind = requestKind(url)
     await loadState()
-    let mode = firstMode(modes)
-    let response = await fetchIn(mode)
+    const first = firstMode(kind, modes)
+    let response = await fetchInMode(url, first, opts.signal)
     let blockPage = isBlockPage(response)
     let retried = false
-    if (blockPage && Date.now() >= _loggedInFetchState.doubleBlockUntil && (opts.canRetry?.() ?? true)) {
-        const blockedMode = mode
-        mode = (mode + 1) % modes.length
+    const doubleBlocked = isFresh(_loggedInFetchState.doubleBlockAt[kind], DOUBLE_BLOCK_MEMORY_MS, Date.now())
+    if (blockPage && !doubleBlocked && (opts.canRetry?.() ?? true)) {
+        const other = otherOf(modes, first)
         opts.onRetry?.()
         retried = true
-        response = await fetchIn(mode)
+        response = await fetchInMode(url, other, opts.signal)
         blockPage = isBlockPage(response)
         if (!blockPage) {
-            // Past the edge, whatever the resource said: keep this mode
-            keepState({ preferredCacheMode: modes[mode] })
-            opts.onSwitched?.(modes[blockedMode], modes[mode], response.status)
+            learn(kind, other)
+            opts.onSwitched?.(first, other, response.status)
         } else {
-            keepState({ doubleBlockUntil: Date.now() + DOUBLE_BLOCK_MEMORY_MS })
+            _loggedInFetchState.doubleBlockAt[kind] = Date.now()
+            keepState()
         }
     }
     return { response, blockPage, retried }
 }
 
-// A scan's read: one request. After a block page it names the mode for a second
-// try, which the page sends on a turn of its own, where a cancel can stop it. A
-// block page may be about that one feed, so unlike above it says nothing about
-// other requests.
-export const fetchForScan = async (url: string, signal: AbortSignal, secondTryMode?: number) => {
-    const isSecondTry = secondTryMode !== undefined
+// A scan's read: one request. After a block page it names the other mode for a
+// second try, which the page sends on a turn of its own, where a cancel can stop
+// it. That's always offered: another kind's double block says nothing about
+// feeds, and a feed's may be about that one feed, so none is kept. The page stops
+// asking in a click that saw both modes refused.
+export const fetchForScan = async (url: string, signal: AbortSignal, secondTryMode?: RequestCache) => {
+    const kind = requestKind(url)
     await loadState()
-    const mode = secondTryMode ?? firstMode(UNCACHED_MODES)
-    const response = await fetchInMode(url, UNCACHED_MODES[mode], signal)
+    const mode = secondTryMode ?? firstMode(kind, UNCACHED_MODES)
+    const response = await fetchInMode(url, mode, signal)
     const blockPage = isBlockPage(response)
-    // Past the edge, whatever the resource said: keep this mode
-    if (isSecondTry && !blockPage) keepState({ preferredCacheMode: UNCACHED_MODES[mode] })
-    const retry = blockPage && !isSecondTry && Date.now() >= _loggedInFetchState.doubleBlockUntil
-    return { response, blockPage, otherMode: retry ? (mode + 1) % UNCACHED_MODES.length : undefined }
+    if (secondTryMode && !blockPage) learn(kind, mode)
+    return { response, blockPage, otherMode: blockPage && !secondTryMode ? otherOf(UNCACHED_MODES, mode) : undefined }
 }
 
 // A fetch, tab message or injected script that never settles (a stalled

@@ -72,7 +72,7 @@ export class RateLimiter {
 // leaves it out the same way. No page or JSON listing shows a removed comment's
 // text any more (verified 2026-11-04). Logged out, reddit allows one feed a
 // minute, so these go through the background with the user's login.
-async function fetchWithLogin(path: string, limiter: RateLimiter, secondTryMode?: number): Promise<string> {
+async function fetchWithLogin(path: string, limiter: RateLimiter, secondTryMode?: RequestCache): Promise<string> {
     let res: any
     do {
         await limiter.wait(Math.min(res?.waitMs ?? 0, LONGEST_WAIT_MS))
@@ -401,6 +401,7 @@ export async function lookupCommentsByIds(
             created_utc: d?.created_utc || 0,
             permalink: d?.permalink || '',
             subreddit: d?.subreddit || '',
+            // Not isPlaceholderText: it needs the author, and [deleted] counts, as feeds show removals that way
             removed: !d || (d.author === '[deleted]' && (d.body === '[removed]' || d.body === '[deleted]')),
         })
     }

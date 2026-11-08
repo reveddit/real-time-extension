@@ -13,11 +13,17 @@ import browserMock, {
     makeStorageArea,
 } from '../mocks/webextension-polyfill.js'
 import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
-import { untilAborted } from '../mocks/responses.js'
+import { untilAborted, blockPage, refusing } from '../mocks/responses.js'
 
 import { readWithLogin, _scanTurn } from '../../src/src/requests'
 import { RateLimiter, ScanReads } from '../../src/src/scan-reads'
-import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
+import {
+    fetchLoggedIn,
+    requestKind,
+    UNCACHED_MODES,
+    _loggedInFetchState,
+    _resetLoggedInFetchState,
+} from '../../src/src/logged-in-fetch'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
 import { NEWS_CACHE_KEY, MECHANISM_SCAN_FEEDS } from '../../src/src/news'
 import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates'
@@ -25,7 +31,8 @@ import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates'
 const PATH = '/user/alice/comments/.rss?sort=new&limit=100'
 const answer = (status, type = 'application/atom+xml', body = '<feed/>') =>
     new Response(body, { status, headers: { 'content-type': type } })
-const blockPage = () => answer(403, 'text/html', 'network security')
+// Reddit's edge refusing no-store, so only a second try gets past it
+const refusingFirst = refusing('no-store', () => answer(200))
 
 let fetchMock
 
@@ -34,7 +41,7 @@ beforeEach(() => {
     fill([cookie('reddit_session', 'S1')])
     browserMock.cookies = cookiesApi
     _scanTurn.next = 0
-    Object.assign(_loggedInFetchState, { preferredCacheMode: undefined, doubleBlockUntil: 0 })
+    _resetLoggedInFetchState()
     fetchMock = vi.fn(async () => answer(200))
     vi.stubGlobal('fetch', fetchMock)
 })
@@ -53,18 +60,18 @@ describe('a read for a scan', () => {
     it("leaves a block page's second try to the page, in the other mode, at no cost to other requests", async () => {
         fetchMock.mockImplementation(async () => blockPage())
         const first = await readWithLogin(PATH)
-        expect(first).toMatchObject({ ok: false, status: 403, blockPage: true, otherMode: 1 })
+        expect(first).toMatchObject({ ok: false, status: 403, blockPage: true, otherMode: 'no-cache' })
         expect(fetchMock).toHaveBeenCalledTimes(1)
         _scanTurn.next = 0
         const second = await readWithLogin(PATH, first.otherMode)
         expect(second).toMatchObject({ ok: false, status: 403, blockPage: true, otherMode: undefined })
         expect(fetchMock.mock.calls.map(call => call[1].cache)).toEqual(['no-store', 'no-cache'])
-        expect(_loggedInFetchState.doubleBlockUntil).toBe(0)
-        expect(_loggedInFetchState.preferredCacheMode).toBeUndefined()
+        expect(_loggedInFetchState.doubleBlockAt).toEqual({})
+        expect(_loggedInFetchState.preferredCacheMode).toEqual({})
     })
 
     it('keeps the mode a second try got past the edge in', async () => {
-        fetchMock.mockImplementation(async (url, { cache }) => (cache === 'no-cache' ? answer(200) : blockPage()))
+        fetchMock.mockImplementation(refusingFirst)
         const { otherMode } = await readWithLogin(PATH)
         _scanTurn.next = 0
         expect(await readWithLogin(PATH, otherMode)).toMatchObject({ ok: true })
@@ -76,16 +83,22 @@ describe('a read for a scan', () => {
     it('tries the mode its first try named, whatever another request has learned since', async () => {
         fetchMock.mockImplementation(async () => blockPage())
         const { otherMode } = await readWithLogin(PATH)
-        _loggedInFetchState.preferredCacheMode = 'no-cache'
+        _loggedInFetchState.preferredCacheMode[requestKind(`https://www.reddit.com${PATH}`)] = 'no-store'
         _scanTurn.next = 0
         await readWithLogin(PATH, otherMode)
         expect(fetchMock.mock.calls.map(call => call[1].cache)).toEqual(['no-store', 'no-cache'])
     })
 
-    it('offers no second try while both modes are blocked for every request', async () => {
-        _loggedInFetchState.doubleBlockUntil = Date.now() + 60000
+    it("takes a second try named in a mode a scan can't use for a first try, so no read comes from the cache", async () => {
+        await readWithLogin(PATH, 'force-cache')
+        expect(fetchMock.mock.calls[0][1].cache).toBe('no-store')
+    })
+
+    it('offers a second try whatever other kinds of request met, whose block pages say nothing about feeds', async () => {
         fetchMock.mockImplementation(async () => blockPage())
-        expect(await readWithLogin(PATH)).toMatchObject({ blockPage: true, otherMode: undefined })
+        // The login check, refused in both modes a moment ago
+        await fetchLoggedIn('https://www.reddit.com/api/me.json', { modes: UNCACHED_MODES })
+        expect(await readWithLogin(PATH)).toMatchObject({ blockPage: true, otherMode: 'no-cache' })
     })
 
     it('a 429 enters the backoff that monitoring and the bridge honor, once', async () => {
@@ -242,7 +255,7 @@ describe('a page waiting a long gap for its turn', () => {
     })
 })
 
-// The tests above have no session storage, as Chrome 101 and Firefox before 115
+// The tests above have no session storage, as on Chrome 101 and Firefox's background page
 describe('a worker that stops between reads, where the browser has session storage', () => {
     beforeEach(() => {
         vi.useFakeTimers()
@@ -293,13 +306,13 @@ describe('a login reddit keeps refusing', () => {
     it('asks to sign in where both tries got a block page, which would read as try later', async () => {
         fetchMock.mockImplementation(async () => blockPage())
         const first = await readWithLogin(PATH)
-        expect(first).toMatchObject({ ok: false, status: 403, otherMode: 1 })
+        expect(first).toMatchObject({ ok: false, status: 403, otherMode: 'no-cache' })
         _scanTurn.next = 0
         expect(await readWithLogin(PATH, first.otherMode)).toMatchObject({ ok: false, status: 0, needsLogin: true })
     })
 
     it('reads on when the other mode gets past the edge, which says the login is fine', async () => {
-        fetchMock.mockImplementation(async (url, { cache }) => (cache === 'no-cache' ? answer(200) : blockPage()))
+        fetchMock.mockImplementation(refusingFirst)
         const { otherMode } = await readWithLogin(PATH)
         _scanTurn.next = 0
         expect(await readWithLogin(PATH, otherMode)).toMatchObject({ ok: true })

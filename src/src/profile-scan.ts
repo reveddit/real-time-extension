@@ -1,4 +1,4 @@
-import { isRemovedByCategory, isRemovedInModView, isRemovedPost } from './common'
+import { isPlaceholderText, isRemovedByCategory, isRemovedInModView, isRemovedPost } from './common'
 import {
     type ProgressCallback,
     RateLimiter,
@@ -138,8 +138,8 @@ export async function scanUserProfile(
                 : live && (isRemovedPost(live) || isRemovedInModView(live) || isRemovedByCategory(live))
         if (!removed) return
 
-        const cachedHasContent = cached.body && cached.body !== '[removed]' && cached.body !== '[deleted]'
-        const cachedHasTitle = cached.title && cached.title !== '[removed]' && cached.title !== '[deleted]'
+        const cachedHasContent = cached.body && !isPlaceholderText(cached.body)
+        const cachedHasTitle = cached.title && !isPlaceholderText(cached.title)
         if (!cachedHasContent && !cachedHasTitle) return
 
         results.push({

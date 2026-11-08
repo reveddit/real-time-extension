@@ -18,6 +18,14 @@ import browser from 'webextension-polyfill'
 
     const matches = window.location.href.match(/^https?:\/\/[^/]*(reddit\.com|reveddit\.com|localhost)/)
 
+    const withSiteStorage = (use: (storage: Storage) => void) => {
+        try {
+            use(window.localStorage)
+        } catch {
+            /* blocked site storage throws, which mustn't stop the rest of this script */
+        }
+    }
+
     function onMessage(message: any, _sender: any, _response: any) {
         if (message.action === 'get-logged-in-user-items') {
             // Handle request for logged-in user's items from background script
@@ -89,18 +97,16 @@ import browser from 'webextension-polyfill'
     if (matches?.[1] === 'reddit.com') {
         // Older versions left these in reddit.com's own storage, where its scripts
         // can read that the extension is installed
-        try {
+        withSiteStorage(storage => {
             for (const key of [
                 'hasSeenLanguageModal',
                 'extensionSaysNoSubscriptions',
                 'hasNotifierExtension',
                 'notifierExtensionVersion',
             ]) {
-                window.localStorage.removeItem(key)
+                storage.removeItem(key)
             }
-        } catch {
-            /* blocked site storage throws, which mustn't stop the rest of this script */
-        }
+        })
     }
     // Bridge relay for the website: Firefox has no externally_connectable, so
     // reveddit.com pages postMessage here and the background does the fetch
@@ -109,14 +115,12 @@ import browser from 'webextension-polyfill'
         // Presence and version stamps are for the website only. reddit.com's
         // own storage never needed them and should not learn the extension
         // is installed.
-        try {
-            window.localStorage.setItem('hasNotifierExtension', 'true')
+        withSiteStorage(storage => {
+            storage.setItem('hasNotifierExtension', 'true')
             // Version for the website (e.g. /update-help): Firefox has no
             // externally_connectable, so the page can read this instead.
-            window.localStorage.setItem('notifierExtensionVersion', browser.runtime.getManifest().version)
-        } catch {
-            /* blocked site storage throws, which mustn't stop the rest of this script */
-        }
+            storage.setItem('notifierExtensionVersion', browser.runtime.getManifest().version)
+        })
         // A content script left behind by an extension update or reload can't
         // reach the background any more. It stops answering, so the page gets
         // the new script's answer instead of a refusal from the old one.
@@ -207,15 +211,13 @@ import browser from 'webextension-polyfill'
                 )
             } else {
                 // For the website only, like the stamps above
-                try {
+                withSiteStorage(storage => {
                     if (subscribed_users_lowercase.length === 0) {
-                        window.localStorage.setItem(extensionSaysNoSubscriptions, 'true')
+                        storage.setItem(extensionSaysNoSubscriptions, 'true')
                     } else {
-                        window.localStorage.removeItem(extensionSaysNoSubscriptions)
+                        storage.removeItem(extensionSaysNoSubscriptions)
                     }
-                } catch {
-                    /* blocked site storage throws, which mustn't stop the rest of this script */
-                }
+                })
                 revdditModifications(storage, user, isUserPage, isInfoPage)
             }
         })

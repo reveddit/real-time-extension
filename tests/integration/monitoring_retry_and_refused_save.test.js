@@ -14,6 +14,7 @@ import { _checkForChanges_thing_byId } from '../../src/src/monitoring'
 import {
     getObjectNamesForThing,
     markThingAsSeen,
+    markEverythingAsSeen,
     markIDsAsSeenIfSubscribed,
     unsubscribeId,
 } from '../../src/src/storage'
@@ -151,6 +152,37 @@ describe('retry of a pending notification', () => {
         expect(pendingNow()).toBeUndefined()
     })
 
+    // Followed items' check, of a comment that shows as it is
+    const followedCheck = async view => {
+        await _checkForChanges_thing_byId([ID], 'other', false, null, structuredClone(__getSyncStorage()), 2, {}, [
+            { data: { ...item, ...view } },
+        ])
+        for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 0))
+    }
+
+    it("leaves an account named other's entry to that account", async () => {
+        __resetStorage(__getSyncStorage(), { pending_notifications: { other: pendingFor({ thing: 'other' }) } })
+        await followedCheck({})
+        expect(created).toEqual([])
+        expect(__getLocalStorage().pending_notifications.other.attempts).toBe(1)
+    })
+
+    it("keeps followed items' own entry, apart from an account named other's", async () => {
+        const ids = []
+        chrome.notifications.create = (id, options, cb) => {
+            ids.push(id.split('|')[0])
+            chrome.runtime.lastError = { message: 'no' }
+            try {
+                cb(id)
+            } finally {
+                chrome.runtime.lastError = null
+            }
+        }
+        await followedCheck({ author: '[deleted]', body: '[removed]' })
+        expect(ids).toEqual(['reveddit:followed'])
+        expect(Object.keys(__getLocalStorage().pending_notifications)).toEqual(['reveddit:followed'])
+    })
+
     it('does nothing without an entry', async () => {
         setPending(null)
         await quietCycle()
@@ -205,6 +237,27 @@ describe('the end of a check', () => {
         )
         expect(__getSyncStorage()[keys.approved][ID]).toBeDefined()
         expect(__getLocalStorage()['items_u_' + USER]).toMatchObject({ [ID]: { t: 'my comment' } })
+    })
+})
+
+describe('marking all seen while a check saves', () => {
+    it('keeps the change the check told of, and options saved meanwhile', async () => {
+        seed()
+        const sync = __getSyncStorage()
+        sync[keys.approved] = { [ID]: { c: NOW - 600, u: true } }
+        const get = browserMock.storage.sync.get
+        vi.spyOn(browserMock.storage.sync, 'get').mockImplementationOnce(async wanted => {
+            const read = await get(wanted)
+            Object.assign(sync, {
+                [keys.changes]: [{ i: 't1_gone', g: 1, o: NOW }],
+                options: { ...OPTIONS, seen_count: 3 },
+            })
+            return read
+        })
+        await markEverythingAsSeen()
+        expect(sync[keys.approved][ID].u).toBe(false)
+        expect(sync[keys.changes]).toHaveLength(1)
+        expect(sync.options.seen_count).toBe(3)
     })
 })
 

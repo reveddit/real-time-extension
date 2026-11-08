@@ -65,7 +65,7 @@ import {
 import { flagIfRateLimited, RECENT_RATE_LIMIT_WINDOW_MS, readLocal, isFresh } from './request-gates'
 import { isPublicProfileUnavailable } from './lookup-status'
 import { isCycleInFlight } from './monitoring'
-import { isRemovedInModView, isViewerBlockedItem } from './common'
+import { isPlaceholderText, isRemovedInModView, isViewerBlockedItem } from './common'
 import { dlog } from './diaglog'
 import { getPublicModlogsFeed } from './bridge-config'
 import { fetchLoggedIn, withDeadline } from './logged-in-fetch'
@@ -193,7 +193,6 @@ const getPublicViewContext = async (me: string): Promise<PublicViewContext> => {
     return context
 }
 
-const PLACEHOLDER = /^\[(removed|deleted)\]$/
 const REMOVED_BODY_HTML = '&lt;div class="md"&gt;&lt;p&gt;[removed]&lt;/p&gt;\n&lt;/div&gt;'
 const REMOVED_SELFTEXT_HTML = '&lt;!-- SC_OFF --&gt;' + REMOVED_BODY_HTML + '&lt;!-- SC_ON --&gt;'
 
@@ -204,10 +203,12 @@ const REMOVED_COMMENT_AUTHOR_FIELDS = /^author_(?:fullname|flair_\w+|premium|pat
 // One item rewritten to what logged-out visitors see, in the shape the
 // website reads (its utils.tsx commentIsRemoved and itemIsRemovedOrDeleted).
 // Items their authors deleted already read [deleted] in every view and are
-// left alone.
+// left alone. So are comments reddit removed, which others see as
+// "[ Removed by Reddit ]" with the author kept (archived copies): the website
+// reads that as reddit's removal, not a moderator's.
 const markPubliclyRemoved = (kind: string, item: any) => {
     if (kind === 't1') {
-        if (!PLACEHOLDER.test(item.body ?? '')) {
+        if (!isPlaceholderText(item.body ?? '')) {
             item.body = '[removed]'
             item.author = '[deleted]'
             if ('body_html' in item) {

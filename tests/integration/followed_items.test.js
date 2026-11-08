@@ -11,12 +11,12 @@ import browserMock, {
     __getLocalStorage,
     __getSyncStorage,
 } from '../mocks/webextension-polyfill.js'
-import { json as jsonResponse } from '../mocks/responses.js'
+import { json as jsonResponse, blockPage } from '../mocks/responses.js'
 import { lookupItemsByID } from '../../src/src/requests'
 import { CAPABILITY_REST_KEY } from '../../src/src/news'
 import { isCapabilityResting } from '../../src/src/request-gates'
 import { _followedTiming } from '../../src/src/followed-lookup'
-import { _loggedInFetchState } from '../../src/src/logged-in-fetch'
+import { fetchLoggedIn, _resetLoggedInFetchState } from '../../src/src/logged-in-fetch'
 import { useLegacyStub } from '../mocks/public-profile.js'
 
 useLegacyStub()
@@ -27,7 +27,6 @@ describe('followed items while api/info is refused', () => {
     const NOPOST = 't1_folc3'
     const POSTF = 't3_folp1'
     const json = (status, data, type) => ({ ...jsonResponse(status, data, type), text: async () => JSON.stringify(data) })
-    const blockPage = () => json(403, null, 'text/html; charset=utf-8')
     const thread = (post, comment) => [
         { kind: 'Listing', data: { children: [{ kind: 't3', data: post }] } },
         { kind: 'Listing', data: { children: comment ? [{ kind: 't1', data: comment }] : [] } },
@@ -62,8 +61,7 @@ describe('followed items while api/info is refused', () => {
             { followed_post_ids: { [COMMENT]: 'p1', [COMMENT2]: 'p2' } },
         )
         _followedTiming.delayMs = 0
-        _loggedInFetchState.preferredCacheMode = undefined
-        _loggedInFetchState.doubleBlockUntil = 0
+        _resetLoggedInFetchState()
         loggedIn = true
         browserMock.cookies = { get: async ({ name }) => (loggedIn ? { name, value: 'x' } : null) }
     })
@@ -151,22 +149,29 @@ describe('followed items while api/info is refused', () => {
             calls.push(String(url))
             return blockPage()
         }
-        // api/info's block page in both modes skips the retry for a while: a
-        // block page in one mode stops this cycle's reads but rests nothing
+        // api/info's block page in both modes says nothing about the thread
+        // reads: the first read's two cache modes, then the batch stops
         calls.length = 0
         expect(await lookupFollowed([COMMENT, COMMENT2, POSTF])).toEqual([])
-        expect(calls).toHaveLength(1)
-        expect(await isCapabilityResting('thread_json')).toBe(false)
-
-        _loggedInFetchState.doubleBlockUntil = 0
-        calls.length = 0
-        expect(await lookupFollowed([COMMENT, COMMENT2, POSTF])).toEqual([])
-        // the first read's two cache modes, then the batch stops
         expect(calls).toHaveLength(2)
         expect(await isCapabilityResting('thread_json')).toBe(true)
         calls.length = 0
         expect(await lookupFollowed([COMMENT, COMMENT2, POSTF])).toEqual([])
         expect(calls).toEqual([])
+    })
+
+    it("a block page with the retry skipped stops this cycle's reads but rests nothing", async () => {
+        serve({ apiInfo: blockPage })
+        globalThis.fetch = async url => {
+            calls.push(String(url))
+            return blockPage()
+        }
+        // Another thread read, the website's through the bridge, refused in both modes a moment ago
+        await fetchLoggedIn('https://www.reddit.com/comments/other1.json')
+        calls.length = 0
+        expect(await lookupFollowed([COMMENT, COMMENT2, POSTF])).toEqual([])
+        expect(calls.filter(u => !u.includes('/api/info.json'))).toHaveLength(1)
+        expect(await isCapabilityResting('thread_json')).toBe(false)
     })
 
     it("leaves out a followed comment whose author blocked the user: [unavailable] isn't a removal", async () => {
