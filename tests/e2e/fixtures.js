@@ -26,9 +26,9 @@ export const test = base.extend({
                 '--disable-gpu',
             ],
         })
-        // Nothing reaches reddit: what a test doesn't answer itself gets a 404, from
-        // the extension's pages and its worker alike. Routes added later win.
-        await context.route(/^https:\/\/([\w-]+\.)?reddit\.com\//, r => r.fulfill({ status: 404, body: '' }))
+        // Nothing reaches a live site: what a test doesn't answer itself gets a 404,
+        // from the extension's pages and its worker alike. Routes added later win.
+        await context.route(/^https?:\/\//, r => r.fulfill({ status: 404, body: '' }))
         await use(context)
         await context.close()
     },

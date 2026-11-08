@@ -50,6 +50,7 @@ import {
     emptyPendingPostQueue,
     MAX_PENDING_POST_ATTEMPTS,
     getRateLimitBackoffRemainingMs,
+    getUnseenIDs_thing,
     getBacklogSummaryState,
     markBacklogInitialNotified,
     markBacklogSummarySent,
@@ -360,7 +361,7 @@ export const _pendingPostTiming = { delayMs: PENDING_POST_DELAY_MS }
 // names (popup, context menu) or of an item on the page (its buttons), and a
 // thread page shows only its own comments, so that post is the comment's even
 // when the URL focuses on another comment. Settles once the check has saved.
-export const setCurrentStateForId = (id: string, subscribedFromURL: string, postId?: string) => {
+export const setCurrentStateForId = async (id: string, subscribedFromURL: string, postId?: string) => {
     // A followed comment's post: while api/info rests, the comment is read
     // through its thread, which needs it
     const post = postId || getFullIDsFromURL(subscribedFromURL || '')[0]
@@ -374,6 +375,9 @@ export const setCurrentStateForId = (id: string, subscribedFromURL: string, post
             )
             .catch(() => {})
     }
+    // Not while a second account signs in: the browser's login is its. The
+    // follow is saved, and the cycles check the item once that's over.
+    if (await isViewerConnecting()) return
     let subscribedFrom = SUBSCRIBED_FROM_REDDIT
     if (subscribedFromURL.match(/^https:\/\/www.reveddit.com/)) {
         subscribedFrom = SUBSCRIBED_FROM_REVEDDIT
@@ -415,6 +419,12 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
         dlog('cycle', '[reveddit] checkForChanges: previous cycle still running — skipping this trigger')
         return
     }
+    // Claimed before anything is awaited, so a trigger meanwhile is skipped
+    const startedAt = (cycleStartedAtMs = nowMs)
+    // A cycle that a newer one overlapped doesn't end that one when it ends
+    const endCycle = () => {
+        if (cycleStartedAtMs === startedAt) cycleEndedAtMs = Date.now()
+    }
     // A second account is signing in (viewer.ts): the browser holds its login,
     // not the user's, so nothing runs until that's over. A sign-in left too
     // long, or whose tab is gone, ends here.
@@ -422,6 +432,7 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
         await recoverViewerConnect(whoIsSignedIn)
         if (await isViewerConnecting()) {
             dlog('cycle', '[reveddit] checkForChanges: skipping, a second account is signing in')
+            endCycle()
             return
         }
     }
@@ -434,6 +445,7 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
                 'ratelimit',
                 `checkForChanges: skipping, rate-limit backoff ${Math.ceil(backoffRemainingMs / 1000)}s remaining`,
             )
+            endCycle()
             return
         }
         // Manual "check now" from the options page: run anyway, but say so —
@@ -443,11 +455,6 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
             'ratelimit',
             `checkForChanges: running despite rate-limit backoff (${Math.ceil(backoffRemainingMs / 1000)}s remaining, manual)`,
         )
-    }
-    const startedAt = (cycleStartedAtMs = Date.now())
-    // A cycle that a newer one overlapped doesn't end that one when it ends
-    const endCycle = () => {
-        if (cycleStartedAtMs === startedAt) cycleEndedAtMs = Date.now()
     }
     dlog('cycle', `[reveddit] checkForChanges: cycle start${opts.bypassBackoff ? ' (manual)' : ''}`)
     if (applyJitter) {
@@ -923,8 +930,8 @@ const checkForChanges_thing_byId = async (
                 approved.push(item.name)
             } else if (reading === 'approved') {
                 approved.push(item.name)
-                // A young post without a 'live' page verdict may be held or
-                // spam-filtered while it still shows in the feed
+                // A post still owed a page read (young, or once seen held) may
+                // be held or spam-filtered while it still shows in the feed
                 if (item._public_view && !item._public_view_unverified) {
                     publiclyLive.push(item.name)
                 }
@@ -1035,14 +1042,18 @@ const checkForChanges_thing_byId = async (
             // No new changes this cycle — but retry any pending
             // notification from a prior cycle that may have silently
             // failed to display (e.g. install-time on Firefox Android).
+            const unseen = getUnseenIDs_thing(thing, isUser, storage)
             getPendingNotification(notification)
                 .then(pending => {
                     if (!pending) return
                     // The user turned notifications off after this entry
-                    // was queued — drop it rather than retry a
-                    // notification they opted out of. The badge still
-                    // counts the items.
-                    if (!removal_status.notify && !lock_status.notify) {
+                    // was queued, or has seen its items since (Mark all
+                    // seen, a reveddit page) — drop it rather than retry.
+                    // The badge still counts what's unseen.
+                    if (
+                        (!removal_status.notify && !lock_status.notify) ||
+                        !pending.itemIds?.some(id => unseen.includes(id))
+                    ) {
                         clearPendingNotification(notification).catch(() => {})
                         return
                     }

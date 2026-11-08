@@ -36,6 +36,7 @@ import {
     getCachedNews,
     requestStoreUpdateIfBehind,
     getRemoteLoginCookies,
+    compareVersions,
 } from './src/news'
 import {
     startViewerConnect,
@@ -288,13 +289,6 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             .then(sendResponse)
             .catch(err => sendResponse({ ok: false, status: 0, error: String(err?.message || err) }))
         return true
-    } else if (request.action === 'immediate-user-lookup') {
-        const user = request.user
-        if (user) {
-            triggerImmediateLookupOnce(user)
-        }
-        sendResponse({ response: 'done' })
-        return true
     } else if (request.action === 'get-diag-log') {
         Promise.all([
             getRateLimitBackoffRemainingMs(),
@@ -363,50 +357,43 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         checkForChanges(false, { bypassBackoff: true })
         sendResponse({ started: true })
         return true
-    } else if (request.action === 'get-logged-in-user') {
-        // The welcome page's check, with the worker's request headers. It's
-        // polled, so unlike try-reconnect it doesn't save the cookies each
-        // time. Not while a second account signs in: the browser's login is its.
-        isViewerConnecting()
-            .then(connecting =>
-                connecting
-                    ? { user: null, indeterminate: true, reason: 'a second account is signing in' }
-                    : getLoggedinUserDetailed(),
-            )
-            .then(sendResponse, (e: any) =>
-                sendResponse({ user: null, indeterminate: true, reason: String(e?.message || e) }),
-            )
-        return true
     } else if (request.action === 'try-reconnect') {
-        // Manual reconnect attempt from popup - subscribe user and trigger lookup.
-        // Not while a second account signs in: the browser's login is its.
+        // Not while a second account signs in: the browser's login is its
         isViewerConnecting().then(connecting => {
             if (connecting) {
                 sendResponse({ success: false, indeterminate: true, reason: 'a second account is signing in' })
             } else {
-                tryReconnect(sendResponse)
+                tryReconnect(sendResponse, !!request.quiet)
             }
         })
         return true
     }
 })
 
-// The popup's Connect and Reconnect: subscribe whoever is logged in and look them up
-function tryReconnect(sendResponse: (response: any) => void) {
+// The popup's Connect and Reconnect, and the welcome page's poll: subscribe
+// whoever is logged in and look them up. The poll is quiet, as it can find
+// nobody every few seconds for hours: its lines go to the console only.
+function tryReconnect(sendResponse: (response: any) => void, quiet: boolean) {
+    const log: typeof dlog = quiet ? (_area, message) => console.log(message) : dlog
     storeRedditCookies()
-        .then(() => getLoggedinUserDetailed())
+        .then(() => getLoggedinUserDetailed(log))
         .then(detail => {
             const user = detail.user
             if (user) {
                 chrome.storage.local.set({ last_logged_in_user: user })
-                // Trigger immediate lookup (forced: the user clicked Connect and
-                // expects a check now) and clear the error, whether the user was
-                // just subscribed or already was
+                // A check now, as the user expects one, whether the user was
+                // just subscribed or already was. Only a warning the login
+                // settles goes: needing a second account, say, stays until a
+                // check finds it gone.
                 const done = () => {
-                    triggerImmediateLookupOnce(user, true)
-                    chrome.storage.local.remove('error_status', () => {
-                        updateBadgeUnseenCount()
-                        sendResponse({ success: true, user })
+                    checkForChanges()
+                    chrome.storage.local.get(['error_status'], result => {
+                        const finish = () => {
+                            updateBadgeUnseenCount()
+                            sendResponse({ success: true, user })
+                        }
+                        if (isSettledByLogin(result?.error_status)) chrome.storage.local.remove('error_status', finish)
+                        else finish()
                     })
                 }
                 subscribeUser(user, done, done)
@@ -500,18 +487,20 @@ chrome.runtime.onInstalled.addListener(function (details) {
         fetchNews({ force: true }).catch(() => {})
         applyRemoteConfig().catch(() => {})
         // What 0.0.5.31 and earlier wrote and nothing reads any more: cookie
-        // copies (stored_reddit_cookie_objects holds the snapshot), and an
-        // oldest date for followed items, which have no listing to show one
-        try {
-            browser.storage.local
-                .remove(['stored_reddit_cookies', 'stored_reddit_domain', 'oldest_date_other'])
-                .catch(() => {})
-        } catch {
-            /* ignored */
+        // copies (stored_reddit_cookie_objects holds the snapshot), an oldest
+        // date for followed items, which have no listing to show one, and their
+        // pending notification, kept under the name an account can have. Only
+        // on an update from one of those, as 'other' has been u/other's since.
+        if (details.previousVersion && compareVersions(details.previousVersion, '0.0.5.31') <= 0) {
+            try {
+                browser.storage.local
+                    .remove(['stored_reddit_cookies', 'stored_reddit_domain', 'oldest_date_other'])
+                    .catch(() => {})
+            } catch {
+                /* ignored */
+            }
+            clearPendingNotification('other').catch(() => {})
         }
-        // Followed items' pending notification, which they kept under the name
-        // an account can have
-        clearPendingNotification('other').catch(() => {})
     }
 })
 
@@ -629,9 +618,7 @@ async function subscribeToLoggedInUser_or_promptForUser() {
             // Delay the initial lookup briefly so Android has time to dismiss
             // the "extension was added" system dialog and grant notification
             // permission before the first createNotification call.
-            // force: reinstalls persist user_initial_lookup_done in synced
-            // storage; without forcing, a reinstall would skip the first check.
-            setTimeout(() => triggerImmediateLookupOnce(user, true), 3000)
+            setTimeout(() => checkForChanges(), 3000)
             chrome.tabs.create({ url: chrome.runtime.getURL('src/history.html?welcome=1'), active: true })
         }
         // Also handle the already-subscribed case: user_subscriptions persists
@@ -645,22 +632,6 @@ async function subscribeToLoggedInUser_or_promptForUser() {
         setWarningBadge('needs_user')
         chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome.html'), active: true })
     }
-}
-
-// force bypasses the once-per-user guard (which lives in synced storage and so
-// survives reinstalls) — used when the check is explicitly expected: install
-// and the popup's Connect/Reconnect.
-function triggerImmediateLookupOnce(user: string, force = false) {
-    chrome.storage.sync.get(['user_initial_lookup_done'], result => {
-        const lookupMap = result.user_initial_lookup_done || {}
-        if (force || !lookupMap[user]) {
-            lookupMap[user] = true
-            chrome.storage.sync.set({ user_initial_lookup_done: lookupMap }, () => {
-                // Run a full check which includes logged-in user
-                checkForChanges()
-            })
-        }
-    })
 }
 
 const notificationClicked = (name: string) => {

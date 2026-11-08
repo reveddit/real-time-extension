@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import styled from '@emotion/styled'
 import browser from 'webextension-polyfill'
-import { subscribeUser } from './storage'
-import type { LoginDetectResult } from './reddit-auth'
 import { mountPage } from './ui/global'
 import { BlueLink, Button, Card } from './ui/components'
 import { tokens } from './ui/tokens'
@@ -78,9 +76,11 @@ const Footer = styled.div`
   border-top: 1px solid var(--border);
 `
 
-// The background's login check, which goes out with its request headers
-const askWhoIsLoggedIn = (): Promise<LoginDetectResult> =>
-  browser.runtime.sendMessage({ action: 'get-logged-in-user' })
+// The popup's Connect, which the background runs with its own request headers:
+// it subscribes the user it finds, starts their first check and clears the
+// warning. Quiet, as this polls: a poll that finds nobody stores no log lines.
+const connect = (): Promise<{ user?: string; indeterminate?: boolean; reason?: string }> =>
+  browser.runtime.sendMessage({ action: 'try-reconnect', quiet: true })
 
 function stopPolling(timer: { current: number | null }) {
   if (timer.current !== null) {
@@ -109,7 +109,7 @@ function Welcome() {
       setStatusType('checking')
     }
 
-    askWhoIsLoggedIn()
+    connect()
       .then((result) => {
         const user = result.user
         inFlight.current = false
@@ -119,21 +119,9 @@ function Welcome() {
           setStatusType('success')
           setShowInstructions(false)
           stopPolling(pollTimer)
-
-          const redirect = () => {
-            setTimeout(() => {
-              window.location.href = chrome.runtime.getURL('src/history.html?welcome=1')
-            }, 1000)
-          }
-
-          subscribeUser(user, () => {
-            try {
-              chrome.runtime.sendMessage({ action: 'immediate-user-lookup', user })
-            } catch (e) {
-              console.log('immediate-user-lookup send failed:', e)
-            }
-            redirect()
-          }, redirect)
+          setTimeout(() => {
+            window.location.href = chrome.runtime.getURL('src/history.html?welcome=1')
+          }, 1000)
         } else {
           if (result.indeterminate) {
             // The probe got no clear answer (challenge page, block, 429, no

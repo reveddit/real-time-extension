@@ -62,6 +62,11 @@ describe('a page the content script runs on', () => {
         expect(some.has('extensionSaysNoSubscriptions')).toBe(false)
     })
 
+    it('counts an account named other as someone to follow', async () => {
+        const page = await open(REVEDDIT, { other: true }, { extensionSaysNoSubscriptions: 'true' })
+        expect(page.has('extensionSaysNoSubscriptions')).toBe(false)
+    })
+
     it.each([
         [
             'refuses',

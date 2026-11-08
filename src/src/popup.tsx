@@ -8,6 +8,7 @@ import { DiagStatus, formatDiagStatus } from './diag-status'
 import { tokens } from './ui/tokens'
 import {
   getSubscribedUsers_withSeenAndUnseenIDs,
+  FOLLOWED_NOTIFICATION,
   subscribeId,
   unsubscribeId,
   markEverythingAsSeen,
@@ -257,8 +258,8 @@ function Popup() {
 
     getSubscribedUsers_withSeenAndUnseenIDs(async (users, storage) => {
       setSyncStorage(storage)
-      const other = users['other']
-      delete users['other']
+      const other = users[FOLLOWED_NOTIFICATION]
+      delete users[FOLLOWED_NOTIFICATION]
       setUserData({
         users,
         otherUnseen: other.unseen,

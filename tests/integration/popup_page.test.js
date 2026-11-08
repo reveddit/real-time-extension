@@ -203,6 +203,26 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
     })
 })
 
+describe('an account named other', () => {
+    it('has its own row, apart from followed items', async () => {
+        const { document } = await openPopup({
+            sync: {
+                user_subscriptions: { other: true },
+                other_subscriptions: { t1_followed: { t: 1 }, t1_too: { t: 2 } },
+                removed_u_other: { t1_mine: { u: true }, t1_also: { u: true } },
+                removed_other: { t1_followed: { u: true } },
+            },
+            local: { last_logged_in_user: 'other' },
+        })
+        // Both rows read "other": the account's unseen count, then followed items' of all followed
+        const rows = () =>
+            Array.from(document.querySelectorAll('a'))
+                .filter(a => a.firstElementChild?.textContent === 'other')
+                .map(a => a.children[1].textContent)
+        await vi.waitFor(() => expect(rows()).toEqual(['2', '1 / 2']))
+    })
+})
+
 describe('the test notification', () => {
     it('has the id the background knows only to close (background_clicks.test.js)', async () => {
         const { document } = await openPopup()

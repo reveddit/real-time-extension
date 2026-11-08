@@ -219,25 +219,27 @@ const probeMeJson = (url: string): Promise<MeProbe> =>
         }
     })
 
-const probeMeJsonWithChallengeRetry = async (host: string): Promise<MeProbe> => {
+const probeMeJsonWithChallengeRetry = async (host: string, log = dlog): Promise<MeProbe> => {
     const targetUrl = `https://${host}/api/me.json`
     let probe = await probeMeJson(targetUrl)
     if (probe.state === 'indeterminate' && probe.html && !(await isMeChallengeSolveDisabled())) {
         const solutionUrl = solveChallenge(probe.html, targetUrl)
         if (solutionUrl) {
-            dlog('auth', `[reveddit] me.json challenge detected on ${host} — retrying with solution`)
+            log('auth', `[reveddit] me.json challenge detected on ${host} — retrying with solution`)
             probe = await probeMeJson(solutionUrl)
         }
     }
     if (probe.state === 'indeterminate') {
         // Keep the historical line shape: a challenge/HTML response is otherwise
         // indistinguishable from "not logged in" when debugging connect issues.
-        dlog('auth', `getLoggedinUser direct fetch failed (${targetUrl}): ${probe.reason}`)
+        log('auth', `getLoggedinUser direct fetch failed (${targetUrl}): ${probe.reason}`)
     }
     return probe
 }
 
-export const getLoggedinUserDetailed = async (): Promise<LoginDetectResult> => {
+// Its lines go to log, so the welcome page's poll can keep its misses out of the
+// stored log (background.ts)
+export const getLoggedinUserDetailed = async (log = dlog): Promise<LoginDetectResult> => {
     // Reddit answers a browser with no login with a refusal, not a clean
     // "nobody", so with none there's nothing to ask it. A login the browser
     // lost is put back first.
@@ -265,7 +267,7 @@ export const getLoggedinUserDetailed = async (): Promise<LoginDetectResult> => {
 
     const primaryHost = await pickHost()
 
-    let probe = await probeMeJsonWithChallengeRetry(primaryHost)
+    let probe = await probeMeJsonWithChallengeRetry(primaryHost, log)
     if (probe.state === 'user') {
         return { user: probe.user, indeterminate: false }
     }
@@ -276,7 +278,7 @@ export const getLoggedinUserDetailed = async (): Promise<LoginDetectResult> => {
         // Challenge/throttle flags are often per-host — a definite answer from
         // the other host is just as authoritative.
         const fallbackHost = primaryHost === 'www.reddit.com' ? 'old.reddit.com' : 'www.reddit.com'
-        probe = await probeMeJsonWithChallengeRetry(fallbackHost)
+        probe = await probeMeJsonWithChallengeRetry(fallbackHost, log)
         if (probe.state === 'user') {
             return { user: probe.user, indeterminate: false }
         }
@@ -289,12 +291,12 @@ export const getLoggedinUserDetailed = async (): Promise<LoginDetectResult> => {
     if (!sawLoggedOut) {
         const rehydrated = await rehydrateStoredRedditCookies()
         if (rehydrated) {
-            probe = await probeMeJsonWithChallengeRetry(primaryHost)
+            probe = await probeMeJsonWithChallengeRetry(primaryHost, log)
             if (probe.state === 'user') {
                 return { user: probe.user, indeterminate: false }
             }
             if (probe.state === 'indeterminate') {
-                dlog('auth', 'Failed to authenticate with stored cookies')
+                log('auth', 'Failed to authenticate with stored cookies')
                 lastReason = probe.reason
             }
             sawLoggedOut = sawLoggedOut || probe.state === 'loggedOut'

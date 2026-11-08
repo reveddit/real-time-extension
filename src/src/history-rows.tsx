@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { getItemFromLocalStorage } from './storage'
+import { getItemFromLocalStorage, FOLLOWED_NOTIFICATION } from './storage'
 import { ChangeForStorage, LocalStorageItem, getPrettyDate, getPrettyTimeLength, isComment } from './common'
 import {
   Card,
@@ -137,9 +137,11 @@ export function toRow(
   const action = change.getChangeType() || ''
   const seenCount = change.getSeenCount()
   const user = change.user || ''
-  const isUser = user !== 'other'
+  const isUser = user !== FOLLOWED_NOTIFICATION
+  // Followed items are stored, and shown, as "other"
+  const thing = isUser ? user : 'other'
 
-  const item = getItemFromLocalStorage(user, isUser, id!, localStorage)
+  const item = getItemFromLocalStorage(thing, isUser, id!, localStorage)
   const contentType: 'comment' | 'post' = isComment(id!) ? 'comment' : 'post'
   let text = ''
   let body = ''
@@ -186,7 +188,7 @@ export function toRow(
     timeLength,
     formattedCreated,
     contentType,
-    user,
+    user: thing,
     subreddit,
     text,
     body,

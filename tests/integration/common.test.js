@@ -16,6 +16,7 @@ import {
     isRemovedComment,
     isRemovedPost,
     isRemovedByCategory,
+    isPlaceholderText,
     isUserDeletedComment,
     isUserDeletedPost,
     isComment,
@@ -174,6 +175,27 @@ describe('removal detection', () => {
     it('does not flag removed-by-mod post as user-deleted', () => {
         expect(isUserDeletedPost({ is_robot_indexable: false, author: 'realuser' })).toBe(false)
     })
+})
+
+describe('isPlaceholderText', () => {
+    it.each([
+        '[removed]',
+        '[deleted]',
+        '[ Removed by Reddit ]',
+        '[ Removed by Reddit on account of violating the [content policy](/help/contentpolicy). ]',
+        '[ Removed by Reddit in response to a copyright notice. ]',
+        // A feed gives a link's text, not the link
+        '[ Removed by Reddit on account of violating the content policy. ]',
+    ])("reads %s as reddit's text in place of the item's", text => {
+        expect(isPlaceholderText(text)).toBe(true)
+    })
+
+    it.each(['[Removed by Reddit] why? [Help]', '[removed by reddit admins] sad [vent]'])(
+        "reads %s as a person's own text, which goes on past the bracket",
+        text => {
+            expect(isPlaceholderText(text)).toBe(false)
+        },
+    )
 })
 
 // A moderator's logged-in view of a removal in their subreddit keeps the text
@@ -420,8 +442,8 @@ describe('updateBadgeUnseenCount', () => {
         updateBadgeUnseenCount()
         expect(send).toHaveBeenCalledWith({ action: 'update-badge' })
     })
-    it('totals unseen items across an account and followed items', async () => {
-        const USER = 'someuser'
+    // Followed items' lists are named "other" too
+    it.each(['someuser', 'other'])('totals unseen items across an account named %s and followed items', async USER => {
         const keys = getObjectNamesForThing(USER, true)
         const other = getObjectNamesForThing('other', false)
         __resetStorage({

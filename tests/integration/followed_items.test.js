@@ -5,7 +5,7 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, {
     __resetStorage,
     __getLocalStorage,
@@ -15,8 +15,10 @@ import { json as jsonResponse, blockPage } from '../mocks/responses.js'
 import { lookupItemsByID } from '../../src/src/requests'
 import { CAPABILITY_REST_KEY } from '../../src/src/news'
 import { isCapabilityResting } from '../../src/src/request-gates'
-import { _followedTiming } from '../../src/src/followed-lookup'
+import { _followedTiming, FOLLOWED_POST_IDS_KEY } from '../../src/src/followed-lookup'
 import { fetchLoggedIn, _resetLoggedInFetchState } from '../../src/src/logged-in-fetch'
+import { setCurrentStateForId } from '../../src/src/monitoring'
+import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
 import { useLegacyStub } from '../mocks/public-profile.js'
 
 useLegacyStub()
@@ -197,5 +199,30 @@ describe('followed items while api/info is refused', () => {
         expect(results.map(r => r.data.name)).toEqual([COMMENT])
         expect(await isCapabilityResting('api_info')).toBe(false)
         expect(__getLocalStorage()[CAPABILITY_REST_KEY].api_info).toBeUndefined()
+    })
+})
+
+// The browser's login is the second account's then. A reddit page's follow
+// sends its check to the background, which answers with nothing.
+describe('a follow while a second account signs in', () => {
+    it('reads nothing, from the popup too, and keeps only the comment’s post', async () => {
+        // The popup is a page, so it runs the check itself
+        vi.stubGlobal('window', {})
+        const sync = {
+            options: { removal_status: { track: true }, lock_status: { track: true } },
+            user_subscriptions: {},
+            other_subscriptions: { t1_signin: { t: 1 } },
+        }
+        const local = { [VIEWER_CONNECT_KEY]: { started: Date.now(), main: [] } }
+        __resetStorage(sync, local)
+        const fetch = vi.fn(async () => jsonResponse(200, { data: { children: [] } }))
+        vi.stubGlobal('fetch', fetch)
+        await setCurrentStateForId('t1_signin', 'https://www.reddit.com/r/x/comments/abc/_/signin/')
+        // Its thread is how it's read while api/info rests
+        await vi.waitFor(() =>
+            expect(__getLocalStorage()).toEqual({ ...local, [FOLLOWED_POST_IDS_KEY]: { t1_signin: 'abc' } }),
+        )
+        expect(fetch).not.toHaveBeenCalled()
+        expect(__getSyncStorage()).toEqual(sync)
     })
 })

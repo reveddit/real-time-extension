@@ -478,14 +478,16 @@ export const installViewerHeaderRule = async () => {
 }
 
 // A GET as the second account: its marker on the URL, the browser's own
-// cookies left off. Like the user's own logged-in reads (logged-in-fetch.ts),
-// after the edge's block page it tries once more with the other cache mode and
-// keeps the mode that got past the edge. blocked means both modes got the
-// block page, or one did while that kind of request was refused in both a few
-// minutes ago: the retry is skipped for a while then. That memory is per
-// account and kind of request (me.json, each listing, thread reads), so one
-// refused kind doesn't keep another from finding the mode that works. The
-// lookup rests a second account refused outright (restViewer in viewer-lookup.ts).
+// cookies left off. After the edge's block page it tries once more with the
+// other cache mode and keeps the mode that got past the edge. blocked means
+// both modes got the block page, or one did while that kind of request, with a
+// mode of its own, was refused in both a few minutes ago: the retry is skipped
+// for a while then. A kind with no mode of its own keeps looking, unlike the
+// user's reads (logged-in-fetch.ts), as this account's me.json is cached 30
+// minutes and refused listings rest the account. That memory is per account
+// and kind of request (me.json, each listing, thread reads), so one refused
+// kind doesn't keep another from finding the mode that works. The lookup rests
+// a second account refused outright (restViewer in viewer-lookup.ts).
 interface ViewerJson {
     ok: boolean
     status: number

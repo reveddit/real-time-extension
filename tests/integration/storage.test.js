@@ -24,6 +24,8 @@ import {
     markThingAsSeen,
     getIDs_thing,
     getUnseenIDs_thing,
+    getAllChanges,
+    FOLLOWED_NOTIFICATION,
     getOptions,
     getScanSettings,
     saveOptions,
@@ -74,7 +76,6 @@ function makeStorageInit(overrides = {}) {
     return {
         user_subscriptions: {},
         user_unsubscriptions: {},
-        user_initial_lookup_done: {},
         other_subscriptions: {},
         options: {
             interval: INTERVAL_DEFAULT,
@@ -309,6 +310,22 @@ describe('getIDs_thing / getUnseenIDs_thing', () => {
         storage.options.lock_status = { track: false }
         const result = getIDs_thing('x', true, storage)
         expect(result.unseen).toEqual(['t1_a'])
+    })
+})
+
+describe('getAllChanges', () => {
+    it('keeps an account named other apart from followed items', async () => {
+        const mine = { i: 't1_mine', o: 1, g: REMOVED, n: 0 }
+        const followed = { i: 't1_followed', o: 2, g: REMOVED, n: 0 }
+        __resetStorage(
+            makeStorageInit({
+                user_subscriptions: { other: true },
+                changes_u_other: [mine],
+                changes_other: [followed],
+            }),
+        )
+        const changes = await new Promise(resolve => getAllChanges(resolve))
+        expect(changes).toEqual({ other: [mine], [FOLLOWED_NOTIFICATION]: [followed] })
     })
 })
 

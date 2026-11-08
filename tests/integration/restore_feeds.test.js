@@ -560,6 +560,11 @@ describe("a comment's own feed", () => {
         expect((await lookup()).info.removed).toBe(false)
     })
 
+    it("reads reddit's own text under a [deleted] author as removed, as its words aren't there", async () => {
+        pages[commentPath('t1_x')] = feed(postEntry(), entry('t1_x', null, '[ Removed by Reddit ]'))
+        expect((await lookup()).info.removed).toBe(true)
+    })
+
     it('says nothing about a comment from an answer about something else', async () => {
         for (const wrong of [
             feed(postEntry('t3_other'), entry('t1_elsewhere', 'alice', 'x', 'other')),
@@ -1122,6 +1127,17 @@ describe('the profile scan', () => {
         const { results } = await scanProfile()
         expect(results.map(r => r.after)).toEqual(['t1_live', undefined])
     })
+
+    it.each(['[Removed by Reddit] why? [Help]', '[Removed by Reddit]'])(
+        'shows a removed link post titled %s: reddit never puts its own text in a title',
+        async title => {
+            pages[`/user/someone/submitted/.rss?${query}`] = feed(
+                postEntry('t3_gone', 'someone', '').replace(/<title>.*<\/title>/, `<title>${title}</title>`),
+            )
+            const { results } = await scanProfile()
+            expect(results.find(r => r.id === 't3_gone')).toMatchObject({ title, body: '' })
+        },
+    )
 
     it("says so when a comment feed stops it, and doesn't call the rest clear", async () => {
         pages[commentPath('t1_gone')] = { ok: false, status: 429 }

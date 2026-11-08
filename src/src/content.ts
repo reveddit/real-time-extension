@@ -1,4 +1,4 @@
-import { getSubscribedUsers_withSeenAndUnseenIDs } from './storage'
+import { getSubscribedUsers_withSeenAndUnseenIDs, FOLLOWED_NOTIFICATION } from './storage'
 import { redditModifications } from './content-reddit'
 import { OWN_LISTING_QUERY } from './common'
 import { revdditModifications } from './content-revddit'
@@ -200,7 +200,7 @@ import browser from 'webextension-polyfill'
         }
         getSubscribedUsers_withSeenAndUnseenIDs((users, storage) => {
             const subscribed_users_lowercase = Object.keys(users)
-                .filter(x => x !== 'other')
+                .filter(x => x !== FOLLOWED_NOTIFICATION)
                 .map(x => x.toLowerCase())
             if (isReddit) {
                 redditModifications(
@@ -211,11 +211,11 @@ import browser from 'webextension-polyfill'
                 )
             } else {
                 // For the website only, like the stamps above
-                withSiteStorage(storage => {
+                withSiteStorage(site => {
                     if (subscribed_users_lowercase.length === 0) {
-                        storage.setItem(extensionSaysNoSubscriptions, 'true')
+                        site.setItem(extensionSaysNoSubscriptions, 'true')
                     } else {
-                        storage.removeItem(extensionSaysNoSubscriptions)
+                        site.removeItem(extensionSaysNoSubscriptions)
                     }
                 })
                 revdditModifications(storage, user, isUserPage, isInfoPage)

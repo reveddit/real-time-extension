@@ -139,7 +139,8 @@ export async function scanUserProfile(
         if (!removed) return
 
         const cachedHasContent = cached.body && !isPlaceholderText(cached.body)
-        const cachedHasTitle = cached.title && !isPlaceholderText(cached.title)
+        // Exact: reddit never puts its own text in a title
+        const cachedHasTitle = cached.title && cached.title !== '[removed]' && cached.title !== '[deleted]'
         if (!cachedHasContent && !cachedHasTitle) return
 
         results.push({

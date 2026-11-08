@@ -9,11 +9,12 @@ import browserMock, { makeStorageArea } from '../mocks/webextension-polyfill.js'
 import {
     fetchJsonLoggedIn,
     fetchLoggedIn,
+    LOGGED_IN_CACHE_MODES,
     UNCACHED_MODES,
     WWW_FETCH_TIMEOUT_MS,
     _resetLoggedInFetchState,
 } from '../../src/src/logged-in-fetch'
-import { untilAborted, refusing } from '../mocks/responses.js'
+import { untilAborted, refusing, blockPage, json } from '../mocks/responses.js'
 
 const FAILED = { ok: false, status: 0, blocked: false, refused: false }
 const url = 'https://www.reddit.com/api/info.json?id=t1_c1'
@@ -21,6 +22,8 @@ const thread = 'https://www.reddit.com/comments/p1.json'
 const answer = json => ({ ok: true, status: 200, headers: new Headers(), json })
 // A fetch that answers each address its own way
 const answering = byUrl => vi.fn(async (to, init) => byUrl[to](to, init))
+// The edge letting one cache mode through
+const passingOnly = mode => async (_, init) => (init.cache === mode ? json(200, {}) : blockPage())
 const modesSent = () => fetch.mock.calls.map(([, init]) => init.cache)
 
 beforeEach(() => {
@@ -100,6 +103,40 @@ describe('both modes refused', () => {
         expect(await fetchJsonLoggedIn(thread)).toMatchObject({ ok: true })
         expect(modesSent()).toEqual(['no-store', 'no-cache', 'no-store', 'default', 'no-cache'])
     })
+
+    it('takes the retry again once that kind of request gets through', async () => {
+        vi.stubGlobal('fetch', vi.fn(refusing()))
+        await fetchLoggedIn(url)
+        fetch.mockImplementation(async () => json(200, {}))
+        await fetchLoggedIn(url)
+        fetch.mockImplementation(refusing('default'))
+        expect(await fetchLoggedIn(url)).toMatchObject({ blockPage: false, retried: true })
+        expect(modesSent()).toEqual(['default', 'no-cache', 'default', 'default', 'no-cache'])
+    })
+
+    // The user's listing and the bridge's profile reads are one kind of request
+    const listing = ['https://www.reddit.com/user/me.json?limit=100', UNCACHED_MODES]
+    const profile = ['https://www.reddit.com/user/bob.json', LOGGED_IN_CACHE_MODES]
+    it.each([
+        ["the user's listing", "the bridge's profile read", listing, profile],
+        ["the bridge's profile read", "the user's listing", profile, listing],
+    ])('in %s still lets %s try its other mode', async (_, __, [refusedUrl, refusedModes], [otherUrl, otherModes]) => {
+        // Both lists have no-cache, which this learns
+        vi.stubGlobal('fetch', vi.fn(refusing(refusedModes[0])))
+        await fetchLoggedIn(refusedUrl, { modes: refusedModes })
+        // Then only the mode the other list alone has gets through
+        fetch.mockImplementation(passingOnly(otherModes[0]))
+        expect(await fetchLoggedIn(refusedUrl, { modes: refusedModes })).toMatchObject({ retried: true })
+        expect(await fetchLoggedIn(otherUrl, { modes: otherModes })).toMatchObject({ blockPage: false })
+        expect(modesSent()).toEqual([
+            refusedModes[0],
+            'no-cache',
+            'no-cache',
+            refusedModes[0],
+            'no-cache',
+            otherModes[0],
+        ])
+    })
 })
 
 // The tests above have no session storage, as on Chrome 101 and Firefox's background page
@@ -135,6 +172,17 @@ describe('a worker that stops and starts again, where the browser has session st
         const after = await restarted()
         expect(await after.fetchJsonLoggedIn(url)).toMatchObject({ blocked: true, refused: false })
         expect(fetch).toHaveBeenCalledTimes(3)
+    })
+
+    it('takes the retry again once that kind got through before it stopped', async () => {
+        vi.stubGlobal('fetch', vi.fn(refusing()))
+        await fetchJsonLoggedIn(url)
+        fetch.mockImplementation(async () => json(200, {}))
+        await fetchJsonLoggedIn(url)
+        fetch.mockImplementation(refusing('default'))
+        const after = await restarted()
+        expect(await after.fetchJsonLoggedIn(url)).toMatchObject({ ok: true })
+        expect(modesSent()).toEqual(['default', 'no-cache', 'default', 'default', 'no-cache'])
     })
 
     it('takes the retry again once the clock is put back, though both modes were refused just before', async () => {

@@ -207,7 +207,6 @@ const nearlyFullStore = () => {
         options: OPTIONS,
         user_subscriptions: Object.fromEntries([USER, ...ALTS].map(user => [user, true])),
         user_unsubscriptions: {},
-        user_initial_lookup_done: {},
         other_subscriptions: {},
         last_check: NOW,
         [otherKeys.removed]: {},

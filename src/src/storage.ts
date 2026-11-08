@@ -179,7 +179,8 @@ export const getOldestDateKey = (thing: string, isUser: boolean): string => getO
 // it's human after a lot of automated activity, as it did a test account in 2026-11.
 // So scans start gentle, and people can speed them up in options at their own risk.
 export const SCAN_READS_DEFAULT = 20
-// The reads that open a profile scan can take 6 of these (profile-scan.ts)
+// The fewest the options take. A scan doesn't need this many: what a click reads
+// carries over to the next (scan-reads.ts), and the website's floor is 2 (news.ts)
 export const SCAN_READS_MIN = 10
 export const SCAN_READS_MAX = 100
 export const SCAN_SECONDS_DEFAULT = 3
@@ -219,7 +220,6 @@ const getStorageInit = () => {
     const result = {
         user_subscriptions: {},
         user_unsubscriptions: {}, // tracks if username has ever been manually unsubscribed, so it doesn't auto-subscribe again
-        user_initial_lookup_done: {}, // tracks whether we've ever looked up a user's content
         other_subscriptions: {},
         options: {
             interval: INTERVAL_DEFAULT,
@@ -266,8 +266,9 @@ const updateLocal = <T>(key: string, empty: T, update: (value: T) => T | void): 
         return browser.storage.local.set({ [key]: update(value) ?? value }) as unknown as void
     })
 
-// Followed items' notification and its pending entry. An account's are named
-// for it, and an account can be named "other".
+// Followed items' notification and its pending entry, and their entry beside the
+// accounts' in the popup's, the badge's and history's lists. An account's are
+// named for it, and an account can be named "other".
 export const FOLLOWED_NOTIFICATION = 'reveddit:followed'
 export const notificationName = (thing: string, isUser: boolean) => (isUser ? thing : FOLLOWED_NOTIFICATION)
 
@@ -501,7 +502,7 @@ export const getSubscribedUsers_withSeenAndUnseenIDs = (
         }
         const users_withIDs: Record<string, any> = {}
         subscribedThings(storage.user_subscriptions).forEach(({ thing, isUser }) => {
-            users_withIDs[thing] = getIDs_thing(thing, isUser, storage)
+            users_withIDs[notificationName(thing, isUser)] = getIDs_thing(thing, isUser, storage)
         })
         callback(users_withIDs, storage)
     })
@@ -511,7 +512,7 @@ const getSubscribedUsers_withUnseenIDs = (callback: (users_withIDs: Record<strin
     chrome.storage.sync.get(undefined as any, storage => {
         const users_withIDs: Record<string, any> = {}
         subscribedThings(storage.user_subscriptions).forEach(({ thing, isUser }) => {
-            users_withIDs[thing] = getUnseenIDs_thing(thing, isUser, storage)
+            users_withIDs[notificationName(thing, isUser)] = getUnseenIDs_thing(thing, isUser, storage)
         })
         callback(users_withIDs)
     })
@@ -592,7 +593,7 @@ export const getAllChanges = (callback: (changesByUser: Record<string, any[]>) =
     chrome.storage.sync.get('user_subscriptions', result => {
         const otherKey = getObjectName('changes', 'other', false)
         const keys = [otherKey]
-        const keyToUser_lookup: Record<string, string> = { [otherKey]: 'other' }
+        const keyToUser_lookup: Record<string, string> = { [otherKey]: FOLLOWED_NOTIFICATION }
 
         Object.keys(result.user_subscriptions).forEach(user => {
             const key = getObjectName('changes', user, true)

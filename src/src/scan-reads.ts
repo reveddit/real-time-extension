@@ -1,3 +1,4 @@
+import { isPlaceholderText } from './common'
 import { isRateLimitError } from './parse_html/common'
 import { getRateLimitBackoffRemainingMs, getScanSettings } from './storage'
 import browser from 'webextension-polyfill'
@@ -200,6 +201,7 @@ export class ScanReads {
     private failedInARow = 0
     // Tried on two clicks, with no answer, among those this click came to
     private givenUp = new Set<string>()
+    // Per click: while every style is refused, the second try costs each click one paced request from its budget
     private refusedInBothModes = false
     private limiter: RateLimiter
     private pageReads: Map<string, any[]>
@@ -401,8 +403,7 @@ export async function lookupCommentsByIds(
             created_utc: d?.created_utc || 0,
             permalink: d?.permalink || '',
             subreddit: d?.subreddit || '',
-            // Not isPlaceholderText: it needs the author, and [deleted] counts, as feeds show removals that way
-            removed: !d || (d.author === '[deleted]' && (d.body === '[removed]' || d.body === '[deleted]')),
+            removed: !d || (d.author === '[deleted]' && isPlaceholderText(d.body)),
         })
     }
     return looked

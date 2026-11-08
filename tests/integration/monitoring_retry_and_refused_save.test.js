@@ -25,6 +25,8 @@ const USER = 'someuser'
 const keys = getObjectNamesForThing(USER, true)
 const ID = 't1_livecomm'
 const NOW = Math.floor(Date.now() / 1000)
+const SEEN = { c: NOW - 600, u: false }
+const UNSEEN = { c: NOW - 600, u: true }
 const item = {
     name: ID,
     author: USER,
@@ -74,12 +76,20 @@ const setPending = pending =>
     __resetStorage(__getSyncStorage(), pending ? { pending_notifications: { [USER]: pending } } : {})
 const pendingNow = () => (__getLocalStorage().pending_notifications || {})[USER]
 const log = () => __getLocalStorage().notification_log || []
+// The entry's items as the check that told of them left them: unseen
+const seedWithPendingItems = options => {
+    seed(options)
+    Object.assign(__getSyncStorage(), {
+        [keys.removed]: { t1_a: { ...UNSEEN } },
+        [keys.locked]: { t1_b: { ...UNSEEN } },
+    })
+}
 
 describe('retry of a pending notification', () => {
     let created
     let realCreate
     beforeEach(() => {
-        seed()
+        seedWithPendingItems()
         created = []
         realCreate = chrome.notifications.create
         chrome.notifications.create = (id, options, cb) => {
@@ -140,7 +150,7 @@ describe('retry of a pending notification', () => {
     })
 
     it('drops the entry without a notification once both kinds are turned off', async () => {
-        seed({
+        seedWithPendingItems({
             ...OPTIONS,
             removal_status: { track: true, notify: false },
             lock_status: { track: true, notify: false },
@@ -150,6 +160,31 @@ describe('retry of a pending notification', () => {
         expect(created).toEqual([])
         expect(log()).toEqual([])
         expect(pendingNow()).toBeUndefined()
+    })
+
+    it.each([
+        ['Mark all seen', () => markEverythingAsSeen()],
+        [
+            'a reveddit page showing them',
+            () =>
+                new Promise(resolve =>
+                    markIDsAsSeenIfSubscribed(USER, true, { t1_a: NOW - 600 }, {}, { t1_b: NOW - 600 }, {}, resolve),
+                ),
+        ],
+    ])('drops the entry without a notification once %s marked its items seen', async (_, markSeen) => {
+        setPending(pendingFor())
+        await markSeen()
+        await quietCycle()
+        expect(created).toEqual([])
+        expect(log()).toEqual([])
+        expect(pendingNow()).toBeUndefined()
+    })
+
+    it('still shows it while one of its items is unseen', async () => {
+        __getSyncStorage()[keys.removed].t1_a = { ...SEEN }
+        setPending(pendingFor())
+        await quietCycle()
+        expect(created).toEqual(['2 new [mod removed, locked] actions, click to view'])
     })
 
     // Followed items' check, of a comment that shows as it is
@@ -264,8 +299,6 @@ describe('marking all seen while a check saves', () => {
 describe('a save after storage changed during the lookup', () => {
     const other = getObjectNamesForThing('other', false)
     const followed = { ...item, name: 't1_followed', author: 'someone' }
-    const SEEN = { c: NOW - 600, u: false }
-    const UNSEEN = { c: NOW - 600, u: true }
 
     // A check whose storage was read before the change, as every check's is
     const checkFrom = (copy, thing, isUser, view, itemLookup = {}) =>

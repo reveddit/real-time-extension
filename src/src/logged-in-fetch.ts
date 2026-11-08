@@ -7,9 +7,9 @@
 // page and accepts others, and it reversed which on 2026-10-21 (www-routes.ts).
 // A block page, unlike a resource's own JSON 403, gets one retry in the other
 // cache mode, and the mode that answers is kept. After both modes got the block
-// page, the retry is skipped for a while, so a blocked client doesn't send every
-// request twice. Both are kept per kind of request, as reddit has refused one
-// kind (api/info) while the rest answered.
+// page, the retry is skipped for a while, or until that kind gets through, so a
+// blocked client doesn't send every request twice. Both are kept per kind of
+// request, as reddit has refused one kind (api/info) while the rest answered.
 //
 // It imports none of the extension's own modules: bridge.ts, requests.ts,
 // www-fetcher.ts, followed-lookup.ts, reddit-auth.ts, viewer.ts, request-gates.ts
@@ -37,10 +37,11 @@ export const requestKind = (url: string): string =>
         .replace(/\/comments\/[^.]+/, '/comments/_')
 
 // Per kind of request: the mode that last got past the edge after a block page,
-// by name, and when both modes last got the block page (a time it happened, so a
-// clock put right can't stretch it). A kind with no mode of its own starts in the
-// latest one learned, where its list has it, since reddit has refused a request
-// style across every kind at once. Mutable for tests, like _wwwRouteTiming.
+// by name, and when both modes of a list last got the block page (a time it
+// happened, so a clock put right can't stretch it). A kind with no mode of its
+// own starts in the latest one learned, where its list has it, since reddit has
+// refused a request style across every kind at once. Mutable for tests, like
+// _wwwRouteTiming.
 interface FetchState {
     preferredCacheMode: Record<string, RequestCache>
     latestMode?: RequestCache
@@ -49,12 +50,16 @@ interface FetchState {
 const freshState = (): FetchState => ({ preferredCacheMode: {}, latestMode: undefined, doubleBlockAt: {} })
 export const _loggedInFetchState = freshState()
 export const _resetLoggedInFetchState = () => Object.assign(_loggedInFetchState, freshState())
+// A double block is kept per list of modes too: the user's listing and the
+// bridge's profile reads are one kind with different lists, and Firefox's
+// no-store isn't its default on the wire (reddit.md)
+const doubleBlockKey = (kind: string, modes: RequestCache[]) => `${kind} ${modes.join(',')}`
 
 // Session storage, which outlives Chrome's worker. Only the worker, the one
-// context with no window, uses it: a page's reads would go out with the page's
-// own headers, so what they learned mustn't reach the worker's (the welcome page
-// asks the worker instead), and Firefox's background page keeps its memory.
-// Chrome 101 has none.
+// context with no window, uses it. A page's reads go out with the page's own
+// headers, so what they learn mustn't reach the worker's: the popup's follow
+// switch still reads from the popup. Firefox's background page keeps its
+// memory. Chrome 101 has none.
 export const workerSession = () => (typeof window === 'undefined' ? browser.storage.session : undefined)
 // The state is kept there, so the worker, which stops between requests, doesn't
 // spend a refused request learning a mode again. It's read once, before the
@@ -73,9 +78,9 @@ const keepState = () =>
         ?.set({ [STATE_KEY]: _loggedInFetchState })
         .catch(() => {})
 // Past the edge after a block page, whatever the resource said: keep this mode
-const learn = (kind: string, mode: RequestCache) => {
+const learn = (kind: string, modes: RequestCache[], mode: RequestCache) => {
     _loggedInFetchState.preferredCacheMode[kind] = _loggedInFetchState.latestMode = mode
-    delete _loggedInFetchState.doubleBlockAt[kind]
+    delete _loggedInFetchState.doubleBlockAt[doubleBlockKey(kind, modes)]
     keepState()
 }
 const firstMode = (kind: string, modes: RequestCache[]): RequestCache =>
@@ -113,12 +118,22 @@ export const fetchLoggedIn = async (
 ): Promise<{ response: Response; blockPage: boolean; retried: boolean }> => {
     const modes = opts.modes ?? LOGGED_IN_CACHE_MODES
     const kind = requestKind(url)
+    const doubleBlock = doubleBlockKey(kind, modes)
     await loadState()
     const first = firstMode(kind, modes)
     let response = await fetchInMode(url, first, opts.signal)
     let blockPage = isBlockPage(response)
     let retried = false
-    const doubleBlocked = isFresh(_loggedInFetchState.doubleBlockAt[kind], DOUBLE_BLOCK_MEMORY_MS, Date.now())
+    // Any answer but the block page got through, unlike in viewer.ts: no body is
+    // read here, and a me.json challenge is a way in (reddit-auth.ts solves it)
+    if (!blockPage && doubleBlock in _loggedInFetchState.doubleBlockAt) {
+        delete _loggedInFetchState.doubleBlockAt[doubleBlock]
+        keepState()
+    }
+    // Skipped for a kind with no mode of its own too, unlike in viewer.ts: its
+    // retry would double the refused me.json reads the login check makes every
+    // cycle (issue #28)
+    const doubleBlocked = isFresh(_loggedInFetchState.doubleBlockAt[doubleBlock], DOUBLE_BLOCK_MEMORY_MS, Date.now())
     if (blockPage && !doubleBlocked && (opts.canRetry?.() ?? true)) {
         const other = otherOf(modes, first)
         opts.onRetry?.()
@@ -126,10 +141,10 @@ export const fetchLoggedIn = async (
         response = await fetchInMode(url, other, opts.signal)
         blockPage = isBlockPage(response)
         if (!blockPage) {
-            learn(kind, other)
+            learn(kind, modes, other)
             opts.onSwitched?.(first, other, response.status)
         } else {
-            _loggedInFetchState.doubleBlockAt[kind] = Date.now()
+            _loggedInFetchState.doubleBlockAt[doubleBlock] = Date.now()
             keepState()
         }
     }
@@ -147,7 +162,7 @@ export const fetchForScan = async (url: string, signal: AbortSignal, secondTryMo
     const mode = secondTryMode ?? firstMode(kind, UNCACHED_MODES)
     const response = await fetchInMode(url, mode, signal)
     const blockPage = isBlockPage(response)
-    if (secondTryMode && !blockPage) learn(kind, mode)
+    if (secondTryMode && !blockPage) learn(kind, UNCACHED_MODES, mode)
     return { response, blockPage, otherMode: blockPage && !secondTryMode ? otherOf(UNCACHED_MODES, mode) : undefined }
 }
 
