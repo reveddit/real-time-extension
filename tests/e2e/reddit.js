@@ -18,11 +18,11 @@ export const test = base.extend({
             ),
         )
     },
-    // A login, and reddit's answers in the background, which sends everything else away
+    // A login, and reddit's answers in the background, which sends everything else away.
+    // The answers go in first: the login starts a check, which mustn't reach reddit
+    // and learn its refusals.
     answerAs: async ({ context, worker, setOptions }, use) => {
         await use(async answers => {
-            await context.addCookies([{ name: 'reddit_session', value: 'x', domain: '.reddit.com', path: '/' }])
-            await setOptions({ scan_seconds_between_reads: 1, scan_reads_per_click: 50 })
             await worker.evaluate(answers => {
                 self.asked = []
                 self.feedsAt = []
@@ -34,6 +34,8 @@ export const test = base.extend({
                     return new Response(answer ?? '', { status: answer === undefined ? 404 : 200 })
                 }
             }, answers)
+            await context.addCookies([{ name: 'reddit_session', value: 'x', domain: '.reddit.com', path: '/' }])
+            await setOptions({ scan_seconds_between_reads: 1, scan_reads_per_click: 50 })
         })
     },
     // What scans sent, not the login checks monitoring sends alongside them

@@ -1,24 +1,58 @@
 // A fetch with the user's reddit login, shared by the bridge and the
-// background's own logged-in reads (followed items, pending posts), so both
-// learn which request style reddit's edge lets through.
+// background's own logged-in reads (followed items, pending posts, the login
+// check, the user's listing, scans), so all learn which request style reddit's
+// edge lets through.
 //
 // Reddit's edge refuses some request-header combinations with its HTML block
 // page and accepts others, and it reversed which on 2026-10-21 (www-routes.ts).
 // A block page, unlike a resource's own JSON 403, gets one retry in the other
-// cache mode, and the mode that answers is kept for this worker's life. After
-// both modes got the block page, the retry is skipped for a while, so a
-// blocked client doesn't send every request twice.
+// cache mode, and the mode that answers is kept. After both modes got the block
+// page, the retry is skipped for a while, so a blocked client doesn't send every
+// request twice.
 //
-// Import-free: bridge.ts, requests.ts, www-fetcher.ts, followed-lookup.ts,
-// reddit-auth.ts, viewer.ts and parse_html/old.ts import it.
+// It imports none of the extension's own modules: bridge.ts, requests.ts,
+// www-fetcher.ts, followed-lookup.ts, reddit-auth.ts, viewer.ts and
+// parse_html/old.ts import it.
+import browser from 'webextension-polyfill'
 
 export const LOGGED_IN_CACHE_MODES: RequestCache[] = ['default', 'no-cache']
 // Feeds send max-age=3600, so a scan's read must never come from the browser's
-// cache. On Chrome's wire no-store is the same as default (reddit.md).
-const SCAN_CACHE_MODES: RequestCache[] = ['no-store', 'no-cache']
+// cache, and nor may the login check or the user's listing. On Chrome's wire
+// no-store is the same as default (reddit.md).
+export const UNCACHED_MODES: RequestCache[] = ['no-store', 'no-cache']
 const DOUBLE_BLOCK_MEMORY_MS = 5 * 60 * 1000
-// Mutable for tests, like _wwwRouteTiming
-export const _loggedInFetchState = { preferredCacheMode: 0, doubleBlockUntil: 0 }
+// The mode that last got past the edge after a block page, by name, so a list of
+// modes without it starts at its own first. Mutable for tests, like _wwwRouteTiming.
+export const _loggedInFetchState: { preferredCacheMode?: RequestCache; doubleBlockUntil: number } = {
+    doubleBlockUntil: 0,
+}
+// Session storage keeps it too, so Chrome's worker, which stops between requests,
+// doesn't spend a refused request learning the mode again. It's read once, before
+// the worker's first request. Only the worker, the one context with no window,
+// uses it: an extension page's reads (the welcome page's login check) go out with
+// the page's own headers, so what they learn stays with the page. Chrome 101 has
+// no session storage, and Firefox's background page keeps its memory.
+const STATE_KEY = 'logged_in_fetch'
+const session = () => (typeof window === 'undefined' ? browser.storage.session : undefined)
+let loaded: Promise<void> | undefined
+const loadState = () =>
+    (loaded ??= (async () => {
+        const stored: Record<string, any> | undefined = await session()
+            ?.get(STATE_KEY)
+            .catch(() => undefined)
+        Object.assign(_loggedInFetchState, stored?.[STATE_KEY])
+    })())
+const keepState = (change: Partial<typeof _loggedInFetchState>) => {
+    Object.assign(_loggedInFetchState, change)
+    session()
+        ?.set({ [STATE_KEY]: { ..._loggedInFetchState } })
+        .catch(() => {})
+}
+const firstMode = (modes: RequestCache[]) =>
+    Math.max(
+        0,
+        modes.findIndex(mode => mode === _loggedInFetchState.preferredCacheMode),
+    )
 
 // A resource's own 403 (private subreddit) is JSON; the edge's block page isn't
 export const isBlockPage = (res: Response): boolean =>
@@ -26,6 +60,8 @@ export const isBlockPage = (res: Response): boolean =>
 
 interface LoggedInFetchOptions {
     signal?: AbortSignal
+    // The two cache modes to try, LOGGED_IN_CACHE_MODES unless given
+    modes?: RequestCache[]
     // Whether the retry may still go out (the bridge's deadline)
     canRetry?: () => boolean
     // Just before the retry goes out: the bridge counts it as a request
@@ -44,24 +80,26 @@ export const fetchLoggedIn = async (
     url: string,
     opts: LoggedInFetchOptions = {},
 ): Promise<{ response: Response; blockPage: boolean; retried: boolean }> => {
-    const fetchIn = (mode: number) => fetchInMode(url, LOGGED_IN_CACHE_MODES[mode], opts.signal)
-    let mode = _loggedInFetchState.preferredCacheMode
+    const modes = opts.modes ?? LOGGED_IN_CACHE_MODES
+    const fetchIn = (mode: number) => fetchInMode(url, modes[mode], opts.signal)
+    await loadState()
+    let mode = firstMode(modes)
     let response = await fetchIn(mode)
     let blockPage = isBlockPage(response)
     let retried = false
     if (blockPage && Date.now() >= _loggedInFetchState.doubleBlockUntil && (opts.canRetry?.() ?? true)) {
         const blockedMode = mode
-        mode = (mode + 1) % LOGGED_IN_CACHE_MODES.length
+        mode = (mode + 1) % modes.length
         opts.onRetry?.()
         retried = true
         response = await fetchIn(mode)
         blockPage = isBlockPage(response)
         if (!blockPage) {
             // Past the edge, whatever the resource said: keep this mode
-            _loggedInFetchState.preferredCacheMode = mode
-            opts.onSwitched?.(LOGGED_IN_CACHE_MODES[blockedMode], LOGGED_IN_CACHE_MODES[mode], response.status)
+            keepState({ preferredCacheMode: modes[mode] })
+            opts.onSwitched?.(modes[blockedMode], modes[mode], response.status)
         } else {
-            _loggedInFetchState.doubleBlockUntil = Date.now() + DOUBLE_BLOCK_MEMORY_MS
+            keepState({ doubleBlockUntil: Date.now() + DOUBLE_BLOCK_MEMORY_MS })
         }
     }
     return { response, blockPage, retried }
@@ -73,13 +111,14 @@ export const fetchLoggedIn = async (
 // other requests.
 export const fetchForScan = async (url: string, signal: AbortSignal, secondTryMode?: number) => {
     const isSecondTry = secondTryMode !== undefined
-    const mode = secondTryMode ?? _loggedInFetchState.preferredCacheMode
-    const response = await fetchInMode(url, SCAN_CACHE_MODES[mode], signal)
+    await loadState()
+    const mode = secondTryMode ?? firstMode(UNCACHED_MODES)
+    const response = await fetchInMode(url, UNCACHED_MODES[mode], signal)
     const blockPage = isBlockPage(response)
     // Past the edge, whatever the resource said: keep this mode
-    if (isSecondTry && !blockPage) _loggedInFetchState.preferredCacheMode = mode
+    if (isSecondTry && !blockPage) keepState({ preferredCacheMode: UNCACHED_MODES[mode] })
     const retry = blockPage && !isSecondTry && Date.now() >= _loggedInFetchState.doubleBlockUntil
-    return { response, blockPage, otherMode: retry ? (mode + 1) % SCAN_CACHE_MODES.length : undefined }
+    return { response, blockPage, otherMode: retry ? (mode + 1) % UNCACHED_MODES.length : undefined }
 }
 
 // A fetch, tab message or injected script that never settles (a stalled

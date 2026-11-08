@@ -1,6 +1,7 @@
 // The user's items whose removal monitoring tells its lookup it's confirming:
 // counted as removed at least once, not recorded yet, and still recordable.
-// The lookup reads their pages afresh every cycle until then.
+// The lookup reads their pages again rather than reuse a cached removal, and a
+// read that decides nothing is cached as 'unknown', paced like any other.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
@@ -9,7 +10,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
 import { _checkForChanges_thing_byId } from '../../src/src/monitoring'
-import { getObjectNamesForThing, getOldestDateKey } from '../../src/src/storage'
+import { lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
+import { getObjectNamesForThing, getOldestDateKey, getPublicLiveKey } from '../../src/src/storage'
+import { installFetch, thingIdEl, emptyStatePage, FRONT_PAGE } from '../mocks/public-profile.js'
 
 const USER = 'someuser'
 const keys = getObjectNamesForThing(USER, true)
@@ -30,7 +33,7 @@ beforeEach(() => {
     browserMock.runtime.sendMessage = async message => {
         if (message.action !== 'get-reddit-items-by-id') return undefined
         lookups.push(message)
-        return answer
+        return typeof answer === 'function' ? answer(message) : answer
     }
 })
 afterEach(() => {
@@ -52,16 +55,8 @@ const seed = ({ removed = {}, records = {}, oldest = null, track = true } = {}) 
         { ['items_u_' + USER]: records, ...(oldest && { [getOldestDateKey(USER, true)]: oldest }) },
     )
 
-const check = names =>
-    _checkForChanges_thing_byId(
-        names,
-        USER,
-        true,
-        null,
-        structuredClone(__getSyncStorage()),
-        2,
-        Object.fromEntries(names.map(name => [name, item(name)])),
-    )
+const check = (names, items = Object.fromEntries(names.map(name => [name, item(name)]))) =>
+    _checkForChanges_thing_byId(names, USER, true, null, structuredClone(__getSyncStorage()), 2, items)
 
 // What the last lookup was told about each item
 const confirming = () =>
@@ -96,5 +91,55 @@ describe('the removals monitoring is confirming', () => {
         expect(__getLocalStorage()['items_u_' + USER].t1_a.r).toBe(1)
         await check(['t1_a'])
         expect(confirming()).toEqual({ t1_a: true })
+    })
+
+    it('come from the one read of the records the check makes', async () => {
+        seed({ records: { t1_a: record(1) } })
+        // Its result held back, so there's nothing to save either
+        answer = { items: [] }
+        const get = vi.spyOn(browserMock.storage.local, 'get')
+        await check(['t1_a'])
+        expect(confirming()).toEqual({ t1_a: true })
+        expect(get.mock.calls.filter(([keys]) => 'items_u_' + USER in Object(keys))).toHaveLength(1)
+    })
+
+    it.each([
+        ['while removals go untracked', { track: false }, null],
+        ['for a pending post, whose lookup is done', {}, [{ data: item('t1_a') }]],
+    ])('need nothing read before the lookup %s', async (_, options, preFetched) => {
+        seed({ records: { t1_a: record(0) }, ...options })
+        answer = { items: [{ data: item('t1_a') }] }
+        const get = vi.spyOn(browserMock.storage.local, 'get')
+        const storage = structuredClone(__getSyncStorage())
+        await _checkForChanges_thing_byId(['t1_a'], USER, true, null, storage, 2, { t1_a: item('t1_a') }, preFetched)
+        // Once each, after the lookup
+        const reads = key => get.mock.calls.filter(([keys]) => key in Object(keys)).length
+        expect(reads('items_u_' + USER)).toBe(1)
+        expect(reads(getOldestDateKey(USER, true))).toBe(1)
+    })
+})
+
+describe('a post more than two days old whose removal is counted', () => {
+    const POST = 't3_mature1'
+    const OLD = NOW - 5 * 86400
+    const post = { name: POST, author: USER, title: 'words', created_utc: OLD, locked: false }
+
+    it("keeps its count while its page decides nothing, and the bridge isn't told it's live", async () => {
+        seed({ records: { [POST]: { ...record(1), o: OLD, c: OLD } } })
+        // Its page read it held a cycle ago
+        __getLocalStorage().www_post_page_verdicts = { [POST]: { v: 'held', t: Date.now(), k: 2 } }
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
+            [`/user/${USER}/submitted/?sort=new`, thingIdEl(POST)],
+            ['/comments/mature1/', FRONT_PAGE],
+        ])
+        answer = message => lookupItemsByID_fromPublicProfile(message.ids, message.username, message.authItemsMeta)
+        // A read that decides nothing, then a cycle that waits it out
+        for (let cycle = 0; cycle < 2; cycle++) {
+            await check([POST], { [POST]: post })
+            expect(confirming()).toEqual({ [POST]: true })
+            expect(__getLocalStorage()['items_u_' + USER][POST].r).toBe(1)
+        }
+        expect(__getLocalStorage()[getPublicLiveKey(USER)]).toBeUndefined()
     })
 })

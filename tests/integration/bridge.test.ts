@@ -282,7 +282,7 @@ describe('handleBridgeFetch', () => {
             { last_logged_in_user: 'alice' },
         )
         cycleBusy = false
-        _loggedInFetchState.preferredCacheMode = 0
+        _loggedInFetchState.preferredCacheMode = undefined
         _loggedInFetchState.doubleBlockUntil = 0
         loggedIn()
         globalThis.fetch = vi.fn(async () => json(200, listingOf(['t1_a', 'alice'], ['t1_b', 'bob'])))
@@ -410,7 +410,7 @@ describe('0.0.5.27 review fixes: the bridge', () => {
     beforeEach(() => {
         __resetStorage({}, { last_logged_in_user: 'alice' })
         cycleBusy = false
-        _loggedInFetchState.preferredCacheMode = 0
+        _loggedInFetchState.preferredCacheMode = undefined
         _loggedInFetchState.doubleBlockUntil = 0
         ;(browserMock as any).cookies = { get: vi.fn(async () => ({ name: 'reddit_session', value: 'x' })) }
     })
@@ -489,7 +489,7 @@ describe('0.0.5.27 review fixes: the bridge', () => {
         )
         await new Promise(r => setTimeout(r, 350))
         expect(await handleBridgeFetch({ url: URL })).toMatchObject({ ok: false, status: 403 })
-        expect(_loggedInFetchState.preferredCacheMode).toBe(1)
+        expect(_loggedInFetchState.preferredCacheMode).toBe('no-cache')
     })
 
     it('says the answer is the logged-in view rewritten', async () => {

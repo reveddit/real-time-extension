@@ -34,7 +34,7 @@ beforeEach(() => {
     fill([cookie('reddit_session', 'S1')])
     browserMock.cookies = cookiesApi
     _scanTurn.next = 0
-    Object.assign(_loggedInFetchState, { preferredCacheMode: 0, doubleBlockUntil: 0 })
+    Object.assign(_loggedInFetchState, { preferredCacheMode: undefined, doubleBlockUntil: 0 })
     fetchMock = vi.fn(async () => answer(200))
     vi.stubGlobal('fetch', fetchMock)
 })
@@ -60,7 +60,7 @@ describe('a read for a scan', () => {
         expect(second).toMatchObject({ ok: false, status: 403, blockPage: true, otherMode: undefined })
         expect(fetchMock.mock.calls.map(call => call[1].cache)).toEqual(['no-store', 'no-cache'])
         expect(_loggedInFetchState.doubleBlockUntil).toBe(0)
-        expect(_loggedInFetchState.preferredCacheMode).toBe(0)
+        expect(_loggedInFetchState.preferredCacheMode).toBeUndefined()
     })
 
     it('keeps the mode a second try got past the edge in', async () => {
@@ -76,7 +76,7 @@ describe('a read for a scan', () => {
     it('tries the mode its first try named, whatever another request has learned since', async () => {
         fetchMock.mockImplementation(async () => blockPage())
         const { otherMode } = await readWithLogin(PATH)
-        _loggedInFetchState.preferredCacheMode = 1
+        _loggedInFetchState.preferredCacheMode = 'no-cache'
         _scanTurn.next = 0
         await readWithLogin(PATH, otherMode)
         expect(fetchMock.mock.calls.map(call => call[1].cache)).toEqual(['no-store', 'no-cache'])
@@ -271,7 +271,8 @@ describe('a worker that stops between reads, where the browser has session stora
         expect(second).toEqual({ ok: false, status: 0, waitMs: 3000 })
         expect(await readWithLogin(PATH)).toMatchObject({ waitMs: 3000 })
         expect(set).toHaveBeenCalledTimes(1)
-        expect(get).toHaveBeenCalledTimes(2)
+        // The turn's reads: the logged-in fetch reads its own key too, once a worker
+        expect(get.mock.calls.filter(([key]) => key === 'scan_turn_next')).toHaveLength(2)
     })
 })
 

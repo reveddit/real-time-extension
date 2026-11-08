@@ -10,7 +10,7 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
-import { res, untilAborted } from '../mocks/responses.js'
+import { json, res, untilAborted } from '../mocks/responses.js'
 import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
 import { thingIdEl, emptyStatePage } from '../mocks/public-profile.js'
 import { getDiagEntries } from '../mocks/diag-entries.js'
@@ -18,6 +18,7 @@ import { getDiagEntries } from '../mocks/diag-entries.js'
 import {
     getLoggedinUserDetailed,
     getLoggedinUser,
+    lookupItemsByLoggedInUserWithAuth,
     whoIsSignedIn,
     recordLoginDetectOutcome,
     isSettledByLogin,
@@ -29,7 +30,7 @@ import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates'
 import { checkForChanges } from '../../src/src/monitoring'
 import { getUserInit, getObjectNamesForThing } from '../../src/src/storage'
 import { readWithLogin, _scanTurn } from '../../src/src/requests'
-import { WWW_FETCH_TIMEOUT_MS } from '../../src/src/logged-in-fetch'
+import { WWW_FETCH_TIMEOUT_MS, _loggedInFetchState } from '../../src/src/logged-in-fetch'
 import { clearDiagLog } from '../../src/src/diaglog'
 
 const USER_JSON = JSON.stringify({ data: { name: 'alice' } })
@@ -48,6 +49,8 @@ beforeEach(() => {
     browserMock.cookies = cookiesApi
     // A check with a reddit tab open saves the cookie snapshot
     globalThis.chrome.cookies = { getAll: (q, cb) => cb([]) }
+    // The request style the login check and the listing learned
+    Object.assign(_loggedInFetchState, { preferredCacheMode: undefined, doubleBlockUntil: 0 })
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 })
@@ -134,6 +137,32 @@ describe('getLoggedinUserDetailed', () => {
     })
 })
 
+// Neither comes from the browser's cache, and a block page gets a try in the other
+// style (logged-in-fetch.ts). On 2026-10-21 the edge refused 'reload' from the
+// background, and 0.0.5.25 failed every lookup sending it.
+describe("the login check and the user's listing, where reddit's edge refuses one request style", () => {
+    const reads = {
+        'who is signed in': [getLoggedinUserDetailed, { user: 'alice', indeterminate: false }],
+        "the user's listing": [lookupItemsByLoggedInUserWithAuth, []],
+    }
+    const refusing = style => async (url, init) => {
+        if (init.cache === style) return res(403, 'network security', 'text/html')
+        return String(url).includes('/user/me.json') ? json(200, { data: { children: [] } }) : res(200, USER_JSON)
+    }
+
+    it.each([
+        ['who is signed in', 'reload', ['no-store']],
+        ['who is signed in', 'no-store', ['no-store', 'no-cache']],
+        ["the user's listing", 'reload', ['no-store']],
+        ["the user's listing", 'no-store', ['no-store', 'no-cache']],
+    ])('reads %s past a block page for %s', async (read, style, sent) => {
+        const [run, answer] = reads[read]
+        fetchMock.mockImplementation(refusing(style))
+        expect(await run()).toEqual(answer)
+        expect(fetchMock.mock.calls.map(([, init]) => init.cache)).toEqual(sent)
+    })
+})
+
 describe('a browser with no Reddit login', () => {
     beforeEach(() => fill([cookie('token_v2', 'T1')]))
 
@@ -164,7 +193,8 @@ describe("a scan's read when the count of login refusals can't be read", () => {
 })
 
 describe('a check for a remembered user', () => {
-    const REFUSED = res(403, 'blocked')
+    // The edge's block page
+    const REFUSED = res(403, 'blocked', 'text/html')
     const LISTING = { ok: true, status: 200, json: async () => ({ data: { children: [] } }) }
     const listingBy = author => ({
         ok: true,

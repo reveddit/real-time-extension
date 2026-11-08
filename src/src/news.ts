@@ -371,10 +371,10 @@ export const CAPABILITY_REST_KEY = 'capability_rest'
 
 const isNumberFrom = (least: number, value: unknown): value is number =>
     typeof value === 'number' && Number.isFinite(value) && value >= least
-// The reads that open a profile scan can take 6 (profile-scan.ts), and they go out
-// whatever the limit, so a lower one couldn't hold. A block page's second try comes
-// out of the same reads, so at 6 a blocked scan can stop early. No limit turns
-// scans off, not even 0: mechanisms.scanFeeds does.
+// The reads that open a profile scan can take 6 (profile-scan.ts) and must fit in
+// one click, so a lower limit would never get a profile scan past them. A block
+// page's second try comes out of the same reads, so at 6 a blocked scan can stop
+// early. No limit turns scans off, not even 0: mechanisms.scanFeeds does.
 const FEWEST_SCAN_READS = 6
 const sanitizeScanLimits = (raw: any): ScanLimits => ({
     ...(isNumberFrom(0, raw?.reads_per_click)

@@ -1,4 +1,5 @@
 import { StoredCookie, isViewerConnecting, toStoredCookie, isExpired, restoreCookies } from './viewer'
+import { isSupportedRedditTab } from './www-fetcher'
 import browser from 'webextension-polyfill'
 
 // The expiry reddit gave its login cookie, read from the cookie: reddit_session
@@ -44,15 +45,7 @@ const storeRedditCookiesNow = async () => {
     const tabs = await new Promise<chrome.tabs.Tab[] | undefined>(resolve =>
         chrome.tabs.query({ url: ['*://*.reddit.com/*'] }, resolve),
     )
-    const hasSupportedTab = tabs?.some(tab => {
-        try {
-            const hostname = new URL(tab.url!).hostname
-            return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
-        } catch {
-            return false
-        }
-    })
-    if (!hasSupportedTab) {
+    if (!tabs?.some(isSupportedRedditTab)) {
         return false
     }
 

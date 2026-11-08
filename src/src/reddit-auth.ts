@@ -8,7 +8,7 @@ import { solveChallenge } from './parse_html/new'
 import { isStreakLong, recordStreak } from './lookup-status'
 import { rehydrateStoredRedditCookies } from './reddit-cookies'
 import { flagIfRateLimited, isMechanismDisabled } from './request-gates'
-import { withDeadline, WWW_FETCH_TIMEOUT_MS } from './logged-in-fetch'
+import { fetchLoggedIn, withDeadline, UNCACHED_MODES, WWW_FETCH_TIMEOUT_MS } from './logged-in-fetch'
 
 const oauth_reddit = 'https://oauth.reddit.com/'
 
@@ -87,8 +87,8 @@ export const lookupItemsByLoggedInUserWithAuth = () =>
         const url = `https://www.reddit.com/user/me.json${OWN_LISTING_QUERY}`
         // The body too: one that stalls would hold up the cycle
         return withDeadline(WWW_FETCH_TIMEOUT_MS, signal =>
-            fetch(url, { credentials: 'include', cache: 'reload', signal })
-                .then(response => {
+            fetchLoggedIn(url, { signal, modes: UNCACHED_MODES })
+                .then(({ response }) => {
                     if (response.ok) {
                         // A challenge comes with a 200, and it's a refusal all
                         // the same. A body the deadline cut off isn't one.
@@ -189,7 +189,7 @@ type MeProbe =
     | { state: 'loggedOut' }
     | { state: 'indeterminate'; reason: string; html?: string }
 
-// One fetch of an /api/me.json URL, classified. Logged-out is only concluded
+// One read of an /api/me.json URL, classified. Logged-out is only concluded
 // from a clean 2xx JSON body without a username; every other shape (non-2xx,
 // HTML/challenge, network error, no answer by the deadline) is indeterminate.
 // The deadline covers the body too: one that stalls would hold up the cycle.
@@ -197,7 +197,7 @@ const probeMeJson = (url: string): Promise<MeProbe> =>
     withDeadline(WWW_FETCH_TIMEOUT_MS, async signal => {
         let response: Response
         try {
-            response = await fetch(url, { credentials: 'include', cache: 'reload', signal })
+            response = (await fetchLoggedIn(url, { signal, modes: UNCACHED_MODES })).response
         } catch (err: any) {
             return { state: 'indeterminate', reason: `network error: ${String(err?.message || err)}` }
         }

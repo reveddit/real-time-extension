@@ -16,6 +16,7 @@ import {
     WWW_SOFT_REFUSAL_MS,
     _wwwRouteTiming,
     wwwPageKind,
+    isSupportedRedditTab,
 } from '../../src/src/www-fetcher'
 import { PUBLIC_VIEW_FETCH_INIT, publicViewInit, pageContextFetch } from '../../src/src/www-routes'
 import { WWW_FETCH_TIMEOUT_MS } from '../../src/src/logged-in-fetch'
@@ -494,6 +495,16 @@ describe('wwwPageKind', () => {
         // a post in a profile, and a comment on one, are pages, not the profile
         expect(wwwPageKind('https://www.reddit.com/user/u/comments/abc/a_title/')).toBe('page')
         expect(wwwPageKind('https://www.reddit.com/user/u/comments/abc/comment/x1/?solution=x')).toBe('page')
+    })
+})
+
+describe('isSupportedRedditTab', () => {
+    it("takes www.reddit.com and old.reddit.com, and no tab whose address is missing or won't parse", () => {
+        expect(isSupportedRedditTab({ url: 'https://www.reddit.com/r/pics/' })).toBe(true)
+        expect(isSupportedRedditTab({ url: 'https://old.reddit.com/' })).toBe(true)
+        for (const url of ['https://new.reddit.com/', 'https://reddit.com/', 'not a url', undefined]) {
+            expect(isSupportedRedditTab({ url })).toBe(false)
+        }
     })
 })
 

@@ -35,7 +35,7 @@ describe('the pending-post queue', () => {
     beforeEach(() => {
         for (const key of Object.keys(legacyPages)) delete legacyPages[key]
         _pendingPostTiming.delayMs = 0
-        _loggedInFetchState.preferredCacheMode = 0
+        _loggedInFetchState.preferredCacheMode = undefined
         _loggedInFetchState.doubleBlockUntil = 0
         loggedIn = true
         browserMock.cookies = { get: async ({ name }) => (loggedIn ? { name, value: 'x' } : null) }

@@ -72,6 +72,17 @@ export const withTimeout = async <T>(promise: Promise<T>, what: string): Promise
 // not exist" and "Cannot access contents of the page" pair in issue #27's log.
 export const canTabAnswer = (tab: { discarded?: boolean; frozen?: boolean }): boolean => !tab.discarded && !tab.frozen
 
+// A tab on www.reddit.com or old.reddit.com, the subdomains user monitoring
+// supports. Not one whose address is missing or won't parse.
+export const isSupportedRedditTab = (tab: { url?: string }): boolean => {
+    try {
+        const { hostname } = new URL(tab.url!)
+        return hostname === 'www.reddit.com' || hostname === 'old.reddit.com'
+    } catch {
+        return false
+    }
+}
+
 // An HTTP failure from any leg. Reddit's block page comes with a 403, so that
 // route was refused. Other statuses say nothing about the route (a 429 is rate
 // limiting, which monitoring backs off from; a 404 is about the page), so they

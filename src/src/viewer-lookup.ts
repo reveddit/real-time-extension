@@ -30,7 +30,7 @@ import {
     recordViewerThreadOutcome,
 } from './lookup-status'
 import { noteRateLimited, readLocal, isFresh } from './request-gates'
-import { isConfirmingRemoval, isConfirmingPaced } from './page-verify'
+import { isConfirmingRemoval } from './page-verify'
 
 // The second account's view of the user's own items (viewer.ts): what other
 // logged-in people see, for when reddit asks for a login before it shows
@@ -151,12 +151,11 @@ const viewerVerdictOf = (id: string, postId: string, json: any): ViewerVerdict =
     return showsRemoved(id, data) ? 'removed' : 'live'
 }
 
-// l: read while the item was listed. u: see isConfirmingPaced.
+// l: read while the item was listed
 interface ViewerEntry {
     v: ViewerVerdict
     t: number
     l?: 1
-    u?: number
 }
 
 const readViewerVerdicts = () => readLocal<Record<string, ViewerEntry>>(VIEWER_VERDICTS_KEY, {})
@@ -205,7 +204,7 @@ const restViewer = async (viewer: ViewerAccount) => {
 // view's does for a missing item (absentLiveTtl: sooner for young items, when
 // removals happen), and ends when an item read live while listed drops out of
 // the listing, which is how a removal shows. A 'removed' isn't reused while
-// monitoring counts it (isConfirmingRemoval, isConfirmingPaced).
+// monitoring counts it (isConfirmingRemoval).
 const readViewerThreads = async (
     viewer: ViewerAccount,
     ids: string[],
@@ -223,9 +222,6 @@ const readViewerThreads = async (
               : absentLiveTtl(authItemsMeta[id]?.created_utc, now)
     const due = ids.filter(id => {
         const entry = cache[id]
-        if (isConfirmingPaced(entry, authItemsMeta[id], VIEWER_VERDICT_TTL_MS.unknown, now)) {
-            return false
-        }
         if (entry && isFresh(Number(entry.t), ttl(id, entry), now) && !isConfirmingRemoval(entry, authItemsMeta[id])) {
             if (entry.v !== 'unknown') {
                 verdicts[id] = entry.v
@@ -251,12 +247,6 @@ const readViewerThreads = async (
             await new Promise(r => setTimeout(r, _viewerTiming.delayMs))
         }
         read++
-        // What a read that decides nothing leaves: an 'unknown', or while the
-        // removal is counted the cached verdict, marked (isConfirmingPaced)
-        const undecided = (): ViewerEntry =>
-            isConfirmingRemoval(cache[id], authItemsMeta[id])
-                ? { ...cache[id], u: Date.now() }
-                : { v: 'unknown', t: Date.now() }
         const r = await fetchJsonAsViewer(threadItemUrl(id, postId), viewer)
         if (r.status === 429) {
             noteRateLimited(new Error('www.reddit.com request failed: 429'))
@@ -270,27 +260,22 @@ const readViewerThreads = async (
             // the items after this one instead of asking for it again. A page
             // in place of the JSON (a challenge) stops the reads like the block
             // page, since the next would get the same.
-            cache[id] = undecided()
+            cache[id] = { v: 'unknown', t: Date.now() }
             said.push('unknown')
             note = r.blocked ? ', stopped on a block page' : ', stopped on a page in place of JSON'
             break
         }
         const v = viewerVerdictOf(id, postId, r.ok ? r.json : undefined)
         said.push(v)
-        cache[id] = v === 'unknown' ? undecided() : { v, t: Date.now(), ...(listed.has(id) && { l: 1 as const }) }
+        cache[id] = { v, t: Date.now(), ...(listed.has(id) && { l: 1 as const }) }
         if (v !== 'unknown') {
             verdicts[id] = v
             resolved++
         }
     }
     if (read) {
-        // One marked by a read that decided nothing stays until its next read is due
         const kept = Object.entries(cache)
-            .filter(
-                ([, entry]) =>
-                    Date.now() - Number(entry?.t) < (VIEWER_VERDICT_TTL_MS[entry?.v] ?? 0) ||
-                    isFresh(Number(entry?.u), VIEWER_VERDICT_TTL_MS.unknown, Date.now()),
-            )
+            .filter(([, entry]) => isFresh(Number(entry?.t), VIEWER_VERDICT_TTL_MS[entry?.v] ?? 0, Date.now()))
             .sort((a, b) => b[1].t - a[1].t)
             .slice(0, VIEWER_VERDICTS_MAX)
         await browser.storage.local.set({ [VIEWER_VERDICTS_KEY]: Object.fromEntries(kept) }).catch(() => null)
@@ -464,7 +449,8 @@ export const lookupItemsByID_fromViewer = async (
             }
             // Recorded removed, or young with its removal being counted, still
             // listed, no thread verdict: no news, so a listing alone never
-            // flips a recorded removal back or starts a count over
+            // flips a recorded removal back or starts a count over.
+            // Young, not owed as in requests.ts: this path reads no mature post unless recorded removed
         } else if (covered(id) && publiclyInvisibleReason(m)) {
             // Monitoring reads these as unchecked, as for the public view
             results.push(syntheticRemoved)

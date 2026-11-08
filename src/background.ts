@@ -642,16 +642,15 @@ function triggerImmediateLookupOnce(user: string, force = false) {
     })
 }
 
-const notificationClicked = (rawThing: string) => {
-    const thing = rawThing.replace(/_backlog$/, '')
-
-    if (thing === 'backlog_summary') {
+const notificationClicked = (thing: string) => {
+    if (thing === 'reveddit:backlog_summary') {
         createTab(chrome.runtime.getURL('src/history.html?filter=removed'))
         return
     }
     // The link menu's note that it couldn't follow a link, and the popup's test
-    // notification: no account's items to show
-    if (thing === 'subscribe_failed' || thing === 'test') {
+    // notification: no account's items to show. An account's notification is
+    // named for it, and no username has a colon.
+    if (thing === 'reveddit:subscribe_failed' || thing === 'reveddit:test') {
         return
     }
 

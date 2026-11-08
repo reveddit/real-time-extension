@@ -18,7 +18,7 @@ import { setCurrentStateForId } from './monitoring'
 import { fetchNews, getUnreadMessages, getPendingUpdateVersion, markNewsRead, NewsMessage } from './news'
 import { VIEWER_KEY } from './viewer'
 import { WWW_DETECT_FAILURES_KEY } from './lookup-status'
-import { canTabAnswer } from './www-fetcher'
+import { canTabAnswer, isSupportedRedditTab } from './www-fetcher'
 import { UnseenRow, ToggleSwitch, CurrentUserSection } from './popup-rows'
 import { NewsBanner, UpdateNotice, ReleaseNotice, ErrorNotice } from './popup-notices'
 import { reportProblem } from './popup-report'
@@ -165,7 +165,8 @@ const FooterLink = styled.a`
 function Popup() {
   const [errorStatus, setErrorStatus] = useState<string | null>(null)
   const [wwwFailures, setWwwFailures] = useState(0)
-  const [wwwTabOpen, setWwwTabOpen] = useState(false)
+  // null until the tab query answers
+  const [wwwTabOpen, setWwwTabOpen] = useState<boolean | null>(null)
   // The connected second account (viewer.ts), if any
   const [viewerName, setViewerName] = useState('')
   const [userData, setUserData] = useState<{
@@ -228,6 +229,23 @@ function Popup() {
       setWwwFailures(Number(result?.[WWW_DETECT_FAILURES_KEY]) || 0)
     })
 
+    // Beside the sync read, not after it: the notices that depend on a tab wait for this
+    chrome.tabs.query({ url: ['*://*.reddit.com/*'] }, found => {
+      // undefined when the query fails, which must still answer those notices
+      const tabs = found || []
+      const supported = tabs.filter(isSupportedRedditTab)
+      // Only a tab www-fetcher.ts can read through counts. A supported tab's address parses.
+      setWwwTabOpen(supported.some(tab => new URL(tab.url!).hostname === 'www.reddit.com' && canTabAnswer(tab)))
+      if (tabs.length > 0 && supported.length === 0) {
+        chrome.storage.local.get(['subdomain_warning_shown'], result => {
+          if (!result.subdomain_warning_shown) {
+            setShowSubdomainWarning(true)
+            chrome.storage.local.set({ subdomain_warning_shown: true })
+          }
+        })
+      }
+    })
+
     getSubscribedUsers_withSeenAndUnseenIDs(async (users, storage) => {
       const other = users['other']
       delete users['other']
@@ -235,27 +253,6 @@ function Popup() {
         users,
         otherUnseen: other.unseen,
         otherTotal: Object.keys(storage.other_subscriptions).length,
-      })
-
-      chrome.tabs.query({ url: ['*://*.reddit.com/*'] }, tabs => {
-        const hostOf = (tab: chrome.tabs.Tab) => {
-          try {
-            return new URL(tab.url!).hostname
-          } catch {
-            return ''
-          }
-        }
-        const supported = tabs.filter(tab => hostOf(tab) === 'www.reddit.com' || hostOf(tab) === 'old.reddit.com')
-        // Only a tab www-fetcher.ts can read through counts
-        setWwwTabOpen(tabs.some(tab => hostOf(tab) === 'www.reddit.com' && canTabAnswer(tab)))
-        if (tabs.length > 0 && supported.length === 0) {
-          chrome.storage.local.get(['subdomain_warning_shown'], result => {
-            if (!result.subdomain_warning_shown) {
-              setShowSubdomainWarning(true)
-              chrome.storage.local.set({ subdomain_warning_shown: true })
-            }
-          })
-        }
       })
 
       chrome.storage.local.get(['last_logged_in_user'], result => {
@@ -435,7 +432,7 @@ function Popup() {
 
   const handleTestNotification = () => {
     createNotification({
-      notificationId: 'test',
+      notificationId: 'reveddit:test',
       title: 'Reveddit test notification',
       message: getTestNotificationMessage((syncStorage || {}).options || {}),
     })

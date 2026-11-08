@@ -16,9 +16,18 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
-    // Nothing a click starts goes out
-    vi.stubGlobal('fetch', () => new Promise(() => {}))
-    __resetStorage({ options: {}, user_subscriptions: { someuser: true }, other_subscriptions: {} })
+    __resetStorage({
+        options: {},
+        user_subscriptions: {
+            someuser: true,
+            test: true,
+            subscribe_failed: true,
+            backlog_summary: true,
+            foo_backlog: true,
+        },
+        other_subscriptions: {},
+        removed_u_foo_backlog: { t1_x: { c: 1700000000, u: true } },
+    })
     vi.spyOn(browserMock.storage.sync, 'set')
     vi.spyOn(chrome.tabs, 'create')
     vi.spyOn(chrome.notifications, 'clear')
@@ -29,8 +38,8 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 0))
 
 describe('a notification click', () => {
     it.each([
-        ["the note that a link couldn't be followed", 'subscribe_failed|1700000000000'],
-        ["the popup's test notification", 'test|1700000000000'],
+        ["the note that a link couldn't be followed", 'reveddit:subscribe_failed|1700000000000'],
+        ["the popup's test notification", 'reveddit:test|1700000000000'],
     ])('on %s only closes it', async (_, id) => {
         background.clickNotification(id)
         await settle()
@@ -39,11 +48,30 @@ describe('a notification click', () => {
         expect(chrome.tabs.create).not.toHaveBeenCalled()
     })
 
-    it("on a followed account's opens its history", async () => {
-        background.clickNotification('someuser|1700000000000')
+    // An account's notification is named for it, whatever its name is
+    it.each(['someuser', 'test', 'subscribe_failed', 'backlog_summary', 'foo_backlog'])(
+        "on u/%s's opens its history",
+        async user => {
+            background.clickNotification(`${user}|1700000000000`)
+            await settle()
+            expect(chrome.tabs.create).toHaveBeenCalledWith(
+                expect.objectContaining({ url: chrome.runtime.getURL('src/history.html') }),
+            )
+        },
+    )
+
+    it("on u/foo_backlog's marks that account's items seen", async () => {
+        background.clickNotification('foo_backlog|1700000000000')
+        await settle()
+        const saved = browserMock.storage.sync.set.mock.calls.at(-1)?.[0]
+        expect(saved?.removed_u_foo_backlog?.t1_x?.u).toBe(false)
+    })
+
+    it('on the digest of older removals opens history filtered to them', async () => {
+        background.clickNotification('reveddit:backlog_summary|1700000000000')
         await settle()
         expect(chrome.tabs.create).toHaveBeenCalledWith(
-            expect.objectContaining({ url: chrome.runtime.getURL('src/history.html') }),
+            expect.objectContaining({ url: chrome.runtime.getURL('src/history.html?filter=removed') }),
         )
     })
 })

@@ -312,6 +312,27 @@ describe('a save after storage changed during the lookup', () => {
         expect(sync[keys.removed].t1_gone.u).toBe(false)
     })
 
+    it('keeps what a reveddit page marked seen while the check read its records', async () => {
+        const sync = __getSyncStorage()
+        sync[keys.removed] = { t1_gone: { ...UNSEEN } }
+        const copy = structuredClone(sync)
+        const get = browserMock.storage.local.get
+        let marked = false
+        vi.spyOn(browserMock.storage.local, 'get').mockImplementation(async items => {
+            // As the check reads its records, not as its own save reads them again
+            if (!marked && 'items_u_' + USER in Object(items)) {
+                marked = true
+                await new Promise(resolve =>
+                    markIDsAsSeenIfSubscribed(USER, true, { t1_gone: NOW - 600 }, {}, {}, {}, resolve),
+                )
+            }
+            return get(items)
+        })
+        await checkOfUser(copy)
+        expect(marked).toBe(true)
+        expect(sync[keys.removed].t1_gone.u).toBe(false)
+    })
+
     it('keeps what another check saved meanwhile and the change it told of, in the copy the cycle goes on with too', async () => {
         const sync = __getSyncStorage()
         sync.other_subscriptions = { [followed.name]: { t: 1 } }

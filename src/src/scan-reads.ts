@@ -24,9 +24,9 @@ export type ProgressCallback = (progress: RestoreProgress) => void
 const MAX_FAILED_READS_IN_A_ROW = 3
 // How long before a feed that used up its tries gets another, if a click asks
 const RETRY_GIVEN_UP_MS = 5 * 60 * 1000
-// The cache mode the worker learned is in its memory, which an idle 30 seconds ends,
-// and so is the turn where the browser has no session storage. Asking again keeps it
-// up, and sends nothing until the turn comes.
+// Where the browser has no session storage, the turn and the cache mode the worker
+// learned are only in its memory, which an idle 30 seconds ends. Asking again keeps
+// it up, and sends nothing until the turn comes.
 const LONGEST_WAIT_MS = 20 * 1000
 
 // --- Rate Limiter ---
@@ -268,8 +268,11 @@ export class ScanReads {
     }
 
     // One request, and after a block page a second try, if the click has room and
-    // hasn't already seen both tries refused
+    // hasn't already seen both tries refused. Once the click's reads are spent,
+    // nothing goes out, not even what a scan can't go on without: the next click
+    // sends it.
     async text(path: string): Promise<string> {
+        if (this.left <= 0) throw Object.assign(new Error("this click's reads ran out"), { outOfReads: true })
         this.left--
         try {
             return await fetchWithLogin(path, this.limiter)

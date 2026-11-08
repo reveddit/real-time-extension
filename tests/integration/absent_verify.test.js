@@ -209,13 +209,15 @@ describe('a removal monitoring is counting', () => {
         })
     })
 
-    it("a read that decides nothing leaves the cached verdict and gives none, and the next waits as long as an unknown's", async () => {
+    it("a read that decides nothing is cached as unknown, so the removal isn't counted again, and the next read waits half an hour", async () => {
         vi.useFakeTimers({ toFake: ['Date'] })
         for (const undecided of [async () => SHELL_HTML, wall]) {
             cachedRemoved(['t1_a'])
             expect(await verifyFeedAbsentItems(['t1_a'], counting(['t1_a']), undecided)).toEqual({})
-            expect(__getLocalStorage()[CACHE_KEY].t1_a.v).toBe('removed')
+            expect(__getLocalStorage()[CACHE_KEY].t1_a.v).toBe('unknown')
             const next = vi.fn(async () => removedPage('t1_a'))
+            // Nor once monitoring has stopped counting it
+            expect(await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), next)).toEqual({})
             vi.setSystemTime(Date.now() + 30 * 60 * 1000 - 1)
             expect(await verifyFeedAbsentItems(['t1_a'], counting(['t1_a']), next)).toEqual({})
             expect(next).not.toHaveBeenCalled()

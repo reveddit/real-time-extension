@@ -215,10 +215,21 @@ describe('a post whose removal monitoring is counting', () => {
         `</shreddit-post></body></html>`
     const HELD = page('<div slot="post-removed-banner">Post is awaiting moderator approval.</div>')
     const young = extra => ({ [POST]: { locked: false, created_utc: Math.floor(Date.now() / 1000) - 3600, ...extra } })
-    const verify = (authItemsMeta, fetchHtml) =>
-        verifyFeedPresentPosts([POST], new Set([POST]), authItemsMeta, fetchHtml)
-    const cachedHeld = () =>
-        __resetStorage({}, { www_post_page_verdicts: { [POST]: { v: 'held', t: Date.now(), k: 2 } } })
+    const verify = async (authItemsMeta, fetchHtml) =>
+        (await verifyFeedPresentPosts([POST], new Set([POST]), authItemsMeta, fetchHtml)).verdicts
+    const cachedHeld = (id = POST) =>
+        __resetStorage({}, { www_post_page_verdicts: { [id]: { v: 'held', t: Date.now(), k: 2 } } })
+    // Past the 48 hours in which a listing may still show a held post
+    const MATURE = 't3_mature1'
+    const mature = extra => ({
+        [MATURE]: { locked: false, created_utc: Math.floor(Date.now() / 1000) - 5 * 86400, ...extra },
+    })
+    const matureFeed = (...routes) =>
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, emptyStatePage('comments')],
+            [`/user/${USER}/submitted/?sort=new`, thingIdEl(MATURE)],
+            ...routes,
+        ])
 
     it('is read again each cycle, so one held page cannot fill the count', async () => {
         cachedHeld()
@@ -227,7 +238,7 @@ describe('a post whose removal monitoring is counting', () => {
         expect(fetchHtml).toHaveBeenCalledTimes(1)
     })
 
-    it("a read that decides nothing leaves the cached verdict and gives none, and the next waits as long as an unknown's", async () => {
+    it("a read that decides nothing is cached as unknown, so the held isn't counted again, and the next read waits half an hour", async () => {
         vi.useFakeTimers({ toFake: ['Date'] })
         const failed = async () => {
             throw new Error('www.reddit.com request failed: 403')
@@ -235,8 +246,10 @@ describe('a post whose removal monitoring is counting', () => {
         for (const undecided of [async () => FRONT_PAGE, failed]) {
             cachedHeld()
             expect(await verify(young({ confirming: true }), undecided)).toEqual({})
-            expect(__getLocalStorage().www_post_page_verdicts[POST]).toMatchObject({ v: 'held' })
+            expect(__getLocalStorage().www_post_page_verdicts[POST]).toMatchObject({ v: 'unknown', adverse: true })
             const next = vi.fn(async () => HELD)
+            // Nor once monitoring has stopped counting it
+            expect(await verify(young(), next)).toEqual({})
             vi.setSystemTime(Date.now() + 30 * 60 * 1000 - 1)
             expect(await verify(young({ confirming: true }), next)).toEqual({})
             expect(next).not.toHaveBeenCalled()
@@ -244,6 +257,46 @@ describe('a post whose removal monitoring is counting', () => {
             expect(await verify(young({ confirming: true }), next)).toEqual({ [POST]: 'held' })
             expect(next).toHaveBeenCalledTimes(1)
         }
+    })
+
+    it('names the posts it owed a read and could not decide: undecided, paced, or past the reads of a cycle', async () => {
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation(fn => {
+            fn()
+            return 0
+        })
+        const ids = Array.from({ length: 12 }, (_, i) => `t3_p${i}`)
+        const authItemsMeta = { ...Object.fromEntries(ids.map(id => [id, young()[POST]])), ...mature() }
+        // The first waits out an unknown, and of the ten read, the second's page decides nothing
+        __resetStorage({}, { www_post_page_verdicts: { t3_p0: { v: 'unknown', t: Date.now(), k: 2 } } })
+        const fetchHtml = vi.fn(async url => {
+            const id = `t3_${url.match(/\/comments\/(\w+)\//)[1]}`
+            return id === 't3_p2' ? FRONT_PAGE : page('').replaceAll(POST, id)
+        })
+        const all = [...ids, MATURE]
+        const { verdicts, owed } = await verifyFeedPresentPosts(all, new Set(all), authItemsMeta, fetchHtml)
+        expect(fetchHtml).toHaveBeenCalledTimes(10)
+        expect(Object.keys(verdicts)).toHaveLength(9)
+        expect([...owed].sort()).toEqual(['t3_p0', 't3_p11', 't3_p2'])
+    })
+
+    it('a mature one once read held gets no result while no page verdict lands, so its count neither grows nor starts over', async () => {
+        cachedHeld(MATURE)
+        const calls = matureFeed(['/comments/mature1/', FRONT_PAGE])
+        const reads = () => calls.filter(u => u.includes('/comments/mature1/')).length
+        // Its read decides nothing, and the next cycle waits out that unknown
+        expect(await lookupItemsByID_fromPublicProfile([MATURE], USER, mature({ confirming: true }))).toEqual([])
+        const read = reads()
+        expect(read).toBeGreaterThan(0)
+        expect(await lookupItemsByID_fromPublicProfile([MATURE], USER, mature({ confirming: true }))).toEqual([])
+        expect(reads()).toBe(read)
+    })
+
+    it("a mature one this path owes no read is live by the feed's presence, wherever its count began", async () => {
+        const calls = matureFeed()
+        const [result] = await lookupItemsByID_fromPublicProfile([MATURE], USER, mature({ confirming: true }))
+        expect(result.data).toMatchObject({ name: MATURE, is_robot_indexable: true })
+        expect(result.data._public_view_unverified).toBeUndefined()
+        expect(calls.some(u => u.includes('/comments/mature1/'))).toBe(false)
     })
 
     it('in the feed with no page verdict this cycle, gets no result, so the count neither grows nor starts over', async () => {

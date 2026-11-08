@@ -2,7 +2,6 @@
 // It returns what the script listens to, so a test can send it messages and
 // click its notifications. Call it once per file, before anything imports
 // the script.
-import { vi } from 'vitest'
 import browserMock from './webextension-polyfill.js'
 import { cookiesApi } from './cookies.js'
 
@@ -38,8 +37,9 @@ export const loadBackground = async () => {
     browserMock.storage.onChanged = event()
     browserMock.webRequest = { onBeforeSendHeaders: event(), onHeadersReceived: event() }
     browserMock.runtime = { ...browserMock.runtime, onInstalled: event() }
-    // Nothing the script starts at load goes out
-    vi.stubGlobal('fetch', () => new Promise(() => {}))
+    // Nothing the script sends goes out, at load or in any test that doesn't stub
+    // fetch itself. Not stubGlobal, which the config undoes before every test.
+    globalThis.fetch = () => new Promise(() => {})
     await import('../../src/background.ts')
     return {
         // The first listener that takes the message answers it

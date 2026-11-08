@@ -109,10 +109,14 @@ import browser from 'webextension-polyfill'
         // Presence and version stamps are for the website only. reddit.com's
         // own storage never needed them and should not learn the extension
         // is installed.
-        window.localStorage.setItem('hasNotifierExtension', 'true')
-        // Version for the website (e.g. /update-help): Firefox has no
-        // externally_connectable, so the page can read this instead.
-        window.localStorage.setItem('notifierExtensionVersion', browser.runtime.getManifest().version)
+        try {
+            window.localStorage.setItem('hasNotifierExtension', 'true')
+            // Version for the website (e.g. /update-help): Firefox has no
+            // externally_connectable, so the page can read this instead.
+            window.localStorage.setItem('notifierExtensionVersion', browser.runtime.getManifest().version)
+        } catch {
+            /* blocked site storage throws, which mustn't stop the rest of this script */
+        }
         // A content script left behind by an extension update or reload can't
         // reach the background any more. It stops answering, so the page gets
         // the new script's answer instead of a refusal from the old one.
@@ -203,10 +207,14 @@ import browser from 'webextension-polyfill'
                 )
             } else {
                 // For the website only, like the stamps above
-                if (subscribed_users_lowercase.length === 0) {
-                    window.localStorage.setItem(extensionSaysNoSubscriptions, 'true')
-                } else {
-                    window.localStorage.removeItem(extensionSaysNoSubscriptions)
+                try {
+                    if (subscribed_users_lowercase.length === 0) {
+                        window.localStorage.setItem(extensionSaysNoSubscriptions, 'true')
+                    } else {
+                        window.localStorage.removeItem(extensionSaysNoSubscriptions)
+                    }
+                } catch {
+                    /* blocked site storage throws, which mustn't stop the rest of this script */
                 }
                 revdditModifications(storage, user, isUserPage, isInfoPage)
             }

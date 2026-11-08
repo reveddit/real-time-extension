@@ -1291,7 +1291,7 @@ describe('the profile scan', () => {
         expect(await scanNextPageOfSixty()).toHaveLength(10)
     })
 
-    it("says to scan again when the website's fewest reads run out on block pages' second tries", async () => {
+    it("sends nothing past the website's fewest reads when block pages' second tries use them up, and says to scan again", async () => {
         __resetStorage({}, { [NEWS_CACHE_KEY]: { feed: { options: { scan_limits: { reads_per_click: 6 } } } } })
         const c = 'sort=new&limit=100&after=t1_x'
         pages[`/user/someone/comments/.rss?${c}`] = pages[`/user/someone/comments/.rss?${query}`]
@@ -1306,7 +1306,7 @@ describe('the profile scan', () => {
         const options = { after: 't1_x', firstOnPage: { t3: 't3_first' } }
         const pageReads = new Map()
         const first = await scanProfile(options, pageReads)
-        expect(asked).toHaveLength(7)
+        expect(asked).toHaveLength(6)
         expect(first.last).toMatchObject({
             status: 'partial',
             message: "This click's reads ran out; scan again to go on.",

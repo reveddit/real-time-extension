@@ -55,8 +55,6 @@ interface PostVerdictEntry {
     adverse?: boolean
     // POST_CLASSIFIER, when it was a post page's
     k?: number
-    // See isConfirmingPaced
-    u?: number
 }
 
 // Which post-page classifier a cached post verdict came from. 2 (0.0.5.28)
@@ -81,31 +79,27 @@ const postVerdictTtl = (e: PostVerdictEntry): number =>
 // Monitoring reports a removal once 3 to 5 cycles in a row read it, to ride
 // out a stray answer, and marks each item it's counting and can still record
 // (confirming). Every one of those cycles needs a read of its own, so for such
-// an item a cached 'removed' or 'held' isn't reused, and a read that decides
-// nothing leaves it in place and gives no verdict that cycle. Both caches here
-// and the second account's (viewer-lookup.ts) work this way.
+// an item a cached 'removed' or 'held' isn't reused. A read that decides
+// nothing is cached as 'unknown', as any item's is: no verdict, and no read
+// again for half an hour, so a removal counted while reddit refuses isn't
+// asked for every cycle. Both caches here and the second account's
+// (viewer-lookup.ts) work this way.
 export const isConfirmingRemoval = (entry: { v: string } | undefined, meta: AuthItemMeta | undefined): boolean =>
     !!meta?.confirming && (entry?.v === 'removed' || entry?.v === 'held')
 
-// Such a read also marks the entry with when it was (u), and the item isn't
-// read again sooner than an 'unknown' would be, so a removal counted while
-// reddit refuses isn't asked for every cycle. Until then it gets no verdict.
-export const isConfirmingPaced = (
-    entry: { v: string; u?: number } | undefined,
-    meta: AuthItemMeta | undefined,
-    unknownTtl: number,
-    now: number,
-): boolean => isConfirmingRemoval(entry, meta) && isFresh(Number(entry?.u), unknownTtl, now)
-
+// The page verdicts, and the posts owed one that got none this cycle (paced
+// after an 'unknown', undecided, or past the cycle's reads)
 export const verifyFeedPresentPosts = async (
     ids: string[],
     presentIds: Set<string>,
     authItemsMeta: AuthItemsMeta,
     fetchHtml: FetchHtml,
-): Promise<Record<string, PostPageStatus>> => {
+): Promise<{ verdicts: Record<string, PostPageStatus>; owed: Set<string> }> => {
     const nowMs = Date.now()
     let cache = await readLocal<Record<string, PostVerdictEntry>>(POST_VERDICT_CACHE_KEY, {})
     const verdicts: Record<string, PostPageStatus> = {}
+    // The posts only their page decides
+    const needed: string[] = []
     const toFetch: string[] = []
     for (const id of ids) {
         if (!id.startsWith('t3_') || !presentIds.has(id)) {
@@ -126,9 +120,7 @@ export const verifyFeedPresentPosts = async (
         if (!isYoungPost(m) && !isAdverseVerdict(cached) && !m?.known_removed) {
             continue
         }
-        if (isConfirmingPaced(cached, m, POST_VERDICT_UNKNOWN_TTL_MS, nowMs)) {
-            continue
-        }
+        needed.push(id)
         if (cached && !isStalePostVerdict(id, cached) && !isConfirmingRemoval(cached, m)) {
             if (isFresh(cached.t, postVerdictTtl(cached), nowMs)) {
                 // A recent 'unknown' is paced, not returned: callers treat a
@@ -151,21 +143,21 @@ export const verifyFeedPresentPosts = async (
             await new Promise(r => setTimeout(r, budget.delayMs))
         }
         fetched++
-        // What a read that decides nothing leaves: an 'unknown', or while the
-        // removal is counted the cached verdict, marked (isConfirmingPaced)
-        const undecided: PostVerdictEntry = isConfirmingRemoval(cache[id], authItemsMeta[id])
-            ? { ...cache[id], u: nowMs }
-            : { v: 'unknown', t: nowMs, k: POST_CLASSIFIER, ...(wasAdverse(id) && { adverse: true }) }
         try {
             const verdict = await fetchAndClassifyItemPage(id, authItemsMeta[id] || {}, fetchHtml)
             dlog('verify', `[reveddit] post page verdict ${id}: ${verdict}`)
-            cache[id] = verdict === 'unknown' ? undecided : { v: verdict, t: nowMs, k: POST_CLASSIFIER }
+            cache[id] = {
+                v: verdict,
+                t: nowMs,
+                k: POST_CLASSIFIER,
+                ...(verdict === 'unknown' && wasAdverse(id) && { adverse: true }),
+            }
             if (verdict !== 'unknown') {
                 verdicts[id] = verdict
             }
         } catch (err: any) {
             dlog('verify', `[reveddit] post page fetch failed ${id}:`, String(err?.message || err))
-            cache[id] = undecided
+            cache[id] = { v: 'unknown', t: nowMs, k: POST_CLASSIFIER, ...(wasAdverse(id) && { adverse: true }) }
             if (noteRateLimited(err)) {
                 break
             }
@@ -184,7 +176,7 @@ export const verifyFeedPresentPosts = async (
             /* ignored */
         }
     }
-    return verdicts
+    return { verdicts, owed: new Set(needed.filter(id => !verdicts[id])) }
 }
 
 // Feed absence stopped being a sufficient removal signal in ~2026-07: Reddit now
@@ -235,8 +227,6 @@ interface AbsentVerdictEntry {
     t: number // epoch ms of verification
     // POST_CLASSIFIER, for a post
     k?: number
-    // See isConfirmingPaced
-    u?: number
 }
 
 // Remote gate for the whole feed-absent verification path. Default: enabled
@@ -358,10 +348,6 @@ export const verifyFeedAbsentItems = async (
     let recentUnknownSkipped = 0
     for (const id of ids) {
         const cached = cache[id]
-        if (isConfirmingPaced(cached, authItemsMeta[id], ABSENT_VERDICT_UNKNOWN_TTL_MS, nowMs)) {
-            recentUnknownSkipped++
-            continue
-        }
         if (cached && !isStalePostVerdict(id, cached) && !isConfirmingRemoval(cached, authItemsMeta[id])) {
             const ttl =
                 cached.v === 'live'
@@ -399,15 +385,10 @@ export const verifyFeedAbsentItems = async (
             await new Promise(r => setTimeout(r, budget.delayMs))
         }
         fetched++
-        // What a read that decides nothing leaves: an 'unknown', or while the
-        // removal is counted the cached verdict, marked (isConfirmingPaced)
-        const undecided: AbsentVerdictEntry = isConfirmingRemoval(cache[id], authItemsMeta[id])
-            ? { ...cache[id], u: nowMs }
-            : { v: 'unknown', t: nowMs, ...classifierMark(id) }
         try {
             const verdict = await fetchAndClassifyItemPage(id, authItemsMeta[id] || {}, fetchHtml, scaffoldAbsence)
             dlog('verify', `[reveddit] absent item verdict ${id}: ${verdict}`)
-            cache[id] = verdict === 'unknown' ? undecided : { v: verdict, t: nowMs, ...classifierMark(id) }
+            cache[id] = { v: verdict, t: nowMs, ...classifierMark(id) }
             if (verdict !== 'unknown') {
                 verdicts[id] = verdict
                 freshDefinitive++
@@ -416,7 +397,7 @@ export const verifyFeedAbsentItems = async (
             dlog('verify', `[reveddit] absent item verification failed ${id}:`, String(err?.message || err))
             // Paced like an unreadable page. A wall on every route (the
             // captcha, the block page) must not be retried every cycle.
-            cache[id] = undecided
+            cache[id] = { v: 'unknown', t: nowMs, ...classifierMark(id) }
             // One hit an item: a 429 on its partial has already started the
             // backoff, and two would double the wait
             if (!(await isRateLimitedNow())) {

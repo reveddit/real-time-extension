@@ -41,7 +41,7 @@ const follow = (view, pageText) => {
 const storedText = () => __getLocalStorage().items_other?.[ID]?.t
 
 describe('following a comment from reveddit', () => {
-    it.each(['[removed]', '[deleted]'])(
+    it.each(['[removed]', '[deleted]', '[ Removed by Reddit ]'])(
         'keeps the text the page shows on the record of a comment reddit gives as %s',
         async gone => {
             follow({ ...VIEW, author: '[deleted]', body: gone }, 'the words it recovered')

@@ -25,7 +25,7 @@ import {
     flagIfRateLimited,
 } from './request-gates'
 import { readThreadItemLoggedIn, FOLLOWED_POST_IDS_KEY } from './followed-lookup'
-import { withTimeout, canTabAnswer } from './www-fetcher'
+import { withTimeout, canTabAnswer, isSupportedRedditTab } from './www-fetcher'
 import { dlog } from './diaglog'
 import { isViewerConnecting, recoverViewerConnect, hasRedditLoginCookie } from './viewer'
 import {
@@ -121,9 +121,16 @@ interface MarkChangesResult {
     backlogCount: number
 }
 
-const updateOldestDateThreshold = (items: any[], itemLookup: Record<string, any>, thing: string, isUser: boolean) => {
+// Stores a full listing's oldest date as the threshold and returns it, else
+// null: the check has read local storage already, so it doesn't read it back
+const updateOldestDateThreshold = (
+    items: any[],
+    itemLookup: Record<string, any>,
+    thing: string,
+    isUser: boolean,
+): number | null => {
     if (items.length < FULL_RESPONSE_ITEM_COUNT) {
-        return Promise.resolve(null)
+        return null
     }
 
     const timestamps = items
@@ -134,14 +141,15 @@ const updateOldestDateThreshold = (items: any[], itemLookup: Record<string, any>
         .filter(ts => typeof ts === 'number' && ts > 0)
 
     if (timestamps.length === 0) {
-        return Promise.resolve(null)
+        return null
     }
 
     timestamps.sort((a, b) => a - b)
     const oldestDate = timestamps[0]
 
     const key = getOldestDateKey(thing, isUser)
-    return browser.storage.local.set({ [key]: oldestDate }).then(() => oldestDate)
+    browser.storage.local.set({ [key]: oldestDate })
+    return oldestDate
 }
 
 const getOldestDateThreshold = (thing: string, isUser: boolean) => {
@@ -601,11 +609,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                         return
                     }
 
-                    // Check if we have a supported subdomain (www.reddit.com or old.reddit.com)
-                    const supportedTabs = tabs.filter(tab => {
-                        const hostname = new URL(tab.url!).hostname
-                        return (hostname === 'www.reddit.com' || hostname === 'old.reddit.com') && !isOtherIdentity(tab)
-                    })
+                    const supportedTabs = tabs.filter(tab => isSupportedRedditTab(tab) && !isOtherIdentity(tab))
 
                     if (supportedTabs.length === 0) {
                         dlog('cycle', 'No supported Reddit subdomains found (www.reddit.com or old.reddit.com)')
@@ -794,12 +798,19 @@ const checkForChanges_thing_byId = async (
     // so carry those per-item from the authenticated view (itemLookup).
     const username = isUser ? thing : ''
     const authItemsMeta: Record<string, any> = {}
+    // The user's records, read when the lookup is told which removals are
+    // being confirmed. Only this check's save writes them, so the check goes
+    // on with them after the lookup.
+    let records: Record<string, any> | undefined
     if (isUser) {
         const knownRemovedHash = storage[getObjectNamesForThing(thing, isUser)['removed']] || {}
-        const [records, oldestDateThreshold]: [any, any] = await Promise.all([
-            getLocalStorageItems(thing, isUser),
-            getOldestDateThreshold(thing, isUser),
-        ])
+        let oldestDateThreshold: number | null = null
+        if (!preFetchedItems && storage.options.removal_status.track) {
+            ;[records, oldestDateThreshold] = (await Promise.all([
+                getLocalStorageItems(thing, isUser),
+                getOldestDateThreshold(thing, isUser),
+            ])) as [any, any]
+        }
         for (const [name, authItem] of Object.entries(itemLookup)) {
             const recorded = name in knownRemovedHash
             authItemsMeta[name] = {
@@ -827,7 +838,7 @@ const checkForChanges_thing_byId = async (
                 confirming:
                     !!storage.options.removal_status.track &&
                     !recorded &&
-                    records[name]?.r > 0 &&
+                    records?.[name]?.r > 0 &&
                     !isTooOld(authItem.created_utc, oldestDateThreshold),
                 // Whoever the browser is signed in as (lookupItemsByID)
                 author: authItem.author,
@@ -856,6 +867,13 @@ const checkForChanges_thing_byId = async (
         const lock_status = storage.options.lock_status
         const target_seen_count = storage.options.seen_count || SEEN_COUNT_DEFAULT
         const keys = getObjectNamesForThing(thing, isUser)
+        // Local storage is read first, so that nothing waits between the
+        // lists' re-read below and their save: a save made elsewhere in
+        // between would be lost
+        const [existingLocalStorageItems, storedOldestDate]: [any, any] = await Promise.all([
+            records || getLocalStorageItems(thing, isUser),
+            getOldestDateThreshold(thing, isUser),
+        ])
         // The user, a reveddit page or another check may have saved while the
         // lookup ran. So what this check compares and saves is read again, into
         // storage, which the cycle's later checks size their saves by. If that
@@ -914,7 +932,7 @@ const checkForChanges_thing_byId = async (
             notePubliclyLive(thing, publiclyLive).catch(() => {})
         }
 
-        updateOldestDateThreshold(items, itemLookup, thing, isUser)
+        const oldestDateThreshold = updateOldestDateThreshold(items, itemLookup, thing, isUser) ?? storedOldestDate
 
         // mark items that do not exist in arrays
         // change happens if:
@@ -938,134 +956,128 @@ const checkForChanges_thing_byId = async (
                 if (!mergedRealtime.changeTypes.includes(t)) mergedRealtime.changeTypes.push(t)
             }
         }
-        return Promise.all([getLocalStorageItems(thing, isUser), getOldestDateThreshold(thing, isUser)]).then(
-            async ([existingLocalStorageItems, oldestDateThreshold]: [any, any]) => {
-                const context: MarkChangesContext = {
-                    changes,
-                    itemLookup,
-                    newLocalStorageItems,
-                    isUser,
-                    subscribedFrom,
-                    existingLocalStorageItems,
-                    target_seen_count,
-                    oldestDateThreshold,
-                    skipConfirmationThreshold,
-                }
-                if (removal_status.track) {
-                    mergeResult(
-                        markChanges(
-                            { current: removed, type: REMOVED, known: known_removed },
-                            { current: approved, type: APPROVED, known: known_approved },
-                            removal_status.notify,
-                            context,
-                        ),
-                    )
-                }
-                if (lock_status.track) {
-                    mergeResult(
-                        markChanges(
-                            { current: locked, type: LOCKED, known: known_locked },
-                            { current: unlocked, type: UNLOCKED, known: known_unlocked },
-                            lock_status.notify,
-                            context,
-                        ),
-                    )
-                }
-                console.log('[debug] post-markChanges', {
-                    thing,
-                    isUser,
-                    subscribedFrom,
-                    removed: removed.length,
-                    approved: approved.length,
-                    locked: locked.length,
-                    unlocked: unlocked.length,
-                    known_removed: Object.keys(known_removed).length,
-                    known_approved: Object.keys(known_approved).length,
-                    existingLS: Object.keys(existingLocalStorageItems || {}).length,
-                    num_changes,
-                    realtimeCount: mergedRealtime.count,
-                    backlogCount,
+        const context: MarkChangesContext = {
+            changes,
+            itemLookup,
+            newLocalStorageItems,
+            isUser,
+            subscribedFrom,
+            existingLocalStorageItems,
+            target_seen_count,
+            oldestDateThreshold,
+            skipConfirmationThreshold,
+        }
+        if (removal_status.track) {
+            mergeResult(
+                markChanges(
+                    { current: removed, type: REMOVED, known: known_removed },
+                    { current: approved, type: APPROVED, known: known_approved },
+                    removal_status.notify,
+                    context,
+                ),
+            )
+        }
+        if (lock_status.track) {
+            mergeResult(
+                markChanges(
+                    { current: locked, type: LOCKED, known: known_locked },
+                    { current: unlocked, type: UNLOCKED, known: known_unlocked },
+                    lock_status.notify,
+                    context,
+                ),
+            )
+        }
+        console.log('[debug] post-markChanges', {
+            thing,
+            isUser,
+            subscribedFrom,
+            removed: removed.length,
+            approved: approved.length,
+            locked: locked.length,
+            unlocked: unlocked.length,
+            known_removed: Object.keys(known_removed).length,
+            known_approved: Object.keys(known_approved).length,
+            existingLS: Object.keys(existingLocalStorageItems || {}).length,
+            num_changes,
+            realtimeCount: mergedRealtime.count,
+            backlogCount,
+        })
+        if (mergedRealtime.count > 0) {
+            console.log(
+                `Creating realtime notification for ${thing}: ${mergedRealtime.count} changes of type ${mergedRealtime.changeTypes.join(', ')}`,
+            )
+            announce(
+                thing,
+                {
+                    count: mergedRealtime.count,
+                    types: mergedRealtime.changeTypes,
+                    itemIds: mergedRealtime.ids,
+                    firstAttemptAt: Date.now(),
+                    attempts: 1,
+                },
+                'recent',
+            )
+        }
+        if (backlogCount > 0) {
+            console.log(`Backlog for ${thing}: ${backlogCount} older changes collected (badge-only, no notification)`)
+        }
+        if (num_changes === 0) {
+            // No new changes this cycle — but retry any pending
+            // notification from a prior cycle that may have silently
+            // failed to display (e.g. install-time on Firefox Android).
+            getPendingNotification(thing)
+                .then(pending => {
+                    if (!pending) return
+                    // The user turned notifications off after this entry
+                    // was queued — drop it rather than retry a
+                    // notification they opted out of. The badge still
+                    // counts the items.
+                    if (!removal_status.notify && !lock_status.notify) {
+                        clearPendingNotification(thing).catch(() => {})
+                        return
+                    }
+                    const MAX_RETRY_ATTEMPTS = 5
+                    if (pending.attempts >= MAX_RETRY_ATTEMPTS) return
+                    const MIN_RETRY_DELAY_MS = 2 * 60 * 1000
+                    if (Date.now() - pending.firstAttemptAt < MIN_RETRY_DELAY_MS) return
+                    console.log(`Retrying pending notification for ${thing} (attempt ${pending.attempts + 1})`)
+                    announce(thing, { ...pending, attempts: pending.attempts + 1 }, 'retry')
                 })
-                if (mergedRealtime.count > 0) {
-                    console.log(
-                        `Creating realtime notification for ${thing}: ${mergedRealtime.count} changes of type ${mergedRealtime.changeTypes.join(', ')}`,
-                    )
-                    announce(
-                        thing,
-                        {
-                            count: mergedRealtime.count,
-                            types: mergedRealtime.changeTypes,
-                            itemIds: mergedRealtime.ids,
-                            firstAttemptAt: Date.now(),
-                            attempts: 1,
-                        },
-                        'recent',
-                    )
-                }
-                if (backlogCount > 0) {
-                    console.log(
-                        `Backlog for ${thing}: ${backlogCount} older changes collected (badge-only, no notification)`,
-                    )
-                }
-                if (num_changes === 0) {
-                    // No new changes this cycle — but retry any pending
-                    // notification from a prior cycle that may have silently
-                    // failed to display (e.g. install-time on Firefox Android).
-                    getPendingNotification(thing)
-                        .then(pending => {
-                            if (!pending) return
-                            // The user turned notifications off after this entry
-                            // was queued — drop it rather than retry a
-                            // notification they opted out of. The badge still
-                            // counts the items.
-                            if (!removal_status.notify && !lock_status.notify) {
-                                clearPendingNotification(thing).catch(() => {})
-                                return
-                            }
-                            const MAX_RETRY_ATTEMPTS = 5
-                            if (pending.attempts >= MAX_RETRY_ATTEMPTS) return
-                            const MIN_RETRY_DELAY_MS = 2 * 60 * 1000
-                            if (Date.now() - pending.firstAttemptAt < MIN_RETRY_DELAY_MS) return
-                            console.log(`Retrying pending notification for ${thing} (attempt ${pending.attempts + 1})`)
-                            announce(thing, { ...pending, attempts: pending.attempts + 1 }, 'retry')
-                        })
-                        .catch(() => {})
-                }
-                const toSave = fitStatusLists(
-                    {
-                        [keys['removed']]: known_removed,
-                        [keys['approved']]: known_approved,
-                        [keys['locked']]: known_locked,
-                        [keys['unlocked']]: known_unlocked,
-                    },
-                    storage,
-                    keys,
-                    // 100 entries come to about 5 KB, well inside one item
-                    { [keys['changes']]: changes.slice(-MAX_SYNC_STORAGE_CHANGES) },
-                )
-                await browser.storage.sync.set(toSave).catch(err => {
-                    // A refused save is otherwise silent, and the next check
-                    // announces its changes again (issue #15)
-                    const sizes = Object.entries(toSave)
-                        .map(([key, value]) => `${key} ${syncItemBytes(key, value)}`)
-                        .join(', ')
-                    dlog('cycle', `[reveddit] sync save refused (${String(err?.message || err)}): ${sizes}`)
-                })
-                updateBadgeUnseenCount()
-                console.log('[debug] addLocalStorageItems', {
-                    thing,
-                    isUser,
-                    keys: Object.keys(newLocalStorageItems),
-                    sample: Object.keys(newLocalStorageItems)
-                        .slice(0, 2)
-                        .map(k => ({
-                            id: k,
-                            t: newLocalStorageItems[k]?.t?.slice(0, 60),
-                        })),
-                })
-                return addLocalStorageItems(newLocalStorageItems, thing, isUser)
+                .catch(() => {})
+        }
+        const toSave = fitStatusLists(
+            {
+                [keys['removed']]: known_removed,
+                [keys['approved']]: known_approved,
+                [keys['locked']]: known_locked,
+                [keys['unlocked']]: known_unlocked,
             },
+            storage,
+            keys,
+            // 100 entries come to about 5 KB, well inside one item
+            { [keys['changes']]: changes.slice(-MAX_SYNC_STORAGE_CHANGES) },
         )
+        await browser.storage.sync.set(toSave).catch(err => {
+            // A refused save is otherwise silent, and the next check
+            // announces its changes again (issue #15)
+            const sizes = Object.entries(toSave)
+                .map(([key, value]) => `${key} ${syncItemBytes(key, value)}`)
+                .join(', ')
+            dlog('cycle', `[reveddit] sync save refused (${String(err?.message || err)}): ${sizes}`)
+        })
+        updateBadgeUnseenCount()
+        console.log('[debug] addLocalStorageItems', {
+            thing,
+            isUser,
+            keys: Object.keys(newLocalStorageItems),
+            sample: Object.keys(newLocalStorageItems)
+                .slice(0, 2)
+                .map(k => ({
+                    id: k,
+                    t: newLocalStorageItems[k]?.t?.slice(0, 60),
+                })),
+        })
+        return addLocalStorageItems(newLocalStorageItems, thing, isUser)
     })
 }
 // For tests
@@ -1133,18 +1145,24 @@ function markChanges(
         } else if (existingLocalStorageItem) {
             // reset seen_count so that items observed as approved/normal must be consecutively seen w/that state
             const newLocalStorageItem = currentRecord(name)
-            newLocalStorageItem.resetCount(seen_key)
-            // Track how many consecutive times this item has been observed as removed or locked.
-            // Only fire an alert after REMOVAL_CONFIRMATION_THRESHOLD consecutive observations,
-            // which prevents false alerts from transient API failures or intermittent data.
-            const alert_count = newLocalStorageItem.incrementCount(alert_key)
-            newLocalStorageItems[name] = newLocalStorageItem
-            if (
-                !skipConfirmationThreshold &&
-                alert_count < REMOVAL_CONFIRMATION_THRESHOLD &&
-                !(name in alert_known_hash)
-            ) {
-                return // skip this item — not yet confirmed
+            if (name in alert_known_hash) {
+                // Recorded already, so its alert count is never read: the
+                // record is saved only when its seen count starts over, and
+                // most checks of it write nothing
+                if (newLocalStorageItem.getCount(seen_key) > 0) {
+                    newLocalStorageItem.resetCount(seen_key)
+                    newLocalStorageItems[name] = newLocalStorageItem
+                }
+            } else {
+                newLocalStorageItem.resetCount(seen_key)
+                // Track how many consecutive times this item has been observed as removed or locked.
+                // Only fire an alert after REMOVAL_CONFIRMATION_THRESHOLD consecutive observations,
+                // which prevents false alerts from transient API failures or intermittent data.
+                const alert_count = newLocalStorageItem.incrementCount(alert_key)
+                newLocalStorageItems[name] = newLocalStorageItem
+                if (!skipConfirmationThreshold && alert_count < REMOVAL_CONFIRMATION_THRESHOLD) {
+                    return // skip this item — not yet confirmed
+                }
             }
         }
         if (!(name in alert_known_hash) && !isTooOld(item.created_utc, oldestDateThreshold)) {
@@ -1313,7 +1331,8 @@ const announceBacklog = (count: string, typeText: string, itemIds: string[]) => 
     const id = 'backlog_summary'
     const title = 'reveddit real-time'
     const message = `${count} ${typeText} posts or comments found in your history. Click to review.`
-    createNotification({ notificationId: id, title, message })
+    // Kept apart from accounts' notifications, which are named for the account
+    createNotification({ notificationId: `reveddit:${id}`, title, message })
     appendNotificationLog({ ts: Date.now(), id, title, message, itemIds, source: id }).catch(() => {})
 }
 

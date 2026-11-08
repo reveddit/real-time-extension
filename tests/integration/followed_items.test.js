@@ -62,7 +62,7 @@ describe('followed items while api/info is refused', () => {
             { followed_post_ids: { [COMMENT]: 'p1', [COMMENT2]: 'p2' } },
         )
         _followedTiming.delayMs = 0
-        _loggedInFetchState.preferredCacheMode = 0
+        _loggedInFetchState.preferredCacheMode = undefined
         _loggedInFetchState.doubleBlockUntil = 0
         loggedIn = true
         browserMock.cookies = { get: async ({ name }) => (loggedIn ? { name, value: 'x' } : null) }

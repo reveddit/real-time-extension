@@ -37,8 +37,9 @@ export interface AuthItemMeta {
     // post, removed a day earlier, still listed), so feed presence must never
     // flip a recorded removal back to approved without a page verdict.
     known_removed?: boolean
-    // Monitoring is counting this item's removal and can still record it, so
-    // each cycle until then needs a fresh page read, not a cached verdict
+    // Monitoring is counting this item's removal and can still record it, so a
+    // cached 'removed' or 'held' isn't reused: its page is read again, and a
+    // read that decides nothing is cached as 'unknown', paced like any other
     confirming?: boolean
     // Who the author's own view says wrote it: whoever the browser is signed
     // in as, even when login detection fell back to the cached username

@@ -30,6 +30,8 @@ describe('the link menu', () => {
         rightClick(url)
         expect(chrome.notifications.create).toHaveBeenCalledTimes(1)
         expect(chrome.notifications.create.mock.calls[0][1].message).toContain(url)
+        // The id the background knows only to close (background_clicks.test.js)
+        expect(chrome.notifications.create.mock.calls[0][0]).toMatch(/^reveddit:subscribe_failed\|/)
     })
 
     it('follows a post from a link that ends at its id or has only a query after it', async () => {

@@ -33,7 +33,7 @@ export const setupContextualMenu = () => {
             } else {
                 // The background can't alert: a service worker has no alert, and Firefox's page shows none
                 createNotification({
-                    notificationId: 'subscribe_failed',
+                    notificationId: 'reveddit:subscribe_failed',
                     title: 'reveddit subscribe',
                     message: `Unable to subscribe to this link, it is not a comment, post or user.\n\n${url}`,
                 })

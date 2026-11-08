@@ -135,7 +135,12 @@ export const lookupItemsByID_fromPublicProfile = async (
     }
     await notePublicProfileUnavailable(null)
     await recordPaginationOutcome(profile.paginationStopped)
-    const postVerdicts = await verifyFeedPresentPosts(ids, new Set(profile.items.keys()), authItemsMeta, fetchHtml)
+    const { verdicts: postVerdicts, owed: postsOwed } = await verifyFeedPresentPosts(
+        ids,
+        new Set(profile.items.keys()),
+        authItemsMeta,
+        fetchHtml,
+    )
     // Feed-absent items within coverage can be profile-hidden rather than
     // removed — verify against their own pages before concluding anything.
     // Skipped: auth-confirmed removals, and publicly-invisible classes whose
@@ -205,14 +210,15 @@ export const lookupItemsByID_fromPublicProfile = async (
                     // The post's own page shows it held/removed even though it
                     // lingers in the feed and the auth view hasn't caught up.
                     results.push({ data: { ...publicItem, is_robot_indexable: false, ...carried } })
-                } else if ((meta.known_removed || (meta.confirming && isYoungPost(meta))) && verdict !== 'live') {
-                    // Recorded as removed, or young with its removal being
-                    // counted, still lingering in the feed, and no page verdict
-                    // landed this cycle (no tab, challenge, shell, paced).
-                    // Omit: feed presence alone must not flip a recorded removal
-                    // back to approved or start a count over on fetch luck —
-                    // that oscillates. A real re-approval flips it once a 'live'
-                    // page verdict arrives.
+                } else if ((meta.known_removed || (meta.confirming && postsOwed.has(id))) && verdict !== 'live') {
+                    // Recorded as removed, or with its removal being counted and
+                    // a page read owed, still lingering in the feed, and no page
+                    // verdict landed this cycle (no tab, challenge, shell, paced,
+                    // past the cycle's reads). Omit: feed presence alone must not
+                    // flip a recorded removal back to approved or start a count
+                    // over on fetch luck — that oscillates. A real re-approval
+                    // flips it once a 'live' page verdict arrives.
+                    // Owed, not young as in viewer-lookup.ts: this path also reads a mature post once seen held
                 } else {
                     // No removal signal from any source → live. (verdict 'live',
                     // 'unknown', or unfetched: the auth view says not-removed and

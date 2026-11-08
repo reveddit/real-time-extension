@@ -822,6 +822,18 @@ describe('checking the user’s items through the second account', () => {
         expect(results.map(r => r.data.is_robot_indexable)).toEqual([false])
     })
 
+    it('a cached verdict dated ahead of the clock is dropped when the cache is saved', async () => {
+        connect()
+        __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
+        __getLocalStorage().viewer_item_verdicts = { t1_ahead: { v: 'removed', t: Date.now() + 3600 * 1000 } }
+        answer([
+            ['/user/alice/', listing([])],
+            ['/_/gone.json', thread(null)],
+        ])
+        await lookup(['t1_gone'], meta(['t1_gone']))
+        expect(Object.keys(__getLocalStorage().viewer_item_verdicts)).toEqual(['t1_gone'])
+    })
+
     it('a later listing page failing only ends the walk: what the first page showed still stands', async () => {
         connect()
         __getLocalStorage().viewer_identity = { token: TOKEN, result: 'ok', t: Date.now() }
@@ -890,15 +902,22 @@ describe('checking the user’s items through the second account', () => {
             expect(result.data).toMatchObject({ body: '[removed]' })
         })
 
-        it('a listed young post whose read fails keeps its cached verdict and gets no result, so the count neither grows nor starts over', async () => {
+        it('a listed young post whose read fails gets no result, so the count neither grows nor starts over', async () => {
             for (const failure of [json(500, {}), BLOCK]) {
                 setUp(failure, [YOUNG])
                 cachedRemoved(['t3_young'])
                 const log = vi.spyOn(console, 'log')
                 expect(await lookup(['t3_young'], young())).toEqual([])
-                expect(__getLocalStorage().viewer_item_verdicts.t3_young).toMatchObject({ v: 'removed' })
+                expect(__getLocalStorage().viewer_item_verdicts.t3_young).toMatchObject({ v: 'unknown' })
                 expect(log.mock.calls.some(c => String(c[0]).includes('(0 live, 0 removed, 1 unknown)'))).toBe(true)
                 log.mockRestore()
+                // The next cycle waits out the unknown, still with no result, and
+                // the old removal isn't counted once monitoring stops counting it
+                const reads = threadReads().length
+                expect(await lookup(['t3_young'], young())).toEqual([])
+                const [result] = await lookup(['t3_young'], { t3_young: { ...young().t3_young, confirming: false } })
+                expect(result.data).toMatchObject({ name: 't3_young', is_robot_indexable: true })
+                expect(threadReads()).toHaveLength(reads)
             }
         })
 

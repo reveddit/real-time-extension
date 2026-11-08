@@ -252,7 +252,7 @@ class ThingCounter {
     }
 }
 
-const LEGACY_PAGE_TIMEOUT_MS = 15000
+export const LEGACY_PAGE_TIMEOUT_MS = 15000
 
 // Reads the page through the rewriter's handlers. The rewriter's stream waits for
 // its WASM to load, and so does an abort of that stream, so an abort ends the read

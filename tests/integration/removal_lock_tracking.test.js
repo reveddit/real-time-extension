@@ -6,8 +6,8 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeEach } from 'vitest'
-import { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import browserMock, { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { _checkForChanges_thing_byId } from '../../src/src/monitoring.ts'
 import { getObjectNamesForThing } from '../../src/src/storage.ts'
 import { REMOVED, APPROVED, LOCKED, UNLOCKED, DELETED } from '../../src/src/common.ts'
@@ -179,6 +179,17 @@ describe('an item both tracks are watching', () => {
         for (let i = 0; i < SEEN_COUNT; i++) await check({ locked: true })
         expect(__getLocalStorage()[localKey(USER)][ID].t).toBe('text')
     })
+
+    it.each([USER, OTHER])(
+        'writes nothing for %s when a recorded removal and lock read the same again, and counts nothing',
+        async thing => {
+            seed(['removed', 'locked'], { ...STORED_ITEM, r: 7, lr: 4 }, thing)
+            const set = vi.spyOn(browserMock.storage.local, 'set')
+            for (let i = 0; i < 3; i++) await check({ removed: true, locked: true }, thing)
+            expect(set.mock.calls.filter(([items]) => localKey(thing) in items)).toEqual([])
+            expect(__getLocalStorage()[localKey(thing)][ID]).toEqual({ ...STORED_ITEM, r: 7, lr: 4 })
+        },
+    )
 })
 
 describe('a followed item', () => {

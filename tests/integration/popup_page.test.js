@@ -9,14 +9,16 @@ import { openPage } from '../mocks/extension-page.js'
 
 const POST_URL = 'https://www.reddit.com/r/pics/comments/abc123/a_title/'
 
-// tabs: the reddit tabs open, as the popup's query lists them. active: the
-// address of the tab the popup was opened over.
+// tabs: the reddit tabs open, as the popup's query lists them after the
+// storage has answered, or a promise of them for a query that answers later
+// still. active: the address of the tab the popup was opened over.
 const openPopup = ({ sync = {}, local = {}, tabs = [], active } = {}) =>
     openPage(
         () => {
             vi.stubGlobal('__LATEST_RELEASE__', null)
             vi.stubGlobal('fetch', () => new Promise(() => {}))
-            chrome.tabs.query = (query, callback) => callback(query.active ? (active ? [{ url: active }] : []) : tabs)
+            chrome.tabs.query = (query, callback) =>
+                query.active ? callback(active ? [{ url: active }] : []) : Promise.resolve(tabs).then(callback)
             chrome.tabs.create = vi.fn()
             chrome.runtime.openOptionsPage = vi.fn()
             return import('../../src/src/popup.tsx')
@@ -109,6 +111,16 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
         expect(text).toContain('If it keeps up, connect a second Reddit account.')
     })
 
+    it('public view with a www.reddit.com tab open: offers none even before the tab query answers', async () => {
+        let answer
+        const document = await warning('public_view_unavailable', { tabs: new Promise(resolve => (answer = resolve)) })
+        // The storage has answered: the account's row is there
+        await vi.waitFor(() => expect(document.body.textContent).toContain('someone'))
+        expect(document.body.textContent).not.toContain('Open www.reddit.com')
+        answer([WWW_TAB])
+        await expectButtons(document, [['Connect a second account', 'secondary']])
+    })
+
     it('public view with a www.reddit.com tab open, once it has lasted: the second account is the main choice', async () => {
         const document = await warning('public_view_unavailable', { failures: LASTING, tabs: [WWW_TAB] })
         await expectButtons(document, [['Connect a second account', 'primary']])
@@ -150,6 +162,18 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
             ['Open www.reddit.com', 'primary'],
             ['Connect a second account', 'secondary'],
         ])
+    })
+})
+
+describe('the test notification', () => {
+    it('has the id the background knows only to close (background_clicks.test.js)', async () => {
+        const { document } = await openPopup()
+        const link = () =>
+            Array.from(document.querySelectorAll('a')).find(a => a.textContent === 'send a test notification')
+        await vi.waitFor(() => expect(link()).toBeTruthy())
+        vi.spyOn(chrome.notifications, 'create')
+        link().click()
+        expect(chrome.notifications.create.mock.calls[0][0]).toMatch(/^reveddit:test\|/)
     })
 })
 

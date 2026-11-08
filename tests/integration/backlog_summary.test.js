@@ -86,6 +86,7 @@ describe('maybeFireBacklogSummary', () => {
         await maybeFireBacklogSummary(storage)
 
         expect(notifySpy).toHaveBeenCalledTimes(1)
+        expect(notifySpy.mock.calls[0][0]).toMatch(/^reveddit:backlog_summary\|/)
         expect(notifySpy.mock.calls[0][1].message).toMatch(/^3 older removed\/locked/)
 
         const state = __getLocalStorage().backlog_summary
