@@ -8,9 +8,9 @@ import {
     isOtherIdentity,
     showsWhatsNew,
 } from './src/common'
-import { checkForChanges } from './src/monitoring'
-import { lookupItemsByID, readWithLogin } from './src/requests'
-import { getLoggedinUser, getLoggedinUserDetailed, getAuth, isSettledByLogin, whoIsSignedIn } from './src/reddit-auth'
+import { checkForChanges, setCurrentStateForIdHere } from './src/monitoring'
+import { readWithLogin } from './src/requests'
+import { getLoggedinUser, getLoggedinUserDetailed, isSettledByLogin, whoIsSignedIn } from './src/reddit-auth'
 import { storeRedditCookies } from './src/reddit-cookies'
 import { getPublicViewUncheckedLine } from './src/lookup-status'
 import { getLoginWallLine } from './src/www-fetcher'
@@ -19,13 +19,18 @@ import {
     INTERVAL_DEFAULT,
     getOptions,
     subscribeUser,
-    getUnseenIDs_thing,
-    markThingAsSeen,
+    markThingSeen,
     clearPendingNotification,
     FOLLOWED_NOTIFICATION,
     setBacklogSummaryInstalledAt,
     markBacklogSummarySent,
     updateBadgeUnseenCount,
+    PAGE_WRITE,
+    subscribeIdHere,
+    unsubscribeIdHere,
+    subscribeUserHere,
+    keepPageTextHere,
+    markIDsAsSeenHere,
 } from './src/storage'
 import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
@@ -213,27 +218,45 @@ chrome.tabs.onRemoved.addListener(tabId => {
         })
         .catch(() => {})
 })
-// A content script's item lookup (the subscribe button)
-const lookupItemsForContentScript = (request: any, sendResponse: (response: any) => void) => {
-    getAuth()
-        .then(auth => {
-            return lookupItemsByID(
-                request.ids,
-                auth,
-                request.monitor_quarantined,
-                request.username || '',
-                request.authItemsMeta || {},
-            )
-        })
-        .then(items => {
-            // if request fails, items is null
-            sendResponse({ response: 'done', items })
-        })
-        .catch(error => {
-            console.log('Error in get-reddit-items-by-id:', error)
-            sendResponse({ response: 'done', items: null })
-        })
-}
+// What a reddit or reveddit page's content script asks the background to write
+// (storage.ts byBackground), each run as it runs in an extension page. A web
+// page's script sends them, so each argument is checked first.
+const isItemId = (id: unknown): id is string => typeof id === 'string' && /^t[13]_[a-z0-9]{1,16}$/.test(id)
+const isPostId = (id: unknown): id is string => typeof id === 'string' && /^(t3_)?[a-z0-9]{1,16}$/.test(id)
+const isName = (name: unknown): name is string => typeof name === 'string' && /^[\w-]{1,64}$/.test(name)
+const isPageUrl = (url: unknown): url is string =>
+    typeof url === 'string' && url.length <= 2048 && /^https?:\/\//.test(url)
+const isPageText = (text: unknown): text is string => typeof text === 'string' && text.length <= 40000
+// Item ids and when each was made, as a page's elements give them
+const isSeenIds = (ids: unknown): ids is Record<string, any> =>
+    !!ids &&
+    typeof ids === 'object' &&
+    !Array.isArray(ids) &&
+    Object.keys(ids).length <= 1000 &&
+    Object.entries(ids).every(([id, t]) => isItemId(id) && (t == null || ['string', 'number'].includes(typeof t)))
+const PAGE_WRITES = new Map<string, (args: any[]) => Promise<unknown> | false>([
+    ['subscribeId', ([id]) => isItemId(id) && subscribeIdHere(id)],
+    ['unsubscribeId', ([id]) => isItemId(id) && unsubscribeIdHere(id)],
+    ['subscribeUser', ([user]) => isName(user) && subscribeUserHere(user)],
+    ['keepPageText', ([id, text]) => isItemId(id) && isPageText(text) && keepPageTextHere(id, text)],
+    [
+        'setCurrentStateForId',
+        ([id, url, postId]) =>
+            isItemId(id) &&
+            isPageUrl(url) &&
+            (postId == null || isPostId(postId)) &&
+            setCurrentStateForIdHere(id, url, postId ?? undefined),
+    ],
+    [
+        'markIDsAsSeenIfSubscribed',
+        ([user, isUser, ...lists]) =>
+            isName(user) &&
+            typeof isUser === 'boolean' &&
+            lists.length === 4 &&
+            lists.every(isSeenIds) &&
+            markIDsAsSeenHere(user, isUser, lists[0], lists[1], lists[2], lists[3]),
+    ],
+])
 
 chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     if (request.action == 'open-options') {
@@ -266,15 +289,16 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                   : disconnectViewer().then(() => ({ ok: true }))
         run.then(sendResponse, (e: any) => sendResponse({ ok: false, error: String(e?.message || e) }))
         return true
-    } else if (request.action == 'get-reddit-items-by-id') {
-        // Not while a second account signs in: the browser's login is its
-        isViewerConnecting().then(connecting => {
-            if (connecting) {
-                sendResponse({ response: 'done', items: null })
-                return
-            }
-            lookupItemsForContentScript(request, sendResponse)
-        })
+    } else if (request.action === PAGE_WRITE) {
+        const run = Array.isArray(request.args) && PAGE_WRITES.get(String(request.write))?.(request.args)
+        if (!run) {
+            sendResponse({ ok: false, error: 'forbidden' })
+            return true
+        }
+        run.then(
+            answer => sendResponse({ ok: true, answer }),
+            (e: any) => sendResponse({ ok: false, error: String(e?.message || e) }),
+        )
         return true
     } else if (__DEV__ && request.action === 'dev-relay') {
         // Dev builds: the local website's content script relays test scripts'
@@ -662,29 +686,25 @@ const notificationClicked = (name: string) => {
         return
     }
     const thing = isUser ? name : 'other'
-    chrome.storage.sync.get(undefined as any, storage => {
-        const unseenIDs = getUnseenIDs_thing(thing, isUser, storage)
-        let url: string
-        if (isUser) {
-            url = chrome.runtime.getURL('src/history.html')
-        } else {
-            url = chrome.runtime.getURL('src/other.html')
-            if (unseenIDs.length) {
-                url = `https://www.reveddit.com/info?id=${unseenIDs.join(',')}&removal_status=all`
+    // The page opens even when the save is refused
+    markThingSeen(thing, isUser, (e: any) =>
+        dlog('ui', '[reveddit] marking seen on a notification click failed:', String(e?.message || e)),
+    )
+        .then(unseenIDs => {
+            let url: string
+            if (isUser) {
+                url = chrome.runtime.getURL('src/history.html')
+            } else {
+                url = chrome.runtime.getURL('src/other.html')
+                if (unseenIDs.length) {
+                    url = `https://www.reveddit.com/info?id=${unseenIDs.join(',')}&removal_status=all`
+                }
             }
-        }
-        // The page opens even when the save is refused
-        browser.storage.sync
-            .set(markThingAsSeen(storage, thing, isUser))
-            .catch((e: any) =>
-                dlog('ui', '[reveddit] marking seen on a notification click failed:', String(e?.message || e)),
-            )
-            .then(() => {
-                updateBadgeUnseenCount()
-                clearPendingNotification(name).catch(() => {})
-                createTab(url)
-            })
-    })
+            updateBadgeUnseenCount()
+            clearPendingNotification(name).catch(() => {})
+            createTab(url)
+        })
+        .catch(() => {})
 }
 
 chrome.notifications.onClicked.addListener(notificationId => {

@@ -242,7 +242,8 @@ export const startViewerConnect = async (mainUser: string): Promise<{ ok: boolea
     const main = (await redditCookies()).map(toStoredCookie)
     // Saved before anything leaves the browser, so a worker that stops halfway
     // can put the user's login back (recoverViewerConnect)
-    await browser.storage.local.set({ [VIEWER_CONNECT_KEY]: { started: Date.now(), mainUser, main } })
+    const started = Date.now()
+    await browser.storage.local.set({ [VIEWER_CONNECT_KEY]: { started, mainUser, main } })
     await browser.storage.local.remove(VIEWER_CONNECT_RESULT_KEY)
     try {
         // A little past the timeout, so recoverViewerConnect finds it over
@@ -261,10 +262,17 @@ export const startViewerConnect = async (mainUser: string): Promise<{ ok: boolea
     )
     try {
         const tab = await browser.tabs.create({ url: VIEWER_LOGIN_URL, active: true })
-        const pending = await readConnect()
-        if (pending) {
-            await browser.storage.local.set({ [VIEWER_CONNECT_KEY]: { ...pending, tabId: tab.id } })
-        }
+        // In turn with a cancel or a finish, and only onto this sign-in: one
+        // that ended as the tab opened stays over, and its tab leaves the
+        // login page like any ended sign-in's
+        await inTurn(async () => {
+            const pending = await readConnect()
+            if (pending?.started === started) {
+                await browser.storage.local.set({ [VIEWER_CONNECT_KEY]: { ...pending, tabId: tab.id } })
+            } else {
+                await leaveLoginTab(tab.id)
+            }
+        })
     } catch {
         await cancelViewerConnect('no_tab')
         return { ok: false, error: 'no_tab' }

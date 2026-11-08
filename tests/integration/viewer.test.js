@@ -198,6 +198,25 @@ describe('connecting a second account', () => {
         })
     })
 
+    it("a sign-in cancelled as its tab opens sends that tab away from reddit's login page, where nothing would watch a sign-in", async () => {
+        let opened
+        browserMock.tabs.create = vi.fn(
+            () =>
+                new Promise(resolve => {
+                    opened = () => resolve({ id: LOGIN_TAB })
+                }),
+        )
+        const start = startViewerConnect('alice')
+        await vi.waitFor(() => expect(opened).toBeDefined())
+        await cancelViewerConnect('cancelled')
+        opened()
+        expect(await start).toEqual({ ok: true })
+        expect(await isViewerConnecting()).toBe(false)
+        expect(browserMock.tabs.update).toHaveBeenCalledWith(LOGIN_TAB, {
+            url: 'chrome-extension://fakeidsrc/options.html#second-account',
+        })
+    })
+
     it('sets an alarm that ends the sign-in on time, whatever the monitoring interval', async () => {
         const create = vi.spyOn(globalThis.chrome.alarms, 'create')
         await startViewerConnect('alice')

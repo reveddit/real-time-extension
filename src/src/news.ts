@@ -10,6 +10,7 @@ import { sanitizeLoginWallConfig, setLoginWallConfig, LoginWallConfig } from './
 import { sanitizeWwwRouteOrder, WwwRouteOrderOption } from './www-routes'
 import { sanitizePublicModlogsFeed, setPublicModlogsFeed } from './bridge-config'
 import { sanitizeNameList } from './name-list'
+import { oneAtATime } from './one-at-a-time'
 
 const NEWS_URL = 'https://www.reveddit.com/extension-news.json'
 export const NEWS_CACHE_KEY = 'news_cache'
@@ -518,14 +519,15 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
             (before?.legacy_host !== options.legacy_host ||
                 before?.mechanisms?.[MECHANISM_LEGACY] !== options.mechanisms[MECHANISM_LEGACY])
         ) {
-            chrome.storage.local.get([CAPABILITY_REST_KEY], res => {
-                const rests = { ...(res?.[CAPABILITY_REST_KEY] || {}) }
+            // In the rests' turn, as request-gates.ts rewrites them too
+            await oneAtATime(CAPABILITY_REST_KEY, async () => {
+                const rests = { ...((await readLocal(CAPABILITY_REST_KEY))[CAPABILITY_REST_KEY] || {}) }
                 if (rests.legacy || rests.legacy_info) {
                     delete rests.legacy
                     delete rests.legacy_info
-                    chrome.storage.local.set({ [CAPABILITY_REST_KEY]: rests })
+                    await writeLocal({ [CAPABILITY_REST_KEY]: rests })
                 }
-            })
+            }).catch(() => {})
         }
         dlog(
             'news',

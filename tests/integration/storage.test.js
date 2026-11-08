@@ -230,10 +230,11 @@ describe('subscribeId / unsubscribeId', () => {
     it('finishes unsubscribing on Firefox, where a promise-style chrome.runtime.sendMessage returns undefined', async () => {
         __resetStorage(makeStorageInit({ other_subscriptions: { t3_abc: { t: 1000 } } }))
         vi.spyOn(chrome.runtime, 'sendMessage').mockReturnValue(undefined)
-        const send = vi.spyOn(browserMock.runtime, 'sendMessage')
+        const badge = vi.spyOn(chrome.action, 'setBadgeText')
         await unsubscribeIdP('t3_abc')
         expect(__getSyncStorage().other_subscriptions['t3_abc']).toBeUndefined()
-        expect(send).toHaveBeenCalledWith({ action: 'update-badge' })
+        // Set in place: the background unfollows for a content script, and can't message itself
+        await vi.waitFor(() => expect(badge).toHaveBeenCalledWith({ text: '' }))
     })
 
     it('finishes unsubscribing when the badge message fails', async () => {

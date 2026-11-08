@@ -6,9 +6,10 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
-import { __resetStorage, __getSyncStorage } from '../mocks/webextension-polyfill.js'
+import { __resetStorage } from '../mocks/webextension-polyfill.js'
 import { cookie, fill } from '../mocks/cookies.js'
 import { loadBackground } from '../mocks/background.js'
+import { PAGE_WRITE } from '../../src/src/storage'
 
 let background
 
@@ -42,23 +43,39 @@ describe('a scan in Firefox', () => {
     })
 })
 
-describe("a content script's item lookup", () => {
-    const lookup = () => background.send({ action: 'get-reddit-items-by-id', ids: ['t1_a'] }, tab())
+describe("a reddit page's follow, which the background checks", () => {
+    const follow = () =>
+        background.send(
+            {
+                action: PAGE_WRITE,
+                write: 'setCurrentStateForId',
+                args: ['t1_a', 'https://www.reddit.com/r/x/comments/abc/t/a/'],
+            },
+            tab(),
+        )
     const urls = () => fetch.mock.calls.map(([url]) => String(url))
+    // As the page's follow left it
+    const followed = options =>
+        __resetStorage({
+            options: { removal_status: { track: true }, lock_status: { track: true }, ...options },
+            user_subscriptions: {},
+            other_subscriptions: { t1_a: { t: 1 } },
+        })
 
     beforeEach(() => {
         const answer = JSON.stringify({ access_token: 't', data: { children: [] } })
         fetch.mockImplementation(async () => new Response(answer, { status: 200 }))
     })
 
-    it('reads with the login and asks for no token with no client id, even with no options stored', async () => {
-        expect(await lookup()).toEqual({ response: 'done', items: [] })
+    it('reads with the login and asks for no token with no client id', async () => {
+        followed()
+        expect(await follow()).toEqual({ ok: true })
         expect(urls()).toEqual(['https://www.reddit.com/api/info.json?id=t1_a&raw_json=1'])
     })
 
     it('reads through the API with a token with a client id', async () => {
-        __getSyncStorage().options = { custom_clientid: 'mine' }
-        expect(await lookup()).toEqual({ response: 'done', items: [] })
+        followed({ custom_clientid: 'mine' })
+        expect(await follow()).toEqual({ ok: true })
         expect(urls()).toEqual([
             'https://www.reddit.com/api/v1/access_token',
             'https://oauth.reddit.com/api/info?id=t1_a&raw_json=1',

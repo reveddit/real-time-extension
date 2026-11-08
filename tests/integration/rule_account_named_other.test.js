@@ -30,6 +30,7 @@ import {
     getAllChanges,
     markEverythingAsSeen,
     unsubscribeId,
+    PAGE_WRITE,
 } from '../../src/src/storage'
 import {
     _checkForChanges_thing_byId,
@@ -517,13 +518,17 @@ const rows = [
     [
         "following an item from reveddit keeps it, with the words the page shows, among followed items and not the account's",
         async () => {
-            // In a content script the check's read goes through the background
+            // A content script's follow is the background's, which reads reddit with the login
             vi.stubGlobal('location', { protocol: 'https:', hostname: 'www.reveddit.com' })
             vi.stubGlobal('window', { location: { href: 'https://www.reveddit.com/v/x/comments/post/_/gone/' } })
             vi.spyOn(browserMock.runtime, 'sendMessage').mockImplementation(async message =>
-                message.action === 'get-reddit-items-by-id'
-                    ? { response: 'done', items: [{ data: removedView('t1_gone') }] }
+                message.action === PAGE_WRITE
+                    ? background.send(message, { tab: { id: 9, url: 'https://www.reveddit.com/' } })
                     : undefined,
+            )
+            fill([cookie('reddit_session', 'S1')])
+            vi.stubGlobal('fetch', async () =>
+                json(200, { data: { children: [{ kind: 't1', data: removedView('t1_gone') }] } }),
             )
             const { document } = parseHTML('<html><body><a></a></body></html>')
             const button = setTextAndFunction_subscribe(

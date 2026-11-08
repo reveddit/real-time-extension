@@ -26,6 +26,7 @@ import { setCurrentStateForId } from '../../src/src/monitoring'
 import { _scanTurn } from '../../src/src/requests'
 import { _resetLoggedInFetchState } from '../../src/src/logged-in-fetch'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
+import { PAGE_WRITE } from '../../src/src/storage'
 
 const REDDIT_HOSTS = /(^|\.)(reddit\.com|redd\.it|redditmedia\.com|redditstatic\.com)$/i
 const isReddit = url => {
@@ -180,14 +181,14 @@ const ROWS = [
         },
     },
     {
-        name: "the background's lookup for a reddit page (get-reddit-items-by-id)",
+        name: "the background's check of a reddit page's follow (page-write)",
         drive: () =>
             background.send(
-                { action: 'get-reddit-items-by-id', ids: ['t1_def456'], username: '', authItemsMeta: {} },
+                { action: PAGE_WRITE, write: 'setCurrentStateForId', args: ['t1_def456', REDDIT_PAGE] },
                 FROM_REDDIT_TAB,
             ),
-        // Nothing checked, which the page's check drops without saving anything
-        check: answer => expect(answer).toEqual({ response: 'done', items: null }),
+        // The follow's post is saved, and the item checked once the sign-in is over
+        check: answer => expect(answer).toEqual({ ok: true }),
     },
     {
         name: "the popup's Connect",
@@ -304,8 +305,11 @@ beforeEach(async () => {
     _scanTurn.next = 0
     reply = asDuringSignIn
     globalThis.document = parseHTML(THREAD_PAGE).document
-    // A page's messages reach the background, as from a reddit tab
-    browserMock.runtime.sendMessage = message => background.send(message, FROM_REDDIT_TAB)
+    // A page's messages reach the background, as from a reddit tab. Not a badge
+    // update: with the page's address shared here, the background's own one
+    // would come back to it forever, where in the browser it's set in place.
+    browserMock.runtime.sendMessage = message =>
+        message?.action === 'update-badge' ? Promise.resolve() : background.send(message, FROM_REDDIT_TAB)
     await clearDiagLog()
     sent.length = 0
 })

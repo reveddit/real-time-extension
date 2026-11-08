@@ -6,11 +6,11 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
 import { _checkForChanges_thing_byId } from '../../src/src/monitoring'
-import { lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
+import { lookupItemsByID, lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
 import { getObjectNamesForThing, getOldestDateKey, getPublicLiveKey } from '../../src/src/storage'
 import { installFetch, thingIdEl, emptyStatePage, FRONT_PAGE } from '../mocks/public-profile.js'
 
@@ -22,22 +22,18 @@ const item = name => ({ name, author: USER, body: 'words', created_utc: CREATED,
 // Its record, removal count r
 const record = r => ({ t: 'words', o: CREATED, c: CREATED, n: 0, r })
 
-const realSendMessage = browserMock.runtime.sendMessage
+// The lookup sees what it's told, and answers as each test says
+vi.mock('../../src/src/requests', async original => ({ ...(await original()), lookupItemsByID: vi.fn() }))
 let lookups
 let answer
 beforeEach(() => {
-    // From a page, the lookup goes through the background, which sees what it's told
-    vi.stubGlobal('location', { protocol: 'https:' })
     lookups = []
     answer = undefined
-    browserMock.runtime.sendMessage = async message => {
-        if (message.action !== 'get-reddit-items-by-id') return undefined
+    lookupItemsByID.mockImplementation(async (ids, auth, monitor_quarantined, username, authItemsMeta) => {
+        const message = { ids, username, authItemsMeta }
         lookups.push(message)
         return typeof answer === 'function' ? answer(message) : answer
-    }
-})
-afterEach(() => {
-    browserMock.runtime.sendMessage = realSendMessage
+    })
 })
 
 const seed = ({ removed = {}, records = {}, oldest = null, track = true } = {}) =>

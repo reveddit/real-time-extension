@@ -14,6 +14,7 @@ import {
 } from './request-gates'
 import { NO_AUTH, fetch_forReddit } from './reddit-auth'
 import { rehydrateStoredRedditCookies } from './reddit-cookies'
+import { oneAtATime } from './one-at-a-time'
 
 // "Other" (non-profile) items have no public profile to diff against, so removal
 // is read from api/info instead. This is the deprecation-surviving primary for
@@ -79,11 +80,12 @@ const readFollowedMaps = async (): Promise<{ checkedAt: Record<string, number>; 
     }
 }
 
-// Merged into what's stored now (a follow's lookup can run beside a cycle's)
-// and pruned to the followed list, not to this call's ids: a follow looks up
-// one id, and the rotation must not restart then
-const saveFollowedMaps = async (checked: Record<string, number>, foundPostIds: Record<string, string>) => {
-    try {
+// Merged into what's stored now, in the maps' turn (a follow's lookup can run
+// beside a cycle's, and a follow saves its post), and pruned to the followed
+// list, not to this call's ids: a follow looks up one id, and the rotation must
+// not restart then
+const saveFollowedMaps = (checked: Record<string, number>, foundPostIds: Record<string, string>) =>
+    oneAtATime(FOLLOWED_POST_IDS_KEY, async () => {
         const { checkedAt, postIds } = await readFollowedMaps()
         const followed = new Set(
             Object.keys(
@@ -110,10 +112,7 @@ const saveFollowedMaps = async (checked: Record<string, number>, foundPostIds: R
             write[FOLLOWED_POST_IDS_KEY] = postIds
         }
         await browser.storage.local.set(write)
-    } catch {
-        /* ignored */
-    }
-}
+    }).catch(() => {})
 
 const lookupFollowedItemsByThread = async (ids: string[]): Promise<any[]> => {
     const skip = (why: string) => {

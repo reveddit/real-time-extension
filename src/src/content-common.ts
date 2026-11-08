@@ -1,5 +1,4 @@
-import { subscribeId, unsubscribeId, getLocalStorageItems, saveLocalStorageItems } from './storage'
-import { LocalStorageItem, isPlaceholderText } from './common'
+import { subscribeId, unsubscribeId, keepPageText } from './storage'
 import { setCurrentStateForId } from './monitoring'
 
 let UNSUBSCRIBE_TEXT = 'unsubscribe-rev'
@@ -107,19 +106,7 @@ const subscribeId_changeText = (id: string, element: HTMLElement, commentBody = 
     subscribeId(id, async () => {
         setTextAndFunction_unsubscribe(id, element, commentBody, postId)
         await setCurrentStateForId(id, window.location.href, postId)
-        if (commentBody) {
-            getLocalStorageItems('other', false).then((storedItems: any) => {
-                const item = storedItems[id]
-                // Only in place of text reddit no longer gives: what it gave
-                // keeps its markdown, which the page's text has lost
-                if (item && isPlaceholderText(item.t)) {
-                    const itemObj = new LocalStorageItem({ object: item })
-                    itemObj.setText(commentBody)
-                    storedItems[id] = itemObj
-                    saveLocalStorageItems('other', false, storedItems)
-                }
-            })
-        }
+        if (commentBody) keepPageText(id, commentBody).catch(() => {})
     })
 }
 

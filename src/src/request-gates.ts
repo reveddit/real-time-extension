@@ -4,6 +4,7 @@ import { dlogSummary, dlog } from './diaglog'
 import { setWarningBadge } from './common'
 import { recordRateLimitHit, getRateLimitBackoffRemainingMs } from './storage'
 import { isRateLimitError } from './parse_html/common'
+import { oneAtATime } from './one-at-a-time'
 
 // Methods reddit can refuse outright, each resting on its own: 'api_info'
 // (api/info.json with the user's login, refused everywhere tried on
@@ -76,8 +77,10 @@ export const isCapabilityResting = async (capability: RestingCapability): Promis
 
 const hoursText = (ms: number) => `${Math.round(ms / 3600000)} h`
 
-export const noteCapabilityRefused = async (capability: RestingCapability, why: string) => {
-    try {
+// The rests are one object, which a refusal, a success and the news feed
+// (news.ts) each rewrite whole, so each in its turn
+export const noteCapabilityRefused = (capability: RestingCapability, why: string) =>
+    oneAtATime(CAPABILITY_REST_KEY, async () => {
         const rests = await readCapabilityRests()
         const now = Date.now()
         const before = rests[capability]
@@ -95,13 +98,10 @@ export const noteCapabilityRefused = async (capability: RestingCapability, why: 
             `[reveddit] ${capability} refused (${why}): resting ${hoursText(restMs)}, ` +
                 `refusal ${refusals} in a row since ${new Date(rests[capability]!.since).toISOString()}`,
         )
-    } catch {
-        /* ignored */
-    }
-}
+    }).catch(() => {})
 
-export const noteCapabilityWorked = async (capability: RestingCapability) => {
-    try {
+export const noteCapabilityWorked = (capability: RestingCapability) =>
+    oneAtATime(CAPABILITY_REST_KEY, async () => {
         const rests = await readCapabilityRests()
         const before = rests[capability]
         if (!before) {
@@ -113,10 +113,7 @@ export const noteCapabilityWorked = async (capability: RestingCapability) => {
             'cycle',
             `[reveddit] ${capability} works again, after ${before.refusals} refusals since ${new Date(before.since).toISOString()}`,
         )
-    } catch {
-        /* ignored */
-    }
-}
+    }).catch(() => {})
 
 // Only a 429 is rate limiting. A 403 is a block (challenge page, structural
 // block on unauthenticated JSON) and gets its own status so the popup and

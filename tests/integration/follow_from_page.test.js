@@ -7,13 +7,21 @@
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
 
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
 import { parseHTML } from 'linkedom'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import { loadBackground } from '../mocks/background.js'
+import { cookie, fill } from '../mocks/cookies.js'
+import { PAGE_WRITE } from '../../src/src/storage'
 
 // content-common.ts asks where it's running as it loads
 globalThis.location.hostname = 'www.reveddit.com'
 const { setTextAndFunction_subscribe } = await import('../../src/src/content-common')
+
+let background
+beforeAll(async () => {
+    background = await loadBackground()
+})
 
 const ID = 't1_recover'
 const VIEW = { name: ID, author: 'someone', body: 'its words', created_utc: 1700000000, link_id: 't3_abc' }
@@ -27,13 +35,21 @@ afterEach(() => {
 const follow = (view, pageText) => {
     __resetStorage({
         options: { removal_status: { track: true }, lock_status: { track: true } },
+        user_subscriptions: {},
         other_subscriptions: {},
     })
-    // In a content script a lookup goes through the background
+    // A content script's follow is the background's, which reads reddit with the login
     vi.stubGlobal('location', { protocol: 'https:', hostname: 'www.reveddit.com' })
     vi.stubGlobal('window', { location: { href: 'https://www.reveddit.com/v/x/comments/abc/_/recover/' } })
     browserMock.runtime.sendMessage = async message =>
-        message.action === 'get-reddit-items-by-id' ? { response: 'done', items: [{ data: view }] } : undefined
+        message.action === PAGE_WRITE
+            ? background.send(message, { tab: { id: 9, url: 'https://www.reveddit.com/' } })
+            : undefined
+    fill([cookie('reddit_session', 'S1')])
+    vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(JSON.stringify({ data: { children: [{ kind: 't1', data: view }] } }))),
+    )
     const { document } = parseHTML('<html><body><a></a></body></html>')
     const button = setTextAndFunction_subscribe(ID, document.querySelector('a'), pageText, 't3_abc')
     button.onclick({ preventDefault() {}, stopPropagation() {} })

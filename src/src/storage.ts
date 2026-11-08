@@ -5,8 +5,10 @@ import {
     sortDict_by_numberValuedAttribute,
     trimDict_by_numberValuedAttribute,
     setWarningBadge,
+    isPlaceholderText,
 } from './common'
 import { getRemoteScanLimits } from './news'
+import { oneAtATime, afterWrites } from './one-at-a-time'
 import browser from 'webextension-polyfill'
 
 export const INTERVAL_DEFAULT = 1
@@ -240,13 +242,13 @@ const getStorageInit = () => {
     return result
 }
 
-export const markEverythingAsSeen = () => {
-    return (browser.storage.sync.get as any)(null).then((storage: Record<string, any>) => {
-        const marked = subscribedThings(storage.user_subscriptions).map(({ thing, isUser }) =>
-            markThingAsSeen(storage, thing, isUser),
-        )
-        return setStorageUpdateBadge(Object.assign({}, ...marked))
-    })
+// Each thing's lists in their turn (markThingSeen)
+export const markEverythingAsSeen = async () => {
+    const { user_subscriptions } = (await browser.storage.sync.get('user_subscriptions')) as Record<string, any>
+    for (const { thing, isUser } of subscribedThings(user_subscriptions)) {
+        await markThingSeen(thing, isUser)
+    }
+    updateBadgeUnseenCount()
 }
 
 // One key of local storage, with what it holds when nothing is stored there.
@@ -259,18 +261,41 @@ const readLocal = <T, R = T>(
     pick: (value: T) => R = value => value as unknown as R,
 ): Promise<R> => browser.storage.local.get({ [key]: empty }).then((r: any) => pick(r[key] || empty))
 
-// update changes the value in place, or returns its replacement
+// update changes the value in place, or returns its replacement. One update of
+// a key at a time, in every context (one-at-a-time.ts), as each rewrites it whole.
 const updateLocal = <T>(key: string, empty: T, update: (value: T) => T | void): Promise<void> =>
-    browser.storage.local.get({ [key]: empty }).then((r: any) => {
-        const value: T = r[key] || empty
-        return browser.storage.local.set({ [key]: update(value) ?? value }) as unknown as void
+    oneAtATime(key, async () => {
+        const value = await readLocal(key, empty)
+        await browser.storage.local.set({ [key]: update(value) ?? value })
     })
+
+// chrome.storage.sync as the writers below have long used it, as a promise: a
+// read that fails answers undefined, and a write calls back even when refused
+const syncGet = (keys: any) => new Promise<Record<string, any>>(resolve => chrome.storage.sync.get(keys, resolve))
+const syncSet = (items: Record<string, any>) =>
+    new Promise<void>(resolve => chrome.storage.sync.set(items, () => resolve()))
+
+// A content script runs in reddit's or reveddit's origin, which doesn't share
+// the extension's locks, so the background makes its writes of what other
+// contexts write too: background.ts runs each of these by name (PAGE_WRITES),
+// through its ...Here version
+export const PAGE_WRITE = 'page-write'
+export const inContentScript = () => /^http/.test(location.protocol)
+export const byBackground = (write: string, ...args: unknown[]): Promise<any> =>
+    browser.runtime
+        .sendMessage({ action: PAGE_WRITE, write, args })
+        .then((r: any) => (r?.ok ? r.answer : Promise.reject(new Error(r?.error || 'no answer'))))
 
 // Followed items' notification and its pending entry, and their entry beside the
 // accounts' in the popup's, the badge's and history's lists. An account's are
 // named for it, and an account can be named "other".
 export const FOLLOWED_NOTIFICATION = 'reveddit:followed'
 export const notificationName = (thing: string, isUser: boolean) => (isUser ? thing : FOLLOWED_NOTIFICATION)
+
+// The turn of a thing's status lists, and for followed items their list too:
+// a check's save, marking seen, following and unfollowing, subscribing an
+// account. Each reads them in its turn, so none undoes another's save.
+export const statusListsLock = (thing: string, isUser: boolean) => `lists:${notificationName(thing, isUser)}`
 
 const PENDING_NOTIFICATIONS_KEY = 'pending_notifications'
 
@@ -373,14 +398,20 @@ export const markThingAsSeen = (storage: Record<string, any>, thing: string, isU
     return marked
 }
 
-export const setStorageUpdateBadge = (storage: Record<string, any>) => {
-    return browser.storage.sync
-        .set(storage)
-        .then(() => {
-            return browser.runtime.sendMessage({ action: 'update-badge' })
-        })
-        .catch(() => {})
-}
+// A thing's lists marked seen, read and saved in their turn: a check that saves
+// meanwhile waits, rather than having its new removal undone. Answers with the
+// ids that were unseen, even when the save is refused (onRefused).
+export const markThingSeen = (
+    thing: string,
+    isUser: boolean,
+    onRefused: (err: any) => void = () => {},
+): Promise<string[]> =>
+    oneAtATime(statusListsLock(thing, isUser), async () => {
+        const storage = (await browser.storage.sync.get(null)) as Record<string, any>
+        const unseen = getUnseenIDs_thing(thing, isUser, storage)
+        await browser.storage.sync.set(markThingAsSeen(storage, thing, isUser)).catch(onRefused)
+        return unseen
+    })
 
 const markSeenForStorageKey = (
     storage: Record<string, any>,
@@ -401,9 +432,38 @@ const markSeenForStorageKey = (
 }
 
 // A reveddit page's items load well after the page read sync storage, and a
-// check may save in between. So marking reads storage again and saves only the
-// lists it marks: the page's copy would undo that save, and announce again a
-// removal the save recorded.
+// check may save in between. So marking reads storage again, in the lists'
+// turn, and saves only the lists it marks: the page's copy would undo that
+// save, and announce again a removal the save recorded. Answers whether it saved.
+export const markIDsAsSeenHere = (
+    user: string,
+    is_user: boolean,
+    removed_ids: Record<string, any>,
+    approved_ids: Record<string, any>,
+    locked_ids: Record<string, any>,
+    unlocked_ids: Record<string, any>,
+): Promise<boolean> =>
+    oneAtATime(statusListsLock(user, is_user), async () => {
+        const storage_keys = getStatusListKeys(user, is_user)
+        const storage = await syncGet(undefined)
+        const user_subscribed = storage?.user_subscriptions?.[user]
+        if (!storage || !(user_subscribed || !is_user)) {
+            return false
+        }
+        markSeenForStorageKey(storage, storage_keys, 'removed', removed_ids, is_user)
+        markSeenForStorageKey(storage, storage_keys, 'approved', approved_ids, is_user)
+        markSeenForStorageKey(storage, storage_keys, 'locked', locked_ids, is_user)
+        markSeenForStorageKey(storage, storage_keys, 'unlocked', unlocked_ids, is_user)
+        // The entries added here have to fit like the monitoring save's
+        const lists = Object.fromEntries(
+            Object.values(storage_keys)
+                .filter(key => storage[key])
+                .map(key => [key, storage[key]]),
+        )
+        await syncSet(fitStatusLists(lists, storage, storage_keys))
+        return true
+    })
+
 export const markIDsAsSeenIfSubscribed = (
     user: string,
     is_user: boolean,
@@ -413,70 +473,95 @@ export const markIDsAsSeenIfSubscribed = (
     unlocked_ids: Record<string, any>,
     callback: () => void = () => {},
 ) => {
-    const storage_keys = getStatusListKeys(user, is_user)
-    chrome.storage.sync.get(undefined as any, storage => {
-        const user_subscribed = storage?.user_subscriptions?.[user]
-        if (storage && (user_subscribed || !is_user)) {
-            markSeenForStorageKey(storage, storage_keys, 'removed', removed_ids, is_user)
-            markSeenForStorageKey(storage, storage_keys, 'approved', approved_ids, is_user)
-            markSeenForStorageKey(storage, storage_keys, 'locked', locked_ids, is_user)
-            markSeenForStorageKey(storage, storage_keys, 'unlocked', unlocked_ids, is_user)
-            // The entries added here have to fit like the monitoring save's
-            const lists = Object.fromEntries(
-                Object.values(storage_keys)
-                    .filter(key => storage[key])
-                    .map(key => [key, storage[key]]),
-            )
-            chrome.storage.sync.set(fitStatusLists(lists, storage, storage_keys), callback)
-        }
-    })
+    const args = [user, is_user, removed_ids, approved_ids, locked_ids, unlocked_ids] as const
+    ;(inContentScript() ? byBackground('markIDsAsSeenIfSubscribed', ...args) : markIDsAsSeenHere(...args)).then(
+        saved => saved && callback(),
+        () => {},
+    )
 }
 
-export const subscribeId = (id: string, callback: () => void = () => {}) => {
-    const key = 'other_subscriptions'
-    chrome.storage.sync.get(key, result => {
+// Following and unfollowing, in followed items' turn (statusListsLock). A
+// refused save still calls back, as the switches and buttons show what's saved.
+export const subscribeIdHere = (id: string): Promise<void> =>
+    oneAtATime(statusListsLock('other', false), async () => {
+        const key = 'other_subscriptions'
+        const result = await syncGet(key)
         result[key][id] = { t: Math.floor(new Date().getTime() / 1000) }
         const itemsToSave = trimDict_by_numberValuedAttribute(result[key], MAX_OTHER_SUBSCRIPTIONS, 't')
-        chrome.storage.sync.set({ [key]: itemsToSave }, callback)
+        await syncSet({ [key]: itemsToSave })
     })
+export const subscribeId = (id: string, callback: () => void = () => {}) => {
+    ;(inContentScript() ? byBackground('subscribeId', id) : subscribeIdHere(id)).then(
+        () => callback(),
+        () => {},
+    )
 }
-export const unsubscribeId = (id: string, callback: () => void = () => {}) => {
-    const mainKey = 'other_subscriptions'
-    const otherKeys = getStatusListKeys('other', false)
-    chrome.storage.sync.get(Object.values(otherKeys).concat(mainKey), result => {
+export const unsubscribeIdHere = (id: string): Promise<void> =>
+    oneAtATime(statusListsLock('other', false), async () => {
+        const mainKey = 'other_subscriptions'
+        const otherKeys = getStatusListKeys('other', false)
+        const result = await syncGet(Object.values(otherKeys).concat(mainKey))
         delete result[mainKey][id]
         Object.values(otherKeys).forEach(fullKeyname => {
             if (id in result[fullKeyname]) {
                 delete result[fullKeyname][id]
             }
         })
-        setStorageUpdateBadge(result).then(() => callback())
+        // In place: run for a content script, the background can't message itself
+        await browser.storage.sync.set(result).then(updateBadgeUnseenCount, () => {})
     })
+export const unsubscribeId = (id: string, callback: () => void = () => {}) => {
+    ;(inContentScript() ? byBackground('unsubscribeId', id) : unsubscribeIdHere(id)).then(
+        () => callback(),
+        () => {},
+    )
 }
 
+// An account's status lists that aren't stored yet, empty as an account starts
+// them, added in the account's turn. Monitoring keeps lists for whoever is
+// logged in, subscribed or not, and its check may save their first ones
+// meanwhile: empty ones in their place would forget the account's recorded
+// removals, and announce them again.
+export const addMissingUserLists = (user: string): Promise<void> =>
+    oneAtATime(statusListsLock(user, true), async () => {
+        const userInit = getUserInit(user)
+        const stored = await syncGet(Object.keys(userInit))
+        const missing = Object.fromEntries(Object.entries(userInit).filter(([key]) => !(key in stored)))
+        if (Object.keys(missing).length) {
+            await syncSet(missing)
+        }
+    })
+
+// Answers with why it didn't subscribe, when it didn't. The subscription and
+// the account's lists each in their own turn, so it never waits on two.
+export const subscribeUserHere = async (user: string): Promise<string | undefined> => {
+    const why = await oneAtATime('user_subscriptions', async () => {
+        const { user_subscriptions } = await syncGet('user_subscriptions')
+        if (user in user_subscriptions) {
+            return 'already subscribed to this user'
+        }
+        if (Object.keys(user_subscriptions).length >= MAX_SUBSCRIPTIONS) {
+            return 'maximum number of subscriptions reached'
+        }
+        user_subscriptions[user] = true
+        await syncSet({ user_subscriptions })
+    })
+    if (!why) {
+        await addMissingUserLists(user)
+    }
+    return why
+}
+
+// Every caller hears back: one that failed hears why
 export const subscribeUser = (
     user: string,
     callbackSuccess: () => void = () => {},
     callbackError: (msg: string) => void = () => {},
 ) => {
-    const userInit = getUserInit(user)
-    chrome.storage.sync.get(['user_subscriptions', ...Object.keys(userInit)], result => {
-        const user_subscriptions = result.user_subscriptions
-        if (!(user in user_subscriptions)) {
-            if (Object.keys(user_subscriptions).length < MAX_SUBSCRIPTIONS) {
-                user_subscriptions[user] = true
-                // Monitoring keeps lists for whoever is logged in, subscribed
-                // or not. Empty ones in their place would forget the account's
-                // recorded removals, and announce them again.
-                const missingLists = Object.fromEntries(Object.entries(userInit).filter(([key]) => !(key in result)))
-                chrome.storage.sync.set({ user_subscriptions, ...missingLists }, callbackSuccess)
-            } else {
-                callbackError('maximum number of subscriptions reached')
-            }
-        } else {
-            callbackError('already subscribed to this user')
-        }
-    })
+    ;(inContentScript() ? byBackground('subscribeUser', user) : subscribeUserHere(user)).then(
+        why => (why ? callbackError(why) : callbackSuccess()),
+        err => callbackError(String(err?.message || err)),
+    )
 }
 
 export const initStorage = (callback: () => void) => {
@@ -555,11 +640,6 @@ export const getLocalStorageItems = (thing: string, isUser: boolean) => {
     })
 }
 
-export const saveLocalStorageItems = (thing: string, isUser: boolean, itemsToSave: Record<string, any>) => {
-    const key_localStorage = getObjectName('items', thing, isUser)
-    return browser.storage.local.set({ [key_localStorage]: itemsToSave })
-}
-
 // A write rewrites the whole object, up to 1,000 items with their text, and
 // most checks have nothing to add
 export const addLocalStorageItems = async (items: Record<string, any>, thing: string, isUser: boolean) => {
@@ -573,6 +653,25 @@ export const addLocalStorageItems = async (items: Record<string, any>, thing: st
         }
     })
 }
+
+// The words a page shows for a followed comment, on its record in place of
+// text reddit no longer gives: what reddit gave keeps its markdown, which the
+// page's text has lost
+export const keepPageTextHere = (id: string, text: string): Promise<void> => {
+    const key = getObjectName('items', 'other', false)
+    return oneAtATime(key, async () => {
+        const storedItems = await readLocal<Record<string, any>>(key, {})
+        const item = storedItems[id]
+        if (item && isPlaceholderText(item.t)) {
+            const itemObj = new LocalStorageItem({ object: item })
+            itemObj.setText(text)
+            storedItems[id] = itemObj
+            await browser.storage.local.set({ [key]: storedItems })
+        }
+    })
+}
+export const keepPageText = (id: string, text: string): Promise<void> =>
+    inContentScript() ? byBackground('keepPageText', id, text) : keepPageTextHere(id, text)
 
 export const getItemFromLocalStorage = (
     thing: string,
@@ -736,18 +835,14 @@ const RATE_LIMIT_LAST_HIT_KEY = 'rate_limit_last_hit'
 const RATE_LIMIT_BASE_MS = 2 * 60 * 1000 // 2 minutes
 const RATE_LIMIT_MAX_MS = 30 * 60 * 1000 // 30 minutes
 
-// Hits and clears run one at a time, in the order they're called: callers
-// don't await a hit (flagIfRateLimited), and a clear that started before the
-// hit was written would otherwise erase it
-let backoffWrites: Promise<unknown> = Promise.resolve()
-const oneAtATime = <T>(task: () => Promise<T>): Promise<T> => {
-    const run = backoffWrites.then(task, task)
-    backoffWrites = run.catch(() => undefined)
-    return run
-}
+// Hits and clears run one at a time, in the order they're called, in every
+// context (the popup's follow lookup sees 429s too): callers don't await a hit
+// (flagIfRateLimited), and a clear that started before the hit was written
+// would otherwise erase it
+const BACKOFF_LOCK = 'rate_limit_backoff'
 
 export const recordRateLimitHit = (): Promise<number> =>
-    oneAtATime(async () => {
+    oneAtATime(BACKOFF_LOCK, async () => {
         const result = await browser.storage.local.get({ [RATE_LIMIT_LEVEL_KEY]: 0 })
         const level = (result[RATE_LIMIT_LEVEL_KEY] as number) || 0
         const waitMs = Math.min(RATE_LIMIT_BASE_MS * Math.pow(2, level), RATE_LIMIT_MAX_MS)
@@ -771,7 +866,7 @@ export const getMsSinceLastRateLimitHit = async (): Promise<number | null> => {
 // the backoff that 429 started, or the next cycle runs straight back into the
 // limiter and the level never climbs.
 export const clearRateLimitBackoff = (): Promise<void> =>
-    oneAtATime(async () => {
+    oneAtATime(BACKOFF_LOCK, async () => {
         const result = await browser.storage.local.get({ [RATE_LIMIT_LEVEL_KEY]: 0, [RATE_LIMIT_UNTIL_KEY]: 0 })
         const until = Number(result[RATE_LIMIT_UNTIL_KEY]) || 0
         if (until > Date.now()) {
@@ -783,12 +878,12 @@ export const clearRateLimitBackoff = (): Promise<void> =>
     })
 
 // After any hit still being written, so a loop that just saw a 429 reads it
-export const getRateLimitBackoffRemainingMs = async (): Promise<number> => {
-    await backoffWrites
-    const result = await browser.storage.local.get({ [RATE_LIMIT_UNTIL_KEY]: 0 })
-    const until = (result[RATE_LIMIT_UNTIL_KEY] as number) || 0
-    return Math.max(0, until - Date.now())
-}
+export const getRateLimitBackoffRemainingMs = (): Promise<number> =>
+    afterWrites(BACKOFF_LOCK, async () => {
+        const result = await browser.storage.local.get({ [RATE_LIMIT_UNTIL_KEY]: 0 })
+        const until = (result[RATE_LIMIT_UNTIL_KEY] as number) || 0
+        return Math.max(0, until - Date.now())
+    })
 
 // Message for the popup's "send a test notification" link: confirms the
 // system-level pipeline works, and flags any notification types turned off in
@@ -805,7 +900,7 @@ export const getTestNotificationMessage = (options: Record<string, any>): string
 }
 
 export const updateBadgeUnseenCount = () => {
-    if (location.protocol.match(/^http/)) {
+    if (inContentScript()) {
         browser.runtime
             .sendMessage({
                 action: 'update-badge',

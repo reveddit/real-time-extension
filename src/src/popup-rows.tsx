@@ -2,7 +2,7 @@ import React from 'react'
 import styled from '@emotion/styled'
 import { ActionBtn, MessageBanner } from './ui/components'
 import { tokens } from './ui/tokens'
-import { markThingAsSeen, setStorageUpdateBadge, clearPendingNotification, notificationName } from './storage'
+import { markThingSeen, updateBadgeUnseenCount, clearPendingNotification, notificationName } from './storage'
 
 const SubRow = styled.a`
   display: flex;
@@ -154,14 +154,13 @@ export function UnseenRow({ thing, isUser, unseenCount, totalStr, url }: {
 }) {
   const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault()
-    chrome.storage.sync.get(undefined, storage => {
-      const marked = markThingAsSeen(storage, thing, isUser)
-      clearPendingNotification(notificationName(thing, isUser)).catch(() => {})
-      setStorageUpdateBadge(marked).then(() => {
+    clearPendingNotification(notificationName(thing, isUser)).catch(() => {})
+    markThingSeen(thing, isUser)
+      .then(updateBadgeUnseenCount, () => {})
+      .then(() => {
         chrome.tabs.create({ url })
         window.close()
       })
-    })
   }
 
   const Pill = unseenCount > 0 ? UnseenPillActive : UnseenPill

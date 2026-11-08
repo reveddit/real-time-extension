@@ -14,7 +14,8 @@ export const openPage = async (load, sync = {}, local = {}) => {
     vi.stubGlobal('document', document)
     vi.stubGlobal('window', window)
     vi.stubGlobal('HTMLElement', window.HTMLElement)
-    vi.stubGlobal('navigator', { userAgent: '' })
+    // With the origin's locks, which the page shares with the background
+    vi.stubGlobal('navigator', { userAgent: '', locks: navigator.locks })
     await import('./chrome-api.js')
     const storage = await import('./webextension-polyfill.js')
     storage.__resetStorage(sync, local)
