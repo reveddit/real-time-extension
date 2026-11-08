@@ -269,9 +269,9 @@
         cursor: wait;
     }
 `),x=((0,a.Z)(h)`
-    background: var(--button-bg);
-    color: var(--button-text);
-    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-light);
     &:hover {
         background: var(--bg-surface-hover);
     }
