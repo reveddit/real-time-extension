@@ -48,6 +48,9 @@ Object.defineProperty(chrome, 'cookies', {
 
 // What the browser tells the background
 const cookieChanged = c => heard.cookies.forEach(listener => listener({ removed: false, cookie: c, cause: 'explicit' }))
+// As Reddit expires one, which isn't the first half of a new value
+const cookieRemoved = c =>
+    heard.cookies.forEach(listener => listener({ removed: true, cookie: c, cause: 'expired_overwrite' }))
 const pageLoaded = (tabId, url) =>
     heard.tabs.forEach(listener => listener(tabId, { status: 'complete' }, { id: tabId, url }))
 const alarmRang = name => heard.alarms.forEach(listener => listener({ name }))
@@ -250,16 +253,24 @@ const repeating = [
             start: whileRefused(signedIn, () => background.send({ action: 'try-reconnect', quiet: true })),
         },
     ],
+    // A new value for a cookie that isn't a login's is only counted, so it's no
+    // row here (reddit_answer_costs.test.js)
     [
-        "reddit's cookies changing every 5 seconds while reddit refuses me.json",
-        { every: 5000, start: whileRefused(loginRefused, i => cookieChanged(cookie('session_tracker', `t${i}`))) },
+        "reddit's login cookie changing every 5 seconds while reddit refuses me.json",
+        {
+            every: 5000,
+            start: whileRefused(loginRefused, i => {
+                fill([cookie('reddit_session', `S${i}`)])
+                cookieChanged(cookie('reddit_session', `S${i}`))
+            }),
+        },
     ],
     [
         'reddit pages loading every 15 seconds while reddit refuses me.json',
         { every: 15000, start: whileRefused(loginRefused, () => pageLoaded(3, 'https://www.reddit.com/r/test/')) },
     ],
     [
-        "reddit's cookies changing every 5 seconds, in a reddit tab, while nobody is signed in",
+        "reddit's cookies going every 5 seconds, in a reddit tab, while nobody is signed in",
         {
             every: 5000,
             start: () => {
@@ -269,10 +280,10 @@ const repeating = [
                 vi.stubGlobal('fetch', vi.fn(refusing()))
                 const before = cookiesApi.get.mock.calls.length
                 return {
-                    // The jar changes too, so each change is saved
+                    // The jar changes too, so each one is saved
                     repeat: i => {
-                        fill([cookie('session_tracker', `t${i}`)])
-                        cookieChanged(cookie('session_tracker', `t${i}`))
+                        fill([cookie('loid', `L${i}`)])
+                        cookieRemoved(cookie('session_tracker', `t${i}`))
                     },
                     // Asking the browser for the login cookie
                     looked: () => cookiesApi.get.mock.calls.length - before,

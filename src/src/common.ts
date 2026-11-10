@@ -22,7 +22,37 @@ export interface RedditItem {
 }
 
 export const ALARM_NAME = 'notifyme'
+// The background telling Reddit tabs what's followed now, or who's signed in
+export const BELLS_CHANGED = 'bells-changed'
 export const REMOVED_BY_MODERATOR_TEXT = 'comment removed by moderator'
+
+// The survey the browser opens after an uninstall
+export const FEEDBACK_FORM =
+    'https://docs.google.com/forms/d/e/1FAIpQLSejWHJAf8thfMdTnnEc5xZPlsdxA_dGUkbmnDq8PABVMkvARg/viewform'
+// Its question "What browser and platform do you use?"
+const FEEDBACK_FORM_BROWSER = 'entry.701261599'
+interface BrowserHints {
+    brands?: { brand: string; version: string }[]
+    platform?: string
+    mobile?: boolean
+}
+// The browser's own name and version: Opera, Edge and Brave list theirs beside
+// Chromium, Chrome lists Google Chrome, and the made-up entry that keeps sites
+// from matching the list exactly spells "Not A Brand" some way
+const browserName = (brands: BrowserHints['brands'] = []) => {
+    const real = brands.filter(b => !/not.?a.?brand/i.test(b.brand))
+    const named = real.find(b => b.brand !== 'Chromium') ?? real[0]
+    return named ? `${named.brand} ${named.version}` : ''
+}
+// The survey with its browser question filled in with the browser and the
+// extension's version, which the person sees and can change before sending.
+// Not on Firefox, whose manifest says the extension collects nothing.
+export const feedbackFormLink = (version: string, hints?: BrowserHints): string => {
+    const name = __BUILT_FOR__ === 'firefox' ? '' : browserName(hints?.brands)
+    if (!name) return FEEDBACK_FORM
+    const answer = `${name} on ${hints?.platform || 'an unknown system'}${hints?.mobile ? ', mobile' : ''}, extension ${version}`
+    return `${FEEDBACK_FORM}?usp=pp_url&${FEEDBACK_FORM_BROWSER}=${encodeURIComponent(answer)}`
+}
 
 export const REMOVED = 1
 export const APPROVED = 2

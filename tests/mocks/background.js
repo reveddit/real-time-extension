@@ -14,16 +14,22 @@ export const loadBackground = async () => {
     const messages = []
     const clicks = []
     const installs = []
-    for (const name of ['onMessageExternal', 'onStartup', 'onUpdateAvailable']) c.runtime[name] = event()
+    const startups = []
+    const cookieChanges = []
+    const storageChanges = []
+    const tabUpdates = []
+    for (const name of ['onMessageExternal', 'onUpdateAvailable']) c.runtime[name] = event()
+    c.runtime.onStartup = event(startups)
     c.runtime.onInstalled = event(installs)
     c.runtime.onMessage = event(messages)
     c.runtime.getManifest = () => ({ version: '0.0.5.30' })
-    for (const name of ['onUpdated', 'onRemoved', 'onActivated']) c.tabs[name] = event()
+    c.tabs.onUpdated = event(tabUpdates)
+    for (const name of ['onRemoved', 'onActivated']) c.tabs[name] = event()
     c.alarms.onAlarm = event()
     c.alarms.get = (name, callback) => callback?.(null)
     c.alarms.getAll = callback => callback?.([])
     c.cookies = {
-        onChanged: event(),
+        onChanged: event(cookieChanges),
         getAll: (query, callback) => callback([]),
         get: (query, callback) => callback(null),
     }
@@ -34,9 +40,9 @@ export const loadBackground = async () => {
     // Manifest V2's name for the toolbar button
     c.browserAction = c.action
     c.contextMenus.removeAll = callback => callback?.()
-    c.storage.onChanged = event()
+    c.storage.onChanged = event(storageChanges)
     browserMock.cookies = cookiesApi
-    browserMock.storage.onChanged = event()
+    browserMock.storage.onChanged = event(storageChanges)
     browserMock.webRequest = { onBeforeSendHeaders: event(), onHeadersReceived: event() }
     browserMock.runtime = { ...browserMock.runtime, onInstalled: event() }
     // Nothing the script sends goes out, at load or in any test that doesn't stub
@@ -53,5 +59,12 @@ export const loadBackground = async () => {
             }),
         clickNotification: id => clicks.forEach(listener => listener(id)),
         install: details => installs.forEach(listener => listener(details)),
+        startUp: () => startups.forEach(listener => listener()),
+        // What the browser reports: a cookie set or removed, a storage write and
+        // a page that finished loading in a tab (the fakes report none themselves)
+        cookieChanged: info => cookieChanges.forEach(listener => listener(info)),
+        storageChanged: (changes, area) => storageChanges.forEach(listener => listener(changes, area)),
+        pageLoaded: (tabId, url) =>
+            tabUpdates.forEach(listener => listener(tabId, { status: 'complete' }, { id: tabId, url })),
     }
 }

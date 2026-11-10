@@ -1,5 +1,6 @@
 import { StoredCookie, isViewerConnecting, toStoredCookie, isExpired, restoreCookies } from './viewer'
 import { isSupportedRedditTab } from './www-fetcher'
+import { countCookieSave } from './activity-counts'
 import browser from 'webextension-polyfill'
 
 // The expiry reddit gave its login cookie, read from the cookie: reddit_session
@@ -38,9 +39,15 @@ const isOldDomainCopy = (c: { domain: string }) => /^\.[^.]+\.reddit\.com$/.test
 // account signs in (viewer.ts): the browser holds that account's cookies then,
 // which must never be saved as the user's.
 //
-// Cookie changes and tab loads ask for saves in bursts. One runs at a time, and
-// the calls made meanwhile share one more after it, which reads the cookies as
-// they are by then.
+// Asked for at each check and Reddit page load, at each change to a login
+// cookie and whenever a cookie goes (background.ts). Not at Reddit's other
+// cookie changes: it replaces one cookie with most of its answers, its own
+// pages' requests included (74 of 96 on 2026-11-09), and a save for each slowed
+// browsers down with several Reddit tabs open. So a saved value that isn't a
+// login's is as old as the last check or page load.
+//
+// Those ask in bursts. One save runs at a time, and the calls made meanwhile
+// share one more after it, which reads the cookies as they are by then.
 let latestSave: Promise<unknown> = Promise.resolve()
 let queuedSave: Promise<unknown> | undefined
 
@@ -99,6 +106,7 @@ const storeRedditCookiesNow = async () => {
     if (Array.isArray(stored) && snapshotText(stored) === snapshotText(cookieObjects)) {
         return true
     }
+    countCookieSave()
     return new Promise<boolean>(resolve =>
         chrome.storage.local.set({ [SNAPSHOT_KEY]: cookieObjects }, () => resolve(true)),
     )

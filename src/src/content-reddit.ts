@@ -1,4 +1,4 @@
-import { getFullIDsFromPath, REMOVED_BY_MODERATOR_TEXT, detectIsNewReddit } from './common'
+import { getFullIDsFromPath, REMOVED_BY_MODERATOR_TEXT, detectIsNewReddit, BELLS_CHANGED } from './common'
 import {
     setTextAndFunction_subscribe,
     setTextAndFunction_unsubscribe,
@@ -317,18 +317,21 @@ const addSubscribeButtons_newReddit = async (subscriptions: Record<string, any>)
         document.querySelectorAll(NEW_REDDIT_POST).forEach(addToPost)
     }
     // One document outlasts many pages here, unlike on old reddit, and bells
-    // already on the page should say what's followed now. Firefox reports writes
-    // that change nothing, and monitoring writes the name every cycle.
-    browser.storage.onChanged.addListener((changes: any, area: string) => {
-        if (area === 'sync' && changes.other_subscriptions) {
-            const nowFollowed = changes.other_subscriptions.newValue || {}
-            if (JSON.stringify(nowFollowed) === JSON.stringify(followed)) return
-            followed = nowFollowed
-        } else if (area === 'local' && changes.last_logged_in_user) {
-            if (changes.last_logged_in_user.newValue === me) return
-            me = changes.last_logged_in_user.newValue
-        } else return
-        addToAll()
+    // already on the page should say what's followed now. The background says
+    // when that or the user changes (background.ts): a listener to storage here
+    // would be handed every write the extension makes, in every Reddit tab.
+    browser.runtime.onMessage.addListener((message: any) => {
+        if (message?.action !== BELLS_CHANGED) return
+        let redraw = false
+        if ('followed' in message && JSON.stringify(message.followed) !== JSON.stringify(followed)) {
+            followed = message.followed
+            redraw = true
+        }
+        if ('me' in message && message.me !== me) {
+            me = message.me
+            redraw = true
+        }
+        if (redraw) addToAll()
     })
     addToAll()
     observe(document, rows, addToRow)

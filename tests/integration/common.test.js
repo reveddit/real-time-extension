@@ -25,6 +25,8 @@ import {
     ItemForStorage,
     ChangeForStorage,
     LocalStorageItem,
+    feedbackFormLink,
+    FEEDBACK_FORM,
 } from '../../src/src/common.ts'
 import { getTestNotificationMessage, updateBadgeUnseenCount, getObjectNamesForThing } from '../../src/src/storage.ts'
 
@@ -458,5 +460,42 @@ describe('updateBadgeUnseenCount', () => {
         updateBadgeUnseenCount()
         await vi.waitFor(() => expect(badge).toHaveBeenCalled())
         expect(badge.mock.calls.at(-1)[0]).toEqual({ text: '2' })
+    })
+})
+
+// The survey after an uninstall: its browser question comes filled in, so a
+// report says which browser and version it's about (2026-11-09: three lag
+// reports from Opera, none reachable)
+describe('feedbackFormLink', () => {
+    const answer = link => new URL(link).searchParams.get('entry.701261599')
+    const grease = { brand: 'Not_A Brand', version: '99' }
+    const chromium = { brand: 'Chromium', version: '142' }
+
+    it.each([
+        ['Chrome', [chromium, { brand: 'Google Chrome', version: '142' }, grease], 'Google Chrome 142'],
+        ['Opera GX', [{ brand: 'Not)A;Brand', version: '8' }, chromium, { brand: 'Opera GX', version: '124' }], 'Opera GX 124'],
+        ['Edge', [{ brand: 'Microsoft Edge', version: '142' }, chromium, { brand: 'Not?A_Brand', version: '24' }], 'Microsoft Edge 142'],
+        ['a browser that lists only Chromium', [grease, chromium], 'Chromium 142'],
+    ])('names %s by its own brand, not Chromium or the made-up entry', (_, brands, name) => {
+        expect(answer(feedbackFormLink('0.0.5.33', { brands, platform: 'Windows', mobile: false }))).toBe(
+            `${name} on Windows, extension 0.0.5.33`,
+        )
+    })
+
+    it('says a phone is one', () => {
+        const hints = { brands: [chromium, { brand: 'Microsoft Edge', version: '142' }], platform: 'Android', mobile: true }
+        expect(answer(feedbackFormLink('0.0.5.33', hints))).toBe('Microsoft Edge 142 on Android, mobile, extension 0.0.5.33')
+    })
+
+    it('is the plain form where the browser gives no hints, and on Firefox', () => {
+        expect(feedbackFormLink('0.0.5.33')).toBe(FEEDBACK_FORM)
+        expect(feedbackFormLink('0.0.5.33', { brands: [grease] })).toBe(FEEDBACK_FORM)
+        const builtFor = globalThis.__BUILT_FOR__
+        globalThis.__BUILT_FOR__ = 'firefox'
+        try {
+            expect(feedbackFormLink('0.0.5.33', { brands: [chromium], platform: 'Linux' })).toBe(FEEDBACK_FORM)
+        } finally {
+            globalThis.__BUILT_FOR__ = builtFor
+        }
     })
 })

@@ -1,6 +1,7 @@
-// The bells on new reddit's comments (content-reddit.ts) as storage changes.
-// Firefox reports a write that changes nothing, and monitoring writes the
-// user's name every cycle, so only a real change may redraw every bell.
+// The bells on new reddit's comments (content-reddit.ts) as what's followed, or
+// who's signed in, changes. The background tells Reddit tabs (background.ts
+// BELLS_CHANGED): a tab listening to storage would be handed every write the
+// extension makes. Only a real change may redraw every bell.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
@@ -8,6 +9,7 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { parseHTML } from 'linkedom'
 import browserMock, { __resetStorage } from '../mocks/webextension-polyfill.js'
+import { BELLS_CHANGED } from '../../src/src/common'
 
 // content-common.ts asks where it's running as it loads
 globalThis.location.hostname = 'www.reddit.com'
@@ -17,7 +19,7 @@ const PAGE =
     '<html device="desktop"><body><shreddit-comment author="someone" thingid="t1_c1" postid="t3_abc">' +
     '<shreddit-comment-action-row></shreddit-comment-action-row></shreddit-comment></body></html>'
 
-let listeners, bell, change
+let listeners, bell, tell
 
 const open = async followed => {
     const { document, window } = parseHTML(PAGE, { location: { pathname: '/' } })
@@ -39,50 +41,63 @@ beforeEach(() => {
     // Its later looks for removed comments have nothing to do here
     vi.useFakeTimers({ toFake: ['setTimeout'] })
     listeners = []
-    browserMock.storage.onChanged = { addListener: listener => listeners.push(listener) }
-    change = (changes, area) => listeners.forEach(listener => listener(changes, area))
+    browserMock.runtime.onMessage = { addListener: listener => listeners.push(listener) }
+    // What the background sends
+    tell = news => listeners.forEach(listener => listener({ action: BELLS_CHANGED, ...news }))
 })
 
 afterEach(() => {
-    delete browserMock.storage.onChanged
+    delete browserMock.runtime.onMessage
 })
 
 describe('the bells on new reddit', () => {
-    it('stay as they are when a write repeats the name', async () => {
+    it('stay as they are when told the name they have', async () => {
         await open({})
         const drawn = bell().firstChild
-        change({ last_logged_in_user: { oldValue: 'me', newValue: 'me' } }, 'local')
+        tell({ me: 'me' })
         expect(bell().firstChild).toBe(drawn)
     })
 
-    it('stay as they are when a write repeats what is followed', async () => {
+    it('stay as they are when told what they already show is followed', async () => {
         await open({ t1_c1: { t: 1 } })
         const drawn = bell().firstChild
-        change({ other_subscriptions: { oldValue: { t1_c1: { t: 1 } }, newValue: { t1_c1: { t: 1 } } } }, 'sync')
+        tell({ followed: { t1_c1: { t: 1 } } })
         expect(bell().firstChild).toBe(drawn)
     })
 
     it('redraw for a new name: the comment turns out to be your own', async () => {
         await open({})
         expect(bell().getAttribute('aria-disabled')).toBeNull()
-        change({ last_logged_in_user: { oldValue: 'me', newValue: 'someone' } }, 'local')
+        tell({ me: 'someone' })
         expect(bell().getAttribute('aria-disabled')).toBe('true')
     })
 
     it('redraw for a comment newly followed, and for one no longer followed', async () => {
         await open({})
         expect(bell().title).toBe('Get told if this is removed')
-        change({ other_subscriptions: { newValue: { t1_c1: { t: 1 } } } }, 'sync')
+        tell({ followed: { t1_c1: { t: 1 } } })
         expect(bell().title).toBe('Stop following this')
-        change({ other_subscriptions: { oldValue: { t1_c1: { t: 1 } } } }, 'sync')
+        tell({ followed: {} })
         expect(bell().title).toBe('Get told if this is removed')
     })
 
-    it('ignore a change to anything else, or in the other storage area', async () => {
+    it('ignore any other message', async () => {
         await open({})
         const drawn = bell().firstChild
-        change({ other: { newValue: 1 } }, 'local')
-        change({ last_logged_in_user: { newValue: 'someone' } }, 'sync')
+        listeners.forEach(listener => listener({ action: 'fetch-www-profile-public', me: 'someone' }))
         expect(bell().firstChild).toBe(drawn)
+    })
+
+    // Every write once came to every Reddit tab, the cookie snapshot's with each
+    // of Reddit's answers (survey lag reports, 2026-11-09)
+    it("don't listen to storage", async () => {
+        const storageListeners = []
+        browserMock.storage.onChanged = { addListener: listener => storageListeners.push(listener) }
+        try {
+            await open({})
+            expect(storageListeners).toEqual([])
+        } finally {
+            delete browserMock.storage.onChanged
+        }
     })
 })

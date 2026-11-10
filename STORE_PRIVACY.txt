@@ -5,6 +5,7 @@ Update this file whenever a permission changes, or what the extension does with 
 Privacy policy URL: https://www.reveddit.com/about/extension-privacy/
 Remote code: No
 Data usage: tick Authentication information, Website content and all three certifications. Leave Personally identifiable information unticked: a reddit username is a pseudonym.
+Uninstall survey: on Chrome and Edge, the form the browser opens after an uninstall has one answer filled in, with the browser's name and version, the system and the extension's version. Google, which hosts the form, gets that with the page, as the privacy policy says. It uses no permission. Firefox opens the form with nothing filled in.
 
 
 SINGLE PURPOSE
@@ -14,7 +15,7 @@ To show Reddit users what moderators removed: it notifies them about their own a
 
 HOST PERMISSIONS
 
-The extension checks the user's own and subscribed Reddit posts and comments for removal, and scans threads and profiles for removed content when the user asks. reddit.com: its background fetches reddit pages, JSON and feeds. It reads the user's own listing and subscribed items with their Reddit login, then checks their own items logged out or through their optional second account. A scan reads feeds with the user's login, because reddit allows too few logged-out feed requests. It also restores the cookies these reads use, and its content script shows removal status, scan and subscribe buttons on reddit pages. reveddit.com: its content script tells reveddit.com pages the extension is installed, adds subscribe links and marks items seen. Those pages can ask it for a fixed list of public reddit paths, read with the user's login because reddit refuses them logged out. The page gets the data, never the login. It also downloads a settings file. It sends nothing elsewhere on its own.
+The extension checks the user's own and subscribed Reddit posts and comments for removal, and scans threads and profiles for removed content when the user asks. reddit.com: its background fetches reddit pages, JSON and feeds. It reads the user's own listing and subscribed items with their Reddit login, then checks their own items logged out or through their optional second account. A scan reads feeds with the user's login, because reddit allows too few logged-out feed requests. It also restores the cookies these reads use, and its content script shows removal status, scan and subscribe buttons on reddit pages. reveddit.com: its content script tells reveddit.com pages the extension is installed, adds subscribe links and marks items seen. Those pages can ask it for a fixed list of public reddit paths, read with the user's login because reddit refuses them logged out. The page gets the data, never the login. It also downloads a settings file. It makes no requests to other sites.
 
 
 COOKIES

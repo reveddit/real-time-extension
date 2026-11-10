@@ -7,11 +7,15 @@ import {
     setWarningBadge,
     isOtherIdentity,
     showsWhatsNew,
+    BELLS_CHANGED,
+    feedbackFormLink,
 } from './src/common'
 import { checkForChanges, setCurrentStateForIdHere } from './src/monitoring'
 import { readWithLogin } from './src/requests'
 import { getLoggedinUser, getLoggedinUserDetailed, isSettledByLogin, whoIsSignedIn } from './src/reddit-auth'
 import { storeRedditCookies } from './src/reddit-cookies'
+import { countCookieChange, countStorageWrites } from './src/activity-counts'
+import { isFresh } from './src/logged-in-fetch'
 import { getPublicViewUncheckedLine } from './src/lookup-status'
 import { getLoginWallLine } from './src/www-fetcher'
 import {
@@ -156,21 +160,67 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     }
 })
 
-chrome.cookies.onChanged.addListener(changeInfo => {
-    const cookie = changeInfo.cookie
-    if (cookie && cookie.domain && cookie.domain.replace(/^\./, '').endsWith('reddit.com')) {
-        isViewerConnecting().then(async connecting => {
-            if (connecting) {
-                // A second account signed in (viewer.ts): done once reddit has
-                // set the cookies that follow its login cookie
-                if (!changeInfo.removed && (await getRemoteLoginCookies()).includes(cookie.name)) {
-                    setTimeout(() => finishViewerConnect(whoAmI), VIEWER_SETTLE_MS)
-                }
-                return
-            }
-            storeCookiesThenRecover()
-        })
+// The login cookies' names, read again at most every 5 minutes: they're asked
+// about at each of Reddit's cookie changes, and the feed holding them is large
+const LOGIN_NAMES_EVERY_MS = 5 * 60 * 1000
+let loginNames: { at: number; names: Promise<string[]> } | undefined
+const loginCookieNames = () => {
+    if (!loginNames || !isFresh(loginNames.at, LOGIN_NAMES_EVERY_MS, Date.now())) {
+        loginNames = { at: Date.now(), names: getRemoteLoginCookies() }
     }
+    return loginNames.names
+}
+// Reddit replaces one of its cookies with most of its answers, its own pages'
+// requests included (74 of 96 on 2026-11-09), so what runs here runs for nearly
+// every request. A new value for a cookie that isn't a login's is only counted:
+// the saved copy takes it at the next check or page load (reddit-cookies.ts).
+// A login cookie's change and any cookie's going are saved at once, so a check
+// that puts missing cookies back can't sign a user back in who just signed out.
+chrome.cookies.onChanged.addListener(async changeInfo => {
+    const cookie = changeInfo.cookie
+    if (!cookie?.domain?.replace(/^\./, '').endsWith('reddit.com')) return
+    // A new value comes as the old cookie's removal, then the new cookie
+    if (changeInfo.removed && changeInfo.cause === 'overwrite') return
+    countCookieChange()
+    const login = (await loginCookieNames()).includes(cookie.name)
+    if (!login && !changeInfo.removed) return
+    if (await isViewerConnecting()) {
+        // A second account signed in (viewer.ts): done once reddit has
+        // set the cookies that follow its login cookie
+        if (login && !changeInfo.removed) {
+            setTimeout(() => finishViewerConnect(whoAmI), VIEWER_SETTLE_MS)
+        }
+        return
+    }
+    storeCookiesThenRecover()
+})
+
+// Reddit tabs' bells show what's followed and who's signed in, and hear of a
+// change from here (content-reddit.ts): a listener to storage in each tab would
+// be handed every write the extension makes, the cookie snapshot's included.
+// Firefox reports writes that change nothing.
+browser.storage.onChanged.addListener((changes, area) => {
+    countStorageWrites(changes)
+    const changed = (key: string) =>
+        key in changes && JSON.stringify(changes[key].oldValue) !== JSON.stringify(changes[key].newValue)
+    const news = {
+        ...(area === 'sync' && changed('other_subscriptions')
+            ? { followed: changes.other_subscriptions.newValue || {} }
+            : {}),
+        ...(area === 'local' && changed('last_logged_in_user')
+            ? { me: changes.last_logged_in_user.newValue || '' }
+            : {}),
+    }
+    if (!Object.keys(news).length) return
+    browser.tabs.query({ url: '*://*.reddit.com/*' }).then(
+        tabs => {
+            for (const tab of tabs) {
+                if (tab.id !== undefined)
+                    browser.tabs.sendMessage(tab.id, { action: BELLS_CHANGED, ...news }).catch(() => {})
+            }
+        },
+        () => {},
+    )
 })
 
 // The second account (viewer.ts): who the browser is logged in as when its
@@ -490,6 +540,14 @@ chrome.runtime.onMessageExternal.addListener(function (message, sender, sendResp
     return true
 })
 
+// The survey after an uninstall, with this version and the browser's filled in
+// (common.ts feedbackFormLink): set again at each update and browser start, as
+// both change. navigator.userAgentData is Chromium's, in its worker too.
+const setUninstallSurvey = () =>
+    chrome.runtime.setUninstallURL?.(
+        feedbackFormLink(chrome.runtime.getManifest().version, (navigator as any).userAgentData),
+    )
+
 chrome.runtime.onInstalled.addListener(function (details) {
     try {
         dlog('cycle', `[reveddit] onInstalled (${details.reason}) — version ${chrome.runtime.getManifest().version}`)
@@ -499,6 +557,7 @@ chrome.runtime.onInstalled.addListener(function (details) {
     // Existing reddit tabs lost their content script on install/update; re-inject
     // so the reliable tab fetch path is ready before the first removal check.
     injectContentScriptIntoExistingRedditTabs()
+    setUninstallSurvey()
     if (details.reason == 'install') {
         initStorage(() => {
             setAlarm(INTERVAL_DEFAULT)
@@ -506,11 +565,6 @@ chrome.runtime.onInstalled.addListener(function (details) {
             subscribeToLoggedInUser_or_promptForUser()
             updateBadgeUnseenCount()
         })
-        const uninstallGoogleFormLink =
-            'https://docs.google.com/forms/d/e/1FAIpQLSejWHJAf8thfMdTnnEc5xZPlsdxA_dGUkbmnDq8PABVMkvARg/viewform'
-        if (chrome.runtime.setUninstallURL) {
-            chrome.runtime.setUninstallURL(uninstallGoogleFormLink)
-        }
     } else if (details.reason == 'update') {
         updateBadgeUnseenCount()
         markBacklogSummarySent()
@@ -614,6 +668,7 @@ chrome.runtime.onUpdateAvailable.addListener(details => {
 // On browser startup, if no user is currently tracked, re-check connection and
 // surface a warning badge if Reddit can't be reached.
 chrome.runtime.onStartup.addListener(async () => {
+    setUninstallSurvey()
     // Not while a second account signs in: the browser's login is its, and it
     // would be subscribed as the user's
     if (await isViewerConnecting()) return

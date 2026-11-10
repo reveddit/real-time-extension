@@ -209,10 +209,11 @@ const ROWS = [
         },
     },
     {
-        name: "the cookie listener, as reddit's login page sets a cookie",
+        // Not a cookie it sets: a new value that isn't a login's is only counted
+        name: "the cookie listener, as reddit's login page drops a cookie",
         drive: () => {
             __getLocalStorage().error_status = 'needs_user'
-            fire('onCookieChanged', { removed: false, cause: 'explicit', cookie: cookie('loid', 'L1') })
+            fire('onCookieChanged', { removed: true, cause: 'expired_overwrite', cookie: cookie('loid', 'L1') })
         },
     },
     {

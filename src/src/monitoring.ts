@@ -15,6 +15,7 @@ import {
     postRemovedByCategory,
 } from './lookup-status'
 import { storeRedditCookies } from './reddit-cookies'
+import { logActivityHourly } from './activity-counts'
 import { isLegacyOff } from './legacy-lookup'
 import {
     isCapabilityResting,
@@ -438,6 +439,7 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
     }
     // Claimed before anything is awaited, so a trigger meanwhile is skipped
     const startedAt = (cycleStartedAtMs = nowMs)
+    logActivityHourly()
     // A cycle that a newer one overlapped doesn't end that one when it ends
     const endCycle = () => {
         if (cycleStartedAtMs === startedAt) cycleEndedAtMs = Date.now()

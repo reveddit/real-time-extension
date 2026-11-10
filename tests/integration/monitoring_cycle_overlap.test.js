@@ -14,6 +14,7 @@ import { getDiagEntries } from '../mocks/diag-entries.js'
 import { checkForChanges, isCycleInFlight } from '../../src/src/monitoring'
 import { clearDiagLog } from '../../src/src/diaglog'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
+import { countCookieChange, _resetActivityCounts } from '../../src/src/activity-counts'
 
 const lines = async text => (await getDiagEntries()).filter(entry => entry.m.includes(text)).length
 
@@ -94,6 +95,16 @@ describe('the start of a cycle', () => {
         for (const key of Object.keys(reason)) delete __getLocalStorage()[key]
         await checkForChanges()
         expect(await lines('cycle start')).toBe(1)
+        await vi.waitFor(async () => expect(await lines('cycle done')).toBe(1))
+    })
+
+    // The background counts and the cycle writes the line (activity-counts.ts)
+    it("writes the past hour's activity counts to the saved log", async () => {
+        _resetActivityCounts()
+        await countCookieChange()
+        clock += 60 * 60 * 1000
+        await checkForChanges()
+        await vi.waitFor(async () => expect(await lines('Reddit cookie changes 1, cookie copies saved 0')).toBe(1))
         await vi.waitFor(async () => expect(await lines('cycle done')).toBe(1))
     })
 })
