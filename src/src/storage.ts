@@ -1,5 +1,5 @@
 import {
-    ACTION_API,
+    actionApi,
     ItemForStorage,
     LocalStorageItem,
     sortDict_by_numberValuedAttribute,
@@ -913,8 +913,8 @@ export const updateBadgeUnseenCount = () => {
                 total += ids.length
             })
             const setCount = (text: string) => {
-                ;(chrome as any)[ACTION_API].setBadgeBackgroundColor({ color: 'red' })
-                ;(chrome as any)[ACTION_API].setBadgeText({ text })
+                actionApi().setBadgeBackgroundColor({ color: 'red' })
+                actionApi().setBadgeText({ text })
             }
             if (total > 0) {
                 setCount(total.toString())

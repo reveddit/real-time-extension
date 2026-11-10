@@ -1,4 +1,5 @@
 import { getPrettyDate } from './common'
+import { element } from './dom-helpers'
 import { type ScanResult } from './profile-scan'
 
 // --- Shared helper ---
@@ -49,6 +50,14 @@ export function createNoteMark(jump: boolean, noteSelector = '.rev-scan-note'): 
     return mark
 }
 
+// "r/sub · 3 hours ago" and the red "removed" badge, under a scan result
+export function scanItemMeta(item: ScanResult): HTMLElement {
+    const sub = item.subreddit ? `r/${item.subreddit}` : ''
+    const age = item.created_utc ? getPrettyDate(item.created_utc) : ''
+    const badge = element('span', 'rev-scan-badge-removed', 'removed')
+    return element('div', 'rev-scan-item-meta', `${sub}${sub && age ? ' · ' : ''}${age} `, badge)
+}
+
 // showOwnViewMark: only the scanned account's own session sees removed content
 // as if it were live, so the jump badge, like the note above the results it
 // leads to, is only shown when the viewer is that account.
@@ -68,12 +77,7 @@ export function createScanResultItem(item: ScanResult, showOwnViewMark: boolean)
         el.appendChild(title)
     }
 
-    const meta = document.createElement('div')
-    meta.className = 'rev-scan-item-meta'
-    const sub = item.subreddit ? `r/${item.subreddit}` : ''
-    const age = item.created_utc ? getPrettyDate(item.created_utc) : ''
-    meta.innerHTML = `${sub}${sub && age ? ' &middot; ' : ''}${age} <span class="rev-scan-badge-removed">removed</span>`
-    el.appendChild(meta)
+    el.appendChild(scanItemMeta(item))
 
     if (item.body) {
         const body = document.createElement('div')

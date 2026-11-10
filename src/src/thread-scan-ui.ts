@@ -20,6 +20,7 @@ import {
 import { activeScan, endScan, pageReads, readsGoWith, scanStopped, showProgress, startScan } from './scan-session'
 import { autoFilterRemoved, injectThreadFilter, refreshThreadFilter } from './thread-filter'
 import { RecoveredCommentInserter, inserterForPage } from './recovered-inserter'
+import { element, icon, setRedditHTML } from './dom-helpers'
 
 // --- State tracking ---
 
@@ -137,14 +138,12 @@ const showScanLeft = (btn: Element, left: number) => {
     ;(btn as HTMLElement).title = `${left} more to check — click to continue`
 }
 
-function newRedditScanBtnHTML(): string {
-    return (
-        '<svg fill="currentColor" height="16" width="16" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">' +
-        '<path d="M9 2a7 7 0 104.32 12.527l3.576 3.576a1 1 0 001.414-1.414l-3.576-3.576A7 7 0 009 2zM4 9a5 5 0 1110 0A5 5 0 014 9z"/>' +
-        '</svg>' +
-        '<span>Scan-Rev</span>'
-    )
-}
+const newRedditScanBtnParts = (): Node[] => [
+    icon(
+        'M9 2a7 7 0 104.32 12.527l3.576 3.576a1 1 0 001.414-1.414l-3.576-3.576A7 7 0 009 2zM4 9a5 5 0 1110 0A5 5 0 014 9z',
+    ),
+    element('span', '', 'Scan-Rev'),
+]
 
 // Reddit stamps a comment's action row as the comment comes into view. The button
 // takes a slot of the row's, which puts it inline with Share, and a light child
@@ -163,7 +162,7 @@ export function injectScanButton_newReddit(row: Element) {
     btn.className = 'rev-btn rev-scan-comment-btn rev-newreddit-action'
     btn.classList.toggle('rev-scan-disabled', !!activeScan)
     btn.title = SCAN_TITLE
-    btn.innerHTML = newRedditScanBtnHTML()
+    btn.replaceChildren(...newRedditScanBtnParts())
     if (nothingMissing()) markExhausted(btn)
     btn.addEventListener('click', e => {
         e.preventDefault()
@@ -317,7 +316,7 @@ function displayRestoredComment(
         entry.classList.add('rev-removed-highlight')
         const bodyEl = commentEl.querySelector(':scope > .entry .usertext-body .md')
         if (bodyEl && result.body_html) {
-            bodyEl.innerHTML = result.body_html
+            setRedditHTML(bodyEl, result.body_html)
         } else if (bodyEl) {
             bodyEl.textContent = result.body
         }
@@ -345,7 +344,7 @@ function displayRestoredComment(
     restoredEl.className = 'rev-inserted-comment rev-removed-highlight'
     restoredEl.setAttribute('data-rev-id', commentId)
     if (result.body_html) {
-        restoredEl.innerHTML = result.body_html
+        setRedditHTML(restoredEl, result.body_html)
     } else {
         restoredEl.textContent = result.body
     }

@@ -4,6 +4,7 @@ import { type RecoveredComment } from './restore'
 import { addUnderComment, findOldRedditCommentEl, newRedditCommentEl, openComment, ownPart } from './comment-dom'
 import { activeScan, addCancelLink, endScan, pageReads, scanStopped, startScan } from './scan-session'
 import { refreshThreadFilter } from './thread-filter'
+import { setRedditHTML } from './dom-helpers'
 
 // Places what this page's scans recover, so each click's can nest under the last's
 let pageInserter: RecoveredCommentInserter | null = null
@@ -328,7 +329,7 @@ function recoveredBody(rc: RecoveredComment): HTMLElement {
     const body = document.createElement('div')
     // Outer .rev-removed-highlight already provides the red marker; no inner blue.
     body.className = 'rev-scan-item-body'
-    if (rc.body_html) body.innerHTML = rc.body_html
+    if (rc.body_html) setRedditHTML(body, rc.body_html)
     else body.textContent = rc.body
     return body
 }
@@ -372,7 +373,7 @@ function fillRecoveredTombstone(tombstone: HTMLElement, rc: RecoveredComment): H
     entry.classList.add('rev-removed-highlight')
     const bodyEl = tombstone.querySelector(':scope > .entry .usertext-body .md')
     if (bodyEl) {
-        if (rc.body_html) bodyEl.innerHTML = rc.body_html
+        if (rc.body_html) setRedditHTML(bodyEl, rc.body_html)
         else bodyEl.textContent = rc.body
     }
     const authorEl = tombstone.querySelector(':scope > .entry .tagline .author')

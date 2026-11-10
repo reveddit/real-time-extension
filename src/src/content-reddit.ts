@@ -6,7 +6,7 @@ import {
     BELL_BUTTON,
 } from './content-common'
 import { placeForThisRun, ofThisRun, markThisRun, orphaned } from './run-token'
-import { observe, findByText } from './dom-helpers'
+import { element, observe, findByText } from './dom-helpers'
 import browser from 'webextension-polyfill'
 import { subscribeUser, MAX_SUBSCRIPTIONS } from './storage'
 import { initRestoreOnThread, initProfileScan, resetScansForPage } from './restore-ui'
@@ -201,33 +201,34 @@ const showRemovalStatus = ({
     }
 
     if (message_1) {
-        const optionsID = 'goto-options-from-content'
         const place = subreddit ? `r/${subreddit}` : `u/${user}'s profile`
         const message_2 = ` It is not currently visible in ${place} and may not appear in web search results.`
-        const from = `<div class="rev-from"><a id="${optionsID}" href="#">Reveddit Real-Time</a> note</div>`
-        const linkOptions = (note: Element) =>
-            note
-                .querySelector(`#${optionsID}`)
-                ?.addEventListener('click', () => browser.runtime.sendMessage({ action: 'open-options' }))
+        const link = (href: string, text: string) => {
+            const a = element('a', '', text) as HTMLAnchorElement
+            a.href = href
+            return a
+        }
+        const options = link('#', 'Reveddit Real-Time')
+        options.addEventListener('click', () => browser.runtime.sendMessage({ action: 'open-options' }))
+        const from = element('div', 'rev-from', options, ' note')
         const post_path = window.location.pathname.split('/', 6).join('/')
-        const reveddit_link = `<p><a href="https://www.reveddit.com${post_path}/">View the post on Reveddit.com</a></p>`
+        const reveddit_link = element(
+            'p',
+            '',
+            link(`https://www.reveddit.com${post_path}/`, 'View the post on Reveddit.com'),
+        )
         if (!isNewReddit) {
-            message_1 += ` View the post <a href="https://sh.reddit.com${post_path}/">on new "sh" reddit</a> for more details.`
-            const infobar = document.createElement('div')
-            infobar.className = `reddit-infobar md-container-small ${className}`
-            infobar.innerHTML = `${from}<div class="md"><p>${message_1}${message_2}</p>${reveddit_link}</div>`
-            linkOptions(infobar)
-            const contentMain = document.querySelector('div.content[role="main"]')
-            if (contentMain) {
-                contentMain.prepend(infobar)
-            }
+            const sh = link(`https://sh.reddit.com${post_path}/`, 'on new "sh" reddit')
+            const text = element('p', '', message_1, ' View the post ', sh, ' for more details.', message_2)
+            const infobar = element('div', `reddit-infobar md-container-small ${className}`, from)
+            infobar.append(element('div', 'md', text, reveddit_link))
+            document.querySelector('div.content[role="main"]')?.prepend(infobar)
         } else {
-            message_1 += ` More details may appear in a message above from reddit.`
-            const wrap = document.createElement('div')
-            wrap.className = `${NEW_REDDIT_NOTE} ${className}`
+            const more = ' More details may appear in a message above from reddit.'
+            const description = element('div', 'rev-new-reddit-message-content-description', message_1, more, message_2)
+            const wrap = element('div', `${NEW_REDDIT_NOTE} ${className}`, from)
+            wrap.append(element('div', 'rev-new-reddit-message-content', description, reveddit_link))
             wrap.dataset.post = postID
-            wrap.innerHTML = `${from}<div class="rev-new-reddit-message-content"><div class="rev-new-reddit-message-content-description">${message_1}${message_2}</div>${reveddit_link}</div>`
-            linkOptions(wrap)
             // Reddit's back and forward buttons put a page's old elements back
             if (target && !document.querySelector(`.${NEW_REDDIT_NOTE}[data-post="${postID}"]`)) {
                 target.after(wrap)

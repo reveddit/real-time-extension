@@ -1,9 +1,10 @@
-import { getPrettyDate, detectIsNewReddit } from './common'
+import { detectIsNewReddit } from './common'
 import { ofThisRun, markThisRun, orphaned } from './run-token'
 import { scanUserProfile, type ScanResult, type ProfileScanOptions } from './profile-scan'
 import { type RestoreProgress } from './scan-reads'
 import { endScan, pageReads, readsGoWith, scanStopped, showProgress, startScan } from './scan-session'
-import { OWN_VIEW_HINT, createNoteMark, createScanResultItem, isViewer } from './note-mark'
+import { OWN_VIEW_HINT, createNoteMark, createScanResultItem, isViewer, scanItemMeta } from './note-mark'
+import { setRedditHTML } from './dom-helpers'
 
 // Profile scans that saw everything, so a rescan starts over
 const finishedProfiles = new WeakSet<Element>()
@@ -112,7 +113,7 @@ async function handleProfileScan(username: string, container: HTMLElement) {
     btn.textContent = 'Scanning...'
     progressEl.style.display = ''
     resultsEl.style.display = 'none'
-    resultsEl.innerHTML = ''
+    resultsEl.replaceChildren()
 
     if (finishedProfiles.has(container)) pageReads.clear()
     const limiter = startScan(container)
@@ -222,7 +223,7 @@ function highlightComment_oldReddit(el: HTMLElement, result: ScanResult) {
     const bodyEl = el.querySelector(':scope > .entry .usertext-body .md') || el.querySelector('.usertext-body .md')
     if (bodyEl && result.body) {
         if (result.body_html) {
-            bodyEl.innerHTML = result.body_html
+            setRedditHTML(bodyEl, result.body_html)
         } else {
             bodyEl.textContent = result.body
         }
@@ -256,7 +257,7 @@ function highlightComment_newReddit(el: HTMLElement, result: ScanResult) {
         const restoredEl = document.createElement('div')
         restoredEl.className = 'rev-restored-inline'
         if (result.body_html) {
-            restoredEl.innerHTML = result.body_html
+            setRedditHTML(restoredEl, result.body_html)
         } else if (result.body) {
             restoredEl.textContent = result.body
         }
@@ -349,11 +350,7 @@ function createInlineItem(item: ScanResult, isNewReddit: boolean, showOwnViewMar
         el.setAttribute('data-fullname', item.id)
     }
 
-    const meta = document.createElement('div')
-    meta.className = 'rev-scan-item-meta'
-    const sub = item.subreddit ? `r/${item.subreddit}` : ''
-    const age = item.created_utc ? getPrettyDate(item.created_utc) : ''
-    meta.innerHTML = `${sub} &middot; ${age} <span class="rev-scan-badge-removed">removed</span>`
+    const meta = scanItemMeta(item)
 
     const title = document.createElement('div')
     title.className = 'rev-scan-item-title'
@@ -364,7 +361,7 @@ function createInlineItem(item: ScanResult, isNewReddit: boolean, showOwnViewMar
     const body = document.createElement('div')
     body.className = 'rev-scan-item-body'
     if (item.body_html) {
-        body.innerHTML = item.body_html
+        setRedditHTML(body, item.body_html)
     } else if (item.body) {
         body.textContent = item.body
     }

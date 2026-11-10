@@ -1,5 +1,6 @@
 import { subscribeId, unsubscribeId, keepPageText } from './storage'
 import { setCurrentStateForId } from './monitoring'
+import { icon } from './dom-helpers'
 
 let UNSUBSCRIBE_TEXT = 'unsubscribe-rev'
 let SUBSCRIBE_TEXT = 'subscribe-rev'
@@ -23,16 +24,18 @@ const styleRevButton = (element: HTMLElement) => {
 // the item is followed, and says what it does in its tooltip
 export const BELL_BUTTON = 'rev-subscribe-bell'
 const bell = (followed: boolean) =>
-    '<svg fill="currentColor" fill-rule="evenodd" height="16" width="16" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">' +
-    '<path d="M10 2a6 6 0 00-6 6v3.6L2.3 14a1 1 0 00.8 1.6h13.8a1 1 0 00.8-1.6L16 11.6V8a6 6 0 00-6-6z' +
-    (followed ? '' : 'M6 8a4 4 0 118 0v4.3l1 1.3H5l1-1.3V8z') +
-    'M8 17a2 2 0 004 0H8z"/></svg>'
+    icon(
+        'M10 2a6 6 0 00-6 6v3.6L2.3 14a1 1 0 00.8 1.6h13.8a1 1 0 00.8-1.6L16 11.6V8a6 6 0 00-6-6z' +
+            (followed ? '' : 'M6 8a4 4 0 118 0v4.3l1 1.3H5l1-1.3V8z') +
+            'M8 17a2 2 0 004 0H8z',
+        true,
+    )
 const setLabel = (element: HTMLElement, text: string, followed = false) => {
     if (!element.classList.contains(BELL_BUTTON)) {
         element.textContent = text
         return
     }
-    element.innerHTML = bell(followed)
+    element.replaceChildren(bell(followed))
     element.title = followed ? 'Stop following this' : 'Get told if this is removed'
     element.setAttribute('aria-label', text)
 }

@@ -79,12 +79,14 @@ export function detectIsNewReddit(): boolean {
     return false
 }
 const maxRedditContentLength = 10000
-export const ACTION_API = __BUILT_FOR__ === 'chrome' ? 'action' : 'browserAction'
+// Named outright, not as chrome[name], which Firefox's linter reads as an API it lacks
+export const actionApi = (): typeof chrome.action =>
+    __BUILT_FOR__ === 'chrome' ? chrome.action : (chrome as any).browserAction
 
 export const setWarningBadge = (errorStatus?: string) => {
     try {
-        ;(chrome as any)[ACTION_API].setBadgeText({ text: '!' })
-        ;(chrome as any)[ACTION_API].setBadgeBackgroundColor({ color: '#ffcc00' })
+        actionApi().setBadgeText({ text: '!' })
+        actionApi().setBadgeBackgroundColor({ color: '#ffcc00' })
         if (errorStatus) {
             chrome.storage.local.set({ error_status: errorStatus })
         }
