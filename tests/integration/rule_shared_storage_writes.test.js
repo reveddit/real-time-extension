@@ -12,10 +12,13 @@
 // first is held at its read of the object while the second runs, and then
 // writes what it read. A row passes when both changes survive. A writer that
 // waits its turn behind the first (a chain) can't run meanwhile, so the read
-// goes on after a while and the second runs after it. Where the second writer
-// is a page's (the popup, a content script), it comes from the page's own copy
-// of the modules, as a page loads them: a chain in the background's copy
-// can't order the page's writes. Add a row for a new object that's rewritten
+// goes on after a while and the second runs after it. Where a writer is a
+// page's (the popup, a content script), it comes from the page's own copy of
+// the modules, as a page loads them: a chain in the background's copy can't
+// order the page's writes. The row's `page` names that module, loaded before
+// the writers start, as a page is loaded before anyone clicks in it: an import
+// during the overlap can outlast its wait, and the page's writer then runs
+// after the row is checked. Add a row for a new object that's rewritten
 // whole, or a new writer of one. An object only one context may write gets a
 // row that checks the guard that keeps the others out.
 
@@ -243,8 +246,9 @@ const overlaps = [
         name: "the cycle's notification kept pending while the popup's row for the account clears its own",
         local: { pending_notifications: { [USER]: pendingEntry(USER, ['t1_old']) } },
         keys: 'pending_notifications',
+        page: '../../src/src/storage',
         first: () => setPendingNotification(FOLLOWED_NOTIFICATION, pendingData(['t1_followed'])),
-        second: async () => (await inPage('../../src/src/storage')).clearPendingNotification(USER),
+        second: ({ page }) => page.clearPendingNotification(USER),
         expect: () => expect(pendingNames()).toEqual([FOLLOWED_NOTIFICATION]),
     },
 
@@ -295,9 +299,9 @@ const overlaps = [
     {
         name: "followed items' cache keeps the cycle's save and the popup's follow check's save",
         keys: 'items_other',
+        page: '../../src/src/storage',
         first: () => addLocalStorageItems({ t1_a: record('words a') }, 'other', false),
-        second: async () =>
-            (await inPage('../../src/src/storage')).addLocalStorageItems({ t1_b: record('words b') }, 'other', false),
+        second: ({ page }) => page.addLocalStorageItems({ t1_b: record('words b') }, 'other', false),
         expect: () => expect(Object.keys(__getLocalStorage().items_other).sort()).toEqual(['t1_a', 't1_b']),
     },
 
@@ -325,11 +329,9 @@ const overlaps = [
     {
         name: 'following one item from a page while another is unfollowed elsewhere keeps both changes',
         keys: 'other_subscriptions',
+        page: '../../src/src/storage',
         first: callback(done => unsubscribeId('t1_followed', done)),
-        second: async () => {
-            const page = await inPage('../../src/src/storage')
-            await new Promise(resolve => page.subscribeId('t1_a', resolve))
-        },
+        second: ({ page }) => new Promise(resolve => page.subscribeId('t1_a', resolve)),
         expect: () => expect(Object.keys(__getSyncStorage().other_subscriptions)).toEqual(['t1_a']),
     },
 
@@ -338,11 +340,9 @@ const overlaps = [
     {
         name: "an account followed from the link menu while a reddit page subscribes whoever's signed in",
         keys: 'user_subscriptions',
+        page: '../../src/src/storage',
         first: callback(done => subscribeUser('bob', done, done)),
-        second: async () => {
-            const page = await inPage('../../src/src/storage')
-            await new Promise(resolve => page.subscribeUser('carol', resolve, resolve))
-        },
+        second: ({ page }) => new Promise(resolve => page.subscribeUser('carol', resolve, resolve)),
         expect: () => expect(Object.keys(__getSyncStorage().user_subscriptions).sort()).toEqual([USER, 'bob', 'carol']),
     },
 
@@ -372,12 +372,9 @@ const overlaps = [
         // Its second read of the followed maps, as it saves them
         keys: FOLLOWED_POST_IDS_KEY,
         nth: 2,
+        page: '../../src/src/monitoring',
         first: () => lookupItemsByID(['t1_x'], NO_AUTH, false, '', {}),
-        second: async () =>
-            (await inPage('../../src/src/monitoring')).setCurrentStateForId(
-                't1_y',
-                'https://www.reddit.com/r/pics/comments/ypost/t/y/',
-            ),
+        second: ({ page }) => page.setCurrentStateForId('t1_y', 'https://www.reddit.com/r/pics/comments/ypost/t/y/'),
         expect: () => expect(__getLocalStorage()[FOLLOWED_POST_IDS_KEY]).toEqual({ t1_x: 'xpost', t1_y: 'ypost' }),
     },
 
@@ -424,12 +421,11 @@ const overlaps = [
     {
         name: "the account's page on reveddit marks its items seen while the cycle's check records a removal",
         keys: mine.removed,
-        first: async () => {
-            const page = await inPage('../../src/src/storage')
-            await new Promise(resolve =>
+        page: '../../src/src/storage',
+        first: ({ page }) =>
+            new Promise(resolve =>
                 page.markIDsAsSeenIfSubscribed(USER, true, { t1_old: NOW - 600 }, {}, {}, {}, resolve),
-            )
-        },
+            ),
         second: () => checkFindsRemoval('t1_new'),
         expect: () => {
             const removed = __getSyncStorage()[mine.removed]
@@ -487,8 +483,9 @@ const overlaps = [
         name: "the backoff keeps a 429 in the popup's follow lookup that comes while the cycle's lookup clears the last one",
         local: { rate_limit_level: 2, rate_limit_until: Date.now() - 1000 },
         keys: 'rate_limit_until',
+        page: '../../src/src/storage',
         first: () => clearRateLimitBackoff(),
-        second: async () => (await inPage('../../src/src/storage')).recordRateLimitHit(),
+        second: ({ page }) => page.recordRateLimitHit(),
         expect: () => expect(__getLocalStorage().rate_limit_until).toBeGreaterThan(Date.now()),
     },
 
@@ -600,6 +597,7 @@ const startRow = async row => {
     __resetStorage({ ...SYNC, ...row.sync }, row.local ?? {})
     const context = {}
     await row.setup?.(context)
+    if (row.page) context.page = await inPage(row.page)
     return context
 }
 
