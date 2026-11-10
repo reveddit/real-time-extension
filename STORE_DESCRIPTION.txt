@@ -23,6 +23,9 @@ Note, the extension can't check your own comments in private, quarantined or 18+
 
 VERSION HISTORY:
 
+2026/11/10 - 0.0.5.34
+- the popup gives a newly opened www.reddit.com tab a few checks before it suggests a second account, and clears its warning once checks work again
+
 2026/11/09 - 0.0.5.33
 - less work on reddit pages, which slowed some browsers down with several reddit tabs open; the copied log now shows each hour's work
 
