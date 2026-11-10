@@ -6,7 +6,6 @@ import { markdownToHTML } from './ui/markdown'
 import { LOGIN_WALL_INFO_URL } from './report'
 import { isSignedInViewer } from './viewer'
 import { NewsMessage } from './news'
-import { STREAK_WARN_AT } from './lookup-status'
 
 const NewsCard = styled(Card)`
   padding: ${tokens.space.sm} ${tokens.space.md};
@@ -110,14 +109,15 @@ type Warning = {
   text: ReactNode | ((wwwTabOpen: boolean) => ReactNode)
   button?: Action
   fallback?: Action
-  // The buttons once a tab has had time to clear the public view's warning
-  lasting?: Pick<Warning, 'button' | 'fallback'>
+  // The warning once an open tab has had its checks
+  lasting?: Warning
 }
 const OPEN_WWW: Action = ['Open www.reddit.com', openWww]
 const CONNECT_SECOND: Action = ['Connect a second account', openSecondAccount]
 
-// The checks a www.reddit.com tab usually takes to clear the public view's
-// warning, after the STREAK_WARN_AT failed lookups that raised it
+// The failed checks in a row a www.reddit.com tab gets to clear the public
+// view's warning (WWW_TAB_FAILURES_KEY), a few minutes at the default of a
+// check a minute. Until then, the second account is only the other choice.
 const CHECKS_FOR_A_TAB = 3
 
 // login_required or public_view_unavailable, while Reddit is signed in to the second account
@@ -166,11 +166,17 @@ const WARNINGS: Record<string, Warning> = {
   public_view_unavailable: {
     text: tabOpen =>
       "⚠ Removal monitoring is paused — Reddit's public view isn't loading. " +
-      (tabOpen ? '' : 'Opening a www.reddit.com tab usually restores it. ') +
-      'If it keeps up, connect a second Reddit account.',
+      (tabOpen
+        ? 'Keeping your www.reddit.com tab open usually restores it within a few checks.'
+        : 'Opening a www.reddit.com tab usually restores it. If it keeps up, connect a second Reddit account.'),
     button: OPEN_WWW,
     fallback: CONNECT_SECOND,
-    lasting: { button: CONNECT_SECOND, fallback: OPEN_WWW },
+    lasting: {
+      text:
+        "⚠ Removal monitoring is paused — Reddit's public view isn't loading, even with your www.reddit.com tab open. " +
+        'To keep checking your posts and comments, connect a second Reddit account.',
+      button: CONNECT_SECOND,
+    },
   },
   absent_verify_unavailable: {
     text: tabOpen =>
@@ -192,7 +198,7 @@ export function ErrorNotice({
   viewerName,
   currentUser,
   wwwTabOpen,
-  wwwFailures,
+  wwwTabFailures,
   reconnectSuccess,
   reconnecting,
   onReconnect,
@@ -202,8 +208,8 @@ export function ErrorNotice({
   currentUser: string | null | undefined
   // A www.reddit.com tab that can carry the extension's reads is open
   wwwTabOpen: boolean
-  // The public view's lookups that have failed in a row (lookup-status.ts)
-  wwwFailures: number
+  // The public view's lookups in a row that failed with a tab open (lookup-status.ts)
+  wwwTabFailures: number
   reconnectSuccess: boolean | null
   reconnecting: boolean
   onReconnect: () => void
@@ -237,7 +243,8 @@ export function ErrorNotice({
       </div>
     )
   }
-  const lasting = wwwFailures >= STREAK_WARN_AT + CHECKS_FOR_A_TAB
+  // Checks without a tab don't count, so opening one always gets its checks
+  const lasting = wwwTabOpen && wwwTabFailures >= CHECKS_FOR_A_TAB
   const chosen = (lasting && warning.lasting) || warning
   // With a tab open, there's none to open
   const offered = (action?: Action) => (wwwTabOpen && action === OPEN_WWW ? undefined : action)
@@ -246,7 +253,7 @@ export function ErrorNotice({
   return (
     <div>
       <MessageBanner variant="warning">
-        {typeof warning.text === 'function' ? warning.text(wwwTabOpen) : warning.text}
+        {typeof chosen.text === 'function' ? chosen.text(wwwTabOpen) : chosen.text}
       </MessageBanner>
       {button && <ActionBtn onClick={button[1]}>{button[0]}</ActionBtn>}
       {fallback && <SecondaryActionBtn onClick={fallback[1]}>{fallback[0]}</SecondaryActionBtn>}

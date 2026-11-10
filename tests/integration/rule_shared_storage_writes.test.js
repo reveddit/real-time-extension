@@ -640,6 +640,7 @@ const BACKGROUND_ONLY = [
     'www_post_page_verdicts',
     'www_absent_item_verdicts',
     'www_detect_consecutive_failures',
+    'www_detect_tab_failures',
     'absent_verify_consecutive_failures',
     'check_consecutive_failures',
     'profile_pagination_consecutive_shortfalls',

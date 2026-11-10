@@ -8,7 +8,7 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect } from 'vitest'
-import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
+import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { lookupItemsByID, lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
 import {
     isPublicProfileUnavailable,
@@ -16,6 +16,8 @@ import {
     PUBLIC_VIEW_UNCHECKED_KEY,
     formatPublicViewUnchecked,
     getPublicViewUncheckedLine,
+    WWW_DETECT_FAILURES_KEY,
+    WWW_TAB_FAILURES_KEY,
 } from '../../src/src/lookup-status'
 import { getDiagEntries } from '../mocks/diag-entries.js'
 import { res } from '../mocks/responses.js'
@@ -586,6 +588,31 @@ describe('lookup failure reasons', () => {
                 ),
             ),
         ).toBe(true)
+    })
+
+    // The popup gives a www.reddit.com tab a few failed checks of its own
+    // before it asks for a second account (popup-notices.tsx)
+    it('counts the failures a www.reddit.com tab was open for, starting again after one without', async () => {
+        blockAll()
+        const fail = () =>
+            expect(lookupItemsByID_fromPublicProfile([GONE], USER, { [GONE]: meta(GONE) })).rejects.toThrow()
+        const counts = () => [__getLocalStorage()[WWW_DETECT_FAILURES_KEY], __getLocalStorage()[WWW_TAB_FAILURES_KEY]]
+        const tabs = open => (browserMock.tabs.query = async () => (open ? [{ id: 7 }] : []))
+        await fail()
+        await fail()
+        tabs(true)
+        await fail()
+        await fail()
+        expect(counts()).toEqual([4, 2])
+        tabs(false)
+        await fail()
+        expect(counts()).toEqual([5, undefined])
+        tabs(true)
+        await fail()
+        expect(counts()).toEqual([6, 1])
+        installFetch(defaultRoutes())
+        await lookupItemsByID_fromPublicProfile([FEED_OK], USER, { [FEED_OK]: meta(FEED_OK) })
+        expect(counts()).toEqual([undefined, undefined])
     })
 
     it('when the legacy fallback fails too, the error names both', async () => {

@@ -100,7 +100,7 @@ export const lookupItemsByID_fromPublicProfile = async (
             }
             dlog('feed', `[reveddit] public profile for ${username} is a 404, but so is the control; not a shadowban`)
         }
-        await recordWwwDetectOutcome(false, reason, !!profile.loginWall)
+        await recordWwwDetectOutcome(false, { reason, loginWall: !!profile.loginWall, withTab: fetcher.withTab })
         // A 429 enters the shared backoff. Refusals don't touch the status:
         // recordWwwDetectOutcome reports a persistent failure itself.
         noteRateLimited(new Error(reason))

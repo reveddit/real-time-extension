@@ -4,7 +4,7 @@
 import '../mocks/chrome-api.js'
 
 import { describe, it, expect, vi } from 'vitest'
-import { STREAK_WARN_AT, WWW_DETECT_FAILURES_KEY } from '../../src/src/lookup-status'
+import { WWW_DETECT_FAILURES_KEY, WWW_TAB_FAILURES_KEY } from '../../src/src/lookup-status'
 import { openPage } from '../mocks/extension-page.js'
 
 const POST_URL = 'https://www.reddit.com/r/pics/comments/abc123/a_title/'
@@ -98,46 +98,69 @@ describe('the follow switch', () => {
 })
 
 describe('a warning that a www.reddit.com tab usually clears', () => {
-    // Monitoring raises the public view's warning on the STREAK_WARN_AT-th
-    // failed lookup in a row. Three checks after that, a tab has had its chance.
-    const LASTING = STREAK_WARN_AT + 3
+    // A tab gets three failed checks of its own to clear the public view's
+    // warning. Checks with no tab open don't count, however many there were.
+    const TAB_CHECKS = 3
     const WWW_TAB = { url: 'https://www.reddit.com/r/pics/' }
     const OPEN_TAB = 'Opening a www.reddit.com tab usually restores it.'
     const KEEP_TAB = 'Keeping a www.reddit.com tab open usually restores this.'
+    const CONNECT = 'connect a second Reddit account'
 
-    const warning = async (error_status, { failures = 0, tabs = [] } = {}) => {
-        const { document } = await openPopup({
-            local: { error_status, last_logged_in_user: 'someone', [WWW_DETECT_FAILURES_KEY]: failures },
-            tabs,
-        })
+    const local = (error_status, { failures = 0, tabFailures = 0 } = {}) => ({
+        error_status,
+        last_logged_in_user: 'someone',
+        [WWW_DETECT_FAILURES_KEY]: failures,
+        [WWW_TAB_FAILURES_KEY]: tabFailures,
+    })
+    const warning = async (error_status, { tabs = [], ...counts } = {}) => {
+        const { document } = await openPopup({ local: local(error_status, counts), tabs })
         return document
     }
     const expectButtons = (document, buttons) =>
         vi.waitFor(async () => expect((await warningIn(document)).buttons).toEqual(buttons))
 
-    it("public view with no tab open: a tab first, a second account after, until it's lasted", async () => {
-        const document = await warning('public_view_unavailable', { failures: LASTING - 1 })
+    it('public view with no tab open: a tab first, a second account after, however long it has lasted', async () => {
+        // The count of a tab closed since doesn't count either
+        const document = await warning('public_view_unavailable', { failures: 40, tabFailures: TAB_CHECKS })
         await expectButtons(document, [
             ['Open www.reddit.com', 'primary'],
             ['Connect a second account', 'secondary'],
         ])
-        expect((await warningIn(document)).text).toContain(OPEN_TAB)
+        expect((await warningIn(document)).text).toContain(`${OPEN_TAB} If it keeps up, ${CONNECT}.`)
     })
 
-    it('public view with no tab open, once it has lasted: the second account first', async () => {
-        const document = await warning('public_view_unavailable', { failures: LASTING })
-        await expectButtons(document, [
-            ['Connect a second account', 'primary'],
-            ['Open www.reddit.com', 'secondary'],
-        ])
-    })
-
-    it('public view with a www.reddit.com tab open: asks for no tab, and the second account waits as the other choice', async () => {
-        const document = await warning('public_view_unavailable', { failures: LASTING - 1, tabs: [WWW_TAB] })
+    // Reported 2026-11-10: a tab opened after a long time without one got the
+    // second account's words and button at once
+    it('public view with a tab just opened: waits on its checks, with the second account as the other choice', async () => {
+        const document = await warning('public_view_unavailable', {
+            failures: 40,
+            tabFailures: TAB_CHECKS - 1,
+            tabs: [WWW_TAB],
+        })
         await expectButtons(document, [['Connect a second account', 'secondary']])
         const { text } = await warningIn(document)
-        expect(text).not.toContain('www.reddit.com tab')
-        expect(text).toContain('If it keeps up, connect a second Reddit account.')
+        expect(text).toContain('Keeping your www.reddit.com tab open usually restores it within a few checks.')
+        expect(text).not.toContain(CONNECT)
+    })
+
+    it('public view with a tab open that has had its checks: the second account is the main choice', async () => {
+        const document = await warning('public_view_unavailable', { tabFailures: TAB_CHECKS, tabs: [WWW_TAB] })
+        await expectButtons(document, [['Connect a second account', 'primary']])
+        expect((await warningIn(document)).text).toContain(
+            `isn't loading, even with your www.reddit.com tab open. To keep checking your posts and comments, ${CONNECT}.`,
+        )
+    })
+
+    it('follows the checks while open: the second account comes first, then the warning goes', async () => {
+        const { document, storageChanged } = await openPopup({
+            local: local('public_view_unavailable', { tabFailures: TAB_CHECKS - 1 }),
+            tabs: [WWW_TAB],
+        })
+        await expectButtons(document, [['Connect a second account', 'secondary']])
+        storageChanged({ [WWW_TAB_FAILURES_KEY]: { oldValue: TAB_CHECKS - 1, newValue: TAB_CHECKS } }, 'local')
+        await expectButtons(document, [['Connect a second account', 'primary']])
+        storageChanged({ error_status: { oldValue: 'public_view_unavailable' } }, 'local')
+        await vi.waitFor(async () => expect((await warningIn(document)).text).toBeUndefined())
     })
 
     it('public view with a www.reddit.com tab open: offers none even before the tab query answers', async () => {
@@ -157,11 +180,6 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
         expect((await warningIn(document)).text).toBeUndefined()
         answer([])
         await vi.waitFor(async () => expect((await warningIn(document)).text).toContain("aren't being checked right now"))
-    })
-
-    it('public view with a www.reddit.com tab open, once it has lasted: the second account is the main choice', async () => {
-        const document = await warning('public_view_unavailable', { failures: LASTING, tabs: [WWW_TAB] })
-        await expectButtons(document, [['Connect a second account', 'primary']])
     })
 
     it.each(['absent_verify_unavailable', 'profile_pagination_unavailable'])(
@@ -195,7 +213,7 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
             { url: 'https://www.reddit.com/', discarded: true },
             { url: 'https://www.reddit.com/r/pics/', frozen: true },
         ]
-        const document = await warning('public_view_unavailable', { failures: STREAK_WARN_AT, tabs })
+        const document = await warning('public_view_unavailable', { tabFailures: TAB_CHECKS, tabs })
         await expectButtons(document, [
             ['Open www.reddit.com', 'primary'],
             ['Connect a second account', 'secondary'],

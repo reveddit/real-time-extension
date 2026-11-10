@@ -18,7 +18,7 @@ import {
 import { setCurrentStateForId } from './monitoring'
 import { fetchNews, getUnreadMessages, getPendingUpdateVersion, markNewsRead, NewsMessage } from './news'
 import { VIEWER_KEY } from './viewer'
-import { WWW_DETECT_FAILURES_KEY } from './lookup-status'
+import { WWW_TAB_FAILURES_KEY } from './lookup-status'
 import { canTabAnswer, isSupportedRedditTab } from './www-fetcher'
 import { UnseenRow, ToggleSwitch, CurrentUserSection } from './popup-rows'
 import { NewsBanner, UpdateNotice, ReleaseNotice, ErrorNotice } from './popup-notices'
@@ -165,7 +165,7 @@ const FooterLink = styled.a`
 
 function Popup() {
   const [errorStatus, setErrorStatus] = useState<string | null>(null)
-  const [wwwFailures, setWwwFailures] = useState(0)
+  const [wwwTabFailures, setWwwTabFailures] = useState(0)
   // null until the tab query answers
   const [wwwTabOpen, setWwwTabOpen] = useState<boolean | null>(null)
   // The connected second account (viewer.ts), if any
@@ -233,10 +233,10 @@ function Popup() {
       }
     })
 
-    chrome.storage.local.get(['error_status', VIEWER_KEY, WWW_DETECT_FAILURES_KEY], result => {
+    chrome.storage.local.get(['error_status', VIEWER_KEY, WWW_TAB_FAILURES_KEY], result => {
       setErrorStatus(result?.error_status || null)
       setViewerName(String(result?.[VIEWER_KEY]?.name || ''))
-      setWwwFailures(Number(result?.[WWW_DETECT_FAILURES_KEY]) || 0)
+      setWwwTabFailures(Number(result?.[WWW_TAB_FAILURES_KEY]) || 0)
     })
 
     // Beside the sync read, not after it: the notices wait for this
@@ -310,17 +310,21 @@ function Popup() {
 
   useEffect(() => {
     const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-      if (area === 'local' && changes.pending_post_lookups) {
+      if (area !== 'local') return
+      if (changes.pending_post_lookups) {
         const newQueue = changes.pending_post_lookups.newValue || []
         setPendingPostCount(newQueue.length)
         if (newQueue.length === 0) setPendingProgress(null)
       }
-      if (area === 'local' && changes.pending_post_progress) {
+      if (changes.pending_post_progress) {
         const prog = changes.pending_post_progress.newValue
         setPendingProgress(
           prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null,
         )
       }
+      // A check's change to the warning shows at once, as it does on the badge
+      if (changes.error_status) setErrorStatus(changes.error_status.newValue || null)
+      if (changes[WWW_TAB_FAILURES_KEY]) setWwwTabFailures(Number(changes[WWW_TAB_FAILURES_KEY].newValue) || 0)
     }
     chrome.storage.onChanged.addListener(listener)
     return () => chrome.storage.onChanged.removeListener(listener)
@@ -517,7 +521,7 @@ function Popup() {
             viewerName={viewerName}
             currentUser={currentUser}
             wwwTabOpen={wwwTabOpen}
-            wwwFailures={wwwFailures}
+            wwwTabFailures={wwwTabFailures}
             reconnectSuccess={reconnectSuccess}
             reconnecting={reconnecting}
             onReconnect={handleReconnect}

@@ -1,7 +1,8 @@
 // An extension page as a person sees it: the real page over a fake DOM, with
 // fresh modules, so chrome and browser share the storage the page reads. load
-// imports the page, after any fakes it needs. Returns the DOM and the storage
-// mock's helpers.
+// imports the page, after any fakes it needs. Returns the DOM, the storage
+// mock's helpers and storageChanged, which reports a storage write to the page
+// as the browser would (the fakes report none themselves).
 import { vi } from 'vitest'
 import { parseHTML } from 'linkedom'
 
@@ -19,7 +20,9 @@ export const openPage = async (load, sync = {}, local = {}) => {
     await import('./chrome-api.js')
     const storage = await import('./webextension-polyfill.js')
     storage.__resetStorage(sync, local)
-    chrome.storage.onChanged = { addListener() {}, removeListener() {} }
+    const listeners = []
+    chrome.storage.onChanged = { addListener: fn => listeners.push(fn), removeListener() {} }
     await load()
-    return { document, window, ...storage }
+    const storageChanged = (changes, area) => listeners.forEach(listener => listener(changes, area))
+    return { document, window, ...storage, storageChanged }
 }

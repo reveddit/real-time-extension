@@ -652,6 +652,7 @@ describe('checking the user’s items through the second account', () => {
         __getLocalStorage().absent_verify_consecutive_failures = 7
         __getLocalStorage().profile_pagination_consecutive_shortfalls = 6
         __getLocalStorage().www_detect_consecutive_failures = 7
+        __getLocalStorage().www_detect_tab_failures = 3
         // and an earlier missing-profile reading, which the bridge would keep acting on
         __getLocalStorage().public_profile_unavailable = { user: 'alice', t: Date.now() }
         answer([
@@ -662,6 +663,7 @@ describe('checking the user’s items through the second account', () => {
         expect(__getLocalStorage().absent_verify_consecutive_failures).toBeUndefined()
         expect(__getLocalStorage().profile_pagination_consecutive_shortfalls).toBeUndefined()
         expect(__getLocalStorage().www_detect_consecutive_failures).toBeUndefined()
+        expect(__getLocalStorage().www_detect_tab_failures).toBeUndefined()
         expect(__getLocalStorage().public_profile_unavailable).toBeUndefined()
     })
 

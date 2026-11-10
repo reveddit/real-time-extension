@@ -157,8 +157,8 @@ export const isStreakLong = async (key: string): Promise<boolean> => {
 export const recordStreak = async (
     key: string,
     ok: boolean,
-    say: (failures: number) => void,
-    warn: () => void | Promise<void>,
+    say?: (failures: number) => void,
+    warn?: () => void | Promise<void>,
 ) => {
     try {
         if (ok) {
@@ -168,9 +168,9 @@ export const recordStreak = async (
         const stored = (await browser.storage.local.get({ [key]: 0 })) as any
         const failures = Number(stored[key] || 0) + 1
         await browser.storage.local.set({ [key]: failures })
-        say(failures)
+        say?.(failures)
         if (failures >= STREAK_WARN_AT) {
-            await warn()
+            await warn?.()
         }
     } catch {
         /* ignored */
@@ -205,8 +205,15 @@ export const recordCheckOutcome = (checked: boolean) =>
 // instead, since opening a tab doesn't help with that.
 export const LOGIN_REQUIRED = 'login_required'
 
-export const recordWwwDetectOutcome = (ok: boolean, reason = '', loginWall = false) =>
-    recordStreak(
+// The failed lookups in a row that had a www.reddit.com tab open. The popup
+// gives a tab a few of them to clear the public view's warning before it puts
+// the second account first. A lookup with no tab starts the count again.
+export const WWW_TAB_FAILURES_KEY = 'www_detect_tab_failures'
+
+export const recordWwwDetectOutcome = async (ok: boolean, { reason = '', loginWall = false, withTab = false } = {}) => {
+    // First, since the streak below raises the warning: the popup never shows it with an old count
+    await recordStreak(WWW_TAB_FAILURES_KEY, ok || !withTab)
+    await recordStreak(
         WWW_DETECT_FAILURES_KEY,
         ok,
         n =>
@@ -217,6 +224,7 @@ export const recordWwwDetectOutcome = (ok: boolean, reason = '', loginWall = fal
             ),
         () => setWarningBadge(loginWall ? LOGIN_REQUIRED : 'public_view_unavailable'),
     )
+}
 
 // The logged-in user's profile is publicly empty or missing (the shadowban
 // signature), as the last lookup found it. The bridge reads it so reveddit.com

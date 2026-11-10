@@ -411,6 +411,8 @@ interface WwwHtmlFetcher {
     fetchHtml: FetchHtml
     // The route that last served each kind of page, for the lookup's log line
     servedRoutes: () => Partial<Record<WwwPageKind, WwwRoute>>
+    // A www.reddit.com tab that can answer was open, as the popup counts one
+    withTab: boolean
 }
 
 export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
@@ -697,5 +699,6 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
             Object.fromEntries(
                 WWW_PAGE_KINDS.filter(kind => state[kind]?.served).map(kind => [kind, state[kind]!.served!.route]),
             ),
+        withTab: !!tab,
     }
 }
