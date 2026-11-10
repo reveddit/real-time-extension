@@ -4,6 +4,13 @@
 
 import { test, expect } from './fixtures.js'
 
+// The install's own login check tries for a few seconds, then warns that
+// nobody is signed in, over any warning stored meanwhile
+const installWarned = worker =>
+    expect
+        .poll(() => worker.evaluate(() => chrome.storage.local.get('error_status')), { timeout: 15000 })
+        .toEqual({ error_status: 'needs_user' })
+
 test.describe('Popup page', () => {
     test('renders the popup with expected elements', async ({ openPage }) => {
         const page = await openPage('popup.html')
@@ -37,11 +44,15 @@ test.describe('Popup page', () => {
         await expect.poll(() => page.evaluate(() => window.__opened.length)).toBe(1)
         return new URL(await page.evaluate(() => window.__opened[0]))
     }
+    // A test's warning goes in after the install's, as the popup follows the
+    // warning while it's open
+    const setWarning = async (worker, stored) => {
+        await installWarned(worker)
+        await worker.evaluate(values => chrome.storage.local.set(values), stored)
+    }
 
     test("logged out: says so, and a button opens reddit's login page", async ({ worker, openPage }) => {
-        await worker.evaluate(() =>
-            chrome.storage.local.set({ error_status: 'needs_user', last_logged_in_user: 'someone' }),
-        )
+        await setWarning(worker, { error_status: 'needs_user', last_logged_in_user: 'someone' })
         const page = await openPage('popup.html')
 
         await expect(page.getByText("You don't seem to be logged in to Reddit")).toBeVisible()
@@ -51,9 +62,7 @@ test.describe('Popup page', () => {
     })
 
     test('a login reddit keeps refusing: says so, and offers to log in', async ({ worker, openPage }) => {
-        await worker.evaluate(() =>
-            chrome.storage.local.set({ error_status: 'logged_in_view_unavailable', last_logged_in_user: 'someone' }),
-        )
+        await setWarning(worker, { error_status: 'logged_in_view_unavailable', last_logged_in_user: 'someone' })
         const page = await openPage('popup.html')
 
         await expect(page.getByText("Reddit isn't accepting your login")).toBeVisible()
@@ -64,7 +73,7 @@ test.describe('Popup page', () => {
         worker,
         openPage,
     }) => {
-        await worker.evaluate(() => chrome.storage.local.set({ error_status: 'checks_failing' }))
+        await setWarning(worker, { error_status: 'checks_failing' })
         const page = await openPage('popup.html')
 
         await expect(page.getByText("aren't being checked right now")).toBeVisible()
@@ -74,9 +83,7 @@ test.describe('Popup page', () => {
     test("reddit's login wall: offers a second account, then says why", async ({ worker, extensionId, openPage }) => {
         // What monitoring leaves behind after five lookups that landed on
         // reddit's login page
-        await worker.evaluate(() =>
-            chrome.storage.local.set({ error_status: 'login_required', last_logged_in_user: 'someone' }),
-        )
+        await setWarning(worker, { error_status: 'login_required', last_logged_in_user: 'someone' })
         const page = await openPage('popup.html')
 
         await expect(
@@ -97,9 +104,7 @@ test.describe('Popup page', () => {
         openPage,
     }) => {
         // A login wall that doesn't redirect to the login page lands here too
-        await worker.evaluate(() =>
-            chrome.storage.local.set({ error_status: 'public_view_unavailable', last_logged_in_user: 'someone' }),
-        )
+        await setWarning(worker, { error_status: 'public_view_unavailable', last_logged_in_user: 'someone' })
         const page = await openPage('popup.html')
         await expect(page.getByText('If it keeps up, connect a second Reddit account.')).toBeVisible()
         await expect(page.getByRole('button', { name: 'Open www.reddit.com' })).toBeVisible()
@@ -109,13 +114,11 @@ test.describe('Popup page', () => {
     })
 
     test('signed in as the second account itself: asks for a different one', async ({ worker, openPage }) => {
-        await worker.evaluate(() =>
-            chrome.storage.local.set({
-                error_status: 'login_required',
-                last_logged_in_user: 'bob',
-                viewer_account: { name: 'Bob', token: 'ab'.repeat(16), cookies: [], connectedAt: Date.now() },
-            }),
-        )
+        await setWarning(worker, {
+            error_status: 'login_required',
+            last_logged_in_user: 'bob',
+            viewer_account: { name: 'Bob', token: 'ab'.repeat(16), cookies: [], connectedAt: Date.now() },
+        })
         const page = await openPage('popup.html')
         await expect(page.getByText("You're signed in to Reddit with your second account")).toBeVisible()
         await recordOpens(page)
@@ -281,9 +284,7 @@ test.describe('Background: a reddit tab finishing a load', () => {
     // has given up (it tries for a few seconds, then says nobody is signed
     // in). Reddit's other pages don't answer, so no check starts meanwhile.
     const signedIn = async worker => {
-        await expect
-            .poll(() => worker.evaluate(() => chrome.storage.local.get('error_status')), { timeout: 15000 })
-            .toEqual({ error_status: 'needs_user' })
+        await installWarned(worker)
         await worker.evaluate(async () => {
             await chrome.cookies.set({ url: 'https://www.reddit.com/', name: 'reddit_session', value: 'test' })
             const realFetch = globalThis.fetch.bind(globalThis)
