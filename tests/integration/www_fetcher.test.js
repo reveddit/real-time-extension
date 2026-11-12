@@ -14,6 +14,7 @@ import {
     WWW_ROUTE_STATE_KEY,
     WWW_HARD_REFUSAL_MS,
     WWW_SOFT_REFUSAL_MS,
+    WWW_BLOCKED_RETRY_MS,
     _wwwRouteTiming,
     wwwPageKind,
     isSupportedRedditTab,
@@ -280,6 +281,64 @@ describe('getWwwHtmlFetcher routes', () => {
         const later = await getWwwHtmlFetcher()
         await expect(later.fetchHtml(FEED)).rejects.toThrow()
         expect(cachesTried()).toEqual(['no-cache', 'no-store'])
+    })
+
+    // Seen 2026-11-11: reddit refused profiles' older pages on every route, and
+    // each check still sent a refused request for comments and one for posts
+    it('when every route got a 403, that kind of page goes unasked for half an hour, then one route is asked', async () => {
+        const ALL_403 = 'refused: background:no-store 403, background:no-cache 403, background:reload 403'
+        answersByCache({ 'no-store': 403, 'no-cache': 403, reload: 403 })
+        const fetcher = await getWwwHtmlFetcher()
+        await expect(fetcher.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(`request failed: 403 (${ALL_403})`)
+        expect(cachesTried()).toEqual(['no-store', 'no-cache', 'reload'])
+
+        // The rest of this lookup and the next ones ask nothing, and say when they will
+        globalThis.fetch.mockClear()
+        const blocked = 'request failed: 403 (every route got a 403 for profile-partial pages; next try after '
+        await expect(fetcher.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(blocked)
+        await expect((await getWwwHtmlFetcher()).fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(blocked)
+        expect(globalThis.fetch).not.toHaveBeenCalled()
+        // Another kind of page keeps its own routes
+        await expect(fetcher.fetchHtml(PARTIAL)).rejects.toThrow(ALL_403)
+        expect(cachesTried()).toEqual(['no-store', 'no-cache', 'reload'])
+
+        // Half an hour after the last 403, the route that comes back soonest is asked
+        const routes = routeState()['profile-partial'].routes
+        for (const record of Object.values(routes)) {
+            record.t -= WWW_BLOCKED_RETRY_MS
+            record.until -= WWW_BLOCKED_RETRY_MS
+        }
+        routes['background:reload'].until -= 1000
+        globalThis.fetch.mockClear()
+        const later = await getWwwHtmlFetcher()
+        await expect(later.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow('(refused: background:reload 403)')
+        expect(cachesTried()).toEqual(['reload'])
+        globalThis.fetch.mockClear()
+        await expect(later.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(blocked)
+        expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
+
+    it('every background route blocked: a tab route without a 403 of its own is tried at once', async () => {
+        const now = Date.now()
+        const blocked = { t: now, until: now + WWW_HARD_REFUSAL_MS }
+        __getLocalStorage()[WWW_ROUTE_STATE_KEY] = {
+            profile: {
+                routes: {
+                    'background:no-store': blocked,
+                    'background:no-cache': blocked,
+                    'background:reload': blocked,
+                },
+            },
+        }
+        // No tab open: nothing is asked
+        const closed = await getWwwHtmlFetcher()
+        await expect(closed.fetchHtml(FEED)).rejects.toThrow('every route got a 403 for profile pages')
+        // A tab opened since gets its try
+        browserMock.tabs.query = vi.fn(async () => [{ id: 7 }])
+        browserMock.tabs.sendMessage = vi.fn(async () => ({ success: true, html: 'TABPAGE' }))
+        const open = await getWwwHtmlFetcher()
+        expect(await open.fetchHtml(FEED)).toBe('TABPAGE')
+        expect(globalThis.fetch).not.toHaveBeenCalled()
     })
 
     it('a resting route that serves again stops resting', async () => {

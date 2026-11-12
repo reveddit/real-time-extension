@@ -209,9 +209,13 @@ export const _fetchViaExecuteScript = async (
 // while no tab was open) is tried as soon as it can be, and a rested route
 // gets its turn again on its own. When every route is resting, a fetch tries
 // only the one that comes back soonest, so a client refused everywhere makes
-// one request per page. A solved challenge's URL still works on the next route
-// (verified 2026-10-21), so a refusal right after a solve costs one request,
-// not a new challenge. Kinds of page keep separate memories, since reddit has
+// one request per page. When each of them rests after a 403, that kind of page
+// is asked for once in half an hour, and the fetches in between fail at once:
+// a 403 block lasts hours, so asking at every check only adds refused requests
+// (two a minute while reddit refused profiles' older pages, 2026-11-11; also
+// issue #28's log, with no www tab). A solved challenge's URL still works on
+// the next route (verified 2026-10-21), so a refusal right after a solve costs
+// one request, not a new challenge. Kinds of page keep separate memories, since reddit has
 // refused them differently, and the memory survives restarts. Other failures
 // (a 429, a 404) are about the client or the page, so they never switch
 // routes. Nor does a login page (login-wall-config.ts): every route is logged
@@ -243,6 +247,10 @@ export const WWW_HARD_REFUSAL_MS = 6 * 3600 * 1000
 
 export const WWW_SOFT_REFUSAL_MS = 30 * 60 * 1000
 
+// How long a kind of page goes unasked after a 403, while every route that can
+// run rests after one
+export const WWW_BLOCKED_RETRY_MS = 30 * 60 * 1000
+
 // Pause before trying another route, so a refusal isn't answered with a burst
 // (the captcha came in bursts during back-to-back requests, 2026-10-21).
 // Mutable for tests, like _legacyLookups.
@@ -254,6 +262,10 @@ interface RouteRecord {
     t: number
     until?: number
 }
+
+// A rest a 403 began: no other refusal rests longer than half an hour
+const restsAfter403 = (record: RouteRecord | undefined): boolean =>
+    !!record?.until && record.until - record.t > WWW_SOFT_REFUSAL_MS
 
 // A kind of page landing on reddit's login page: since is when that began, t
 // the latest time, where what the log says about it. It holds until a page of
@@ -592,6 +604,21 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
         // fallbacks, since one may turn out unable to run (a tab route with
         // its tab gone), but only the first that sends a request is tried.
         const resting = new Set(usable.filter(route => restingUntil(route) > now))
+        // Every route that can run got a 403: the latest one is half an hour
+        // old before any is asked again (the block explained above)
+        const lastRefused = Math.max(0, ...usable.map(route => routes[route]?.t || 0))
+        if (
+            usable.length &&
+            usable.every(route => resting.has(route) && restsAfter403(routes[route])) &&
+            now - lastRefused < WWW_BLOCKED_RETRY_MS
+        ) {
+            throw new RouteError(
+                `www.reddit.com request failed: 403 (every route got a 403 for ${kind} pages; ` +
+                    `next try after ${new Date(lastRefused + WWW_BLOCKED_RETRY_MS).toISOString()})`,
+                'refused',
+                403,
+            )
+        }
         const candidates = [
             ...usable.filter(route => !resting.has(route)),
             ...[...resting].sort((a, b) => restingUntil(a) - restingUntil(b)),
