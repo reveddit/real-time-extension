@@ -23,6 +23,9 @@ Note, the extension can't check your own comments in private, quarantined or 18+
 
 VERSION HISTORY:
 
+2026/11/12 - 0.0.5.35
+- while reddit refuses your profile's pages, the extension asks for them again every half hour instead of at every check, and the warning about your older posts and comments offers a second account
+
 2026/11/10 - 0.0.5.34
 - the popup gives a newly opened www.reddit.com tab a few checks before it suggests a second account, and clears its warning once checks work again
 
