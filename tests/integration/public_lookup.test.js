@@ -10,6 +10,7 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect } from 'vitest'
 import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { lookupItemsByID, lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
+import { WWW_ROUTE_STATE_KEY } from '../../src/src/www-fetcher'
 import {
     isPublicProfileUnavailable,
     isProfilePaginationShort,
@@ -610,6 +611,8 @@ describe('lookup failure reasons', () => {
         tabs(true)
         await fail()
         expect(counts()).toEqual([6, 1])
+        // Later, when the routes' 403s are past the profile hold (www-fetcher.ts)
+        delete __getLocalStorage()[WWW_ROUTE_STATE_KEY]
         installFetch(defaultRoutes())
         await lookupItemsByID_fromPublicProfile([FEED_OK], USER, { [FEED_OK]: meta(FEED_OK) })
         expect(counts()).toEqual([undefined, undefined])

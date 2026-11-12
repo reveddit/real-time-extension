@@ -263,81 +263,131 @@ describe('getWwwHtmlFetcher routes', () => {
         }
     })
 
+    // An item's page: the profile hold doesn't apply (a 403 there can be the page's own)
     it('when every route is refused it names them, then tries only the route that comes back soonest', async () => {
         answersByCache({ 'no-store': 403, 'no-cache': CAPTCHA, reload: 403 })
         const fetcher = await getWwwHtmlFetcher()
-        await expect(fetcher.fetchHtml(FEED)).rejects.toThrow(
+        await expect(fetcher.fetchHtml(PARTIAL)).rejects.toThrow(
             'request failed: 403 (refused: background:no-store 403, background:no-cache captcha, background:reload 403)',
         )
         expect(cachesTried()).toEqual(['no-store', 'no-cache', 'reload'])
 
         globalThis.fetch.mockClear()
-        await expect(fetcher.fetchHtml(FEED)).rejects.toThrow('refused: background:no-cache captcha)')
+        await expect(fetcher.fetchHtml(PARTIAL)).rejects.toThrow('refused: background:no-cache captcha)')
         expect(cachesTried()).toEqual(['no-cache'])
 
         // the captcha's rest ends first: that route, then the next to come back
-        routeState().profile.routes['background:no-cache'].until = Date.now() - 1000
+        routeState().partial.routes['background:no-cache'].until = Date.now() - 1000
         globalThis.fetch.mockClear()
         const later = await getWwwHtmlFetcher()
-        await expect(later.fetchHtml(FEED)).rejects.toThrow()
+        await expect(later.fetchHtml(PARTIAL)).rejects.toThrow()
         expect(cachesTried()).toEqual(['no-cache', 'no-store'])
     })
 
     // Seen 2026-11-11: reddit refused profiles' older pages on every route, and
     // each check still sent a refused request for comments and one for posts
-    it('when every route got a 403, that kind of page goes unasked for half an hour, then one route is asked', async () => {
-        const ALL_403 = 'refused: background:no-store 403, background:no-cache 403, background:reload 403'
+    const HELD = 'request failed: 403 (every route that can run got a 403 for '
+    // A rest a 403 began, ago ms ago
+    const after403 = ago => ({ t: Date.now() - ago, until: Date.now() - ago + WWW_HARD_REFUSAL_MS })
+
+    it("a profile page's route that got a 403 goes unasked for half an hour, each on its own clock", async () => {
         answersByCache({ 'no-store': 403, 'no-cache': 403, reload: 403 })
         const fetcher = await getWwwHtmlFetcher()
-        await expect(fetcher.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(`request failed: 403 (${ALL_403})`)
+        await expect(fetcher.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(
+            'request failed: 403 (refused: background:no-store 403, background:no-cache 403, background:reload 403)',
+        )
         expect(cachesTried()).toEqual(['no-store', 'no-cache', 'reload'])
 
         // The rest of this lookup and the next ones ask nothing, and say when they will
         globalThis.fetch.mockClear()
-        const blocked = 'request failed: 403 (every route got a 403 for profile-partial pages; next try after '
-        await expect(fetcher.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(blocked)
-        await expect((await getWwwHtmlFetcher()).fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(blocked)
+        await expect(fetcher.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(
+            `${HELD}profile-partial pages; next try after `,
+        )
+        await expect((await getWwwHtmlFetcher()).fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(HELD)
         expect(globalThis.fetch).not.toHaveBeenCalled()
-        // Another kind of page keeps its own routes
-        await expect(fetcher.fetchHtml(PARTIAL)).rejects.toThrow(ALL_403)
-        expect(cachesTried()).toEqual(['no-store', 'no-cache', 'reload'])
 
-        // Half an hour after the last 403, the route that comes back soonest is asked
+        // Two routes' half hours are up: each is asked once, back soonest first,
+        // while the third waits out its own
         const routes = routeState()['profile-partial'].routes
-        for (const record of Object.values(routes)) {
-            record.t -= WWW_BLOCKED_RETRY_MS
-            record.until -= WWW_BLOCKED_RETRY_MS
-        }
-        routes['background:reload'].until -= 1000
-        globalThis.fetch.mockClear()
+        routes['background:no-store'] = after403(WWW_BLOCKED_RETRY_MS + 2000)
+        routes['background:no-cache'] = after403(WWW_BLOCKED_RETRY_MS + 1000)
         const later = await getWwwHtmlFetcher()
-        await expect(later.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow('(refused: background:reload 403)')
-        expect(cachesTried()).toEqual(['reload'])
-        globalThis.fetch.mockClear()
-        await expect(later.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(blocked)
-        expect(globalThis.fetch).not.toHaveBeenCalled()
+        await expect(later.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow('(refused: background:no-store 403)')
+        await expect(later.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow('(refused: background:no-cache 403)')
+        await expect(later.fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(HELD)
+        expect(cachesTried()).toEqual(['no-store', 'no-cache'])
     })
 
-    it('every background route blocked: a tab route without a 403 of its own is tried at once', async () => {
-        const now = Date.now()
-        const blocked = { t: now, until: now + WWW_HARD_REFUSAL_MS }
+    // An absent item in a members-only community answers with a 403 of its own (0239fa4)
+    it("item pages aren't held: after one page's 403s, the next page still asks", async () => {
+        answersByCache({ 'no-store': 403, 'no-cache': 403, reload: 403 })
+        const fetcher = await getWwwHtmlFetcher()
+        await expect(fetcher.fetchHtml(PARTIAL)).rejects.toThrow('background:reload 403')
+        answersByCache({})
+        expect(await fetcher.fetchHtml(PARTIAL.replace('x1', 'x2'))).toBe('PAGE')
+        expect(cachesTried()).toEqual(['no-store'])
+    })
+
+    it('every background route held: a tab route without a 403 of its own is tried at once', async () => {
+        const recent = after403(60 * 1000)
         __getLocalStorage()[WWW_ROUTE_STATE_KEY] = {
             profile: {
-                routes: {
-                    'background:no-store': blocked,
-                    'background:no-cache': blocked,
-                    'background:reload': blocked,
-                },
+                routes: { 'background:no-store': recent, 'background:no-cache': recent, 'background:reload': recent },
             },
         }
         // No tab open: nothing is asked
         const closed = await getWwwHtmlFetcher()
-        await expect(closed.fetchHtml(FEED)).rejects.toThrow('every route got a 403 for profile pages')
+        await expect(closed.fetchHtml(FEED)).rejects.toThrow(`${HELD}profile pages`)
         // A tab opened since gets its try
         browserMock.tabs.query = vi.fn(async () => [{ id: 7 }])
         browserMock.tabs.sendMessage = vi.fn(async () => ({ success: true, html: 'TABPAGE' }))
         const open = await getWwwHtmlFetcher()
         expect(await open.fetchHtml(FEED)).toBe('TABPAGE')
+        expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
+
+    it("a tab opened again is asked once its own 403s are half an hour old, whatever the background's", async () => {
+        const recent = after403(60 * 1000)
+        const old = after403(WWW_BLOCKED_RETRY_MS + 1000)
+        __getLocalStorage()[WWW_ROUTE_STATE_KEY] = {
+            profile: {
+                routes: {
+                    'background:no-store': recent,
+                    'background:no-cache': recent,
+                    'background:reload': recent,
+                    'tab:no-cache': old,
+                    'tab:reload': old,
+                    'tab:default': old,
+                },
+            },
+        }
+        browserMock.tabs.query = vi.fn(async () => [{ id: 7 }])
+        browserMock.tabs.sendMessage = vi.fn(async () => ({ success: true, html: 'TABPAGE' }))
+        const fetcher = await getWwwHtmlFetcher()
+        expect(await fetcher.fetchHtml(FEED)).toBe('TABPAGE')
+        expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
+
+    it("a tab that can't run lets no held route through", async () => {
+        const recent = after403(60 * 1000)
+        __getLocalStorage()[WWW_ROUTE_STATE_KEY] = {
+            'profile-partial': {
+                routes: { 'background:no-store': recent, 'background:no-cache': recent, 'background:reload': recent },
+            },
+        }
+        // A tab on Chrome's error page: no content script, and no injection
+        browserMock.tabs.query = vi.fn(async () => [{ id: 7 }])
+        browserMock.tabs.sendMessage = vi.fn(async () => {
+            throw new Error('Receiving end does not exist')
+        })
+        browserMock.scripting = {
+            executeScript: vi.fn(async () => {
+                throw new Error('Frame with ID 0 is showing error page')
+            }),
+        }
+        for (let check = 0; check < 3; check++) {
+            await expect((await getWwwHtmlFetcher()).fetchHtml(PROFILE_PARTIAL)).rejects.toThrow(HELD)
+        }
         expect(globalThis.fetch).not.toHaveBeenCalled()
     })
 
@@ -393,16 +443,42 @@ describe('getWwwHtmlFetcher routes', () => {
         expect(cachesTried()).toEqual(['no-store'])
     })
 
-    it('a rest a fast clock left in the future is held to the longest rest', async () => {
-        const farAhead = Date.now() + 100 * 3600 * 1000
+    // A clock that ran ahead and was set back: held to now instead, these
+    // times would read as "just now" at every lookup, holding the profile for
+    // as long as the clock was ahead
+    it('records a fast clock left in the future are dropped, so their routes and pages are asked again', async () => {
+        const ahead = Date.now() + 2 * 3600 * 1000
+        const blocked = { t: ahead, until: ahead + WWW_HARD_REFUSAL_MS }
+        // A captcha's rest too, which would have read as a 403's once held to now
+        const captcha = { t: ahead, until: ahead + WWW_SOFT_REFUSAL_MS }
         __getLocalStorage()[WWW_ROUTE_STATE_KEY] = {
-            profile: { routes: { 'background:no-store': { t: farAhead, until: farAhead } } },
+            profile: {
+                routes: {
+                    'background:no-store': blocked,
+                    'background:no-cache': captcha,
+                    'background:reload': blocked,
+                },
+                login: { since: ahead, t: ahead, where: 'the login page' },
+            },
         }
         answersByCache({})
         const fetcher = await getWwwHtmlFetcher()
-        await fetcher.fetchHtml(FEED)
+        expect(await fetcher.fetchHtml(FEED)).toBe('PAGE')
+        expect(cachesTried()).toEqual(['no-store'])
+        const saved = routeState().profile
+        expect(saved.routes).toEqual({})
+        expect(saved.login).toBeUndefined()
+        expect(saved.served.t).toBeLessThanOrEqual(Date.now())
+    })
+
+    it('a rest never lasts longer than the longest one from its refusal', async () => {
+        const now = Date.now()
+        __getLocalStorage()[WWW_ROUTE_STATE_KEY] = {
+            profile: { routes: { 'background:no-store': { t: now - 1000, until: now + 100 * 3600 * 1000 } } },
+        }
+        answersByCache({})
+        await (await getWwwHtmlFetcher()).fetchHtml(FEED)
         expect(restsFor('profile', 'background:no-store')).toBeLessThanOrEqual(WWW_HARD_REFUSAL_MS)
-        expect(routeState().profile.routes['background:no-store'].t).toBeLessThanOrEqual(Date.now())
     })
 
     it("removes the earlier versions' route memory", async () => {

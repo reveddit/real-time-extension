@@ -120,7 +120,7 @@ const CONNECT_SECOND: Action = ['Connect a second account', openSecondAccount]
 // check a minute. Until then, the second account is only the other choice.
 const CHECKS_FOR_A_TAB = 3
 
-// login_required or public_view_unavailable, while Reddit is signed in to the second account
+// A warning that offers a second account, while Reddit is signed in to the second account
 const SIGNED_IN_AS_VIEWER: Warning = {
   text: (
     <>
@@ -191,7 +191,7 @@ const WARNINGS: Record<string, Warning> = {
     text: tabOpen =>
       "⚠ Reddit stopped loading the older pages of your public profile, so removals of your older posts and comments can't be checked right now. " +
       (tabOpen
-        ? 'To keep checking them, connect a second Reddit account.'
+        ? 'If it keeps up with your www.reddit.com tab open, connect a second Reddit account.'
         : 'Opening a www.reddit.com tab sometimes restores this. If it keeps up, connect a second Reddit account.'),
     button: OPEN_WWW,
     fallback: CONNECT_SECOND,
@@ -225,9 +225,8 @@ export function ErrorNotice({
         <MessageBanner variant="success">✓ Connected!</MessageBanner>
       </div>
     )
-  const asViewer =
-    (errorStatus === 'login_required' || errorStatus === 'public_view_unavailable') &&
-    isSignedInViewer(viewerName, currentUser || '')
+  const offersSecondAccount = (w?: Warning) => !!w && [w.button, w.fallback, w.lasting?.button].includes(CONNECT_SECOND)
+  const asViewer = offersSecondAccount(WARNINGS[errorStatus]) && isSignedInViewer(viewerName, currentUser || '')
   const warning = asViewer ? SIGNED_IN_AS_VIEWER : WARNINGS[errorStatus]
   if (!warning) {
     return (

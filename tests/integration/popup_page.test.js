@@ -204,12 +204,25 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
             `Opening a www.reddit.com tab sometimes restores this. If it keeps up, ${CONNECT}.`,
         )
 
+        // A tab opened on that advice gets its checks before a second account comes first
         const open = await warning('profile_pagination_unavailable', { tabs: [WWW_TAB] })
         await expectButtons(open, [['Connect a second account', 'secondary']])
-        const { text } = await warningIn(open)
-        expect(text).toContain(`can't be checked right now. To keep checking them, ${CONNECT}.`)
-        expect(text).not.toContain('www.reddit.com tab')
+        expect((await warningIn(open)).text).toContain(
+            `can't be checked right now. If it keeps up with your www.reddit.com tab open, ${CONNECT}.`,
+        )
     })
+
+    // Reddit signed in to the second account itself has that account's items
+    // checked logged out, so connecting a second account would lead nowhere
+    it.each(['login_required', 'public_view_unavailable', 'profile_pagination_unavailable'])(
+        '%s while signed in to Reddit as the second account: asks for a different one',
+        async status => {
+            const viewer_account = { name: 'Someone', token: 'ab'.repeat(16), cookies: [], connectedAt: Date.now() }
+            const { document } = await openPopup({ local: { ...local(status), viewer_account } })
+            await expectButtons(document, [['Connect a different account', 'primary']])
+            expect((await warningIn(document)).text).toContain("You're signed in to Reddit with your second account")
+        },
+    )
 
     it('a blocked request: says a tab usually clears it only while none is open', async () => {
         const BLOCKED = "⚠ Reddit blocked the extension's last request (HTTP 403). It keeps retrying"

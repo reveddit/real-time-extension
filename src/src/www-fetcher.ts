@@ -12,7 +12,7 @@ import browser from 'webextension-polyfill'
 import { isCaptchaPage, solveChallenge, isSolvedChallengeUrl, FetchHtml } from './parse_html/new'
 import { getRemoteWwwRouteOrder } from './news'
 import { dlog } from './diaglog'
-import { WWW_FETCH_TIMEOUT_MS, withDeadline } from './logged-in-fetch'
+import { WWW_FETCH_TIMEOUT_MS, withDeadline, isFresh } from './logged-in-fetch'
 
 declare const content: { fetch?: typeof fetch } | undefined
 
@@ -209,18 +209,20 @@ export const _fetchViaExecuteScript = async (
 // while no tab was open) is tried as soon as it can be, and a rested route
 // gets its turn again on its own. When every route is resting, a fetch tries
 // only the one that comes back soonest, so a client refused everywhere makes
-// one request per page. When each of them rests after a 403, that kind of page
-// is asked for once in half an hour, and the fetches in between fail at once:
-// a 403 block lasts hours, so asking at every check only adds refused requests
-// (two a minute while reddit refused profiles' older pages, 2026-11-11; also
-// issue #28's log, with no www tab). A solved challenge's URL still works on
+// one request per page. On the monitored profile's own pages, a route that got
+// a 403 isn't asked again for half an hour even then, and a fetch with no
+// other route left fails at once: a 403 block lasts hours, so asking at every
+// check only added refused requests (two a minute while reddit refused
+// profiles' older pages, 2026-11-11; also issue #28's log, with no www tab).
+// Each route keeps its own half hour, so one reddit serves again, or a tab
+// opened since, is asked within it. A solved challenge's URL still works on
 // the next route (verified 2026-10-21), so a refusal right after a solve costs
-// one request, not a new challenge. Kinds of page keep separate memories, since reddit has
-// refused them differently, and the memory survives restarts. Other failures
-// (a 429, a 404) are about the client or the page, so they never switch
-// routes. Nor does a login page (login-wall-config.ts): every route is logged
-// out alike, so the fetch ends there, and that kind of page is fetched once an
-// hour until one loads.
+// one request, not a new challenge. Kinds of page keep separate memories,
+// since reddit has refused them differently, and the memory survives restarts.
+// Other failures (a 429, a 404) are about the client or the page, so they
+// never switch routes. Nor does a login page (login-wall-config.ts): every
+// route is logged out alike, so the fetch ends there, and that kind of page is
+// fetched once an hour until one loads.
 const WWW_PAGE_KINDS = ['profile', 'profile-partial', 'partial', 'page'] as const
 
 type WwwPageKind = (typeof WWW_PAGE_KINDS)[number]
@@ -247,8 +249,8 @@ export const WWW_HARD_REFUSAL_MS = 6 * 3600 * 1000
 
 export const WWW_SOFT_REFUSAL_MS = 30 * 60 * 1000
 
-// How long a kind of page goes unasked after a 403, while every route that can
-// run rests after one
+// How long a profile page's route goes unasked after a 403, even when no other
+// route is left (the profile hold)
 export const WWW_BLOCKED_RETRY_MS = 30 * 60 * 1000
 
 // Pause before trying another route, so a refusal isn't answered with a burst
@@ -263,9 +265,15 @@ interface RouteRecord {
     until?: number
 }
 
-// A rest a 403 began: no other refusal rests longer than half an hour
+// A rest a 403 began: only a 403 rests WWW_HARD_REFUSAL_MS from its refusal
+// (readRouteState keeps every rest within that, and drops future times)
 const restsAfter403 = (record: RouteRecord | undefined): boolean =>
-    !!record?.until && record.until - record.t > WWW_SOFT_REFUSAL_MS
+    !!record?.until && record.until - record.t >= WWW_HARD_REFUSAL_MS
+
+// The kinds of page the profile hold applies to: the monitored profile's own
+// pages, where a 403 is about the route. An item's page can be refused for
+// itself (a members-only community), so item pages keep asking.
+const HELD_KINDS: ReadonlySet<WwwPageKind> = new Set(['profile', 'profile-partial'])
 
 // A kind of page landing on reddit's login page: since is when that began, t
 // the latest time, where what the log says about it. It holds until a page of
@@ -291,11 +299,16 @@ export const LOGIN_WALL_REST_MS = 60 * 60 * 1000
 const loginWallOf = (own: KindState | undefined): LoginWallRecord | null =>
     own?.login && own.login.t > (own.served?.t || 0) ? own.login : null
 
-// Stored state, kept to well-formed entries. A clock that ran ahead and was
-// set back leaves times in the future; they're held to now, so a refusal
-// never rests longer than the longest memory.
+// Stored state, kept to well-formed entries. A time in the future was written
+// by a clock that ran ahead and has since been set back, so it says nothing
+// about when the refusal, the served page or the login page came: its record
+// is dropped, and the route (or the kind's login wall) is asked again. Held to
+// now instead, it would be read as "just now" at every lookup, and rests and
+// the profile hold would last for as long as the clock was ahead. A rest never
+// lasts longer than the longest one from its refusal.
 const readRouteState = (raw: any, now: number): WwwRouteState => {
     const state: WwwRouteState = {}
+    const past = (t: number) => t > 0 && t <= now
     for (const kind of WWW_PAGE_KINDS) {
         const stored = raw?.[kind]
         if (!stored || typeof stored !== 'object') {
@@ -304,14 +317,11 @@ const readRouteState = (raw: any, now: number): WwwRouteState => {
         const routes: KindState['routes'] = {}
         for (const [route, record] of Object.entries(stored.routes || {})) {
             const t = Number((record as any)?.t)
-            if (!isWwwRoute(route) || !(t > 0)) {
+            if (!isWwwRoute(route) || !past(t)) {
                 continue
             }
             const until = Number((record as any)?.until)
-            routes[route] = {
-                t: Math.min(t, now),
-                ...(until > 0 && { until: Math.min(until, now + WWW_HARD_REFUSAL_MS) }),
-            }
+            routes[route] = { t, ...(until > 0 && { until: Math.min(until, t + WWW_HARD_REFUSAL_MS) }) }
         }
         const servedT = Number(stored.served?.t)
         const loginT = Number(stored.login?.t)
@@ -319,13 +329,13 @@ const readRouteState = (raw: any, now: number): WwwRouteState => {
         state[kind] = {
             routes,
             ...(isWwwRoute(stored.served?.route) &&
-                servedT > 0 && { served: { route: stored.served.route, t: Math.min(servedT, now) } }),
-            ...(loginT > 0 &&
+                past(servedT) && { served: { route: stored.served.route, t: servedT } }),
+            ...(past(loginT) &&
                 loginSince > 0 &&
                 typeof stored.login.where === 'string' && {
                     login: {
-                        since: Math.min(loginSince, loginT, now),
-                        t: Math.min(loginT, now),
+                        since: Math.min(loginSince, loginT),
+                        t: loginT,
                         where: stored.login.where.slice(0, 200),
                     },
                 }),
@@ -600,28 +610,23 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
         }
         const restingUntil = (route: WwwRoute) => routes[route]?.until || 0
         const usable = order.filter(route => !route.startsWith('tab:') || tabUsable())
+        const resting = new Set(usable.filter(route => restingUntil(route) > now))
+        // The profile hold (explained above): each route waits out its own
+        // half hour, so one reddit serves again is found within it
+        const held = new Set(
+            [...resting].filter(
+                route =>
+                    HELD_KINDS.has(kind) &&
+                    restsAfter403(routes[route]) &&
+                    isFresh(routes[route]!.t, WWW_BLOCKED_RETRY_MS, now),
+            ),
+        )
         // Resting routes follow the rest, soonest back first. All stay
         // fallbacks, since one may turn out unable to run (a tab route with
         // its tab gone), but only the first that sends a request is tried.
-        const resting = new Set(usable.filter(route => restingUntil(route) > now))
-        // Every route that can run got a 403: the latest one is half an hour
-        // old before any is asked again (the block explained above)
-        const lastRefused = Math.max(0, ...usable.map(route => routes[route]?.t || 0))
-        if (
-            usable.length &&
-            usable.every(route => resting.has(route) && restsAfter403(routes[route])) &&
-            now - lastRefused < WWW_BLOCKED_RETRY_MS
-        ) {
-            throw new RouteError(
-                `www.reddit.com request failed: 403 (every route got a 403 for ${kind} pages; ` +
-                    `next try after ${new Date(lastRefused + WWW_BLOCKED_RETRY_MS).toISOString()})`,
-                'refused',
-                403,
-            )
-        }
         const candidates = [
             ...usable.filter(route => !resting.has(route)),
-            ...[...resting].sort((a, b) => restingUntil(a) - restingUntil(b)),
+            ...[...resting].filter(route => !held.has(route)).sort((a, b) => restingUntil(a) - restingUntil(b)),
         ]
         const refused: string[] = []
         let failure: RouteError | null = null
@@ -699,6 +704,15 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
         // A page no route could read goes back to the caller, which says why
         if (unreadable !== null) {
             return unreadable
+        }
+        if (!failure && held.size) {
+            const next = Math.min(...[...held].map(route => routes[route]!.t)) + WWW_BLOCKED_RETRY_MS
+            throw new RouteError(
+                `${httpFailure(403).message} (every route that can run got a 403 for ${kind} pages; ` +
+                    `next try after ${new Date(next).toISOString()})`,
+                'refused',
+                403,
+            )
         }
         if (!failure) {
             throw new RouteError('no www fetch route available', 'unavailable')
