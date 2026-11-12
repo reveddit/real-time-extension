@@ -60,26 +60,46 @@ async function runScript(scriptName) {
 
 // A check every release must pass: the preflight, then a real second-account
 // sign-in in Chrome, which signs in with the password in .env. Each is skipped
-// when it already passed for these exact extension files, so a run that only
-// needs to finish the stores a failure left behind starts at once.
-function runCheck(status, key, label, script) {
-    if (status[key] && !extensionChangedSince(status[key].commit)) {
-        console.log(`\x1b[32m✔ ${label} already passed for this code (${status[key].at}), skipping it\x1b[0m\n`);
+// when it already passed (or was skipped) for these exact extension files, so
+// a run that only needs to finish the stores a failure left behind starts at
+// once. A check with a skip flag isn't run when the flag is given, and the
+// skip is recorded like a pass.
+function runCheck(status, key, label, script, skip) {
+    const done = status[key];
+    if (done && !extensionChangedSince(done.commit)) {
+        const how = done.skipped ? 'was skipped' : 'already passed';
+        console.log(`\x1b[32m✔ ${label} ${how} for this code (${done.at}), skipping it\x1b[0m\n`);
+        return;
+    }
+    if (skip && process.argv.includes(skip.flag)) {
+        console.log(`\x1b[33m⚠ ${label} not run (${skip.flag})\x1b[0m\n`);
+        logPublishEvent({ event: skip.event, reason: skip.flag });
+        pinResult(status, key, { skipped: true });
         return;
     }
     console.log(`\x1b[33mRunning yarn ${script}...\x1b[0m`);
     const result = spawnSync('yarn', [script], { stdio: 'inherit', cwd: process.cwd() });
     if (result.status !== 0) {
         console.error(`\x1b[31m${label} failed, so nothing was published.\x1b[0m`);
+        if (skip) console.error(`To publish without it, run \x1b[1myarn publish:all ${skip.flag}\x1b[0m.`);
         process.exit(1);
     }
-    // Only committed files pin the result; with local edits, the next run checks again.
+    pinResult(status, key, {});
+}
+
+// Only committed files pin a check's result; with local edits, the next run checks again.
+function pinResult(status, key, result) {
     const head = headCommit();
     if (!extensionChangedSince(head)) {
-        status[key] = { commit: head, at: new Date().toISOString() };
+        status[key] = { commit: head, at: new Date().toISOString(), ...result };
         writePublishStatus(status);
     }
 }
+
+// The sign-in test's browser is one automation drives, and reddit has refused
+// that window's login at times when the extension's own sign-in worked
+// (2026-11-05, 11-08 and 11-12), so a person can publish without it.
+const SKIP_SIGNIN = { flag: '--skip-signin', event: 'sign-in test skipped' };
 
 async function main() {
     const { version } = getManifest();
@@ -91,7 +111,7 @@ async function main() {
     const status = readPublishStatus();
 
     runCheck(status, 'preflight', 'Preflight', 'preflight');
-    runCheck(status, 'signin', 'The real sign-in test', 'test:signin:chrome');
+    runCheck(status, 'signin', 'The real sign-in test', 'test:signin:chrome', SKIP_SIGNIN);
     // No upfront build: each publish script rebuilds its own production
     // artifact (buildFresh in common.js) right before uploading.
 
