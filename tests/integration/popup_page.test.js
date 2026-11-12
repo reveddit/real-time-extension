@@ -182,18 +182,34 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
         await vi.waitFor(async () => expect((await warningIn(document)).text).toContain("aren't being checked right now"))
     })
 
-    it.each(['absent_verify_unavailable', 'profile_pagination_unavailable'])(
-        '%s: offers a tab while none is open, and nothing once one is',
-        async status => {
-            const closed = await warning(status)
-            await expectButtons(closed, [['Open www.reddit.com', 'primary']])
-            expect((await warningIn(closed)).text).toContain(KEEP_TAB)
+    it('absent verification: offers a tab while none is open, and nothing once one is', async () => {
+        const closed = await warning('absent_verify_unavailable')
+        await expectButtons(closed, [['Open www.reddit.com', 'primary']])
+        expect((await warningIn(closed)).text).toContain(KEEP_TAB)
 
-            const open = await warning(status, { tabs: [WWW_TAB] })
-            await vi.waitFor(async () => expect((await warningIn(open)).text).not.toContain(KEEP_TAB))
-            expect((await warningIn(open)).buttons).toEqual([])
-        },
-    )
+        const open = await warning('absent_verify_unavailable', { tabs: [WWW_TAB] })
+        await vi.waitFor(async () => expect((await warningIn(open)).text).not.toContain(KEEP_TAB))
+        expect((await warningIn(open)).buttons).toEqual([])
+    })
+
+    // Reddit refused a profile's older pages through the tab too (2026-11-11),
+    // which a second account doesn't read
+    it("a profile's older pages: a tab might help while none is open, and a second account either way", async () => {
+        const closed = await warning('profile_pagination_unavailable')
+        await expectButtons(closed, [
+            ['Open www.reddit.com', 'primary'],
+            ['Connect a second account', 'secondary'],
+        ])
+        expect((await warningIn(closed)).text).toContain(
+            `Opening a www.reddit.com tab sometimes restores this. If it keeps up, ${CONNECT}.`,
+        )
+
+        const open = await warning('profile_pagination_unavailable', { tabs: [WWW_TAB] })
+        await expectButtons(open, [['Connect a second account', 'secondary']])
+        const { text } = await warningIn(open)
+        expect(text).toContain(`can't be checked right now. To keep checking them, ${CONNECT}.`)
+        expect(text).not.toContain('www.reddit.com tab')
+    })
 
     it('a blocked request: says a tab usually clears it only while none is open', async () => {
         const BLOCKED = "⚠ Reddit blocked the extension's last request (HTTP 403). It keeps retrying"

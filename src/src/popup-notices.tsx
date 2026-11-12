@@ -185,11 +185,16 @@ const WARNINGS: Record<string, Warning> = {
       'If it keeps up, use “report a problem” below.',
     button: OPEN_WWW,
   },
+  // A second account reads the profile's JSON listing, not the older pages
+  // reddit refused here, which it refused through the tab too (2026-11-11)
   profile_pagination_unavailable: {
     text: tabOpen =>
-      "⚠ Reddit stopped loading the older pages of your public profile, so removals of your older posts and comments can't be checked right now." +
-      (tabOpen ? '' : ' Keeping a www.reddit.com tab open usually restores this.'),
+      "⚠ Reddit stopped loading the older pages of your public profile, so removals of your older posts and comments can't be checked right now. " +
+      (tabOpen
+        ? 'To keep checking them, connect a second Reddit account.'
+        : 'Opening a www.reddit.com tab sometimes restores this. If it keeps up, connect a second Reddit account.'),
     button: OPEN_WWW,
+    fallback: CONNECT_SECOND,
   },
 }
 
