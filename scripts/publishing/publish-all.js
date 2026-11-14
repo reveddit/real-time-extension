@@ -9,6 +9,7 @@ import {
     extensionChangedSince,
     assertCleanBuildInputs,
     assertSameCodeForVersion,
+    assertNodeVersion,
     logPublishEvent,
 } from './common.js';
 
@@ -108,6 +109,7 @@ async function main() {
     // Before the preflight, so a refusal comes at once (each store's build checks again)
     assertCleanBuildInputs();
     assertSameCodeForVersion();
+    assertNodeVersion();
     const status = readPublishStatus();
 
     runCheck(status, 'preflight', 'Preflight', 'preflight');

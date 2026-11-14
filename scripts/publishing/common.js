@@ -48,15 +48,38 @@ export function buildFresh(buildScript) {
     // Here too, so a standalone `yarn publish:<store>` can't give a store
     // other code under a version another store already has
     assertSameCodeForVersion();
+    assertNodeVersion();
+    const commit = headCommit();
+    // The dependencies yarn.lock names, which a reviewer's rebuild installs: a
+    // merge or checkout can change yarn.lock without anyone running yarn install
+    if (spawnSync('yarn', ['install', '--immutable'], { stdio: 'inherit', cwd: process.cwd() }).status !== 0) {
+        failureReason = 'yarn install --immutable failed';
+        console.error("\x1b[31myarn install --immutable failed, so the build wouldn't use the dependencies yarn.lock names.\x1b[0m");
+        process.exit(1);
+    }
     console.log(`\x1b[33mBuilding fresh production package (yarn ${buildScript})...\x1b[0m`);
-    const result = spawnSync('yarn', [buildScript], { stdio: 'inherit', cwd: process.cwd() });
+    // STAGING and SIMULATE_DEPRECATION make a test build (webpack.config.js,
+    // common.js), so one exported in the shell mustn't reach a store
+    const env = { ...process.env };
+    delete env.STAGING;
+    delete env.SIMULATE_DEPRECATION;
+    const result = spawnSync('yarn', [buildScript], { stdio: 'inherit', cwd: process.cwd(), env });
     if (result.status !== 0) {
         console.error(`\x1b[31myarn ${buildScript} failed.\x1b[0m`);
         process.exit(1);
     }
+    // A file edited while the build ran may be in the build but not in the commit
+    if (buildInputsDirty() || extensionChangedSince(commit)) {
+        failureReason = 'files changed during the build';
+        console.error(
+            "\x1b[31mThe extension's files changed while it was building, so the build may not match the commit.\x1b[0m\n" +
+            'Commit or undo the change, then run it again.'
+        );
+        process.exit(1);
+    }
     // What was built, for markPublished: HEAD can move before the store accepts it
     const status = readPublishStatus();
-    status.built = { commit: headCommit(), dirty: buildInputsDirty(), at: new Date().toISOString() };
+    status.built = { commit, at: new Date().toISOString() };
     writePublishStatus(status);
 }
 
@@ -159,20 +182,37 @@ export function buildInputsDirty() {
 }
 
 /**
- * Stop unless the build inputs match HEAD. PUBLISH_ALLOW_DIRTY=1 publishes
- * anyway; the run is then recorded as dirty, and publish:all won't resume it.
+ * Stop unless the build inputs match HEAD, so what a store gets is a commit,
+ * and Firefox's source zip (that commit) is what was built.
  */
 export function assertCleanBuildInputs() {
     if (!buildInputsDirty()) return;
-    if (process.env.PUBLISH_ALLOW_DIRTY) {
-        console.warn('\x1b[33mWarning: publishing uncommitted changes (PUBLISH_ALLOW_DIRTY)\x1b[0m');
-        return;
-    }
     failureReason = 'uncommitted changes';
     console.error(
         '\x1b[31mThe extension has uncommitted or untracked changes:\x1b[0m\n' +
         git('status', '--short', '--', ...BUILD_INPUTS).out + '\n' +
-        'Commit or stash them first, so the version in each store is a commit (PUBLISH_ALLOW_DIRTY=1 overrides).'
+        'Commit or stash them first, so the version in each store is a commit.'
+    );
+    process.exit(1);
+}
+
+/**
+ * Stop unless this is the Node that .nvmrc names, which Mozilla's reviewers
+ * rebuild with, so their build comes out the same.
+ */
+export function assertNodeVersion() {
+    let wanted = '';
+    try {
+        wanted = fs.readFileSync(path.join(process.cwd(), '.nvmrc'), 'utf8').trim().replace(/^v/, '');
+    } catch (e) {
+        // Missing: nothing names the version, so it's refused below
+    }
+    const running = process.version.slice(1);
+    if (wanted && (running === wanted || running.startsWith(`${wanted}.`))) return;
+    failureReason = 'not the Node version .nvmrc names';
+    console.error(
+        `\x1b[31mThis is Node ${running}, but .nvmrc names ${wanted || 'no version'}, which Mozilla's reviewers rebuild with.\x1b[0m\n` +
+        'Switch with `nvm use`, then run it again.'
     );
     process.exit(1);
 }
@@ -186,7 +226,7 @@ export function assertSameCodeForVersion() {
     // AMO may hold a Firefox submission whose run stopped before recording it
     // (publish-firefox.js), so other code under this version can't go out
     const otherFirefoxCode = !status.published.firefox &&
-        (status.firefoxSubmissions || []).find(s => s.dirty || !s.commit || extensionChangedSince(s.commit));
+        (status.firefoxSubmissions || []).find(s => !s.commit || extensionChangedSince(s.commit));
     if (otherFirefoxCode) {
         failureReason = 'AMO may have this version from other code';
         console.error(
@@ -197,14 +237,6 @@ export function assertSameCodeForVersion() {
     }
     const already = Object.keys(status.published);
     if (!already.length) return;
-    if (status.dirty) {
-        failureReason = 'another store has this version from uncommitted files';
-        console.error(
-            `\x1b[31m${already.join(', ')} got ${status.version} from uncommitted files (PUBLISH_ALLOW_DIRTY), so the other stores can't be given the same code.\x1b[0m\n` +
-            'Bump the version and add its VERSION HISTORY line.'
-        );
-        process.exit(1);
-    }
     if (status.commit && extensionChangedSince(status.commit)) {
         failureReason = 'another store has this version from other code';
         console.error(
@@ -273,9 +305,6 @@ export function markPublished(store) {
     logPublishEvent({ store, event: 'published' });
     const status = readPublishStatus();
     status.commit = status.commit || status.built?.commit || headCommit();
-    // What was built, not the tree now: an edit made while a store's prompt
-    // waited didn't go to that store
-    if (status.built ? status.built.dirty : buildInputsDirty()) status.dirty = true;
     status.published[store] = new Date().toISOString();
     writePublishStatus(status);
 }

@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import jwt from 'jsonwebtoken';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import {
     CONFIG,
     readDescription,
@@ -15,7 +15,6 @@ import {
     readPublishStatus,
     writePublishStatus,
     headCommit,
-    buildInputsDirty,
     extensionChangedSince,
 } from './common.js';
 
@@ -36,22 +35,23 @@ function checkEnv() {
     }
 }
 
-async function createSourceZip() {
+async function createSourceZip(commit) {
     console.log('\n\x1b[33m[1/3] Zipping source code for review...\x1b[0m');
     const zipName = 'source-code-submission.zip';
     const zipPath = path.join(process.cwd(), zipName);
-    
+
     // Remove old zip if exists
     if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-    // What git keeps, so nothing ignored reaches Mozilla's reviewers, less .env
-    // (CRITICAL), the dist folders they rebuild, and our own tooling notes. A run
-    // under PUBLISH_ALLOW_DIRTY builds from untracked files too, so they're included.
-    const cmd = `git ls-files --cached --others --exclude-standard -- . ":(exclude)*.env*" ":(exclude)dist-*" ":(exclude).claude" ":(exclude).claude-mcp" | zip "${zipName}" -@`;
-    
+    // The commit that was built, so the source matches the build and nothing
+    // uncommitted or untracked reaches Mozilla's reviewers, less .env
+    // (CRITICAL), the dist folders they rebuild, and our own tooling notes.
+    const args = ['archive', '--format=zip', '-o', zipName, commit, '--', '.',
+        ':(exclude)*.env*', ':(exclude)dist-*', ':(exclude).claude', ':(exclude).claude-mcp'];
+
     try {
-        execSync(cmd, { stdio: 'inherit' });
-        console.log(`\x1b[32m✔ Source code zipped: ${zipName}\x1b[0m`);
+        execFileSync('git', args, { stdio: 'inherit' });
+        console.log(`\x1b[32m✔ Source code zipped: ${zipName} (${commit.slice(0, 7)})\x1b[0m`);
         return zipPath;
     } catch (error) {
         console.error('\x1b[31mFailed to zip source code:\x1b[0m', error);
@@ -127,17 +127,17 @@ async function main() {
     console.log(`\n\x1b[36m🚀 Starting Firefox Publish Flow for version ${manifest.version}...\x1b[0m`);
 
     buildFresh('build-firefox');
+    const status = readPublishStatus();
+    const built = status.built || { commit: headCommit() };
 
-    const sourceZipPath = await createSourceZip();
+    const sourceZipPath = await createSourceZip(built.commit);
 
     // Every submission of this version is recorded before AMO sees it, as
     // the build recorded its code: when a run stops after AMO has the
     // version, the next run's "already exists" is checked against the code
     // of each submission AMO may have kept
-    const status = readPublishStatus();
-    const built = status.built || { commit: headCommit(), dirty: buildInputsDirty() };
     const earlierSubmissions = status.firefoxSubmissions || [];
-    const submission = { commit: built.commit, dirty: built.dirty, at: new Date().toISOString() };
+    const submission = { commit: built.commit, at: new Date().toISOString() };
     status.firefoxSubmissions = [...earlierSubmissions, submission];
     writePublishStatus(status);
 
@@ -174,7 +174,7 @@ async function main() {
             writePublishStatus(recorded);
             const sameCode =
                 earlierSubmissions.length > 0 &&
-                earlierSubmissions.every(s => s.commit && !s.dirty && !extensionChangedSince(s.commit));
+                earlierSubmissions.every(s => s.commit && !extensionChangedSince(s.commit));
             if (sameCode) {
                 console.warn(`\x1b[33mAMO already has ${manifest.version} from this code (submitted ${earlierSubmissions[earlierSubmissions.length - 1].at}); recording it as published.\x1b[0m`);
                 markPublished('firefox');
