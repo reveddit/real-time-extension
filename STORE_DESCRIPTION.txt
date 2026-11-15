@@ -23,6 +23,9 @@ Note, the extension can't check your own comments in private, quarantined or 18+
 
 VERSION HISTORY:
 
+2026/11/15 - 0.0.5.36
+- your older posts and comments are checked logged out again: like a logged-out browser, the extension keeps the cookies reddit gives its logged-out checks and sends them back
+
 2026/11/12 - 0.0.5.35
 - while reddit refuses your profile's pages, the extension asks for them again every half hour instead of at every check, and the warning about your older posts and comments offers a second account
 
