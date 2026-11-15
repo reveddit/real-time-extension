@@ -43,13 +43,24 @@ export const loadBackground = async () => {
     c.storage.onChanged = event(storageChanges)
     browserMock.cookies = cookiesApi
     browserMock.storage.onChanged = event(storageChanges)
-    browserMock.webRequest = { onBeforeSendHeaders: event(), onHeadersReceived: event() }
+    const sendingHeaders = []
+    const headersReceived = []
+    browserMock.webRequest = { onBeforeSendHeaders: event(sendingHeaders), onHeadersReceived: event(headersReceived) }
     browserMock.runtime = { ...browserMock.runtime, onInstalled: event() }
     // Nothing the script sends goes out, at load or in any test that doesn't stub
     // fetch itself. Not stubGlobal, which the config undoes before every test.
     globalThis.fetch = () => new Promise(() => {})
     await import('../../src/background.ts')
+    // The fakes report no answers to webRequest, so a fetch doesn't wait for
+    // its answer's cookies; a test that reports answers sets this back
+    const { _publicCookieTiming } = await import('../../src/src/public-cookies')
+    _publicCookieTiming.settleMs = 0
     return {
+        // What webRequest would report: a request about to go out (the
+        // background's blocking listener answers with its headers, or a
+        // promise of them) and an answer's headers arriving
+        beforeSendHeaders: details => sendingHeaders.map(listener => listener(details)).find(Boolean),
+        headersReceived: details => headersReceived.forEach(listener => listener(details)),
         // The first listener that takes the message answers it
         send: (request, sender = {}) =>
             new Promise(resolve => {

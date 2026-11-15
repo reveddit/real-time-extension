@@ -1,6 +1,7 @@
 import browser from 'webextension-polyfill'
 import { getViewer, viewerCookieHeaderFor, ViewerAccount, VIEWER_KEY } from './viewer'
 import { isLegacyPageUrl, LEGACY_PAGE_MARKER_PATTERN } from './parse_html/common'
+import { isPublicViewUrl, publicCookieHeaderFor } from './public-cookies'
 
 // The two header rules the background's requests need. Both are installed from
 // background.ts, synchronously at its top level and in the order set there:
@@ -45,6 +46,22 @@ export function installWebRequestHeaders() {
                 return viewerForHeaders === undefined
                     ? loadViewerForHeaders().then(withViewerCookies)
                     : withViewerCookies(viewerForHeaders)
+            }
+            // The extension's logged-out reads, from the background or from
+            // inside a www.reddit.com tab: the cookies reddit gave the reads
+            // before them (public-cookies.ts), if the marker carries the
+            // jar's token. The reads omit the browser's cookies.
+            if (details.method === 'GET' && isPublicViewUrl(details.url)) {
+                return publicCookieHeaderFor(details.url).then(header =>
+                    header
+                        ? {
+                              requestHeaders: [
+                                  ...(details.requestHeaders || []).filter(h => h.name.toLowerCase() !== 'cookie'),
+                                  { name: 'Cookie', value: header },
+                              ],
+                          }
+                        : { requestHeaders: details.requestHeaders },
+                )
             }
             // Legacy post pages on www: background requests carrying the
             // legacy marker get the redesign_optout cookie (see the DNR rule
@@ -96,6 +113,7 @@ export function installWebRequestHeaders() {
                 'https://*.reddit.com/api/info*',
                 'https://www.reddit.com/*rv_legacy=1',
                 'https://www.reddit.com/*rv_viewer=*',
+                'https://www.reddit.com/*rv_public=*',
             ],
         },
         opt_extraInfoSpec,

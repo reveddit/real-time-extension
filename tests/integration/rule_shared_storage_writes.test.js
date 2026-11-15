@@ -70,6 +70,7 @@ import {
 } from '../../src/src/viewer'
 import { storeRedditCookies } from '../../src/src/reddit-cookies'
 import { getWwwHtmlFetcher, WWW_ROUTE_STATE_KEY } from '../../src/src/www-fetcher'
+import { PUBLIC_COOKIES_KEY } from '../../src/src/public-cookies'
 
 // --- The install ---
 
@@ -634,9 +635,12 @@ describe('the same two writes one after the other', () => {
 // What only the background's checks keep: the www route memory, the page
 // verdicts, the failure streaks, the profile control, the second account's
 // verdicts and its sign-in, and the cookie snapshot. One check runs at a time
-// (rule_check_cycles), so each is written in sequence.
+// (rule_check_cycles), so each is written in sequence. The logged-out reads'
+// cookies are the background's alone too: it holds them in memory and saves
+// them, and a page only reads their marker (public-cookies.ts).
 const BACKGROUND_ONLY = [
     WWW_ROUTE_STATE_KEY,
+    PUBLIC_COOKIES_KEY,
     'www_post_page_verdicts',
     'www_absent_item_verdicts',
     'www_detect_consecutive_failures',
@@ -660,7 +664,11 @@ describe('objects only one context writes', () => {
     it("a follow's lookup in the popup writes none of what only the background's checks keep", async () => {
         __resetStorage(
             { ...SYNC, other_subscriptions: { t1_x: { t: NOW } } },
-            { items_other: { t1_x: { ...record('words x'), p: 't3_xpost' } } },
+            {
+                items_other: { t1_x: { ...record('words x'), p: 't3_xpost' } },
+                // The background's logged-out cookies, whose marker the page reads
+                [PUBLIC_COOKIES_KEY]: { token: 'ab'.repeat(16), cookies: [] },
+            },
         )
         fill([cookie('reddit_session', 'S1')])
         vi.stubGlobal('fetch', async url =>

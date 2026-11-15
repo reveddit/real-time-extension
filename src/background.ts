@@ -63,6 +63,7 @@ import { loginWallLanding } from './src/login-wall-config'
 import { initDiagPersistence, buildDiagReport, clearDiagLog, dlog } from './src/diaglog'
 import { getRateLimitBackoffRemainingMs, getSyncUsageLine } from './src/storage'
 import { installWebRequestHeaders, installDnrHeaderRules } from './src/header-rules'
+import { installPublicCookies } from './src/public-cookies'
 import { installDevLog, createDevActionHandler, installReplayInstall } from './src/background-dev'
 
 // The background context is the diagnostic log's single writer — see diaglog.ts.
@@ -95,6 +96,8 @@ if (__BUILT_FOR__ !== 'chrome') {
 // END webRequest API code
 
 installDnrHeaderRules()
+// The logged-out reads' own cookies: its listener, then its rule
+installPublicCookies()
 
 console.log('bg script running')
 // Throttle recovery calls that fetch /api/me.json to at most ~2 per minute

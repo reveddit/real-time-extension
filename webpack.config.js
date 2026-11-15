@@ -69,12 +69,17 @@ function modify(buffer) {
             "gecko_android": {}
         }
         // The cookie header rules run through webRequest on Firefox (the DNR
-        // calls in header-rules.ts and viewer.ts are guarded), so the permission is dead weight.
+        // calls in header-rules.ts, viewer.ts and public-cookies.ts are guarded),
+        // so the permission is dead weight. webRequest is in the base manifest
+        // too (public-cookies.ts reads reddit's answers with it), so only what's
+        // missing is added.
         manifest.permissions = manifest.permissions.filter(p => p !== 'declarativeNetRequestWithHostAccess')
-        manifest.permissions.push(
+        for (const permission of [
             'activeTab', 'webRequest', 'webRequestBlocking',
             'https://*.reddit.com/*', 'https://*.reveddit.com/*',
-        )
+        ]) {
+            if (!manifest.permissions.includes(permission)) manifest.permissions.push(permission)
+        }
         delete manifest.host_permissions
         delete manifest.externally_connectable
         delete manifest.minimum_chrome_version

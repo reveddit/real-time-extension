@@ -111,6 +111,11 @@ export const MECHANISM_ABSENT_UNVERIFIED_UNKNOWN = 'absentUnverifiedIsUnknown'
 // Flip to 'off' if reddit closes them or starts to mind the pace: scans then
 // stop before sending anything and say reddit is refusing them.
 export const MECHANISM_SCAN_FEEDS = 'scanFeeds'
+// The cookies the logged-out reads keep and send back, as a logged-out browser
+// does (public-cookies.ts). On by default. Flip to 'off' if reddit ever minds
+// them: the reads then go out without cookies, as they used to, and the
+// kept ones are dropped.
+export const MECHANISM_PUBLIC_COOKIES = 'publicViewCookies'
 
 interface NewsFeed {
     messages: NewsMessage[]
