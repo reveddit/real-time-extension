@@ -13,7 +13,7 @@ import { isCaptchaPage, solveChallenge, isSolvedChallengeUrl, FetchHtml } from '
 import { getRemoteWwwRouteOrder } from './news'
 import { dlog } from './diaglog'
 import { WWW_FETCH_TIMEOUT_MS, withDeadline, isFresh } from './logged-in-fetch'
-import { publicViewMarking, publicCookiesSettled, emptyPublicCookies } from './public-cookies'
+import { publicViewMarking, publicCookiesSettled, requestPublicCookiesStartOver } from './public-cookies'
 
 declare const content: { fetch?: typeof fetch } | undefined
 
@@ -276,6 +276,10 @@ const restsAfter403 = (record: RouteRecord | undefined): boolean =>
 // itself (a members-only community), so item pages keep asking.
 const HELD_KINDS: ReadonlySet<WwwPageKind> = new Set(['profile', 'profile-partial'])
 
+// How a route ends when reddit refuses the request itself: the block page, the
+// captcha, or a challenge answered with another
+const START_OVER_OUTCOMES: ReadonlySet<string> = new Set(['403', 'captcha', 're-challenged'])
+
 // A kind of page landing on reddit's login page: since is when that began, t
 // the latest time, where what the log says about it. It holds until a page of
 // the kind is served after t, and while it holds, a fetch of the kind goes out
@@ -464,8 +468,9 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
     }
     const order = wwwRouteOrder(await getRemoteWwwRouteOrder().catch(() => ({})))
     // Every route's request carries the logged-out cookie jar's marker, so
-    // reddit gets back the cookies it set (public-cookies.ts)
-    const mark = await publicViewMarking()
+    // reddit gets back the cookies it set (public-cookies.ts). A fault there
+    // never stops a lookup: its requests then go out as they used to.
+    const mark = await publicViewMarking().catch(() => (url: string) => url)
     let dirty = false
     const saveState = async () => {
         if (!dirty) {
@@ -647,6 +652,8 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
             ...[...resting].filter(route => !held.has(route)).sort((a, b) => restingUntil(a) - restingUntil(b)),
         ]
         const refused: string[] = []
+        // How each route tried ended: a status, 'network', or the page's verdict
+        const outcomes: string[] = []
         let failure: RouteError | null = null
         let unreadable: string | null = null
         let restingTried = false
@@ -679,6 +686,7 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
                     }
                     restingTried ||= resting.has(route)
                     noteRefusal(kind, route, err)
+                    outcomes.push(describeFailure(err))
                     refused.push(`${route} ${describeFailure(err)}`)
                     // A 403 decides what the whole fetch reports
                     if (!failure || (err.status === 403 && failure.status !== 403)) {
@@ -702,6 +710,7 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
                 }
                 const err = new RouteError(`www.reddit.com request refused: ${verdict}`, 'refused')
                 noteRefusal(kind, route, err)
+                outcomes.push(verdict)
                 refused.push(`${route} ${verdict}`)
                 if (verdict === 'unrecognized') {
                     unreadable = html
@@ -710,6 +719,14 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
             }
         } finally {
             await saveState()
+        }
+        // Reddit refused the monitored profile's own page on every route that
+        // tried it, with its block page, its captcha or a challenge it wouldn't
+        // take: the logged-out cookies may be what it refuses, so the next
+        // lookup may start them over (public-cookies.ts). Not a network error
+        // or a page the parsers can't read, which say nothing about them.
+        if (HELD_KINDS.has(kind) && outcomes.length && outcomes.every(o => START_OVER_OUTCOMES.has(o))) {
+            requestPublicCookiesStartOver(`${kind} pages refused (${refused.join(', ')})`)
         }
         if (refused.length > 1 && !failureLogged.has(kind)) {
             failureLogged.add(kind)
@@ -734,12 +751,6 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
         }
         if (!failure) {
             throw new RouteError('no www fetch route available', 'unavailable')
-        }
-        // No route read the monitored profile's own page and one got the block
-        // page, which there is about the request, not the page: reddit may be
-        // refusing the logged-out cookies, so they start over
-        if (HELD_KINDS.has(kind) && failure.status === 403) {
-            await emptyPublicCookies(`every route tried got a 403 for ${kind} pages`)
         }
         throw new RouteError(`${failure.message} (refused: ${refused.join(', ')})`, failure.failure, failure.status)
     }

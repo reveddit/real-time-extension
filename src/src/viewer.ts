@@ -109,16 +109,20 @@ export const settableCookie = (c: StoredCookie) => ({
 export const isExpired = (c: StoredCookie, nowSec = Date.now() / 1000): boolean =>
     !!c.expirationDate && c.expirationDate <= nowSec
 
+// A saved cookie that a request to any www.reddit.com page carries: one for
+// that host or reddit.com, on path /
+export const sendsToWww = (c: StoredCookie): boolean => {
+    const host = c.domain.replace(/^\./, '').toLowerCase()
+    const forWww = c.hostOnly ? host === 'www.reddit.com' : host === 'reddit.com' || host === 'www.reddit.com'
+    return forWww && (c.path || '/') === '/'
+}
+
 // The Cookie header a www.reddit.com request would carry from saved cookies
 // (the second account's, or the logged-out reads' in public-cookies.ts):
-// those for that host and path /, unexpired
+// those it sends, unexpired
 export const wwwCookieHeader = (cookies: StoredCookie[], nowSec = Date.now() / 1000): string =>
     cookies
-        .filter(c => {
-            const host = c.domain.replace(/^\./, '').toLowerCase()
-            const forWww = c.hostOnly ? host === 'www.reddit.com' : host === 'reddit.com' || host === 'www.reddit.com'
-            return forWww && (c.path || '/') === '/' && !isExpired(c, nowSec)
-        })
+        .filter(c => sendsToWww(c) && !isExpired(c, nowSec))
         .map(c => `${c.name}=${c.value}`)
         .join('; ')
 
@@ -139,8 +143,10 @@ export const markedUrl = (name: string, url: string, token: string): string =>
 // The token is hex, so it needs no escaping. RE2 syntax, for Chrome's rules too.
 export const markerPattern = (name: string, token: string): string =>
     `^https://www\\.reddit\\.com/[^#]*[?&]${name}=${token}(&|$)`
+export const isMarkerToken = (token: unknown): token is string =>
+    typeof token === 'string' && /^[0-9a-f]{32}$/.test(token)
 export const isMarkedUrl = (name: string, url: string, token: string): boolean =>
-    /^[0-9a-f]{32}$/.test(token) && new RegExp(markerPattern(name, token)).test(url)
+    isMarkerToken(token) && new RegExp(markerPattern(name, token)).test(url)
 export const newMarkerToken = (): string =>
     Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('')
 
@@ -155,10 +161,7 @@ export const isSignedInViewer = (viewerName: string, signedIn: string): boolean 
 
 export const getViewer = async (): Promise<ViewerAccount | null> => {
     const viewer: any = await readLocal(VIEWER_KEY, null)
-    return viewer &&
-        typeof viewer.name === 'string' &&
-        /^[0-9a-f]{32}$/.test(viewer.token) &&
-        Array.isArray(viewer.cookies)
+    return viewer && typeof viewer.name === 'string' && isMarkerToken(viewer.token) && Array.isArray(viewer.cookies)
         ? viewer
         : null
 }
@@ -447,49 +450,82 @@ const forgetViewerWarnings = async () => {
     }
 }
 
-// Chrome and Edge: the rule that puts the second account's cookies on the
-// extension's own marked GET requests (tabId -1: not from any tab). Replaced
-// whenever the account changes, on every worker start, since session rules
-// don't outlive the browser, and before each lookup through the account
-// (viewer-lookup.ts), so a cookie that has expired since drops off. Firefox does
-// this in header-rules.ts.
-export const installViewerHeaderRule = async () => {
+// declarativeNetRequest, for its session rules: Chrome and Edge builds only.
+// Firefox exposes the API without the permission, and its methods then return
+// undefined (header-rules.ts installDnrHeaderRules).
+const sessionRulesApi = (): any => {
     if (typeof __BUILT_FOR__ !== 'undefined' && __BUILT_FOR__ !== 'chrome') {
-        return
+        return null
     }
     const dnr = (globalThis as any).chrome?.declarativeNetRequest
-    if (!dnr?.updateSessionRules) {
+    return dnr?.updateSessionRules ? dnr : null
+}
+
+// Chrome and Edge: the session rule that puts saved cookies on GETs whose URL
+// carries a marker with the holder's token, made again each time from the
+// cookies as they are. With none to send, removeWhenEmpty takes the request's
+// Cookie header off instead (the logged-out reads, which carry their own
+// cookies or none); otherwise the rule goes. Firefox does this in
+// header-rules.ts. Never throws.
+export const installMarkerCookieRule = async (rule: {
+    id: number
+    marker: string
+    holder: { token: string; cookies: StoredCookie[] } | null
+    condition?: Record<string, unknown>
+    removeWhenEmpty?: boolean
+    onError: (message: string) => void
+}) => {
+    const dnr = sessionRulesApi()
+    if (!dnr) {
         return
     }
-    const viewer = await getViewer()
-    const header = viewer ? wwwCookieHeader(viewer.cookies) : ''
     try {
+        const header = rule.holder ? wwwCookieHeader(rule.holder.cookies) : ''
+        const requestHeaders = header
+            ? [{ header: 'cookie', operation: 'set', value: header }]
+            : rule.removeWhenEmpty
+              ? [{ header: 'cookie', operation: 'remove' }]
+              : null
         await dnr.updateSessionRules({
-            removeRuleIds: [VIEWER_RULE_ID],
+            removeRuleIds: [rule.id],
             addRules:
-                viewer && header
+                rule.holder && requestHeaders
                     ? [
                           {
-                              id: VIEWER_RULE_ID,
+                              id: rule.id,
                               priority: 3,
-                              action: {
-                                  type: 'modifyHeaders',
-                                  requestHeaders: [{ header: 'cookie', operation: 'set', value: header }],
-                              },
+                              action: { type: 'modifyHeaders', requestHeaders },
                               condition: {
-                                  regexFilter: markerPattern(MARKER_NAME, viewer.token),
+                                  regexFilter: markerPattern(rule.marker, rule.holder.token),
                                   resourceTypes: ['xmlhttprequest', 'other'],
-                                  tabIds: [-1],
-                                  initiatorDomains: [chrome.runtime.id],
                                   requestMethods: ['get'],
+                                  ...rule.condition,
                               },
                           },
                       ]
                     : [],
         })
     } catch (e: any) {
-        dlogSummary('ui', `[reveddit] second account: header rule not installed: ${String(e?.message || e)}`)
+        rule.onError(String(e?.message || e))
     }
+}
+
+// Chrome and Edge: the rule that puts the second account's cookies on the
+// extension's own marked GET requests (tabId -1: not from any tab). Replaced
+// whenever the account changes, on every worker start, since session rules
+// don't outlive the browser, and before each lookup through the account
+// (viewer-lookup.ts), so a cookie that has expired since drops off.
+export const installViewerHeaderRule = async () => {
+    if (!sessionRulesApi()) {
+        return
+    }
+    await installMarkerCookieRule({
+        id: VIEWER_RULE_ID,
+        marker: MARKER_NAME,
+        holder: await getViewer(),
+        condition: { tabIds: [-1], initiatorDomains: [chrome.runtime.id] },
+        onError: message => dlogSummary('ui', `[reveddit] second account: header rule not installed: ${message}`),
+    })
 }
 
 // A GET as the second account: its marker on the URL, the browser's own

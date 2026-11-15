@@ -1,7 +1,8 @@
 // The logged-out reads' own cookies (public-cookies.ts): kept from reddit's
-// answers the way a browser keeps them, sent back only on requests carrying
-// the jar's marker, started over when a profile page is refused on every
-// route, and dropped when the news feed turns them off.
+// answers the way a browser keeps them, sent back only on GETs carrying the
+// jar's marker, started over (with a new marker) at the next lookup after
+// reddit refuses the profile's pages on every route, at most once in
+// START_OVER_MIN_MS, and dropped when the news feed turns them off.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
@@ -17,11 +18,13 @@ import {
     setCookieLines,
     publicViewMarking,
     publicCookiesSettled,
-    emptyPublicCookies,
+    publicCookieHeaderFor,
+    requestPublicCookiesStartOver,
     _publicCookieTiming,
     _resetPublicCookies,
     PUBLIC_COOKIES_KEY,
     PUBLIC_COOKIES_RULE_ID,
+    START_OVER_MIN_MS,
 } from '../../src/src/public-cookies'
 import { getWwwHtmlFetcher, _wwwRouteTiming } from '../../src/src/www-fetcher'
 import { NEWS_CACHE_KEY } from '../../src/src/news'
@@ -33,6 +36,7 @@ const PARTIAL_URL =
 const ITEM_URL = 'https://www.reddit.com/r/pics/comments/abc/t/'
 const TOKEN = 'ab'.repeat(16)
 const OTHER_TOKEN = 'cd'.repeat(16)
+const CAPTCHA = '<html><head><title>Reddit - Prove your humanity</title></head><body></body></html>'
 
 describe('a Set-Cookie header, kept the way a browser keeps it', () => {
     it('a domain cookie with its flags, and a host-only one on the default path', () => {
@@ -98,6 +102,20 @@ describe('a Set-Cookie header, kept the way a browser keeps it', () => {
         ])
     })
 
+    it('keeps none that a request to any www.reddit.com page wouldn’t carry, so none can push one out that it would', () => {
+        const start = withSetCookies([], ['token_v2=T1; Domain=.reddit.com; Path=/'], PAGE_URL, 1000)
+        // No Path on an item page's answer: that page's directory, not /
+        const pathless = Array.from({ length: 60 }, (_, i) => `x${i}=${i}`)
+        expect(
+            withSetCookies(
+                start,
+                [...pathless, 'p=1; Path=/svc', 'q=1; Domain=.reddit.com; Path=/svc'],
+                ITEM_URL,
+                1000,
+            ).map(c => c.name),
+        ).toEqual(['token_v2'])
+    })
+
     it('ignores what a browser ignores: no name, another site, a whole top-level domain, a sibling host', () => {
         for (const line of ['=x', 'novalue', 'a=1; Domain=evil.com', 'a=1; Domain=com', 'a=1; Domain=old.reddit.com']) {
             expect(parseSetCookie(line, PAGE_URL, 1000), line).toBeNull()
@@ -120,6 +138,7 @@ describe('a Set-Cookie header, kept the way a browser keeps it', () => {
 describe('the logged-out reads’ cookies', () => {
     let background
     const stored = () => __getLocalStorage()[PUBLIC_COOKIES_KEY]
+    const log = async () => (await getDiagEntries()).map(e => e.m).join('\n')
     const kept = (name, value) => ({
         name,
         value,
@@ -130,6 +149,12 @@ describe('the logged-out reads’ cookies', () => {
         hostOnly: false,
         expirationDate: Date.now() / 1000 + 86400,
     })
+    // A jar from an earlier worker, whose identity began `age` ago
+    const keepJar = (cookies, age = 0, token = TOKEN) => {
+        __resetStorage({}, { [PUBLIC_COOKIES_KEY]: { token, cookies, since: Date.now() - age } })
+        _resetPublicCookies(true)
+    }
+    const OLD_ENOUGH = START_OVER_MIN_MS + 60 * 1000
 
     beforeAll(async () => {
         background = await loadBackground()
@@ -146,7 +171,8 @@ describe('the logged-out reads’ cookies', () => {
 
     afterEach(() => {
         _publicCookieTiming.settleMs = 0
-        _publicCookieTiming.saveDelayMs = 2000
+        _publicCookieTiming.saveDelayMs = 5000
+        _publicCookieTiming.saveEveryMs = 30000
         chrome.extension.inIncognitoContext = false
     })
 
@@ -170,6 +196,7 @@ describe('the logged-out reads’ cookies', () => {
                 () =>
                     background.headersReceived({
                         url,
+                        method: 'GET',
                         responseHeaders: setCookies.map(value => ({ name: 'set-cookie', value })),
                     }),
                 20,
@@ -212,32 +239,70 @@ describe('the logged-out reads’ cookies', () => {
             ]),
         )
         // The log names them, and no value goes in
-        const log = (await getDiagEntries()).map(e => e.m).join('\n')
-        expect(log).toMatch(/send back the cookies reddit gives them \(token_v2, loid\)/)
-        expect(log).not.toMatch(/T1|L1|S2|S3/)
+        const text = await log()
+        expect(text).toMatch(/send back the cookies reddit gives them \(token_v2, loid\)/)
+        expect(text).not.toMatch(/T1|L1|S2|S3/)
     })
 
-    it('a profile page refused on every route starts the jar over; an item page’s refusal leaves it', async () => {
-        __resetStorage({}, { [PUBLIC_COOKIES_KEY]: { token: TOKEN, cookies: [kept('token_v2', 'T1')] } })
-        _resetPublicCookies(true)
+    it('a profile page refused on every route starts the jar over at the next lookup, with a new marker; an item page’s refusal doesn’t', async () => {
+        keepJar([kept('token_v2', 'T1')], OLD_ENOUGH)
         const sent = reddit(() => ({ status: 403, body: 'network security' }))
-        const fetcher = await getWwwHtmlFetcher()
-        await expect(fetcher.fetchHtml(ITEM_URL)).rejects.toThrow(/403/)
-        expect(stored().cookies.map(c => c.name)).toEqual(['token_v2'])
-        await expect(fetcher.fetchHtml(PARTIAL_URL)).rejects.toThrow(/403/)
-        expect(stored()).toEqual({ token: TOKEN, cookies: [] })
+        const lookup = await getWwwHtmlFetcher()
+        await expect(lookup.fetchHtml(ITEM_URL)).rejects.toThrow(/403/)
+        // The rest of this lookup keeps the cookies its other pages were read with
+        await expect(lookup.fetchHtml(PARTIAL_URL)).rejects.toThrow(/403/)
+        expect(stored()).toMatchObject({ token: TOKEN, cookies: [{ name: 'token_v2' }] })
         expect(sent.length).toBeGreaterThan(1)
         expect(sent.every(s => s.cookie === 'token_v2=T1')).toBe(true)
-        expect((await getDiagEntries()).map(e => e.m).join('\n')).toMatch(
-            /logged-out cookies dropped, to start over: every route tried got a 403 for profile-partial pages/,
+
+        await getWwwHtmlFetcher()
+        const fresh = stored()
+        expect(fresh.token).toMatch(/^[0-9a-f]{32}$/)
+        expect(fresh.token).not.toBe(TOKEN)
+        expect(fresh.cookies).toEqual([])
+        expect(fresh.since).toBeGreaterThan(Date.now() - 60 * 1000)
+        expect(await log()).toMatch(
+            /start over with new cookies and a new marker: profile-partial pages refused \(background:reload 403/,
         )
+
+        // A new identity isn't started over again this soon
+        requestPublicCookiesStartOver('a test')
+        await getWwwHtmlFetcher()
+        expect(stored().token).toBe(fresh.token)
+    })
+
+    it('the captcha on every route counts too, but not an identity younger than START_OVER_MIN_MS', async () => {
+        keepJar([kept('token_v2', 'T1')], START_OVER_MIN_MS - 60 * 1000)
+        reddit(() => ({ body: CAPTCHA }))
+        await expect((await getWwwHtmlFetcher()).fetchHtml(PAGE_URL)).rejects.toThrow(/captcha/)
+        await getWwwHtmlFetcher()
+        expect(stored().token).toBe(TOKEN)
+
+        keepJar([kept('token_v2', 'T1')], OLD_ENOUGH)
+        await expect((await getWwwHtmlFetcher()).fetchHtml(PAGE_URL)).rejects.toThrow(/captcha/)
+        await getWwwHtmlFetcher()
+        expect(stored().token).not.toBe(TOKEN)
+    })
+
+    it('a network error among the refusals says nothing about the cookies, so they stay', async () => {
+        _publicCookieTiming.settleMs = 0
+        keepJar([kept('token_v2', 'T1')], OLD_ENOUGH)
+        let n = 0
+        vi.stubGlobal('fetch', async () => {
+            if (++n === 1) throw new TypeError('Failed to fetch')
+            return res(403, 'network security', 'text/html; charset=utf-8')
+        })
+        await expect((await getWwwHtmlFetcher()).fetchHtml(PARTIAL_URL)).rejects.toThrow(/403/)
+        expect(n).toBeGreaterThan(1)
+        await getWwwHtmlFetcher()
+        expect(stored().token).toBe(TOKEN)
     })
 
     it('turned off by the news feed: requests go unmarked, and the kept cookies go', async () => {
         __resetStorage(
             {},
             {
-                [PUBLIC_COOKIES_KEY]: { token: TOKEN, cookies: [kept('token_v2', 'T1')] },
+                [PUBLIC_COOKIES_KEY]: { token: TOKEN, cookies: [kept('token_v2', 'T1')], since: 1 },
                 [NEWS_CACHE_KEY]: { feed: { messages: [], options: { mechanisms: { publicViewCookies: 'off' } } } },
             },
         )
@@ -249,9 +314,63 @@ describe('the logged-out reads’ cookies', () => {
         expect(stored()).toBeUndefined()
     })
 
-    it('Firefox: the header listener puts them only on GETs marked with the jar’s token, in place of any cookie', async () => {
-        __resetStorage({}, { [PUBLIC_COOKIES_KEY]: { token: TOKEN, cookies: [kept('token_v2', 'T1')] } })
+    it('a stored jar with entries it can’t use keeps the good ones, and the lookup goes on', async () => {
+        __resetStorage(
+            {},
+            {
+                [PUBLIC_COOKIES_KEY]: {
+                    token: TOKEN,
+                    cookies: [null, { name: 'x' }, kept('token_v2', 'T1'), { ...kept('p', '1'), path: '/svc' }],
+                    since: 'not a time',
+                },
+            },
+        )
         _resetPublicCookies(true)
+        const sent = reddit(() => ({}))
+        await (await getWwwHtmlFetcher()).fetchHtml(PAGE_URL)
+        expect(sent.map(s => s.cookie)).toEqual(['token_v2=T1'])
+    })
+
+    it('takes in answers only to GETs marked with the jar’s token', async () => {
+        keepJar([])
+        const setsLogin = [{ name: 'set-cookie', value: 'token_v2=USER; Domain=.reddit.com; Path=/' }]
+        background.headersReceived({
+            url: `${PAGE_URL}&rv_public=${TOKEN}`,
+            method: 'POST',
+            responseHeaders: setsLogin,
+        })
+        background.headersReceived({
+            url: `${PAGE_URL}&rv_public=${OTHER_TOKEN}`,
+            method: 'GET',
+            responseHeaders: setsLogin,
+        })
+        await new Promise(r => setTimeout(r, 20))
+        expect(await publicCookieHeaderFor(`${PAGE_URL}&rv_public=${TOKEN}`)).toBe('')
+        background.headersReceived({ url: `${PAGE_URL}&rv_public=${TOKEN}`, method: 'GET', responseHeaders: setsLogin })
+        await vi.waitFor(async () =>
+            expect(await publicCookieHeaderFor(`${PAGE_URL}&rv_public=${TOKEN}`)).toBe('token_v2=USER'),
+        )
+    })
+
+    it('saves once answers pause, not at every answer', async () => {
+        keepJar([])
+        _publicCookieTiming.saveDelayMs = 40
+        const set = vi.spyOn(browserMock.storage.local, 'set')
+        for (let i = 0; i < 5; i++) {
+            background.headersReceived({
+                url: `${PAGE_URL}&rv_public=${TOKEN}`,
+                method: 'GET',
+                responseHeaders: [{ name: 'set-cookie', value: `session_tracker=S${i}; Domain=.reddit.com; Path=/` }],
+            })
+            await new Promise(r => setTimeout(r, 10))
+        }
+        await vi.waitFor(() => expect(stored().cookies.map(c => c.value)).toEqual(['S4']))
+        await new Promise(r => setTimeout(r, 60))
+        expect(set.mock.calls.filter(([items]) => PUBLIC_COOKIES_KEY in items)).toHaveLength(1)
+    })
+
+    it('Firefox: a GET marked with the jar’s token carries its cookies or none; other requests keep theirs', async () => {
+        keepJar([kept('token_v2', 'T1')])
         const sending = async (url, method = 'GET') =>
             (
                 await background.beforeSendHeaders({
@@ -262,6 +381,7 @@ describe('the logged-out reads’ cookies', () => {
                 })
             )?.requestHeaders
         expect(await sending(`${PAGE_URL}&rv_public=${TOKEN}`)).toEqual([{ name: 'Cookie', value: 'token_v2=T1' }])
+        // A URL with another token may be a page's own request
         for (const [url, method] of [
             [`${PAGE_URL}&rv_public=${OTHER_TOKEN}`, 'GET'],
             [`${PAGE_URL}&rv_public=${TOKEN}`, 'POST'],
@@ -270,37 +390,59 @@ describe('the logged-out reads’ cookies', () => {
                 { name: 'Cookie', value: 'reddit_session=USER' },
             ])
         }
+        keepJar([])
+        expect(await sending(`${PAGE_URL}&rv_public=${TOKEN}`)).toEqual([])
     })
 
-    it('Chrome and Edge: the rule sets them on marked GETs from any tab or none, and is made again as they change', async () => {
+    it('Chrome and Edge: the rule takes cookies off marked GETs from any tab or none until there are some, then sets them', async () => {
         const updateSessionRules = vi.fn(async () => {})
         chrome.declarativeNetRequest = { updateSessionRules }
         globalThis.__BUILT_FOR__ = 'chrome'
         try {
             _resetPublicCookies(true)
             const url = (await publicViewMarking())(PAGE_URL)
+            const empty = updateSessionRules.mock.calls.at(-1)[0]
+            expect(empty.removeRuleIds).toEqual([PUBLIC_COOKIES_RULE_ID])
+            expect(empty.addRules[0].action.requestHeaders).toEqual([{ header: 'cookie', operation: 'remove' }])
+
             background.headersReceived({
                 url,
+                method: 'GET',
                 responseHeaders: [{ name: 'set-cookie', value: 'token_v2=T1; Domain=.reddit.com; Path=/' }],
             })
-            await vi.waitFor(() => expect(updateSessionRules.mock.calls.at(-1)?.[0].addRules).toHaveLength(1))
+            await vi.waitFor(() =>
+                expect(updateSessionRules.mock.calls.at(-1)[0].addRules[0].action.requestHeaders).toEqual([
+                    { header: 'cookie', operation: 'set', value: 'token_v2=T1' },
+                ]),
+            )
             const { removeRuleIds, addRules } = updateSessionRules.mock.calls.at(-1)[0]
             expect(removeRuleIds).toEqual([PUBLIC_COOKIES_RULE_ID])
-            expect(addRules[0].action.requestHeaders).toEqual([
-                { header: 'cookie', operation: 'set', value: 'token_v2=T1' },
-            ])
             expect(addRules[0].condition).not.toHaveProperty('tabIds')
             expect(addRules[0].condition.requestMethods).toEqual(['get'])
             const filter = new RegExp(addRules[0].condition.regexFilter)
             expect(filter.test(url)).toBe(true)
             expect(filter.test(PAGE_URL)).toBe(false)
             expect(filter.test(url.replace(/rv_public=[0-9a-f]+/, `rv_public=${OTHER_TOKEN}`))).toBe(false)
-            // Emptied, the jar takes its rule with it
-            await emptyPublicCookies('a test')
-            expect(updateSessionRules.mock.calls.at(-1)[0]).toEqual({
-                removeRuleIds: [PUBLIC_COOKIES_RULE_ID],
-                addRules: [],
+
+            // A rule that fails to go in doesn't stop the next one
+            updateSessionRules.mockImplementationOnce(async () => {
+                throw new Error('a test')
             })
+            background.headersReceived({
+                url,
+                method: 'GET',
+                responseHeaders: [{ name: 'set-cookie', value: 'token_v2=T2; Domain=.reddit.com; Path=/' }],
+            })
+            background.headersReceived({
+                url,
+                method: 'GET',
+                responseHeaders: [{ name: 'set-cookie', value: 'token_v2=T3; Domain=.reddit.com; Path=/' }],
+            })
+            await vi.waitFor(() =>
+                expect(updateSessionRules.mock.calls.at(-1)[0].addRules[0].action.requestHeaders[0].value).toBe(
+                    'token_v2=T3',
+                ),
+            )
         } finally {
             globalThis.__BUILT_FOR__ = 'firefox'
             delete chrome.declarativeNetRequest
@@ -308,7 +450,7 @@ describe('the logged-out reads’ cookies', () => {
     })
 
     it('in a page (the popup), marks with the background’s token, waits for nothing and changes nothing', async () => {
-        __resetStorage({}, { [PUBLIC_COOKIES_KEY]: { token: TOKEN, cookies: [kept('token_v2', 'T1')] } })
+        keepJar([kept('token_v2', 'T1')], OLD_ENOUGH)
         _resetPublicCookies(false)
         const mark = await publicViewMarking()
         expect(mark('https://www.reddit.com/x?a=1')).toBe(`https://www.reddit.com/x?a=1&rv_public=${TOKEN}`)
@@ -316,8 +458,9 @@ describe('the logged-out reads’ cookies', () => {
         const settled = vi.fn()
         publicCookiesSettled(mark(PAGE_URL), Date.now()).then(settled)
         await vi.waitFor(() => expect(settled).toHaveBeenCalled(), { timeout: 100 })
-        await emptyPublicCookies('a test')
-        expect(stored().cookies).toHaveLength(1)
+        requestPublicCookiesStartOver('a test')
+        await publicViewMarking()
+        expect(stored()).toMatchObject({ token: TOKEN, cookies: [{ name: 'token_v2' }] })
     })
 
     it('the incognito copy marks nothing, and a page marks nothing before the background has made a jar', async () => {

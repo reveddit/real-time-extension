@@ -16,16 +16,20 @@
 // Set-Cookie headers no page and no fetch() does. The cookies go back on
 // those requests only, through a header rule, as the second account's do
 // (viewer.ts): declarativeNetRequest on Chrome and Edge, webRequest on
-// Firefox (header-rules.ts). A request is one of them when its URL carries
-// the jar's secret marker (rv_public=<token>), whichever route sent it: the
-// background, or the content script or injected fetch in a www.reddit.com
-// tab. The requests omit credentials, so reddit's answers never reach the
-// browser's own cookies, and nothing here reads them.
+// Firefox (header-rules.ts). A request is one of them when it is a GET whose
+// URL carries the jar's secret marker (rv_public=<token>), whichever route
+// sent it: the background, or the content script or injected fetch in a
+// www.reddit.com tab. It carries the jar's cookies or none: its own, if any
+// reach it, are taken off. The requests omit credentials, so reddit's answers
+// never reach the browser's own cookies, and nothing here reads them.
 //
 // Nothing here names a cookie: one reddit adds, renames or gives another
-// lifetime is kept, expired and sent the way its answer says. A profile page
-// refused with the jar on every route empties it, and the next answers fill
-// it again. The news feed's publicViewCookies switch turns it all off.
+// lifetime is kept, expired and sent the way its answer says, if a request to
+// any www.reddit.com page would carry it (wwwCookieHeader). When reddit
+// refuses the monitored profile's pages on every route that tries them, the
+// next lookup starts the jar over, with a new marker, at most once per
+// identity's START_OVER_MIN_MS. The news feed's publicViewCookies switch turns
+// it all off.
 //
 // The background holds the jar and is its only writer. The popup's lookups
 // read the token from storage to mark their requests, and the background's
@@ -39,35 +43,67 @@ import { readLocal } from './request-gates'
 import {
     StoredCookie,
     isExpired,
+    sendsToWww,
     wwwCookieHeader,
     markedUrl,
     markerPattern,
     isMarkedUrl,
+    isMarkerToken,
     newMarkerToken,
     inIncognitoContext,
+    installMarkerCookieRule,
 } from './viewer'
 
 export const PUBLIC_COOKIES_KEY = 'public_view_cookies'
 export const PUBLIC_COOKIES_RULE_ID = 9006
 const MARKER_NAME = 'rv_public'
-const MARKER_REGEX = new RegExp(`[?&]${MARKER_NAME}=[0-9a-f]{32}(&|$)`)
+// The webRequest filter for marked requests (match patterns test the query
+// string too), shared with Firefox's header listener
+export const PUBLIC_VIEW_URL_FILTER = `https://www.reddit.com/*${MARKER_NAME}=*`
+const ANY_MARKED_URL = new RegExp(markerPattern(MARKER_NAME, '[0-9a-f]{32}'))
 // Far more than reddit sets, so a flood of new names can't grow the jar
 const MAX_COOKIES = 50
+// How long an identity lasts before a refusal may start it over: the hours a
+// 403 rests a route (www-fetcher.ts WWW_HARD_REFUSAL_MS), so starting over
+// can't run faster than reddit's verdicts change
+export const START_OVER_MIN_MS = 6 * 3600 * 1000
 
 // settleMs: how long a fetch waits for its answer's cookies to reach the jar
-// and the rule, so the next request carries them. saveDelayMs: how long a
-// save waits for more answers, since reddit replaces a cookie in nearly every
-// one; the rule and Firefox's listener use the jar in memory at once.
-// Mutable for tests, like _wwwRouteTiming.
-export const _publicCookieTiming = { settleMs: 1500, saveDelayMs: 2000 }
+// and the rule, so the next request carries them. A save waits for saveDelayMs
+// without a change, since reddit replaces a cookie in nearly every answer,
+// but no longer than saveEveryMs after the first unsaved one; the rule and
+// Firefox's listener use the jar in memory at once. Mutable for tests, like
+// _wwwRouteTiming.
+export const _publicCookieTiming = { settleMs: 1500, saveDelayMs: 5000, saveEveryMs: 30000 }
 
-export interface PublicJar {
+// since: when this identity began, the time its marker was made
+interface PublicJar {
     token: string
     cookies: StoredCookie[]
+    since: number
 }
 
-const isJar = (raw: any): raw is PublicJar =>
-    !!raw && typeof raw.token === 'string' && /^[0-9a-f]{32}$/.test(raw.token) && Array.isArray(raw.cookies)
+const isStoredCookie = (c: any): c is StoredCookie =>
+    !!c &&
+    typeof c.name === 'string' &&
+    typeof c.value === 'string' &&
+    typeof c.domain === 'string' &&
+    typeof c.path === 'string' &&
+    (c.expirationDate === undefined || typeof c.expirationDate === 'number')
+
+// A stored jar, kept to well-formed cookies a request would carry, or null. A
+// start time ahead of the clock (one set back since) reads as long ago.
+const readJar = (raw: any): PublicJar | null => {
+    if (!raw || !isMarkerToken(raw.token) || !Array.isArray(raw.cookies)) {
+        return null
+    }
+    const since = Number(raw.since)
+    return {
+        token: raw.token,
+        cookies: raw.cookies.filter((c: any) => isStoredCookie(c) && sendsToWww(c)).slice(-MAX_COOKIES),
+        since: since > 0 && since <= Date.now() ? since : 0,
+    }
+}
 
 // RFC 6265's default path: the request's path up to its last slash
 const defaultPath = (pathname: string): string => {
@@ -139,27 +175,29 @@ export const parseSetCookie = (line: string, url: string, nowSec = Date.now() / 
     return cookie
 }
 
-// The jar after an answer's Set-Cookie headers, as a browser keeps it: a
-// cookie replaces the one with its name, domain and path, an expired one only
-// removes it, and cookies past their expiry drop out
+// The jar's cookies after an answer's Set-Cookie headers, as a browser keeps
+// them: a cookie replaces the one with its name, domain and path, an expired
+// one only removes it, and cookies past their expiry drop out. One that no
+// request to a www.reddit.com page would carry isn't kept, so it can't take
+// the place of one that is.
 export const withSetCookies = (
     cookies: StoredCookie[],
     lines: string[],
     url: string,
     nowSec = Date.now() / 1000,
 ): StoredCookie[] => {
-    let jar = cookies.filter(c => !isExpired(c, nowSec))
+    let kept = cookies.filter(c => !isExpired(c, nowSec))
     for (const line of lines) {
         const cookie = parseSetCookie(line, url, nowSec)
         if (!cookie) {
             continue
         }
-        jar = jar.filter(c => c.name !== cookie.name || c.domain !== cookie.domain || c.path !== cookie.path)
-        if (!isExpired(cookie, nowSec)) {
-            jar.push(cookie)
+        kept = kept.filter(c => c.name !== cookie.name || c.domain !== cookie.domain || c.path !== cookie.path)
+        if (!isExpired(cookie, nowSec) && sendsToWww(cookie)) {
+            kept.push(cookie)
         }
     }
-    return jar.slice(-MAX_COOKIES)
+    return kept.slice(-MAX_COOKIES)
 }
 
 // An answer's Set-Cookie lines as webRequest gives them: a header each on
@@ -171,7 +209,7 @@ export const setCookieLines = (headers: { name: string; value?: string }[] | und
         .filter(line => line.trim())
 
 // A URL some public-view fetch marked, whatever its token
-export const isPublicViewUrl = (url: string): boolean => MARKER_REGEX.test(url)
+export const isPublicViewUrl = (url: string): boolean => ANY_MARKED_URL.test(url)
 
 // --- The background's jar ---
 
@@ -181,15 +219,15 @@ let jar: PublicJar | null = null
 let loading: Promise<void> | null = null
 const load = () =>
     (loading ||= readLocal<any>(PUBLIC_COOKIES_KEY, null).then(raw => {
-        if (isJar(raw)) {
-            jar = { token: raw.token, cookies: raw.cookies }
-        }
+        jar = readJar(raw)
     }))
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined
+let unsavedSince = 0
 const saveNow = async () => {
     clearTimeout(saveTimer)
     saveTimer = undefined
+    unsavedSince = 0
     try {
         if (jar) {
             await browser.storage.local.set({ [PUBLIC_COOKIES_KEY]: jar })
@@ -201,51 +239,39 @@ const saveNow = async () => {
     }
 }
 const saveSoon = () => {
-    saveTimer ||= setTimeout(saveNow, _publicCookieTiming.saveDelayMs)
+    clearTimeout(saveTimer)
+    unsavedSince ||= Date.now()
+    const overdue = Date.now() - unsavedSince >= _publicCookieTiming.saveEveryMs
+    saveTimer = setTimeout(saveNow, overdue ? 0 : _publicCookieTiming.saveDelayMs)
 }
 
-// Chrome and Edge: the rule that puts the jar's cookies on GETs carrying its
-// marker. Unlike the second account's, it has no tabIds condition, since the
-// tab routes fetch from inside a www.reddit.com tab: the secret marker keeps
-// it to the extension's own requests. Made again from the jar whenever the
-// jar changes, one at a time. Firefox does this in header-rules.ts.
-const installRule = async () => {
-    if (typeof __BUILT_FOR__ !== 'undefined' && __BUILT_FOR__ !== 'chrome') {
-        return
-    }
-    const dnr = (globalThis as any).chrome?.declarativeNetRequest
-    if (!dnr?.updateSessionRules) {
-        return
-    }
-    const header = jar ? wwwCookieHeader(jar.cookies) : ''
-    try {
-        await dnr.updateSessionRules({
-            removeRuleIds: [PUBLIC_COOKIES_RULE_ID],
-            addRules:
-                jar && header
-                    ? [
-                          {
-                              id: PUBLIC_COOKIES_RULE_ID,
-                              priority: 3,
-                              action: {
-                                  type: 'modifyHeaders',
-                                  requestHeaders: [{ header: 'cookie', operation: 'set', value: header }],
-                              },
-                              condition: {
-                                  regexFilter: markerPattern(MARKER_NAME, jar.token),
-                                  resourceTypes: ['xmlhttprequest', 'other'],
-                                  requestMethods: ['get'],
-                              },
-                          },
-                      ]
-                    : [],
-        })
-    } catch (e: any) {
-        console.log('[reveddit] logged-out cookie rule not installed:', String(e?.message || e))
-    }
-}
+// Chrome and Edge: unlike the second account's, the rule has no tabIds
+// condition, since the tab routes fetch from inside a www.reddit.com tab: the
+// secret marker keeps it to the extension's own requests. One at a time, and
+// a failed one never stops the next.
+const installRule = () =>
+    installMarkerCookieRule({
+        id: PUBLIC_COOKIES_RULE_ID,
+        marker: MARKER_NAME,
+        holder: jar,
+        removeWhenEmpty: true,
+        onError: message => console.log('[reveddit] logged-out cookie rule not installed:', message),
+    })
 let ruling: Promise<void> = Promise.resolve()
-const updateRule = (): Promise<void> => (ruling = ruling.then(installRule))
+const updateRule = (): Promise<void> => (ruling = ruling.then(installRule, installRule))
+
+// Every change of the jar goes through here, so memory, storage (at once, or
+// at the next quiet moment) and Chrome's rule stay in step
+const setJar = async (next: PublicJar | null, saveAtOnce: boolean) => {
+    jar = next
+    if (saveAtOnce) {
+        await saveNow()
+    } else {
+        saveSoon()
+    }
+    await updateRule()
+}
+const newJar = (): PublicJar => ({ token: newMarkerToken(), cookies: [], since: Date.now() })
 
 // When each marked URL's latest answer was taken in, so a fetch can wait for
 // its own
@@ -272,17 +298,21 @@ const noteAnswered = (url: string) => {
     }
 }
 
-const takeAnswer = async (details: { url?: string; responseHeaders?: { name: string; value?: string }[] }) => {
+// Only the extension's own reads are taken in: GETs carrying the jar's token.
+// A request of another kind with the marker isn't one of them.
+const takeAnswer = async (details: {
+    url?: string
+    method?: string
+    responseHeaders?: { name: string; value?: string }[]
+}) => {
     await load()
     const url = String(details.url || '')
-    if (jar && isMarkedUrl(MARKER_NAME, url, jar.token)) {
+    if (jar && details.method === 'GET' && isMarkedUrl(MARKER_NAME, url, jar.token)) {
         const lines = setCookieLines(details.responseHeaders)
         const before = jar.cookies
         const cookies = lines.length ? withSetCookies(before, lines, url) : before
         if (JSON.stringify(cookies) !== JSON.stringify(before)) {
-            jar = { token: jar.token, cookies }
-            saveSoon()
-            await updateRule()
+            await setJar({ ...jar, cookies }, false)
             if (!before.length && cookies.length) {
                 dlog(
                     'feed',
@@ -308,26 +338,33 @@ export const installPublicCookies = () => {
         (details: any) => {
             takeAnswer(details).catch(() => {})
         },
-        { urls: [`https://www.reddit.com/*${MARKER_NAME}=*`] },
+        { urls: [PUBLIC_VIEW_URL_FILTER] },
         // Chrome shows Set-Cookie only with extraHeaders, which Firefox doesn't take
         onChrome ? ['responseHeaders', 'extraHeaders'] : ['responseHeaders'],
     )
     // Session rules don't outlive the browser
-    load().then(updateRule)
+    load().then(updateRule, () => {})
 }
 
-const dropJar = async () => {
-    jar = null
-    await saveNow()
-    await updateRule()
-    dlog('feed', '[reveddit] logged-out reads keep no cookies: the news feed turned that off')
+// Why the next lookup should start the jar over, if one asked
+let startOverWhy: string | null = null
+
+// Reddit refused the monitored profile's own page on every route that tried
+// it: the next lookup starts the jar over, with a new marker, unless this
+// identity began less than START_OVER_MIN_MS ago. Not at once, so the rest of
+// this lookup keeps the cookies its other pages were read with.
+export const requestPublicCookiesStartOver = (why: string) => {
+    if (holder) {
+        startOverWhy ||= why
+    }
 }
 
 // What a public-view fetch puts on its URLs: the jar's marker, or nothing
 // while the news feed's switch is off, in the incognito copy, or in a page
 // before the background has made a jar. In the background, the first call
-// makes the jar, a switch turned off drops it, and cookies that have expired
-// since go from it and the rule.
+// makes the jar, a switch turned off drops it, a start-over asked for since
+// the last lookup happens here, cookies that have expired go from it and the
+// rule, and the marker is the jar's as each request goes out.
 export const publicViewMarking = async (): Promise<(url: string) => string> => {
     const unmarked = (url: string) => url
     if (inIncognitoContext()) {
@@ -335,26 +372,28 @@ export const publicViewMarking = async (): Promise<(url: string) => string> => {
     }
     const on = (await getRemoteMechanism(MECHANISM_PUBLIC_COOKIES).catch(() => 'auto')) !== 'off'
     if (!holder) {
-        const stored = on ? await readLocal<any>(PUBLIC_COOKIES_KEY, null) : null
-        return isJar(stored) ? url => markedUrl(MARKER_NAME, url, stored.token) : unmarked
+        const stored = on ? readJar(await readLocal<any>(PUBLIC_COOKIES_KEY, null)) : null
+        return stored ? url => markedUrl(MARKER_NAME, url, stored.token) : unmarked
     }
     await load()
+    const why = startOverWhy
+    startOverWhy = null
     if (!on) {
         if (jar) {
-            await dropJar()
+            await setJar(null, true)
+            dlog('feed', '[reveddit] logged-out reads keep no cookies: the news feed turned that off')
         }
         return unmarked
     }
     if (!jar) {
-        jar = { token: newMarkerToken(), cookies: [] }
-        await saveNow()
+        await setJar(newJar(), true)
+    } else if (why && Date.now() - jar.since >= START_OVER_MIN_MS) {
+        await setJar(newJar(), true)
+        dlog('feed', `[reveddit] logged-out reads start over with new cookies and a new marker: ${why}`)
     } else if (jar.cookies.some(c => isExpired(c))) {
-        jar = { token: jar.token, cookies: jar.cookies.filter(c => !isExpired(c)) }
-        saveSoon()
-        await updateRule()
+        await setJar({ ...jar, cookies: jar.cookies.filter(c => !isExpired(c)) }, false)
     }
-    const { token } = jar
-    return url => markedUrl(MARKER_NAME, url, token)
+    return url => (jar ? markedUrl(MARKER_NAME, url, jar.token) : url)
 }
 
 // Resolves once the answer to a marked request sent at `since` is in the jar
@@ -380,35 +419,23 @@ export const publicCookiesSettled = (url: string, since: number): Promise<void> 
 }
 
 // Firefox: the Cookie header a marked request gets, made from the jar as it
-// is when the request goes out. None unless the marker carries its token.
-export const publicCookieHeaderFor = async (url: string): Promise<string> => {
+// is when the request goes out: its cookies, or '' for none. null for a URL
+// that doesn't carry the jar's token, which may be a page's own request and
+// keeps its cookies.
+export const publicCookieHeaderFor = async (url: string): Promise<string | null> => {
     await load()
-    return jar && isMarkedUrl(MARKER_NAME, url, jar.token) ? wwwCookieHeader(jar.cookies) : ''
-}
-
-// A profile page refused with the jar on every route: reddit may be refusing
-// this visitor, so the jar starts over, and the next answers fill it again
-export const emptyPublicCookies = async (why: string): Promise<void> => {
-    if (!holder) {
-        return
-    }
-    await load()
-    if (!jar?.cookies.length) {
-        return
-    }
-    jar = { token: jar.token, cookies: [] }
-    await saveNow()
-    await updateRule()
-    dlog('feed', `[reveddit] logged-out cookies dropped, to start over: ${why}`)
+    return jar && isMarkedUrl(MARKER_NAME, url, jar.token) ? wwwCookieHeader(jar.cookies) : null
 }
 
 // Tests: forget the jar in memory and what the background set up
 export const _resetPublicCookies = (asHolder = false) => {
     clearTimeout(saveTimer)
     saveTimer = undefined
+    unsavedSince = 0
     holder = asHolder
     jar = null
     loading = null
+    startOverWhy = null
     answered.clear()
     waiting.clear()
     ruling = Promise.resolve()

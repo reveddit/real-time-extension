@@ -1,11 +1,21 @@
 import browser from 'webextension-polyfill'
 import { getViewer, viewerCookieHeaderFor, ViewerAccount, VIEWER_KEY } from './viewer'
 import { isLegacyPageUrl, LEGACY_PAGE_MARKER_PATTERN } from './parse_html/common'
-import { isPublicViewUrl, publicCookieHeaderFor } from './public-cookies'
+import { isPublicViewUrl, publicCookieHeaderFor, PUBLIC_VIEW_URL_FILTER } from './public-cookies'
 
-// The two header rules the background's requests need. Both are installed from
-// background.ts, synchronously at its top level and in the order set there:
-// the service worker must register its listeners before its first await.
+// The header rules the extension's own requests need (from the background, and
+// the logged-out reads its tab routes send from inside a reddit tab), and
+// reveddit.com's: Firefox's listener and Chrome and Edge's static rules. Both
+// are installed from background.ts, synchronously at its top level and in the
+// order set there: the service worker must register its listeners before its
+// first await.
+
+// A request's headers with its Cookie header set to value, or taken off when
+// value is ''
+const withCookie = (headers: { name: string; value?: string }[] | undefined, value: string) => [
+    ...(headers || []).filter(h => h.name.toLowerCase() !== 'cookie'),
+    ...(value ? [{ name: 'Cookie', value }] : []),
+]
 
 // BEGIN webRequest API code
 // When manifest v3 goes live, this code should only run for firefox
@@ -35,33 +45,24 @@ export function installWebRequestHeaders() {
                 /[?&]rv_viewer=/.test(details.url) &&
                 String(details.originUrl || '').startsWith(ownPrefix)
             ) {
-                const withViewerCookies = (viewer: ViewerAccount | null) => {
-                    const headers = (details.requestHeaders || []).filter(h => h.name.toLowerCase() !== 'cookie')
-                    const header = viewerCookieHeaderFor(details.url, viewer)
-                    if (header) {
-                        headers.push({ name: 'Cookie', value: header })
-                    }
-                    return { requestHeaders: headers }
-                }
+                const withViewerCookies = (viewer: ViewerAccount | null) => ({
+                    requestHeaders: withCookie(details.requestHeaders, viewerCookieHeaderFor(details.url, viewer)),
+                })
                 return viewerForHeaders === undefined
                     ? loadViewerForHeaders().then(withViewerCookies)
                     : withViewerCookies(viewerForHeaders)
             }
             // The extension's logged-out reads, from the background or from
             // inside a www.reddit.com tab: the cookies reddit gave the reads
-            // before them (public-cookies.ts), if the marker carries the
-            // jar's token. The reads omit the browser's cookies.
+            // before them (public-cookies.ts), or none, if the marker carries
+            // the jar's token. Unlike the second account's, this branch isn't
+            // limited to the background, so a URL with another token may be a
+            // page's own request, and keeps its cookies.
             if (details.method === 'GET' && isPublicViewUrl(details.url)) {
-                return publicCookieHeaderFor(details.url).then(header =>
-                    header
-                        ? {
-                              requestHeaders: [
-                                  ...(details.requestHeaders || []).filter(h => h.name.toLowerCase() !== 'cookie'),
-                                  { name: 'Cookie', value: header },
-                              ],
-                          }
-                        : { requestHeaders: details.requestHeaders },
-                )
+                return publicCookieHeaderFor(details.url).then(header => ({
+                    requestHeaders:
+                        header === null ? details.requestHeaders : withCookie(details.requestHeaders, header),
+                }))
             }
             // Legacy post pages on www: background requests carrying the
             // legacy marker get the redesign_optout cookie (see the DNR rule
@@ -71,9 +72,7 @@ export function installWebRequestHeaders() {
                 details.url.startsWith('https://www.reddit.com/') &&
                 isLegacyPageUrl(details.url)
             ) {
-                const headers = (details.requestHeaders || []).filter(h => h.name.toLowerCase() !== 'cookie')
-                headers.push({ name: 'Cookie', value: 'redesign_optout=true; over18=1' })
-                return { requestHeaders: headers }
+                return { requestHeaders: withCookie(details.requestHeaders, 'redesign_optout=true; over18=1') }
             }
             //chrome uses details.initiator, but since chrome doesn't support webRequest anymore,
             //only need to check the value supported by firefox
@@ -104,16 +103,17 @@ export function installWebRequestHeaders() {
             return { requestHeaders: details.requestHeaders }
         },
         {
-            // The last pattern is the legacy-page marker (match patterns test
-            // the query string too); keeping this list narrow matters because
-            // the listener is blocking and would otherwise run on every request
+            // The rv_ patterns are the markers of the legacy pages, the second
+            // account and the logged-out reads (match patterns test the query
+            // string too); keeping this list narrow matters because the
+            // listener is blocking and would otherwise run on every request
             // the user's own reddit tabs make.
             urls: [
                 'https://oauth.reddit.com/*.json*',
                 'https://*.reddit.com/api/info*',
                 'https://www.reddit.com/*rv_legacy=1',
                 'https://www.reddit.com/*rv_viewer=*',
-                'https://www.reddit.com/*rv_public=*',
+                PUBLIC_VIEW_URL_FILTER,
             ],
         },
         opt_extraInfoSpec,
