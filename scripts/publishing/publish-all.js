@@ -10,6 +10,8 @@ import {
     assertCleanBuildInputs,
     assertSameCodeForVersion,
     assertNodeVersion,
+    installLockedDependencies,
+    releaseBuildEnv,
     logPublishEvent,
 } from './common.js';
 
@@ -79,7 +81,7 @@ function runCheck(status, key, label, script, skip) {
         return;
     }
     console.log(`\x1b[33mRunning yarn ${script}...\x1b[0m`);
-    const result = spawnSync('yarn', [script], { stdio: 'inherit', cwd: process.cwd() });
+    const result = spawnSync('yarn', [script], { stdio: 'inherit', cwd: process.cwd(), env: releaseBuildEnv() });
     if (result.status !== 0) {
         console.error(`\x1b[31m${label} failed, so nothing was published.\x1b[0m`);
         if (skip) console.error(`To publish without it, run \x1b[1myarn publish:all ${skip.flag}\x1b[0m.`);
@@ -110,6 +112,8 @@ async function main() {
     assertCleanBuildInputs();
     assertSameCodeForVersion();
     assertNodeVersion();
+    // The checks test the dependencies the stores' builds get
+    installLockedDependencies();
     const status = readPublishStatus();
 
     runCheck(status, 'preflight', 'Preflight', 'preflight');

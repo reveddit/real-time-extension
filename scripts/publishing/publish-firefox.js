@@ -14,7 +14,6 @@ import {
     markPublished,
     readPublishStatus,
     writePublishStatus,
-    headCommit,
     extensionChangedSince,
 } from './common.js';
 
@@ -126,9 +125,10 @@ async function main() {
 
     console.log(`\n\x1b[36m🚀 Starting Firefox Publish Flow for version ${manifest.version}...\x1b[0m`);
 
+    // buildFresh records what it built, or stops the run
     buildFresh('build-firefox');
     const status = readPublishStatus();
-    const built = status.built || { commit: headCommit() };
+    const { built } = status;
 
     const sourceZipPath = await createSourceZip(built.commit);
 

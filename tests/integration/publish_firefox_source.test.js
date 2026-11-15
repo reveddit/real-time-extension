@@ -11,7 +11,20 @@ import { fileURLToPath, pathToFileURL } from 'url'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const SLOW = { timeout: 60_000 }
-const GIT_ID = ['-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null']
+const GIT_ID = [
+    '-c',
+    'user.name=test',
+    '-c',
+    'user.email=test@example.com',
+    '-c',
+    'commit.gpgsign=false',
+    '-c',
+    'core.hooksPath=/dev/null',
+]
+// Without the GIT_* variables git hands a hook (GIT_INDEX_FILE, and GIT_DIR in a
+// worktree), which would point the scratch repo's commands at the real one
+// when the pre-commit hook runs these tests
+const GIT_ENV = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')))
 
 // FAKE_INSTALL_FAILS: yarn.lock doesn't match. FAKE_EDIT_DURING_BUILD: a file is
 // edited while the build runs.
@@ -51,7 +64,7 @@ const write = (file, text) => {
     fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true })
     fs.writeFileSync(path.join(repo, file), text)
 }
-const git = (...args) => execFileSync('git', [...GIT_ID, ...args], { cwd: repo, encoding: 'utf8' }).trim()
+const git = (...args) => execFileSync('git', [...GIT_ID, ...args], { cwd: repo, encoding: 'utf8', env: GIT_ENV }).trim()
 
 function run(env = {}) {
     fs.writeFileSync(log, '')
@@ -117,7 +130,7 @@ describe('publish-firefox.js', () => {
         expect(r.calls).toEqual([])
     })
 
-    it("sends the commit that was built, and nothing uncommitted, untracked or secret", SLOW, () => {
+    it('sends the commit that was built, and nothing uncommitted, untracked or secret', SLOW, () => {
         // Docs aren't build inputs, so these don't stop a publish
         write('README.md', 'uncommitted readme\n')
         write('notes.md', 'private notes\n')

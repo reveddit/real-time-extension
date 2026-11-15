@@ -35,6 +35,32 @@ export function getManifest() {
 }
 
 /**
+ * Install the dependencies yarn.lock names, which a reviewer's rebuild
+ * installs: a merge or checkout can change yarn.lock without anyone running
+ * yarn install. Before the preflight, so it tests what the stores get.
+ */
+export function installLockedDependencies() {
+    if (spawnSync('yarn', ['install', '--immutable'], { stdio: 'inherit', cwd: process.cwd() }).status !== 0) {
+        failureReason = 'yarn install --immutable failed';
+        console.error("\x1b[31myarn install --immutable failed, so the build wouldn't use the dependencies yarn.lock names.\x1b[0m");
+        process.exit(1);
+    }
+}
+
+/**
+ * The environment a release's builds and checks run in. STAGING and
+ * SIMULATE_DEPRECATION make test builds (webpack.config.js, common.js), so
+ * one exported in the shell mustn't reach a store, or make the preflight
+ * check a build other than the one that ships.
+ */
+export function releaseBuildEnv() {
+    const env = { ...process.env };
+    delete env.STAGING;
+    delete env.SIMULATE_DEPRECATION;
+    return env;
+}
+
+/**
  * Rebuild the production artifact right before uploading, so a standalone
  * publish (without publish-all) can never ship a stale zip/dist built from an
  * older commit. Dev builds live in dist-dev-*, so they were never a risk here.
@@ -50,21 +76,13 @@ export function buildFresh(buildScript) {
     assertSameCodeForVersion();
     assertNodeVersion();
     const commit = headCommit();
-    // The dependencies yarn.lock names, which a reviewer's rebuild installs: a
-    // merge or checkout can change yarn.lock without anyone running yarn install
-    if (spawnSync('yarn', ['install', '--immutable'], { stdio: 'inherit', cwd: process.cwd() }).status !== 0) {
-        failureReason = 'yarn install --immutable failed';
-        console.error("\x1b[31myarn install --immutable failed, so the build wouldn't use the dependencies yarn.lock names.\x1b[0m");
-        process.exit(1);
-    }
+    // Again here for a standalone run of a publish script; after publish-all's
+    // or a publish:<store> script's own install it changes nothing
+    installLockedDependencies();
     console.log(`\x1b[33mBuilding fresh production package (yarn ${buildScript})...\x1b[0m`);
-    // STAGING and SIMULATE_DEPRECATION make a test build (webpack.config.js,
-    // common.js), so one exported in the shell mustn't reach a store
-    const env = { ...process.env };
-    delete env.STAGING;
-    delete env.SIMULATE_DEPRECATION;
-    const result = spawnSync('yarn', [buildScript], { stdio: 'inherit', cwd: process.cwd(), env });
+    const result = spawnSync('yarn', [buildScript], { stdio: 'inherit', cwd: process.cwd(), env: releaseBuildEnv() });
     if (result.status !== 0) {
+        failureReason = `yarn ${buildScript} failed`;
         console.error(`\x1b[31myarn ${buildScript} failed.\x1b[0m`);
         process.exit(1);
     }
@@ -176,8 +194,9 @@ export function extensionChangedSince(commit) {
  * Whether a build input has uncommitted changes or is untracked, so HEAD
  * wouldn't say what a build from this tree ships.
  */
-export function buildInputsDirty() {
-    const status = git('status', '--porcelain', '--', ...BUILD_INPUTS);
+function buildInputsDirty() {
+    // Every untracked file, whatever status.showUntrackedFiles says
+    const status = git('status', '--porcelain', '--untracked-files=all', '--', ...BUILD_INPUTS);
     return !status.ok || status.out !== '';
 }
 
