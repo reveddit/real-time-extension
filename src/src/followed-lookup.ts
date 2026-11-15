@@ -18,8 +18,8 @@ import { oneAtATime } from './one-at-a-time'
 
 // "Other" (non-profile) items have no public profile to diff against, so removal
 // is read from api/info instead. This is the deprecation-surviving primary for
-// that case: an AUTHENTICATED api/info request (OAuth token if one exists, else
-// the user's real session cookies) — both survive the unauth deprecation. It
+// that case: an AUTHENTICATED api/info request (the optional custom client id's
+// OAuth token while reddit takes it, else the user's real session cookies). It
 // reveals removals for content the user did NOT author (Reddit's self-view only
 // hides your OWN removals); self-authored items are handled separately via the
 // logged-out thread view. Ids are batched to Reddit's 100-per-call api/info limit,
@@ -206,7 +206,11 @@ const lookupFollowedItemsByThread = async (ids: string[]): Promise<any[]> => {
     return results
 }
 
-export const lookupOtherItemsByID_authed = async (ids: string[], auth: any, monitor_quarantined: boolean) => {
+export const lookupOtherItemsByID_authed = async (
+    ids: string[],
+    auth: any,
+    monitor_quarantined: boolean,
+): Promise<any[]> => {
     // After a 429 earlier in the cycle (the user's own lookup): no news this time
     if (await isRateLimitedNow()) {
         dlog('cycle', `[reveddit] followed items not read: rate limited`)
@@ -227,7 +231,7 @@ export const lookupOtherItemsByID_authed = async (ids: string[], auth: any, moni
         const search = `?id=${chunk.join(',')}&raw_json=1`
         let batch: any
         if (useOAuth) {
-            batch = await fetch_forReddit('api/info' + search, auth, monitor_quarantined)
+            batch = await fetch_forReddit('api/info' + search, auth, monitor_quarantined).catch(console.log)
         } else {
             const r = await fetchJsonLoggedIn(`${www_reddit}api/info.json${search}`)
             if (r.blocked) {
@@ -240,8 +244,14 @@ export const lookupOtherItemsByID_authed = async (ids: string[], auth: any, moni
             batch = r.json?.data?.children
         }
         if (!Array.isArray(batch)) {
-            // fetch_forReddit swallows its own errors (returns undefined); treat any
-            // non-array as failure so the caller drops to the legacy chain.
+            // fetch_forReddit swallows its request's errors (returns undefined),
+            // and its cookie steps' are caught above. When the client id's read
+            // fails, the login reads them all, as without the option. The
+            // login's read failing is a failure, and the caller drops to the
+            // legacy chain.
+            if (useOAuth) {
+                return lookupOtherItemsByID_authed(ids, NO_AUTH, monitor_quarantined)
+            }
             throw new Error('authenticated api/info returned no children')
         }
         children.push(...batch)

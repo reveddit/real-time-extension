@@ -7,7 +7,13 @@ import { MECHANISM_ME_CHALLENGE } from './news'
 import { solveChallenge } from './parse_html/new'
 import { isStreakLong, recordStreak } from './lookup-status'
 import { rehydrateStoredRedditCookies } from './reddit-cookies'
-import { flagIfRateLimited, isMechanismDisabled } from './request-gates'
+import {
+    flagIfRateLimited,
+    isMechanismDisabled,
+    isCapabilityResting,
+    noteCapabilityRefused,
+    noteCapabilityWorked,
+} from './request-gates'
 import { fetchLoggedIn, withDeadline, UNCACHED_MODES, WWW_FETCH_TIMEOUT_MS } from './logged-in-fetch'
 
 const oauth_reddit = 'https://oauth.reddit.com/'
@@ -54,7 +60,8 @@ const getSettableCookie = (cookie: any): any => (cookie ? settableCookie(toStore
 // A request with a real OAuth token: only the token paths get here. The cookie
 // that opts in to quarantined content is set every time. monitor_quarantined
 // also takes reddit_session out as the request starts and puts it back right
-// after, without waiting for the answer.
+// after, without waiting for the answer. Reddit refusing the read rests the
+// client id (noteIfClientIdRefused), and a read that works ends the rest.
 export const fetch_forReddit = async (pathAndSearch: string, auth: any, monitor_quarantined: boolean) => {
     let cookie_redditSession
     await browser.cookies.set({
@@ -70,8 +77,13 @@ export const fetch_forReddit = async (pathAndSearch: string, auth: any, monitor_
         }
     }
     const result = fetch(oauth_reddit + pathAndSearch, { ...auth, cache: 'reload' })
+        .then(response => noteIfClientIdRefused(response, pathAndSearch.split('?')[0]))
         .then(handleFetchErrors)
         .then(getRedditData)
+        .then(async children => {
+            await noteCapabilityWorked('oauth')
+            return children
+        })
         .catch(console.log)
     if (cookie_redditSession) {
         await browser.cookies.set(cookie_redditSession)
@@ -111,6 +123,17 @@ export const lookupItemsByLoggedInUserWithAuth = () =>
         })
     })
 
+// Reddit turning the optional custom client id away: its token request, or a
+// read with its token, answered 401 or 403. The client id then rests
+// (request-gates.ts), and the login does its reads, as without the option. An
+// outage's 5xx is no such answer.
+const noteIfClientIdRefused = async (response: Response, what: string) => {
+    if (response.status === 401 || response.status === 403) {
+        await noteCapabilityRefused('oauth', `${what} ${response.status}`)
+    }
+    return response
+}
+
 const handleFetchErrors = (response: Response) => {
     if (!response.ok) {
         throw Error(response.statusText)
@@ -133,9 +156,10 @@ const getRedditToken = (data: any) => {
 }
 
 export const getAuth = () => {
-    return getOptions((options: Record<string, any>) => {
+    return getOptions(async (options: Record<string, any>) => {
         const use_this_clientID = options.custom_clientid
-        if (!use_this_clientID || use_this_clientID === 'testing') {
+        // While the client id rests, no token is asked for
+        if (!use_this_clientID || use_this_clientID === 'testing' || (await isCapabilityResting('oauth'))) {
             return NO_AUTH
         }
         const tokenInit = {
@@ -148,6 +172,7 @@ export const getAuth = () => {
         }
 
         return fetch('https://www.reddit.com/api/v1/access_token', tokenInit)
+            .then(response => noteIfClientIdRefused(response, 'token'))
             .then(handleFetchErrors)
             .then(getRedditToken)
             .then(token => ({
@@ -156,7 +181,10 @@ export const getAuth = () => {
                     'Accept-Language': 'en',
                 },
             }))
-            .catch(console.log)
+            .catch(error => {
+                console.log(error)
+                return NO_AUTH
+            })
     })
 }
 
