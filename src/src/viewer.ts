@@ -109,9 +109,10 @@ export const settableCookie = (c: StoredCookie) => ({
 export const isExpired = (c: StoredCookie, nowSec = Date.now() / 1000): boolean =>
     !!c.expirationDate && c.expirationDate <= nowSec
 
-// The Cookie header a www.reddit.com request would carry from the second
-// account's cookies: those for that host and path /, unexpired
-export const viewerCookieHeader = (cookies: StoredCookie[], nowSec = Date.now() / 1000): string =>
+// The Cookie header a www.reddit.com request would carry from saved cookies
+// (the second account's, or the logged-out reads' in public-cookies.ts):
+// those for that host and path /, unexpired
+export const wwwCookieHeader = (cookies: StoredCookie[], nowSec = Date.now() / 1000): string =>
     cookies
         .filter(c => {
             const host = c.domain.replace(/^\./, '').toLowerCase()
@@ -128,17 +129,23 @@ export const viewerCookieHeaderFor = (
     url: string,
     viewer: Pick<ViewerAccount, 'token' | 'cookies'> | null,
     nowSec = Date.now() / 1000,
-): string => (viewer && isViewerRequestUrl(url, viewer.token) ? viewerCookieHeader(viewer.cookies, nowSec) : '')
+): string => (viewer && isViewerRequestUrl(url, viewer.token) ? wwwCookieHeader(viewer.cookies, nowSec) : '')
 
-export const viewerUrl = (url: string, token: string): string =>
-    `${url}${url.includes('?') ? '&' : '?'}${MARKER_NAME}=${token}`
-// The token is hex, so it needs no escaping. RE2 syntax, for Chrome's rule too.
-const viewerUrlPattern = (token: string): string => `^https://www\\.reddit\\.com/[^#]*[?&]${MARKER_NAME}=${token}(&|$)`
-export const isViewerRequestUrl = (url: string, token: string): boolean =>
-    /^[0-9a-f]{32}$/.test(token) && new RegExp(viewerUrlPattern(token)).test(url)
-
-const newToken = (): string =>
+// A marker: a query parameter carrying a secret token, which a header rule
+// (declarativeNetRequest on Chrome and Edge, webRequest on Firefox) looks for
+// to put saved cookies on the extension's own requests and on no others
+export const markedUrl = (name: string, url: string, token: string): string =>
+    `${url}${url.includes('?') ? '&' : '?'}${name}=${token}`
+// The token is hex, so it needs no escaping. RE2 syntax, for Chrome's rules too.
+export const markerPattern = (name: string, token: string): string =>
+    `^https://www\\.reddit\\.com/[^#]*[?&]${name}=${token}(&|$)`
+export const isMarkedUrl = (name: string, url: string, token: string): boolean =>
+    /^[0-9a-f]{32}$/.test(token) && new RegExp(markerPattern(name, token)).test(url)
+export const newMarkerToken = (): string =>
     Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('')
+
+export const viewerUrl = (url: string, token: string): string => markedUrl(MARKER_NAME, url, token)
+export const isViewerRequestUrl = (url: string, token: string): boolean => isMarkedUrl(MARKER_NAME, url, token)
 
 // Whether the second account is also the one signed in to Reddit in the
 // browser. It can't check its own items then: its view of them is the
@@ -367,7 +374,7 @@ export const finishViewerConnect = (
         }
         const account: ViewerAccount = {
             name,
-            token: newToken(),
+            token: newMarkerToken(),
             cookies: (await redditCookies()).map(toStoredCookie),
             connectedAt: Date.now(),
         }
@@ -455,7 +462,7 @@ export const installViewerHeaderRule = async () => {
         return
     }
     const viewer = await getViewer()
-    const header = viewer ? viewerCookieHeader(viewer.cookies) : ''
+    const header = viewer ? wwwCookieHeader(viewer.cookies) : ''
     try {
         await dnr.updateSessionRules({
             removeRuleIds: [VIEWER_RULE_ID],
@@ -470,7 +477,7 @@ export const installViewerHeaderRule = async () => {
                                   requestHeaders: [{ header: 'cookie', operation: 'set', value: header }],
                               },
                               condition: {
-                                  regexFilter: viewerUrlPattern(viewer.token),
+                                  regexFilter: markerPattern(MARKER_NAME, viewer.token),
                                   resourceTypes: ['xmlhttprequest', 'other'],
                                   tabIds: [-1],
                                   initiatorDomains: [chrome.runtime.id],

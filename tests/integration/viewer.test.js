@@ -18,7 +18,7 @@ import {
     disconnectViewer,
     installViewerHeaderRule,
     isViewerConnecting,
-    viewerCookieHeader,
+    wwwCookieHeader,
     viewerCookieHeaderFor,
     settableCookie,
     toStoredCookie,
@@ -133,7 +133,7 @@ describe('the second account cookies', () => {
             cookie('stale', 'x', { expirationDate: 1000 }),
             cookie('www', 'w', { domain: 'www.reddit.com', hostOnly: true }),
         ].map(toStoredCookie)
-        expect(viewerCookieHeader(cookies, 1800000000)).toBe(
+        expect(wwwCookieHeader(cookies, 1800000000)).toBe(
             'reddit_session=B-SESSION; token_v2=B-TOKEN; loid=B-LOID; www=w',
         )
     })
