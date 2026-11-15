@@ -10,7 +10,8 @@
     "storage",
     "contextMenus",
     "scripting",
-    "declarativeNetRequestWithHostAccess"
+    "declarativeNetRequestWithHostAccess",
+    "webRequest"
   ],
   "host_permissions": [
     "https://*.reddit.com/*",

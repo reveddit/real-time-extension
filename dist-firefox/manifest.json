@@ -9,8 +9,8 @@
     "storage",
     "contextMenus",
     "scripting",
-    "activeTab",
     "webRequest",
+    "activeTab",
     "webRequestBlocking",
     "https://*.reddit.com/*",
     "https://*.reveddit.com/*"
