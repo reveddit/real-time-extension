@@ -32,6 +32,7 @@ import {
     PROFILE_PUBLICLY_EMPTY,
 } from './lookup-status'
 import { getWwwHtmlFetcher } from './www-fetcher'
+import { notePublicViewUnreadable } from './public-cookies'
 import { noteRateLimited, isRateLimitedNow, RECENT_RATE_LIMIT_WINDOW_MS, readLocal, isFresh } from './request-gates'
 import {
     verifyFeedPresentPosts,
@@ -100,7 +101,15 @@ export const lookupItemsByID_fromPublicProfile = async (
             }
             dlog('feed', `[reveddit] public profile for ${username} is a 404, but so is the control; not a shadowban`)
         }
-        await recordWwwDetectOutcome(false, { reason, loginWall: !!profile.loginWall, withTab: fetcher.withTab })
+        await recordWwwDetectOutcome(false, {
+            reason,
+            loginWall: !!profile.loginWall,
+            withTab: fetcher.withTab,
+            unreadable: !!profile.unreadable,
+        })
+        if (profile.unreadable) {
+            await notePublicViewUnreadable()
+        }
         // A 429 enters the shared backoff. Refusals don't touch the status:
         // recordWwwDetectOutcome reports a persistent failure itself.
         noteRateLimited(new Error(reason))

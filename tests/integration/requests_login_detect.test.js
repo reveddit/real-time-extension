@@ -24,7 +24,7 @@ import {
     isSettledByLogin,
     LOGGED_IN_VIEW_UNAVAILABLE,
 } from '../../src/src/reddit-auth'
-import { CHECKS_FAILING } from '../../src/src/lookup-status'
+import { CHECKS_FAILING, getItemsCheckStatus } from '../../src/src/lookup-status'
 import { computeAbsentVerifyBudget } from '../../src/src/page-verify'
 import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates'
 import { checkForChanges } from '../../src/src/monitoring'
@@ -656,6 +656,35 @@ describe('a check for a remembered user', () => {
         await check()
         expect(__getLocalStorage().error_status).not.toBe(LOGGED_IN_VIEW_UNAVAILABLE)
     })
+
+    // 2026-11-17: the status line said "last check 7:51 AM" while no lookup
+    // after a listing that came back had read anything since 4:03 (diag-status.ts)
+    it("keeps when a check last read the user's items, and since when none has", async () => {
+        const UNREADABLE = '<html><body><shreddit-post id="t3_x1" author="someone"></shreddit-post></body></html>'
+        let posts = emptyStatePage('posts')
+        fetchMock.mockImplementation(async url => {
+            if (String(url).includes('/user/me.json')) return listingBy('alice')
+            if (String(url).includes('/user/alice/comments/')) return res(200, thingIdEl('t1_a'))
+            return String(url).includes('/user/alice/submitted/') ? res(200, posts) : blockPage()
+        })
+        await check()
+        const { itemsCheckedAt } = await getItemsCheckStatus()
+        expect(itemsCheckedAt).toBeGreaterThan(Date.now() - 60 * 1000)
+
+        // The listing comes back, so it's no failed check, but the lookup reads nothing
+        posts = UNREADABLE
+        await check()
+        expect(__getLocalStorage().check_consecutive_failures).toBeUndefined()
+        const failing = await getItemsCheckStatus()
+        expect(failing.itemsCheckedAt).toBe(itemsCheckedAt)
+        expect(failing.itemsFailingSince).toBeGreaterThanOrEqual(itemsCheckedAt)
+        await check()
+        expect(await getItemsCheckStatus()).toEqual(failing)
+
+        posts = emptyStatePage('posts')
+        await check()
+        expect((await getItemsCheckStatus()).itemsFailingSince).toBe(0)
+    })
 })
 
 describe('recordLoginDetectOutcome', () => {
@@ -684,6 +713,7 @@ describe('recordLoginDetectOutcome', () => {
             'viewer_signed_out',
             'viewer_unavailable',
             'public_view_unavailable',
+            'public_view_unreadable',
             'absent_verify_unavailable',
             undefined,
         ]) {

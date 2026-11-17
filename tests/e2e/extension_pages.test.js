@@ -103,10 +103,24 @@ test.describe('Popup page', () => {
         worker,
         openPage,
     }) => {
-        // A login wall that doesn't redirect to the login page lands here too
+        // Reddit refusing the profile's pages, or not answering
         await setWarning(worker, { error_status: 'public_view_unavailable', last_logged_in_user: 'someone' })
         const page = await openPage('popup.html')
         await expect(page.getByText('If it keeps up, connect a second Reddit account.')).toBeVisible()
+        await expect(page.getByRole('button', { name: 'Open www.reddit.com' })).toBeVisible()
+        await recordOpens(page)
+        await page.getByRole('button', { name: 'Connect a second account' }).click()
+        expect((await opened(page)).hash).toBe('#second-account')
+    })
+
+    test("a page Reddit sent that couldn't be read: a reddit tab first, then a second account", async ({
+        worker,
+        openPage,
+    }) => {
+        // A login wall that doesn't redirect to the login page lands here too
+        await setWarning(worker, { error_status: 'public_view_unreadable', last_logged_in_user: 'someone' })
+        const page = await openPage('popup.html')
+        await expect(page.getByText("Reddit is sending pages this version can't read")).toBeVisible()
         await expect(page.getByRole('button', { name: 'Open www.reddit.com' })).toBeVisible()
         await recordOpens(page)
         await page.getByRole('button', { name: 'Connect a second account' }).click()

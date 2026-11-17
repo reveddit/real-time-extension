@@ -161,8 +161,8 @@ const WARNINGS: Record<string, Warning> = {
     text: "⚠ Reddit isn't answering checks through your second account right now. They keep retrying. If this keeps up, connect the account again, or use “report a problem” below.",
     button: ['Second account settings', openSecondAccount],
   },
-  // Also how a login wall shows up when it doesn't redirect to the
-  // login page (login-wall-config.ts), so the second account is here too
+  // Reddit refused the profile's pages or they didn't come, which a
+  // www.reddit.com tab's reads often get past
   public_view_unavailable: {
     text: tabOpen =>
       "⚠ Removal monitoring is paused — Reddit's public view isn't loading. " +
@@ -175,6 +175,28 @@ const WARNINGS: Record<string, Warning> = {
       text:
         "⚠ Removal monitoring is paused — Reddit's public view isn't loading, even with your www.reddit.com tab open. " +
         'To keep checking your posts and comments, connect a second Reddit account.',
+      button: CONNECT_SECOND,
+    },
+  },
+  // Reddit sent a page in place of the profile that couldn't be read: a
+  // layout this version doesn't know (2026-11-17, picked by the cookies, which
+  // a tab's reads carry too), a challenge only the background gets, or a login
+  // wall that neither redirects nor matches the news feed's markers
+  // (login-wall-config.ts). A tab helps with some of these, so the steps are
+  // public_view_unavailable's, in words that say what reddit sent.
+  public_view_unreadable: {
+    text: tabOpen =>
+      "⚠ Removal monitoring is paused: Reddit is sending pages this version can't read in place of your profile. " +
+      (tabOpen
+        ? 'Keeping your www.reddit.com tab open sometimes gets past this within a few checks.'
+        : 'Opening a www.reddit.com tab sometimes gets past this. If it keeps up, connect a second Reddit account.'),
+    button: OPEN_WWW,
+    fallback: CONNECT_SECOND,
+    lasting: {
+      text:
+        "⚠ Removal monitoring is paused: Reddit is sending pages this version can't read in place of your profile, " +
+        'even through your www.reddit.com tab. To keep checking your posts and comments, connect a second Reddit ' +
+        'account. If it keeps up, use “report a problem” below.',
       button: CONNECT_SECOND,
     },
   },

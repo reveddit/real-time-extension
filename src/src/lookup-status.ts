@@ -6,6 +6,7 @@ import { VIEWER_FAILURES_KEY, ViewerAccount, getViewer, isSignedInViewer } from 
 import { isLoginWalled } from './www-fetcher'
 import { readLocal, isFresh } from './request-gates'
 import { fullnameValue } from './parse_html/new'
+import { endPublicViewUnreadable } from './public-cookies'
 
 export const www_reddit = 'https://www.reddit.com/'
 
@@ -197,6 +198,37 @@ export const recordCheckOutcome = (checked: boolean) =>
         },
     )
 
+// When a check last read the user's items, and since when the checks after it
+// have read none, for the status line (diag-status.ts). Not the streak above:
+// a lookup that fails after the listing came back isn't counted there.
+const ITEMS_CHECK_KEY = 'items_check'
+
+// A check of the user's items ended, having read them or not. Rewritten on
+// each read; on a failure, only at the first of a run, or for another user.
+export const noteItemsCheck = async (user: string, read: boolean) => {
+    try {
+        const name = user.toLowerCase()
+        if (read) {
+            await browser.storage.local.set({ [ITEMS_CHECK_KEY]: { user: name, ok: Date.now() } })
+            return
+        }
+        const stored: any = await readLocal(ITEMS_CHECK_KEY, null)
+        const same = stored?.user === name
+        if (!same || !stored.failing) {
+            await browser.storage.local.set({
+                [ITEMS_CHECK_KEY]: { user: name, ...(same && stored.ok && { ok: stored.ok }), failing: Date.now() },
+            })
+        }
+    } catch {
+        /* ignored */
+    }
+}
+
+export const getItemsCheckStatus = async (): Promise<{ itemsCheckedAt: number; itemsFailingSince: number }> => {
+    const stored: any = await readLocal(ITEMS_CHECK_KEY, null)
+    return { itemsCheckedAt: Number(stored?.ok) || 0, itemsFailingSince: Number(stored?.failing) || 0 }
+}
+
 // Track consecutive failures of the www public-view path. One failure is noise
 // (deploys, blips); persistent failure means the detection path is broken and
 // the user should know — without it they'd assume monitoring still works. The
@@ -205,14 +237,24 @@ export const recordCheckOutcome = (checked: boolean) =>
 // instead, since opening a tab doesn't help with that.
 export const LOGIN_REQUIRED = 'login_required'
 
+// The warning when the failure was a page reddit sent that couldn't be read,
+// not a refusal or no answer: the same advice in other words (2026-11-17)
+export const PUBLIC_VIEW_UNREADABLE = 'public_view_unreadable'
+
 // The failed lookups in a row that had a www.reddit.com tab open. The popup
 // gives a tab a few of them to clear the public view's warning before it puts
 // the second account first. A lookup with no tab starts the count again.
 export const WWW_TAB_FAILURES_KEY = 'www_detect_tab_failures'
 
-export const recordWwwDetectOutcome = async (ok: boolean, { reason = '', loginWall = false, withTab = false } = {}) => {
+export const recordWwwDetectOutcome = async (
+    ok: boolean,
+    { reason = '', loginWall = false, withTab = false, unreadable = false } = {},
+) => {
     // First, since the streak below raises the warning: the popup never shows it with an old count
     await recordStreak(WWW_TAB_FAILURES_KEY, ok || !withTab)
+    if (ok) {
+        await endPublicViewUnreadable()
+    }
     await recordStreak(
         WWW_DETECT_FAILURES_KEY,
         ok,
@@ -222,7 +264,11 @@ export const recordWwwDetectOutcome = async (ok: boolean, { reason = '', loginWa
                 `[reveddit] www public-view lookup failed — consecutive failures: ${n}` +
                     (reason ? ` (${reason})` : ''),
             ),
-        () => setWarningBadge(loginWall ? LOGIN_REQUIRED : 'public_view_unavailable'),
+        // The latest failure picks the words: both offer a tab, then a second account
+        () =>
+            setWarningBadge(
+                loginWall ? LOGIN_REQUIRED : unreadable ? PUBLIC_VIEW_UNREADABLE : 'public_view_unavailable',
+            ),
     )
 }
 

@@ -2,7 +2,8 @@
 // answers the way a browser keeps them, sent back only on GETs carrying the
 // jar's marker, started over (with a new marker) at the next lookup after
 // reddit refuses the profile's pages on every route, at most once in
-// START_OVER_MIN_MS, and dropped when the news feed turns them off.
+// START_OVER_MIN_MS, or at once when the profile's page has come back
+// unreadable for long enough, and dropped when the news feed turns them off.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
@@ -25,8 +26,12 @@ import {
     PUBLIC_COOKIES_KEY,
     PUBLIC_COOKIES_RULE_ID,
     START_OVER_MIN_MS,
+    notePublicViewUnreadable,
+    UNREADABLE_KEY,
+    UNREADABLE_START_OVER_AFTER_MS,
 } from '../../src/src/public-cookies'
 import { getWwwHtmlFetcher, _wwwRouteTiming } from '../../src/src/www-fetcher'
+import { lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
 import { NEWS_CACHE_KEY } from '../../src/src/news'
 
 const PAGE_URL = 'https://www.reddit.com/user/alice/comments/?sort=new'
@@ -284,6 +289,87 @@ describe('the logged-out reads’ cookies', () => {
         expect(stored().token).not.toBe(TOKEN)
     })
 
+    // 2026-11-17: a jar started over after 403s landed in a Posts-tab layout
+    // the parser couldn't read, picked by the cookies, and kept it for hours
+    describe('a profile page that keeps coming back unreadable', () => {
+        const record = () => __getLocalStorage()[UNREADABLE_KEY]
+        const unreadableSince = (ago, more = {}) => {
+            __getLocalStorage()[UNREADABLE_KEY] = { since: Date.now() - ago, ...more }
+        }
+        const HOUR = 3600 * 1000
+
+        it('starts the jar over at once after UNREADABLE_START_OVER_AFTER_MS of it, however old the jar', async () => {
+            keepJar([kept('token_v2', 'T1')], 5 * 24 * HOUR)
+            // A few minutes of it, as an outage's error pages would be, leave a trusted jar alone
+            await notePublicViewUnreadable()
+            expect(record()).toEqual({ since: expect.any(Number) })
+            unreadableSince(UNREADABLE_START_OVER_AFTER_MS - 60 * 1000)
+            await notePublicViewUnreadable()
+            expect(stored().token).toBe(TOKEN)
+
+            keepJar([kept('token_v2', 'T1')])
+            unreadableSince(UNREADABLE_START_OVER_AFTER_MS + 60 * 1000)
+            await notePublicViewUnreadable()
+            expect(stored().token).not.toBe(TOKEN)
+            expect(stored().cookies).toEqual([])
+            expect(record()).toMatchObject({ startOvers: 1, startedOverAt: expect.any(Number) })
+            expect(await log()).toMatch(
+                /start over with new cookies and a new marker: the profile's page has been unreadable since \d{4}-/,
+            )
+        })
+
+        it('waits twice as long before each start-over after it, up to START_OVER_MIN_MS', async () => {
+            keepJar([kept('token_v2', 'T1')])
+            unreadableSince(5 * HOUR, { startOvers: 1, startedOverAt: Date.now() - 50 * 60 * 1000 })
+            await notePublicViewUnreadable()
+            expect(stored().token).toBe(TOKEN)
+            unreadableSince(5 * HOUR, { startOvers: 1, startedOverAt: Date.now() - 70 * 60 * 1000 })
+            await notePublicViewUnreadable()
+            const second = stored().token
+            expect(second).not.toBe(TOKEN)
+            expect(record()).toMatchObject({ startOvers: 2 })
+
+            unreadableSince(3 * 24 * HOUR, { startOvers: 9, startedOverAt: Date.now() - START_OVER_MIN_MS + 60 * 1000 })
+            await notePublicViewUnreadable()
+            expect(stored().token).toBe(second)
+            unreadableSince(3 * 24 * HOUR, { startOvers: 9, startedOverAt: Date.now() - START_OVER_MIN_MS - 60 * 1000 })
+            await notePublicViewUnreadable()
+            expect(stored().token).not.toBe(second)
+        })
+
+        it('a time to come, from a clock set back, starts the count again', async () => {
+            keepJar([kept('token_v2', 'T1')])
+            unreadableSince(-24 * HOUR)
+            await notePublicViewUnreadable()
+            expect(stored().token).toBe(TOKEN)
+            expect(record().since).toBeLessThanOrEqual(Date.now())
+        })
+
+        it('a lookup notes it and starts over in time, and a good lookup ends it', async () => {
+            keepJar([kept('token_v2', 'T1')])
+            let posts = '<html><body><shreddit-post id="t3_x1" author="someone"></shreddit-post></body></html>'
+            reddit(url => ({
+                body: url.includes('/submitted/') ? posts : '<html><body><div thing-id="t1_a"></div></body></html>',
+            }))
+            const lookup = () => lookupItemsByID_fromPublicProfile(['t1_a'], 'alice', {})
+            await expect(lookup()).rejects.toThrow(/posts page unrecognized/)
+            const { since } = record()
+            await expect(lookup()).rejects.toThrow(/posts page unrecognized/)
+            expect(record()).toEqual({ since })
+            expect(stored().token).toBe(TOKEN)
+
+            unreadableSince(UNREADABLE_START_OVER_AFTER_MS)
+            await expect(lookup()).rejects.toThrow(/posts page unrecognized/)
+            // In this lookup, not the next, which a worker stopped in between would lose
+            expect(stored().token).not.toBe(TOKEN)
+
+            // The new cookies get a layout that reads
+            posts = '<html><body><div thing-id="t3_x1"></div></body></html>'
+            await lookup()
+            expect(record()).toBeUndefined()
+        })
+    })
+
     it('a network error among the refusals says nothing about the cookies, so they stay', async () => {
         _publicCookieTiming.settleMs = 0
         keepJar([kept('token_v2', 'T1')], OLD_ENOUGH)
@@ -459,6 +545,8 @@ describe('the logged-out reads’ cookies', () => {
         publicCookiesSettled(mark(PAGE_URL), Date.now()).then(settled)
         await vi.waitFor(() => expect(settled).toHaveBeenCalled(), { timeout: 100 })
         requestPublicCookiesStartOver('a test')
+        __getLocalStorage()[UNREADABLE_KEY] = { since: Date.now() - START_OVER_MIN_MS }
+        await notePublicViewUnreadable()
         await publicViewMarking()
         expect(stored()).toMatchObject({ token: TOKEN, cookies: [{ name: 'token_v2' }] })
     })

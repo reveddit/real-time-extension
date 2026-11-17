@@ -28,8 +28,9 @@
 // any www.reddit.com page would carry it (wwwCookieHeader). When reddit
 // refuses the monitored profile's pages on every route that tries them, the
 // next lookup starts the jar over, with a new marker, at most once per
-// identity's START_OVER_MIN_MS. The news feed's publicViewCookies switch turns
-// it all off.
+// identity's START_OVER_MIN_MS. When the profile's page comes back unreadable
+// for long enough, the jar starts over too (notePublicViewUnreadable). The news
+// feed's publicViewCookies switch turns it all off.
 //
 // The background holds the jar and is its only writer. The popup's lookups
 // read the token from storage to mark their requests, and the background's
@@ -67,6 +68,14 @@ const MAX_COOKIES = 50
 // 403 rests a route (www-fetcher.ts WWW_HARD_REFUSAL_MS), so starting over
 // can't run faster than reddit's verdicts change
 export const START_OVER_MIN_MS = 6 * 3600 * 1000
+// Since when the monitored profile's page has come back unreadable, and the
+// start-overs that has led to: kept in storage, since Chrome stops the worker
+// between checks. A good lookup ends it (lookup-status.ts).
+export const UNREADABLE_KEY = 'public_view_unreadable_since'
+// How long the page is unreadable before the first of those start-overs. Each
+// one after waits twice as long as the last, up to START_OVER_MIN_MS, so a
+// cause the cookies don't decide can't start the jar over every half hour.
+export const UNREADABLE_START_OVER_AFTER_MS = 30 * 60 * 1000
 
 // settleMs: how long a fetch waits for its answer's cookies to reach the jar
 // and the rule, so the next request carries them. A save waits for saveDelayMs
@@ -356,6 +365,60 @@ let startOverWhy: string | null = null
 export const requestPublicCookiesStartOver = (why: string) => {
     if (holder) {
         startOverWhy ||= why
+    }
+}
+
+// A lookup of the monitored profile got a page it couldn't read. Reddit picks
+// some layouts by the cookies and keeps sending one while they stay
+// (2026-11-17), so once that has gone on long enough, the jar starts over. At
+// once, unlike a refusal's start-over: this lookup is done with the cookies,
+// and an ask kept in memory for the next one would be lost when Chrome stops
+// the worker between checks.
+export const notePublicViewUnreadable = async () => {
+    if (!holder) {
+        return
+    }
+    try {
+        await load()
+        if (!jar) {
+            return
+        }
+        const now = Date.now()
+        const stored: any = await readLocal(UNREADABLE_KEY, null)
+        // A time to come, from a clock set back, starts the count again
+        const valid = (t: unknown) => Number(t) > 0 && Number(t) <= now
+        const since = valid(stored?.since) ? Number(stored.since) : now
+        const startOvers = since === now ? 0 : Math.max(0, Math.floor(Number(stored?.startOvers) || 0))
+        const from = startOvers && valid(stored?.startedOverAt) ? Number(stored.startedOverAt) : since
+        if (now - from < Math.min(UNREADABLE_START_OVER_AFTER_MS * 2 ** startOvers, START_OVER_MIN_MS)) {
+            if (since === now) {
+                await browser.storage.local.set({ [UNREADABLE_KEY]: { since } })
+            }
+            return
+        }
+        await setJar(newJar(), true)
+        await browser.storage.local.set({
+            [UNREADABLE_KEY]: { since, startOvers: startOvers + 1, startedOverAt: now },
+        })
+        dlog(
+            'feed',
+            '[reveddit] logged-out reads start over with new cookies and a new marker: ' +
+                `the profile's page has been unreadable since ${new Date(since).toISOString()}`,
+        )
+    } catch {
+        /* ignored */
+    }
+}
+
+// A good lookup: the profile's page reads again. Removed only when set, since
+// this runs on every one
+export const endPublicViewUnreadable = async () => {
+    try {
+        if (await readLocal(UNREADABLE_KEY, null)) {
+            await browser.storage.local.remove(UNREADABLE_KEY)
+        }
+    } catch {
+        /* ignored */
     }
 }
 

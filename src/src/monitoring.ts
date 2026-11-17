@@ -10,6 +10,7 @@ import {
 } from './reddit-auth'
 import {
     recordCheckOutcome,
+    noteItemsCheck,
     lookupWarningToKeep,
     publicViewUncheckedReason,
     postRemovedByCategory,
@@ -615,6 +616,8 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
             // Only a pass that actually processed items may clear the warning
             // badge below; a failed or skipped lookup must not read as a clean cycle.
             let processedItems = false
+            // The lookup of the items went through too, which processedItems doesn't say
+            let itemsRead = false
             let listingRefused = false
             // The listing came back but says nothing either way
             let noNews = false
@@ -728,6 +731,8 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                 })
                 .then(() => {
                     if (!processedItems) return
+                    itemsRead = true
+                    noteItemsCheck(loggedInUser, true)
                     // The user's own listing came back, so their login works,
                     // even when the login check didn't answer
                     recordLoginDetectOutcome(false)
@@ -759,6 +764,9 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     // A rate limit already says it's why
                     if (!processedItems && !noNews && !(await isRateLimitedNow())) {
                         await recordCheckOutcome(false)
+                    }
+                    if (!itemsRead && !noNews) {
+                        await noteItemsCheck(loggedInUser, false)
                     }
                 })
         })

@@ -19,6 +19,7 @@ import {
     getPublicViewUncheckedLine,
     WWW_DETECT_FAILURES_KEY,
     WWW_TAB_FAILURES_KEY,
+    PUBLIC_VIEW_UNREADABLE,
 } from '../../src/src/lookup-status'
 import { getDiagEntries } from '../mocks/diag-entries.js'
 import { res } from '../mocks/responses.js'
@@ -616,6 +617,25 @@ describe('lookup failure reasons', () => {
         installFetch(defaultRoutes())
         await lookupItemsByID_fromPublicProfile([FEED_OK], USER, { [FEED_OK]: meta(FEED_OK) })
         expect(counts()).toEqual([undefined, undefined])
+    })
+
+    // 2026-11-17: a Posts-tab layout the parser couldn't read raised the warning
+    // that the public view isn't loading and that a www.reddit.com tab helps
+    it('a page that came back unreadable gets its own warning, and a refusal the usual one', async () => {
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
+            // Another page in place of the profile: its one post card is someone else's
+            [`/user/${USER}/submitted/?sort=new`, FRONT_PAGE],
+        ])
+        const lookup = () => lookupItemsByID_fromPublicProfile([FEED_OK], USER, { [FEED_OK]: meta(FEED_OK) })
+        for (let i = 0; i < 4; i++) await expect(lookup()).rejects.toThrow(/posts page unrecognized/)
+        expect(__getLocalStorage().error_status).toBeUndefined()
+        await expect(lookup()).rejects.toThrow(/posts page unrecognized/)
+        expect(__getLocalStorage().error_status).toBe(PUBLIC_VIEW_UNREADABLE)
+        // Past the streak, the words follow the latest failure
+        blockAll()
+        await expect(lookup()).rejects.toThrow(/403/)
+        expect(__getLocalStorage().error_status).toBe('public_view_unavailable')
     })
 
     it('when the legacy fallback fails too, the error names both', async () => {

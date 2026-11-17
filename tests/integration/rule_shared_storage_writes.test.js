@@ -647,6 +647,8 @@ const BACKGROUND_ONLY = [
     'www_detect_tab_failures',
     'absent_verify_consecutive_failures',
     'check_consecutive_failures',
+    'items_check',
+    'public_view_unreadable_since',
     'profile_pagination_consecutive_shortfalls',
     'login_detect_consecutive_failures',
     'viewer_lookup_consecutive_failures',

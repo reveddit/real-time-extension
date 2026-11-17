@@ -173,6 +173,32 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
         await expectButtons(document, [['Connect a second account', 'secondary']])
     })
 
+    // 2026-11-17: Reddit sent a Posts-tab layout the parser couldn't read. The
+    // steps are the public view's, in words that say what Reddit sent.
+    it("a page Reddit sent that couldn't be read: a tab first, a second account once the tab has had its checks", async () => {
+        const UNREADABLE = "Reddit is sending pages this version can't read in place of your profile"
+        const closed = await warning('public_view_unreadable', { failures: 40 })
+        await expectButtons(closed, [
+            ['Open www.reddit.com', 'primary'],
+            ['Connect a second account', 'secondary'],
+        ])
+        expect((await warningIn(closed)).text).toContain(
+            `${UNREADABLE}. Opening a www.reddit.com tab sometimes gets past this. If it keeps up, ${CONNECT}.`,
+        )
+
+        const open = await warning('public_view_unreadable', { tabFailures: TAB_CHECKS - 1, tabs: [WWW_TAB] })
+        await expectButtons(open, [['Connect a second account', 'secondary']])
+        expect((await warningIn(open)).text).toContain(
+            'Keeping your www.reddit.com tab open sometimes gets past this within a few checks.',
+        )
+
+        const lasting = await warning('public_view_unreadable', { tabFailures: TAB_CHECKS, tabs: [WWW_TAB] })
+        await expectButtons(lasting, [['Connect a second account', 'primary']])
+        expect((await warningIn(lasting)).text).toContain(
+            `${UNREADABLE}, even through your www.reddit.com tab. To keep checking your posts and comments, ${CONNECT}.`,
+        )
+    })
+
     it('holds a notice with no word of a tab until the tab query answers too', async () => {
         let answer
         const document = await warning('checks_failing', { tabs: new Promise(resolve => (answer = resolve)) })
@@ -214,7 +240,7 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
 
     // Reddit signed in to the second account itself has that account's items
     // checked logged out, so connecting a second account would lead nowhere
-    it.each(['login_required', 'public_view_unavailable', 'profile_pagination_unavailable'])(
+    it.each(['login_required', 'public_view_unavailable', 'public_view_unreadable', 'profile_pagination_unavailable'])(
         '%s while signed in to Reddit as the second account: asks for a different one',
         async status => {
             const viewer_account = { name: 'Someone', token: 'ab'.repeat(16), cookies: [], connectedAt: Date.now() }

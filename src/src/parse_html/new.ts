@@ -56,6 +56,9 @@ export interface PublicProfileData {
     missing?: boolean
     // A tab landed on reddit's login page (login-wall-config.ts)
     loginWall?: boolean
+    // A tab's page came back but couldn't be read (fetchTab's "page
+    // unrecognized"): an answer from reddit, not a refusal
+    unreadable?: boolean
     // The kinds whose tab the owner hides from logged-out visitors: none of
     // their items is listed, so absence says nothing, and each item is
     // checked on its own page
@@ -682,9 +685,11 @@ export const getPublicProfileItems = async (
         const items = new Map([...comments.items, ...posts.items])
         const error = comments.error || posts.error
         const paginationStopped = [comments.stopped, posts.stopped].filter(Boolean).join('; ')
+        const valid = comments.valid && posts.valid
         return {
             items,
-            valid: comments.valid && posts.valid,
+            valid,
+            ...(!valid && { unreadable: true }),
             // A hidden tab isn't an empty one: it's no shadowban signature
             emptyProfile: comments.emptyState && posts.emptyState && items.size === 0,
             coverage: { t1: comments.floor, t3: posts.floor },

@@ -16,7 +16,7 @@ import { getLoggedinUser, getLoggedinUserDetailed, isSettledByLogin, whoIsSigned
 import { storeRedditCookies } from './src/reddit-cookies'
 import { countCookieChange, countStorageWrites } from './src/activity-counts'
 import { isFresh } from './src/logged-in-fetch'
-import { getPublicViewUncheckedLine } from './src/lookup-status'
+import { getItemsCheckStatus, getPublicViewUncheckedLine } from './src/lookup-status'
 import { getLoginWallLine } from './src/www-fetcher'
 import {
     initStorage,
@@ -441,9 +441,10 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                     resolve(0)
                 }
             }),
+            getItemsCheckStatus(),
         ])
-            .then(([backoffMs, lastCheck, nextCheck]) =>
-                sendResponse({ backoffRemainingMs: backoffMs, lastCheck, nextCheck }),
+            .then(([backoffMs, lastCheck, nextCheck, items]) =>
+                sendResponse({ backoffRemainingMs: backoffMs, lastCheck, nextCheck, ...items }),
             )
             .catch(err => sendResponse({ error: String(err?.message || err) }))
         return true
