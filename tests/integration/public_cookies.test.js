@@ -276,12 +276,29 @@ describe('the logged-out reads’ cookies', () => {
         expect(stored().token).toBe(fresh.token)
     })
 
+    // Chrome stops the worker between checks, and a new one has only what was saved
+    it('the ask outlives the worker: a new one starts the jar over at its first lookup', async () => {
+        keepJar([kept('token_v2', 'T1')], OLD_ENOUGH)
+        reddit(() => ({ status: 403, body: 'network security' }))
+        await expect((await getWwwHtmlFetcher()).fetchHtml(PAGE_URL)).rejects.toThrow(/403/)
+        expect(stored()).toMatchObject({ token: TOKEN, startOver: expect.stringMatching(/^profile pages refused/) })
+
+        _resetPublicCookies(true)
+        await getWwwHtmlFetcher()
+        expect(stored().token).not.toBe(TOKEN)
+        expect(stored().startOver).toBeUndefined()
+        expect(await log()).toMatch(/start over with new cookies and a new marker: profile pages refused \(/)
+    })
+
     it('the captcha on every route counts too, but not an identity younger than START_OVER_MIN_MS', async () => {
         keepJar([kept('token_v2', 'T1')], START_OVER_MIN_MS - 60 * 1000)
         reddit(() => ({ body: CAPTCHA }))
         await expect((await getWwwHtmlFetcher()).fetchHtml(PAGE_URL)).rejects.toThrow(/captcha/)
         await getWwwHtmlFetcher()
         expect(stored().token).toBe(TOKEN)
+        // The ask goes, and the cookies stay
+        await vi.waitFor(() => expect(stored().startOver).toBeUndefined())
+        expect(stored().cookies).toEqual([expect.objectContaining({ name: 'token_v2' })])
 
         keepJar([kept('token_v2', 'T1')], OLD_ENOUGH)
         await expect((await getWwwHtmlFetcher()).fetchHtml(PAGE_URL)).rejects.toThrow(/captcha/)

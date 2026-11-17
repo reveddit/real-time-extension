@@ -723,10 +723,11 @@ export const getWwwHtmlFetcher = async (): Promise<WwwHtmlFetcher> => {
         // Reddit refused the monitored profile's own page on every route that
         // tried it, with its block page, its captcha or a challenge it wouldn't
         // take: the logged-out cookies may be what it refuses, so the next
-        // lookup may start them over (public-cookies.ts). Not a network error
-        // or a page the parsers can't read, which say nothing about them.
+        // lookup may start them over (public-cookies.ts). Not a network error,
+        // which says nothing about them; a page the parsers can't read has a
+        // slower start-over of its own (notePublicViewUnreadable).
         if (HELD_KINDS.has(kind) && outcomes.length && outcomes.every(o => START_OVER_OUTCOMES.has(o))) {
-            requestPublicCookiesStartOver(`${kind} pages refused (${refused.join(', ')})`)
+            await requestPublicCookiesStartOver(`${kind} pages refused (${refused.join(', ')})`)
         }
         if (refused.length > 1 && !failureLogged.has(kind)) {
             failureLogged.add(kind)

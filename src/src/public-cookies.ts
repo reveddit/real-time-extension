@@ -28,7 +28,8 @@
 // any www.reddit.com page would carry it (wwwCookieHeader). When reddit
 // refuses the monitored profile's pages on every route that tries them, the
 // next lookup starts the jar over, with a new marker, at most once per
-// identity's START_OVER_MIN_MS. When the profile's page comes back unreadable
+// identity's START_OVER_MIN_MS; the ask is saved with the jar, so a worker
+// Chrome stops in between doesn't lose it. When the profile's page comes back unreadable
 // for long enough, the jar starts over too (notePublicViewUnreadable). The news
 // feed's publicViewCookies switch turns it all off.
 //
@@ -85,11 +86,13 @@ export const UNREADABLE_START_OVER_AFTER_MS = 30 * 60 * 1000
 // _wwwRouteTiming.
 export const _publicCookieTiming = { settleMs: 1500, saveDelayMs: 5000, saveEveryMs: 30000 }
 
-// since: when this identity began, the time its marker was made
+// since: when this identity began, the time its marker was made. startOver:
+// why the next lookup should start it over, if a refusal asked
 interface PublicJar {
     token: string
     cookies: StoredCookie[]
     since: number
+    startOver?: string
 }
 
 const isStoredCookie = (c: any): c is StoredCookie =>
@@ -111,6 +114,7 @@ const readJar = (raw: any): PublicJar | null => {
         token: raw.token,
         cookies: raw.cookies.filter((c: any) => isStoredCookie(c) && sendsToWww(c)).slice(-MAX_COOKIES),
         since: since > 0 && since <= Date.now() ? since : 0,
+        ...(typeof raw.startOver === 'string' && raw.startOver && { startOver: raw.startOver.slice(0, 500) }),
     }
 }
 
@@ -355,18 +359,14 @@ export const installPublicCookies = () => {
     load().then(updateRule, () => {})
 }
 
-// Why the next lookup should start the jar over, if one asked
-let startOverWhy: string | null = null
-
 // Reddit refused the monitored profile's own page on every route that tried
 // it: the next lookup starts the jar over, with a new marker, unless this
 // identity began less than START_OVER_MIN_MS ago. Not at once, so the rest of
-// this lookup keeps the cookies its other pages were read with.
-export const requestPublicCookiesStartOver = (why: string) => {
-    if (holder) {
-        startOverWhy ||= why
-    }
-}
+// this lookup keeps the cookies its other pages were read with. The ask is
+// saved with the jar at once: Chrome can stop the worker before that lookup.
+// The first ask stands. Memory changes before this returns.
+export const requestPublicCookiesStartOver = (why: string): Promise<void> =>
+    holder && jar && !jar.startOver ? setJar({ ...jar, startOver: why }, true) : Promise.resolve()
 
 // A lookup of the monitored profile got a page it couldn't read. Reddit picks
 // some layouts by the cookies and keeps sending one while they stay
@@ -439,8 +439,6 @@ export const publicViewMarking = async (): Promise<(url: string) => string> => {
         return stored ? url => markedUrl(MARKER_NAME, url, stored.token) : unmarked
     }
     await load()
-    const why = startOverWhy
-    startOverWhy = null
     if (!on) {
         if (jar) {
             await setJar(null, true)
@@ -450,11 +448,13 @@ export const publicViewMarking = async (): Promise<(url: string) => string> => {
     }
     if (!jar) {
         await setJar(newJar(), true)
-    } else if (why && Date.now() - jar.since >= START_OVER_MIN_MS) {
+    } else if (jar.startOver && Date.now() - jar.since >= START_OVER_MIN_MS) {
+        const why = jar.startOver
         await setJar(newJar(), true)
         dlog('feed', `[reveddit] logged-out reads start over with new cookies and a new marker: ${why}`)
-    } else if (jar.cookies.some(c => isExpired(c))) {
-        await setJar({ ...jar, cookies: jar.cookies.filter(c => !isExpired(c)) }, false)
+    } else if (jar.startOver || jar.cookies.some(c => isExpired(c))) {
+        // An identity too young to start over keeps its cookies, and the ask goes
+        await setJar({ ...jar, startOver: undefined, cookies: jar.cookies.filter(c => !isExpired(c)) }, false)
     }
     return url => (jar ? markedUrl(MARKER_NAME, url, jar.token) : url)
 }
@@ -498,7 +498,6 @@ export const _resetPublicCookies = (asHolder = false) => {
     holder = asHolder
     jar = null
     loading = null
-    startOverWhy = null
     answered.clear()
     waiting.clear()
     ruling = Promise.resolve()
