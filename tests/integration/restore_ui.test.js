@@ -139,11 +139,11 @@ describe('Place unattached, then going on with the scan', () => {
         expect(revEl('t1_parent').classList.contains('rev-placeholder')).toBe(true)
         expect(revEl('t1_parent').textContent).toContain('[deleted]')
 
-        pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'), entry('t1_parent', 'p', 'the real words'))
+        pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'), entry('t1_parent', 'b', 'the real words'))
         await scanThread()
         expect(revEl('t1_parent').classList.contains('rev-placeholder')).toBe(false)
         expect(revEl('t1_parent').textContent).toContain('the real words')
-        expect(revEl('t1_parent').textContent).toContain('u/p')
+        expect(revEl('t1_parent').textContent).toContain('u/b')
         expect(Number(revEl('t1_parent').getAttribute('data-rev-created'))).toBe(Math.floor(Date.parse(NOW) / 1000))
         expect(revEl('t1_gone1').parentElement.closest('[data-rev-id]')).toBe(revEl('t1_parent'))
     })
@@ -156,7 +156,7 @@ describe('Place unattached, then going on with the scan', () => {
         await place()
         ui.resetScansForPage()
 
-        pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'), entry('t1_parent', 'p', 'the real words'))
+        pages[authorPath('b')] = feed(entry('t1_b', 'b', 'live words'), entry('t1_parent', 'b', 'the real words'))
         await scanThread()
         expect(document.querySelectorAll('[data-rev-id="t1_parent"]')).toHaveLength(1)
         expect(revEl('t1_parent').textContent).toContain('the real words')
@@ -1132,9 +1132,11 @@ describe('the profile scan', () => {
 
 // What fills a removed comment reddit left a tombstone for, on old reddit
 describe('an old reddit tombstone', () => {
+    // As reddit sends one: no data-author, and its name a bare <em> after the toggle
     const tomb = (id, state = 'deleted') =>
-        `<div class="thing comment ${state}" data-author="" data-permalink="/r/sub/comments/post/a_title/${id.slice(3)}/">` +
-        `<div class="entry"><p class="tagline"><a class="author">[deleted]</a><time datetime="${NOW}"></time></p>` +
+        `<div class="thing comment ${state}" data-permalink="/r/sub/comments/post/a_title/${id.slice(3)}/">` +
+        `<div class="entry"><p class="tagline"><a href="javascript:void(0)" class="expand">${/\bcollapsed\b/.test(state) ? '[+]' : '[–]'}</a>` +
+        `<em>[deleted]</em> <time datetime="${NOW}"></time></p>` +
         `<div class="usertext-body"><div class="md"><p>[removed]</p></div></div><ul class="buttons"></ul></div>` +
         `<div class="child"></div></div>`
     const tombEl = () => document.querySelector('[data-permalink$="/tomb/"]')
@@ -1159,6 +1161,8 @@ describe('an old reddit tombstone', () => {
         expect(author.localName).toBe('a')
         expect(author.getAttribute('href')).toBe('/user/a')
         expect(author.textContent).toBe('a')
+        expect(el.querySelector('.tagline').textContent).not.toContain('[deleted]')
+        expect(el.querySelector('.tagline .expand').textContent).toBe('[–]')
         expect(el.parentElement.classList.contains('nestedlisting')).toBe(true)
     })
 
@@ -1186,8 +1190,47 @@ describe('an old reddit tombstone', () => {
         expect(el.querySelector(':scope > .entry').classList.contains('rev-removed-highlight')).toBe(true)
         expect(el.querySelector('.usertext-body .md').textContent).toContain('the words')
         expect(el.querySelector('.tagline a.author').getAttribute('href')).toBe('/user/a')
-        expect(el.querySelector(':scope > .entry > .rev-restore-attribution').textContent).toBe('Restored by Reveddit')
+        expect(el.querySelector('.tagline').textContent).not.toContain('[deleted]')
+        expect(el.querySelector(':scope > .entry > .rev-restore-attribution').textContent).toBe(
+            'Restored by Reveddit · comment by u/a',
+        )
         expect(document.querySelector('.rev-restore-progress')).toBeNull()
+    })
+
+    it.each([
+        ['a thread scan', scanThread],
+        [
+            'its own scan',
+            async () => {
+                click(tombEl().querySelector('.rev-scan-comment-btn'))
+                await settle(() => document.querySelector('.rev-spinner'))
+            },
+        ],
+    ])('is named for whose feed held it, though its entry there names no one, by %s', async (_, scan) => {
+        await loadThread(oldThreadPage(4, oldComment('t1_a', 'a') + tomb('t1_tomb')), false)
+        seed()
+        pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), entry('t1_tomb', null, 'the words'))
+        await scan()
+        expect(tombEl().querySelector('.usertext-body .md').textContent).toContain('the words')
+        expect(tombEl().querySelector('.tagline a.author').textContent).toBe('a')
+    })
+})
+
+// What a comment's own scan puts under a new reddit tombstone
+describe('a new reddit tombstone', () => {
+    it.each([
+        ['names them', 'a'],
+        ['names no one', null],
+    ])("is restored by its own scan with who wrote it, when their feed's entry %s", async (_, named) => {
+        await loadThread(threadPage(4, comment('t1_a', 'a') + tombstone('t1_tomb')))
+        pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_tomb', null, '[deleted]'))
+        pages[authorPath('a')] = feed(entry('t1_a', 'a', 'live words'), entry('t1_tomb', named, 'the words'))
+        click(document.querySelector('.rev-restore-btn'))
+        await settle(() => document.querySelector('.rev-spinner'))
+        expect(revEl('t1_tomb').textContent).toContain('the words')
+        expect(document.querySelector('[thingid="t1_tomb"] .rev-restore-attribution').textContent).toBe(
+            'Restored by Reveddit · comment by u/a',
+        )
     })
 })
 
@@ -1421,7 +1464,7 @@ describe('the thread filter bar', () => {
     it('old reddit: collapses what has nothing removed, and "all" opens it again', async () => {
         const tomb =
             `<div class="thing comment deleted" data-permalink="/r/sub/comments/post/a_title/tomb/"><div class="entry">` +
-            `<p class="tagline"><a class="author">[deleted]</a></p><div class="usertext-body"><div class="md"><p>[removed]</p></div></div>` +
+            `<p class="tagline"><a href="javascript:void(0)" class="expand">[–]</a><em>[deleted]</em></p><div class="usertext-body"><div class="md"><p>[removed]</p></div></div>` +
             `<ul class="buttons"></ul></div><div class="child"></div></div>`
         await loadThread(oldThreadPage(5, oldComment('t1_a', 'a') + oldComment('t1_b', 'b', oldComment('t1_c', 'c')) + tomb), false)
         pages[threadPath] = feed(postEntry(), entry('t1_a', 'a', 'live words'), entry('t1_b', 'b', 'live words'), entry('t1_c', 'c', 'live words'), entry('t1_tomb', null, '[deleted]'))

@@ -130,6 +130,11 @@ const placedOnPage = () =>
 const recoveredEls = () => document.querySelectorAll('[data-rev-id]:not(.rev-placeholder):not(.rev-context)')
 export const recoveredOnPage = () => recoveredEls().length
 
+// A person's feed holds only their own comments, so it names who wrote each,
+// whatever an entry in it says
+const ownedBy = (author: string, items: any[] | undefined) =>
+    items?.map(item => ({ ...item, data: { ...item.data, author } }))
+
 const toRecovered = (
     d: any,
     tree: Map<string, CommentTreeNode>,
@@ -252,7 +257,7 @@ export async function restoreComment(
             message: `Searching u/${author}…`,
         })
 
-        const items = await reads.feed(path)
+        const items = ownedBy(author, await reads.feed(path))
         if (items) crossCheck(items)
     }
 
@@ -496,7 +501,7 @@ export async function scanThreadForRemovedComments(
             message: `Searching u/${author}… — ${candidates.length - searched} author(s) left, ${recoveredCount()}${counted ? `/${missingCount}` : ''} recovered`,
         })
 
-        const items = await reads.feed(path)
+        const items = ownedBy(author, await reads.feed(path))
         if (!items) continue
 
         // This author's comments in this thread that aren't live here. A tombstone

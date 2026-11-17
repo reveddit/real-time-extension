@@ -67,7 +67,7 @@ export class RecoveredCommentInserter {
         const tombstone = this.isNewReddit ? null : onPage
         const el =
             tombstone && !tombstone.classList.contains('rev-inserted-comment')
-                ? fillRecoveredTombstone(tombstone, rc)
+                ? fillRecoveredTombstone(tombstone, rc.id, rc)
                 : createRecoveredCommentEl(rc)
 
         const placement = this.resolvePlacement(rc.parent_id)
@@ -363,26 +363,40 @@ function fillPlaceholder(el: HTMLElement, rc: RecoveredComment) {
     el.querySelector(':scope > .rev-rec-entry')?.replaceChildren(recoveredMeta(rc), recoveredBody(rc))
 }
 
-// Fills an existing old-reddit tombstone in place with the recovered content.
-function fillRecoveredTombstone(tombstone: HTMLElement, rc: RecoveredComment): HTMLElement {
+// Reddit writes a tombstone's name as a bare <em>[deleted]</em> with no class, so
+// it's found as the first part in brackets after the toggle, whatever its words
+const standInName = (tombstone: Element) =>
+    Array.from(tombstone.querySelectorAll(':scope > .entry .tagline > :not(.expand)')).find(el =>
+        el.textContent?.trim().startsWith('['),
+    )
+
+// Fills an existing old-reddit tombstone in place with the recovered content,
+// putting anything given under the comment's own row, not under its replies
+export function fillRecoveredTombstone(
+    tombstone: HTMLElement,
+    id: string,
+    { author, body, body_html }: { author?: string; body?: string; body_html?: string },
+    ...under: HTMLElement[]
+): HTMLElement {
     openComment(tombstone)
     tombstone.classList.remove('deleted')
-    tombstone.setAttribute('data-rev-id', rc.id)
-    // Highlight only this comment's row, not its nested replies (see displayRestoredComment).
+    tombstone.setAttribute('data-rev-id', id)
+    // Highlight only this comment's row, not its nested replies.
     const entry = (tombstone.querySelector(':scope > .entry') as HTMLElement | null) || tombstone
     entry.classList.add('rev-removed-highlight')
+    entry.append(...under)
     const bodyEl = tombstone.querySelector(':scope > .entry .usertext-body .md')
     if (bodyEl) {
-        if (rc.body_html) setRedditHTML(bodyEl, rc.body_html)
-        else bodyEl.textContent = rc.body
+        if (body_html) setRedditHTML(bodyEl, body_html)
+        else bodyEl.textContent = body ?? ''
     }
-    const authorEl = tombstone.querySelector(':scope > .entry .tagline .author')
-    if (authorEl && rc.author) {
+    const name = standInName(tombstone)
+    if (name && author) {
         const link = document.createElement('a')
-        link.href = `/user/${encodeURIComponent(rc.author)}`
+        link.href = `/user/${encodeURIComponent(author)}`
         link.className = 'author'
-        link.textContent = rc.author
-        authorEl.replaceWith(link)
+        link.textContent = author
+        name.replaceWith(link)
     }
     return tombstone
 }

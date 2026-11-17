@@ -19,7 +19,7 @@ import {
 } from './comment-dom'
 import { activeScan, endScan, pageReads, readsGoWith, scanStopped, showProgress, startScan } from './scan-session'
 import { autoFilterRemoved, injectThreadFilter, refreshThreadFilter } from './thread-filter'
-import { RecoveredCommentInserter, inserterForPage } from './recovered-inserter'
+import { RecoveredCommentInserter, fillRecoveredTombstone, inserterForPage } from './recovered-inserter'
 import { element, icon, setRedditHTML } from './dom-helpers'
 
 // --- State tracking ---
@@ -296,6 +296,11 @@ async function handleRestore(commentId: string, container: HTMLElement, isNewRed
 
 // --- Display Restored Comment ---
 
+// Under what a comment's own scan restored, naming who wrote it on both reddits,
+// whether or not the page's own name for it could be swapped
+const restoredBy = (author?: string) =>
+    element('div', 'rev-restore-attribution', `Restored by Reveddit${author ? ` · comment by u/${author}` : ''}`)
+
 function displayRestoredComment(
     commentId: string,
     container: HTMLElement,
@@ -305,38 +310,8 @@ function displayRestoredComment(
     if (!result.body) return
 
     if (!isNewReddit) {
-        const commentEl = findOldRedditCommentEl(commentId)
-        if (!commentEl) return
-        commentEl.classList.remove('deleted')
-        commentEl.setAttribute('data-rev-id', commentId)
-        // Highlight only the comment's own row (.entry), not the whole .thing —
-        // the .thing contains its nested replies (.child), so a border/tint there
-        // would span the entire subtree.
-        const entry = (commentEl.querySelector(':scope > .entry') as HTMLElement | null) || commentEl
-        entry.classList.add('rev-removed-highlight')
-        const bodyEl = commentEl.querySelector(':scope > .entry .usertext-body .md')
-        if (bodyEl && result.body_html) {
-            setRedditHTML(bodyEl, result.body_html)
-        } else if (bodyEl) {
-            bodyEl.textContent = result.body
-        }
-
-        if (result.author) {
-            const authorEl = commentEl.querySelector(':scope > .entry .tagline .author')
-            if (authorEl) {
-                const link = document.createElement('a')
-                link.href = `/user/${result.author}`
-                link.className = 'author'
-                link.textContent = result.author
-                authorEl.replaceWith(link)
-            }
-        }
-        // Attribution under the comment itself (the author already shows in the
-        // tagline above), not appended after the whole subtree.
-        const attr = document.createElement('div')
-        attr.className = 'rev-restore-attribution'
-        attr.textContent = 'Restored by Reveddit'
-        entry.appendChild(attr)
+        const tombstone = findOldRedditCommentEl(commentId)
+        if (tombstone) fillRecoveredTombstone(tombstone, commentId, result, restoredBy(result.author))
         return
     }
 
@@ -349,10 +324,7 @@ function displayRestoredComment(
         restoredEl.textContent = result.body
     }
 
-    const attr = document.createElement('div')
-    attr.className = 'rev-restore-attribution'
-    attr.textContent = `Restored by Reveddit — comment by u/${result.author || 'unknown'}`
-    addUnderComment(container, restoredEl, attr)
+    addUnderComment(container, restoredEl, restoredBy(result.author))
 }
 
 // --- Thread Scan All ---
