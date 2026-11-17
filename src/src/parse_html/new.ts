@@ -15,6 +15,9 @@
 // Page structure (verified live 2026-07-01; reddit.md, Logged-out views, has
 // the paging and the empty state):
 // - items carry thing-id="t1_xxx" / thing-id="t3_xxx" attributes
+// - a post card is also <shreddit-post id="t3_xxx" author="…">, which in the
+//   second profile feed (view-context="ProfileFeed2", 2026-11-17) is the only
+//   place its id is
 // - <shreddit-comment-action-row comment-id="t1_xxx" score="91" permalink="...">
 // - <shreddit-feed-load-more-observer cursor="base64(lastThingId)">
 // - further pages come from the partial endpoints in buildPartialUrl
@@ -69,6 +72,11 @@ export interface PublicProfileData {
 export type FetchHtml = (url: string, accept?: (html: string) => boolean) => Promise<string>
 
 const THING_ID_REGEX = /\bthing-id="(t[13]_[a-z0-9]+)"/g
+// (?![\w-]) as in COMMENT_TAG_REGEX: <shreddit-post-overflow-menu> and
+// <shreddit-post-flair> match a bare \b, and on the front page the first
+// match is an ad's overflow menu.
+const POST_TAG_REGEX = /<shreddit-post(?![\w-])([^>]*)>/g
+const POST_FULLNAME_REGEX = /^t3_[a-z0-9]+$/
 const ACTION_ROW_REGEX = /<shreddit-comment-action-row\b([^>]*)>/g
 const CURSOR_REGEX = /<shreddit-feed-load-more-observer\b[^>]*\bcursor="([^"]+)"/g
 // A tab can page with only its load-after partial, no observer (a posts tab,
@@ -96,12 +104,16 @@ export const isCaptchaPage = (html: string): boolean => {
 
 export const fullnameValue = (fullname: string): number => parseInt(fullname.split('_')[1], 36)
 
+// An attribute's value, own properties only, since a configured name like
+// 'constructor' would otherwise read Object's
+const ownAttr = (attrs: Record<string, string>, name: string): string | undefined =>
+    Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : undefined
+
 // Whether an element carries this id under any of the attribute names the
 // markup config lists. Any name, not the first one present: a feed-added name
-// can hold some other value on the same element. Own properties only, since a
-// configured name like 'constructor' would otherwise read Object's.
+// can hold some other value on the same element.
 const hasId = (attrs: Record<string, string>, names: string[], id: string): boolean =>
-    names.some(name => Object.prototype.hasOwnProperty.call(attrs, name) && attrs[name] === id)
+    names.some(name => ownAttr(attrs, name) === id)
 
 const parseAttrs = (tagAttrs: string): Record<string, string> => {
     const attrs: Record<string, string> = {}
@@ -134,7 +146,8 @@ interface ParsedPage {
     hasItems: boolean
 }
 
-export const parseProfileHtml = (html: string, typePrefix: string): ParsedPage => {
+// owner is the profile's username, without which a post card's own id isn't read
+export const parseProfileHtml = (html: string, typePrefix: string, owner?: string): ParsedPage => {
     const seen = new Set<string>()
     const ids: string[] = []
     const addId = (id: string) => {
@@ -147,6 +160,25 @@ export const parseProfileHtml = (html: string, typePrefix: string): ParsedPage =
     }
     for (const m of html.matchAll(THING_ID_REGEX)) {
         addId(m[1])
+    }
+    // The second profile feed's post cards have no thing-id, only their own
+    // id. The owner's cards alone count: another author's older post shown
+    // inside one would lower the floor, and the owner's items above it would
+    // read as removed.
+    if (owner !== undefined) {
+        const { postIdAttributes } = getMarkupConfig()
+        for (const m of html.matchAll(POST_TAG_REGEX)) {
+            const attrs = parseAttrs(m[1])
+            if (attrs['author']?.toLowerCase() !== owner.toLowerCase()) {
+                continue
+            }
+            for (const name of postIdAttributes) {
+                const id = ownAttr(attrs, name)
+                if (id !== undefined && POST_FULLNAME_REGEX.test(id)) {
+                    addId(id)
+                }
+            }
+        }
     }
     const rows = new Map<string, { score?: number; permalink?: string }>()
     for (const m of html.matchAll(ACTION_ROW_REGEX)) {
@@ -216,11 +248,6 @@ const POST_HELD_REGEX = /awaiting moderator approval/i
 const POST_REMOVED_REGEX = /\b(removed|deleted)\b|spam filters?|banned from this community|community is private/i
 
 export const buildPostPageUrl = (postId: string): string => `${newReddit}/comments/${postId.replace(/^t3_/, '')}/`
-
-// (?![\w-]) as in COMMENT_TAG_REGEX: <shreddit-post-overflow-menu> and
-// <shreddit-post-flair> match a bare \b, and on the front page the first
-// match is an ad's overflow menu.
-const POST_TAG_REGEX = /<shreddit-post(?![\w-])([^>]*)>/g
 
 // postId is the fullname (t3_…), the form the element's id attribute carries
 export const classifyPostPage = (html: string, postId: string): PostPageResult => {
@@ -505,8 +532,8 @@ interface TabResult {
 // small empty fragment that can end a profile (no items, no cursor, not a
 // whole page). Anything else counts against the route.
 const EMPTY_FRAGMENT_MAX_BYTES = 4096
-const isPartialPageFor = (typePrefix: string) => (h: string) => {
-    const p = parseProfileHtml(h, typePrefix)
+const isPartialPageFor = (typePrefix: string, owner: string) => (h: string) => {
+    const p = parseProfileHtml(h, typePrefix, owner)
     return p.hasItems || (p.cursor === null && !/<html\b/i.test(h) && h.length < EMPTY_FRAGMENT_MAX_BYTES)
 }
 
@@ -522,11 +549,11 @@ const fetchTab = async (
     const invalid = (error: string): TabResult => ({ items, valid: false, emptyState: false, floor: Infinity, error })
 
     const recognized = (p: ParsedPage) => p.hasItems || p.emptyState || p.hidden
-    const isProfilePage = (h: string) => recognized(parseProfileHtml(h, typePrefix))
-    const isPartialPage = isPartialPageFor(typePrefix)
+    const isProfilePage = (h: string) => recognized(parseProfileHtml(h, typePrefix, username))
+    const isPartialPage = isPartialPageFor(typePrefix, username)
     const url = buildTabUrl(username, tab)
     let html = await fetchHtml(url, isProfilePage)
-    let page = parseProfileHtml(html, typePrefix)
+    let page = parseProfileHtml(html, typePrefix, username)
     if (!recognized(page)) {
         // Not recognizable — try the challenge solver once, then give up
         const solutionUrl = solveChallenge(html, url)
@@ -534,7 +561,7 @@ const fetchTab = async (
             return invalid(`${tab} page unrecognized: ${describePageForDiag(html)}`)
         }
         html = await fetchHtml(solutionUrl, isProfilePage)
-        page = parseProfileHtml(html, typePrefix)
+        page = parseProfileHtml(html, typePrefix, username)
         if (!recognized(page)) {
             return invalid(`${tab} page unrecognized after challenge solve: ${describePageForDiag(html)}`)
         }
@@ -580,7 +607,7 @@ const fetchTab = async (
             stopped = `${tab} pagination stopped: ${String(err?.message || err).slice(0, 160)}`
             break
         }
-        const partialPage = parseProfileHtml(partialHtml, typePrefix)
+        const partialPage = parseProfileHtml(partialHtml, typePrefix, username)
         if (!partialPage.hasItems) {
             // Partial pages have no empty-state message. A page with no items is
             // the small fragment that can end a profile, or a page no route

@@ -81,6 +81,18 @@ const frontPage =
     `feedIndex="1" id="t3_feed2" post-title="Another" author="someone_else" subreddit-name="pics">` +
     `</shreddit-post></article></shreddit-feed></body></html>`
 
+// A post card of reddit's second profile feed, modeled on one served
+// 2026-11-17 to some logged-out visitors (which ones follows their cookies).
+// Its id is on the card only: the page has no thing-id at all.
+const feed2Post = (id, author) =>
+    `<shreddit-post data-ks-item class="block relative cursor-pointer group px-md py-2xs rgb-action-bar-placeholder ` +
+    `[&amp;:not(:defined):not(:has(rpl-action-bar))]:pb-2xl" permalink="/r/sub/comments/${id.slice(3)}/a_title/" ` +
+    `content-href="https://www.reddit.com/r/sub/comments/${id.slice(3)}/a_title/" view-context="ProfileFeed2" ` +
+    `comment-count="3" view-type="cardView" feedIndex="0" hide-awards-button is-embeddable archived locked ` +
+    `created-timestamp="2023-02-10T07:28:53.508000+0000" domain="self.sub" id="${id}" post-title="A title" ` +
+    `post-type="multi_media" score="46" subreddit-id="t5_sub1" subreddit-prefixed-name="r/sub" ` +
+    `author-id="t2_user1" author="${author}" subreddit-name="sub"></shreddit-post>`
+
 describe('parseProfileHtml', () => {
     it('extracts comment ids from thing-id attributes and action rows', () => {
         const html =
@@ -116,6 +128,18 @@ describe('parseProfileHtml', () => {
     it('takes the last cursor on the page', () => {
         const html = thingIdEl('t1_aaa111') + loadMoreObserver('t1_zzz') + loadMoreObserver('t1_aaa111')
         expect(parseProfileHtml(html, 't1_').cursor).toBe(b64('t1_aaa111'))
+    })
+
+    it("reads the owner's post cards in the second profile feed, which has no thing-id", () => {
+        const html = feed2Post('t3_feed2a', 'SomeUser') + feed2Post('t3_other1', 'someone_else')
+        const page = parseProfileHtml(html, 't3_', 'someuser')
+        expect(page.ids).toEqual(['t3_feed2a'])
+        expect(page.hasItems).toBe(true)
+        // Without the owner a card's own id isn't read, and the comments tab takes no post ids
+        expect(parseProfileHtml(html, 't3_').ids).toEqual([])
+        expect(parseProfileHtml(html, 't1_', 'SomeUser').ids).toEqual([])
+        // A card id that isn't a post's fullname doesn't count
+        expect(parseProfileHtml(feed2Post('post-1', 'SomeUser'), 't3_', 'SomeUser').ids).toEqual([])
     })
 
     it('recognizes the empty-profile state', () => {
@@ -417,6 +441,25 @@ describe('getPublicProfileItems', () => {
         expect(result.items.get(newestComment).score).toBe(5)
         // no cursor on either tab → fully enumerated
         expect(result.coverage).toEqual({ t1: 0, t3: 0 })
+    })
+
+    it("reads the second profile feed's posts tab and its later pages, from the owner's cards only", async () => {
+        const newerPost = 't3_zz900'
+        const olderPost = 't3_mm500'
+        const othersOlderPost = 't3_aa100'
+        const fetchHtml = makeFetcher([
+            ['/comments/?sort=new', emptyStatePage('comments')],
+            [
+                '/submitted/?sort=new',
+                feed2Post(newerPost, 'user1') + feed2Post(othersOlderPost, 'someone') + loadMoreObserver(newerPost),
+            ],
+            [`after=${encodeURIComponent(b64(newerPost))}`, feed2Post(olderPost, 'USER1') + loadMoreObserver(olderPost)],
+        ])
+        const result = await getPublicProfileItems('user1', fetchHtml, [newerPost, olderPost])
+        expect(result.valid).toBe(true)
+        expect([...result.items.keys()].sort()).toEqual([newerPost, olderPost].sort())
+        // The other author's older card left the floor alone, so the older page was read
+        expect(result.coverage.t3).toBe(fullnameValue(olderPost))
     })
 
     it('paginates through partials until needed ids are covered', async () => {
@@ -793,6 +836,13 @@ describe('markup config', () => {
         expect(classifyPostPage(page, 't3_abc123').status).toBe('unknown')
         setMarkupConfig({ postIdAttributes: ['post-id'] })
         expect(classifyPostPage(page, 't3_abc123').status).toBe('held')
+    })
+
+    it("reads a profile post card's id from a name the feed adds", () => {
+        const card = feed2Post('t3_feed2a', 'SomeUser').replace(' id="t3_feed2a"', ' post-id="t3_feed2a"')
+        expect(parseProfileHtml(card, 't3_', 'SomeUser').ids).toEqual([])
+        setMarkupConfig({ postIdAttributes: ['post-id'] })
+        expect(parseProfileHtml(card, 't3_', 'SomeUser').ids).toEqual(['t3_feed2a'])
     })
 
     it('reads a banner from a renamed slot too', () => {
