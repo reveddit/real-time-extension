@@ -362,22 +362,24 @@ describe('the logged-out reads’ cookies', () => {
             expect(record().since).toBeLessThanOrEqual(Date.now())
         })
 
-        it('a lookup notes it and starts over in time, and a good lookup ends it', async () => {
+        it('a lookup notes it and starts over in time, and one that reads both tabs ends it', async () => {
             keepJar([kept('token_v2', 'T1')])
-            let posts = '<html><body><shreddit-post id="t3_x1" author="someone"></shreddit-post></body></html>'
-            reddit(url => ({
-                body: url.includes('/submitted/') ? posts : '<html><body><div thing-id="t1_a"></div></body></html>',
-            }))
+            const UNREADABLE = '<html><body><shreddit-post id="t3_x1" author="someone"></shreddit-post></body></html>'
+            let comments = UNREADABLE
+            let posts = UNREADABLE
+            reddit(url => ({ body: url.includes('/submitted/') ? posts : comments }))
             const lookup = () => lookupItemsByID_fromPublicProfile(['t1_a'], 'alice', {})
-            await expect(lookup()).rejects.toThrow(/posts page unrecognized/)
+            await expect(lookup()).rejects.toThrow(/page unrecognized/)
             const { since } = record()
-            await expect(lookup()).rejects.toThrow(/posts page unrecognized/)
+            // Comments read again and posts don't: the lookup stands, and the run goes on
+            comments = '<html><body><div thing-id="t1_a"></div></body></html>'
+            await lookup()
             expect(record()).toEqual({ since })
             expect(stored().token).toBe(TOKEN)
 
             unreadableSince(UNREADABLE_START_OVER_AFTER_MS)
-            await expect(lookup()).rejects.toThrow(/posts page unrecognized/)
-            // In this lookup, not the next, which a worker stopped in between would lose
+            await lookup()
+            // In this lookup, not the next
             expect(stored().token).not.toBe(TOKEN)
 
             // The new cookies get a layout that reads

@@ -661,17 +661,20 @@ describe('a check for a remembered user', () => {
     // after a listing that came back had read anything since 4:03 (diag-status.ts)
     it("keeps when a check last read the user's items, and since when none has", async () => {
         const UNREADABLE = '<html><body><shreddit-post id="t3_x1" author="someone"></shreddit-post></body></html>'
+        let comments = thingIdEl('t1_a')
         let posts = emptyStatePage('posts')
         fetchMock.mockImplementation(async url => {
             if (String(url).includes('/user/me.json')) return listingBy('alice')
-            if (String(url).includes('/user/alice/comments/')) return res(200, thingIdEl('t1_a'))
+            if (String(url).includes('/user/alice/comments/')) return res(200, comments)
             return String(url).includes('/user/alice/submitted/') ? res(200, posts) : blockPage()
         })
         await check()
         const { itemsCheckedAt } = await getItemsCheckStatus()
         expect(itemsCheckedAt).toBeGreaterThan(Date.now() - 60 * 1000)
 
-        // The listing comes back, so it's no failed check, but the lookup reads nothing
+        // The listing comes back, so it's no failed check, but the lookup reads
+        // nothing: neither tab can be read
+        comments = UNREADABLE
         posts = UNREADABLE
         await check()
         expect(__getLocalStorage().check_consecutive_failures).toBeUndefined()
@@ -681,6 +684,7 @@ describe('a check for a remembered user', () => {
         await check()
         expect(await getItemsCheckStatus()).toEqual(failing)
 
+        comments = thingIdEl('t1_a')
         posts = emptyStatePage('posts')
         await check()
         expect((await getItemsCheckStatus()).itemsFailingSince).toBe(0)
@@ -714,6 +718,8 @@ describe('recordLoginDetectOutcome', () => {
             'viewer_unavailable',
             'public_view_unavailable',
             'public_view_unreadable',
+            'profile_posts_unreadable',
+            'profile_comments_unreadable',
             'absent_verify_unavailable',
             undefined,
         ]) {

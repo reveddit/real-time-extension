@@ -1,7 +1,7 @@
 import browser from 'webextension-polyfill'
 import { dlogSummary, dlog } from './diaglog'
 import { setWarningBadge } from './common'
-import { getPublicLiveKey } from './storage'
+import { getPublicLiveKey, OWN_ITEMS_CHECK_KEY } from './storage'
 import { VIEWER_FAILURES_KEY, ViewerAccount, getViewer, isSignedInViewer } from './viewer'
 import { isLoginWalled } from './www-fetcher'
 import { readLocal, isFresh } from './request-gates'
@@ -198,10 +198,9 @@ export const recordCheckOutcome = (checked: boolean) =>
         },
     )
 
-// When a check last read the user's items, and since when the checks after it
-// have read none, for the status line (diag-status.ts). Not the streak above:
-// a lookup that fails after the listing came back isn't counted there.
-const ITEMS_CHECK_KEY = 'items_check'
+// OWN_ITEMS_CHECK_KEY is when a check last read the user's items, and since
+// when the checks after it have read none. Not the streak above: a lookup
+// that fails after the listing came back isn't counted there.
 
 // A check of the user's items ended, having read them or not. Rewritten on
 // each read; on a failure, only at the first of a run, or for another user.
@@ -209,14 +208,14 @@ export const noteItemsCheck = async (user: string, read: boolean) => {
     try {
         const name = user.toLowerCase()
         if (read) {
-            await browser.storage.local.set({ [ITEMS_CHECK_KEY]: { user: name, ok: Date.now() } })
+            await browser.storage.local.set({ [OWN_ITEMS_CHECK_KEY]: { user: name, ok: Date.now() } })
             return
         }
-        const stored: any = await readLocal(ITEMS_CHECK_KEY, null)
+        const stored: any = await readLocal(OWN_ITEMS_CHECK_KEY, null)
         const same = stored?.user === name
         if (!same || !stored.failing) {
             await browser.storage.local.set({
-                [ITEMS_CHECK_KEY]: { user: name, ...(same && stored.ok && { ok: stored.ok }), failing: Date.now() },
+                [OWN_ITEMS_CHECK_KEY]: { user: name, ...(same && stored.ok && { ok: stored.ok }), failing: Date.now() },
             })
         }
     } catch {
@@ -225,7 +224,7 @@ export const noteItemsCheck = async (user: string, read: boolean) => {
 }
 
 export const getItemsCheckStatus = async (): Promise<{ itemsCheckedAt: number; itemsFailingSince: number }> => {
-    const stored: any = await readLocal(ITEMS_CHECK_KEY, null)
+    const stored: any = await readLocal(OWN_ITEMS_CHECK_KEY, null)
     return { itemsCheckedAt: Number(stored?.ok) || 0, itemsFailingSince: Number(stored?.failing) || 0 }
 }
 
@@ -252,7 +251,9 @@ export const recordWwwDetectOutcome = async (
 ) => {
     // First, since the streak below raises the warning: the popup never shows it with an old count
     await recordStreak(WWW_TAB_FAILURES_KEY, ok || !withTab)
-    if (ok) {
+    // A lookup that read one tab while the other came back unreadable stands,
+    // but the unreadable pages go on (public-cookies.ts)
+    if (ok && !unreadable) {
         await endPublicViewUnreadable()
     }
     await recordStreak(
@@ -353,6 +354,45 @@ export const recordPaginationOutcome = (stopped: string | undefined) =>
 // When the profile's older pages ask for a login, the warning says so
 const paginationWarning = async () =>
     (await isLoginWalled(['profile-partial'])) ? LOGIN_REQUIRED : PROFILE_PAGINATION_UNAVAILABLE
+
+// Consecutive lookups that read one profile tab while the other came back
+// unreadable (getPublicProfileItems' unreadableKind): that kind's items go
+// unchecked and the other's are checked. Each tab's streak has its own
+// warning, kept at the end of a pass like pagination's. The line keeps the
+// words "www public-view lookup failed … consecutive failures: N (reason)",
+// which the extension canary looks for.
+const TAB_UNREADABLE = {
+    t1: { key: 'comments_tab_unreadable_consecutive', warning: 'profile_comments_unreadable', tab: 'comments' },
+    t3: { key: 'posts_tab_unreadable_consecutive', warning: 'profile_posts_unreadable', tab: 'posts' },
+} as const
+
+// After a lookup that read the profile: kind is the tab that couldn't be read, if one
+export const recordUnreadableTabOutcome = async (kind: 't1' | 't3' | undefined, reason = '') => {
+    for (const k of ['t1', 't3'] as const) {
+        const { key, warning, tab } = TAB_UNREADABLE[k]
+        await recordStreak(
+            key,
+            kind !== k,
+            n =>
+                dlog(
+                    'feed',
+                    `[reveddit] www public-view lookup failed for the ${tab} tab, the other one was checked; ` +
+                        `consecutive failures: ${n}` +
+                        (reason ? ` (${reason})` : ''),
+                ),
+            () => setWarningBadge(warning),
+        )
+    }
+}
+
+const unreadableTabWarning = async (): Promise<string | null> => {
+    for (const k of ['t3', 't1'] as const) {
+        if (await isStreakLong(TAB_UNREADABLE[k].key)) {
+            return TAB_UNREADABLE[k].warning
+        }
+    }
+    return null
+}
 
 // The items the last lookup couldn't judge because nobody logged out can see
 // them (publicViewUncheckedReason), for the copied log's header. Written when
@@ -490,17 +530,28 @@ export const viewerCheckedLast = new Map<string, boolean>()
 
 // Warnings about part of the check. A cycle that read nothing takes over from
 // them (recordCheckOutcome), and the next pass puts back the one still true.
-const PARTIAL_WARNINGS = new Set([VIEWER_UNAVAILABLE, ABSENT_VERIFY_UNAVAILABLE, PROFILE_PAGINATION_UNAVAILABLE])
+const PARTIAL_WARNINGS = new Set<string>([
+    VIEWER_UNAVAILABLE,
+    ABSENT_VERIFY_UNAVAILABLE,
+    PROFILE_PAGINATION_UNAVAILABLE,
+    TAB_UNREADABLE.t1.warning,
+    TAB_UNREADABLE.t3.warning,
+])
 
 // The warning a processed monitoring pass keeps, though a pass otherwise
 // clears error_status: the outage of a check a pass completes without, which
 // only that check's own recovery ends. With a second account checking, that's
-// its thread reads; in the logged-out view, page checks and pagination.
+// its thread reads; in the logged-out view, an unreadable tab, page checks
+// and pagination.
 export const lookupWarningToKeep = async (username: string): Promise<string | null> => {
     const viewer = await getViewer()
     const viaViewer = viewerCheckedLast.get(username.toLowerCase()) ?? !isSignedInViewer(viewer?.name || '', username)
     if (viewer && viaViewer) {
         return (await viewerThreadFailures(viewer)) >= STREAK_WARN_AT ? VIEWER_UNAVAILABLE : null
+    }
+    const tabWarning = await unreadableTabWarning()
+    if (tabWarning) {
+        return tabWarning
     }
     if (await isAbsentVerifyUnavailable()) {
         return absentVerifyWarning()

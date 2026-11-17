@@ -131,6 +131,20 @@ const SIGNED_IN_AS_VIEWER: Warning = {
   button: ['Connect a different account', openSecondAccount],
 }
 
+// One tab of the profile came back unreadable while the other was read
+// (getPublicProfileItems' unreadableKind): that kind's removals go unchecked,
+// the other's are still checked. The steps are profile_pagination_unavailable's.
+const tabUnreadable = (what: string, other: string): Warning => ({
+  text: tabOpen =>
+    `⚠ Reddit is sending the ${what} on your profile in a form this version can't read, so removals of your ${what} ` +
+    `can't be checked right now. Your ${other} are still checked. ` +
+    (tabOpen
+      ? 'If it keeps up with your www.reddit.com tab open, connect a second Reddit account.'
+      : 'Opening a www.reddit.com tab sometimes gets past this. If it keeps up, connect a second Reddit account.'),
+  button: OPEN_WWW,
+  fallback: CONNECT_SECOND,
+})
+
 const WARNINGS: Record<string, Warning> = {
   rate_limited: { text: '⚠ Reddit is rate-limiting requests. Monitoring will resume automatically.' },
   reddit_blocked: {
@@ -200,6 +214,8 @@ const WARNINGS: Record<string, Warning> = {
       button: CONNECT_SECOND,
     },
   },
+  profile_posts_unreadable: tabUnreadable('posts', 'comments'),
+  profile_comments_unreadable: tabUnreadable('comments', 'posts'),
   absent_verify_unavailable: {
     text: tabOpen =>
       "⚠ Reddit isn't letting the extension confirm whether missing content was removed, so some removals can't be detected. " +

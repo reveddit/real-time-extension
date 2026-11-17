@@ -590,6 +590,49 @@ describe('getPublicProfileItems', () => {
         expect(result.coverage).toEqual({ t1: 0, t3: 0 })
     })
 
+    // 2026-11-17: only the Posts tab changed, and the comments went unchecked too
+    it("one tab that can't be read leaves its kind unjudged while the other tab's items stand", async () => {
+        const unreadable = '<html><body><shreddit-post id="t3_x1" author="someone"></shreddit-post></body></html>'
+        const result = await getPublicProfileItems(
+            'user1',
+            makeFetcher([
+                ['/comments/?sort=new', thingIdEl(newestComment) + commentRow(newestComment, '5', '/r/a/x/')],
+                ['/submitted/?sort=new', unreadable],
+            ]),
+            [newestComment, post],
+        )
+        expect(result).toMatchObject({ valid: true, unreadable: true, unreadableKind: 't3', emptyProfile: false })
+        expect([...result.items.keys()]).toEqual([newestComment])
+        expect(result.coverage.t3).toBe(Infinity)
+        expect(result.error).toMatch(/^posts page unrecognized: /)
+
+        const posts = await getPublicProfileItems(
+            'user1',
+            makeFetcher([
+                ['/comments/?sort=new', unreadable],
+                ['/submitted/?sort=new', thingIdEl(post)],
+            ]),
+            [post],
+        )
+        expect(posts).toMatchObject({ valid: true, unreadableKind: 't1' })
+        expect(posts.coverage.t1).toBe(Infinity)
+    })
+
+    // A shadowbanned profile's tabs are both empty: one alone, beside an
+    // unreadable one, can't tell a shadowban from an account with no posts
+    it('an empty tab beside one that can\'t be read leaves the lookup invalid', async () => {
+        const result = await getPublicProfileItems(
+            'user1',
+            makeFetcher([
+                ['/comments/?sort=new', emptyStatePage('comments')],
+                ['/submitted/?sort=new', '<html><body>totally different page</body></html>'],
+            ]),
+            ['t1_abc', post],
+        )
+        expect(result).toMatchObject({ valid: false, unreadable: true, emptyProfile: false })
+        expect(result.unreadableKind).toBeUndefined()
+    })
+
     it('reports invalid when a page is unrecognizable and the challenge cannot be solved', async () => {
         const fetchHtml = makeFetcher([
             ['/comments/?sort=new', '<html><body>totally different page</body></html>'],

@@ -199,6 +199,27 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
         )
     })
 
+    // One tab read and the other not: that kind's removals go unchecked
+    it("a tab that can't be read: names it, a tab first while none is open, a second account either way", async () => {
+        const closed = await warning('profile_posts_unreadable')
+        await expectButtons(closed, [
+            ['Open www.reddit.com', 'primary'],
+            ['Connect a second account', 'secondary'],
+        ])
+        expect((await warningIn(closed)).text).toBe(
+            "⚠ Reddit is sending the posts on your profile in a form this version can't read, so removals of your posts " +
+                "can't be checked right now. Your comments are still checked. Opening a www.reddit.com tab sometimes gets " +
+                `past this. If it keeps up, ${CONNECT}.`,
+        )
+
+        const open = await warning('profile_comments_unreadable', { tabs: [WWW_TAB] })
+        await expectButtons(open, [['Connect a second account', 'secondary']])
+        expect((await warningIn(open)).text).toContain(
+            'removals of your comments can\'t be checked right now. Your posts are still checked. ' +
+                `If it keeps up with your www.reddit.com tab open, ${CONNECT}.`,
+        )
+    })
+
     it('holds a notice with no word of a tab until the tab query answers too', async () => {
         let answer
         const document = await warning('checks_failing', { tabs: new Promise(resolve => (answer = resolve)) })
@@ -240,7 +261,13 @@ describe('a warning that a www.reddit.com tab usually clears', () => {
 
     // Reddit signed in to the second account itself has that account's items
     // checked logged out, so connecting a second account would lead nowhere
-    it.each(['login_required', 'public_view_unavailable', 'public_view_unreadable', 'profile_pagination_unavailable'])(
+    it.each([
+        'login_required',
+        'public_view_unavailable',
+        'public_view_unreadable',
+        'profile_posts_unreadable',
+        'profile_pagination_unavailable',
+    ])(
         '%s while signed in to Reddit as the second account: asks for a different one',
         async status => {
             const viewer_account = { name: 'Someone', token: 'ab'.repeat(16), cookies: [], connectedAt: Date.now() }

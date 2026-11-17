@@ -18,6 +18,7 @@ import {
     PROFILE_CONTROL_USER,
     AuthItemsMeta,
     recordWwwDetectOutcome,
+    recordUnreadableTabOutcome,
     reportPublicProfileShadowban,
     publiclyInvisibleReason,
     notePublicProfileUnavailable,
@@ -115,7 +116,10 @@ export const lookupItemsByID_fromPublicProfile = async (
         noteRateLimited(new Error(reason))
         throw new Error(`www profile lookup invalid: ${reason}`)
     }
-    await recordWwwDetectOutcome(true)
+    // Read, though maybe not one tab, whose items go unchecked: they're
+    // uncovered (coverage Infinity), so they're left out below
+    await recordWwwDetectOutcome(true, { unreadable: !!profile.unreadable })
+    await recordUnreadableTabOutcome(profile.unreadableKind, profile.error)
     if (profile.hidden) {
         const tabs = [profile.hidden.t1 && 'comments', profile.hidden.t3 && 'posts'].filter(Boolean).join(' and ')
         dlog(
@@ -330,6 +334,10 @@ export const lookupItemsByID_fromPublicProfile = async (
             `routes=${JSON.stringify(fetcher.servedRoutes())}` +
             (profile.paginationStopped ? `, ${profile.paginationStopped}` : ''),
     )
+    // Last, since a start-over changes the cookies the page checks above read with
+    if (profile.unreadable) {
+        await notePublicViewUnreadable()
+    }
     return results
 }
 

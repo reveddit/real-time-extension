@@ -20,6 +20,7 @@ import {
     WWW_DETECT_FAILURES_KEY,
     WWW_TAB_FAILURES_KEY,
     PUBLIC_VIEW_UNREADABLE,
+    lookupWarningToKeep,
 } from '../../src/src/lookup-status'
 import { getDiagEntries } from '../mocks/diag-entries.js'
 import { res } from '../mocks/responses.js'
@@ -621,21 +622,58 @@ describe('lookup failure reasons', () => {
 
     // 2026-11-17: a Posts-tab layout the parser couldn't read raised the warning
     // that the public view isn't loading and that a www.reddit.com tab helps
-    it('a page that came back unreadable gets its own warning, and a refusal the usual one', async () => {
-        installFetch([
-            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
-            // Another page in place of the profile: its one post card is someone else's
-            [`/user/${USER}/submitted/?sort=new`, FRONT_PAGE],
-        ])
+    it('a profile whose tabs both came back unreadable gets its own warning, and a refusal the usual one', async () => {
+        // Another page in place of the profile: its one post card is someone else's
+        installFetch([['/user/', FRONT_PAGE]])
         const lookup = () => lookupItemsByID_fromPublicProfile([FEED_OK], USER, { [FEED_OK]: meta(FEED_OK) })
-        for (let i = 0; i < 4; i++) await expect(lookup()).rejects.toThrow(/posts page unrecognized/)
+        for (let i = 0; i < 4; i++) await expect(lookup()).rejects.toThrow(/page unrecognized/)
         expect(__getLocalStorage().error_status).toBeUndefined()
-        await expect(lookup()).rejects.toThrow(/posts page unrecognized/)
+        await expect(lookup()).rejects.toThrow(/page unrecognized/)
         expect(__getLocalStorage().error_status).toBe(PUBLIC_VIEW_UNREADABLE)
         // Past the streak, the words follow the latest failure
         blockAll()
         await expect(lookup()).rejects.toThrow(/403/)
         expect(__getLocalStorage().error_status).toBe('public_view_unavailable')
+    })
+
+    // 2026-11-17: only the Posts tab changed, and the comments went unchecked too
+    it("one tab that can't be read: the other tab's items are checked, its own go unjudged, and its warning lasts", async () => {
+        const POST = 't3_mine11'
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
+            [`/user/${USER}/submitted/?sort=new`, FRONT_PAGE],
+        ])
+        const lookup = () =>
+            lookupItemsByID_fromPublicProfile([FEED_OK, POST], USER, { [FEED_OK]: meta(FEED_OK), [POST]: meta(POST) })
+        for (let i = 0; i < 4; i++) {
+            const results = await lookup()
+            // The post is neither present nor removed: it isn't there at all
+            expect(results.map(r => r.data.name)).toEqual([FEED_OK])
+            expect(results[0].data.author).toBe(USER)
+        }
+        expect(__getLocalStorage().error_status).toBeUndefined()
+        await lookup()
+        expect(__getLocalStorage().error_status).toBe('profile_posts_unreadable')
+        // A pass that processed items keeps it (monitoring.ts)
+        expect(await lookupWarningToKeep(USER)).toBe('profile_posts_unreadable')
+        // Not a failed lookup, so no www public-view warning comes of it
+        expect(__getLocalStorage()[WWW_DETECT_FAILURES_KEY]).toBeUndefined()
+        // The line the extension canary reads
+        const lines = (await getDiagEntries()).map(e => e.m)
+        expect(
+            lines.some(l =>
+                /\bwww public-view lookup failed\b.*?\bconsecutive failures: 5 \(posts page unrecognized: .*\)$/.test(l),
+            ),
+        ).toBe(true)
+
+        // Both tabs read again: the warning has nothing left to keep
+        installFetch([
+            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
+            [`/user/${USER}/submitted/?sort=new`, thingIdEl(POST)],
+        ])
+        delete __getLocalStorage()[WWW_ROUTE_STATE_KEY]
+        await lookup()
+        expect(await lookupWarningToKeep(USER)).toBeNull()
     })
 
     it('when the legacy fallback fails too, the error names both', async () => {

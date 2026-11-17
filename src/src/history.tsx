@@ -1,6 +1,13 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import styled from '@emotion/styled'
-import { getAllChanges, getPendingPostQueueSize, clearPendingPostQueue, getNotificationLog, NotificationLogEntry } from './storage'
+import {
+  getAllChanges,
+  getPendingPostQueueSize,
+  clearPendingPostQueue,
+  getNotificationLog,
+  NotificationLogEntry,
+  OWN_ITEMS_CHECK_KEY,
+} from './storage'
 import { ChangeForStorage } from './common'
 import { mountPage } from './ui/global'
 import { MessageBanner, MiniSpinner, Page } from './ui/components'
@@ -136,6 +143,19 @@ function History() {
   const [logOpen, setLogOpen] = useState(false)
   const logSectionRef = useRef<HTMLDivElement>(null)
 
+  // The first scan is done once a check has read the user's items, or, with
+  // nobody signed in to Reddit, once a check has run: a check whose lookup
+  // failed still ends, so the last check alone would say so too soon
+  const refreshScanDone = useCallback(() => {
+    chrome.storage.local.get([OWN_ITEMS_CHECK_KEY, 'last_logged_in_user'], local => {
+      chrome.storage.sync.get(['last_check'], sync => {
+        setInitialScanDone(
+          !!local?.[OWN_ITEMS_CHECK_KEY]?.ok || (!local?.last_logged_in_user && sync?.last_check != null),
+        )
+      })
+    })
+  }, [])
+
   const loadData = useCallback(() => {
     getPendingPostQueueSize().then(size => setPendingPostCount(size))
     chrome.storage.local.get(['last_logged_in_user', 'pending_post_progress', 'rate_limit_until'], result => {
@@ -144,9 +164,7 @@ function History() {
       setPendingProgress(prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null)
       setBackoffMs(Math.max(0, (result?.rate_limit_until || 0) - Date.now()))
     })
-    chrome.storage.sync.get(['last_check'], result => {
-      setInitialScanDone(result.last_check != null)
-    })
+    refreshScanDone()
     getAllChanges(changesByUser => {
       chrome.storage.local.get(undefined, localStorage => {
         const all: ChangeForStorage[] = []
@@ -164,7 +182,7 @@ function History() {
         setLoaded(true)
       })
     })
-  }, [])
+  }, [refreshScanDone])
 
   useEffect(() => {
     loadData()
@@ -181,8 +199,8 @@ function History() {
       } else if (area === 'local' && keys.some(k => k.startsWith('items_'))) {
         debouncedLoad()
       }
-      if (area === 'sync' && changes.last_check) {
-        setInitialScanDone(true)
+      if ((area === 'sync' && changes.last_check) || (area === 'local' && changes[OWN_ITEMS_CHECK_KEY])) {
+        refreshScanDone()
       }
       if (area === 'local' && changes.pending_post_lookups) {
         const newQueue = changes.pending_post_lookups.newValue || []

@@ -59,6 +59,10 @@ export interface PublicProfileData {
     // A tab's page came back but couldn't be read (fetchTab's "page
     // unrecognized"): an answer from reddit, not a refusal
     unreadable?: boolean
+    // The kind whose tab couldn't be read while the other tab was: the lookup
+    // stands, and that kind's coverage floor is Infinity, so none of its
+    // items is judged
+    unreadableKind?: 't1' | 't3'
     // The kinds whose tab the owner hides from logged-out visitors: none of
     // their items is listed, so absence says nothing, and each item is
     // checked on its own page
@@ -685,11 +689,23 @@ export const getPublicProfileItems = async (
         const items = new Map([...comments.items, ...posts.items])
         const error = comments.error || posts.error
         const paginationStopped = [comments.stopped, posts.stopped].filter(Boolean).join('; ')
-        const valid = comments.valid && posts.valid
+        // One tab that couldn't be read leaves its kind unchecked while the
+        // other tab's items stand (2026-11-17: only the Posts tab changed, and
+        // comments went unchecked too). Only when that tab listed items: an
+        // empty one beside an unreadable one could be a shadowban, which
+        // takes both tabs to tell (emptyProfile).
+        const unreadableKind =
+            !comments.valid && posts.valid && posts.items.size
+                ? 't1'
+                : comments.valid && !posts.valid && comments.items.size
+                  ? 't3'
+                  : undefined
+        const bothRead = comments.valid && posts.valid
         return {
             items,
-            valid,
-            ...(!valid && { unreadable: true }),
+            valid: bothRead || !!unreadableKind,
+            ...(!bothRead && { unreadable: true }),
+            ...(unreadableKind && { unreadableKind }),
             // A hidden tab isn't an empty one: it's no shadowban signature
             emptyProfile: comments.emptyState && posts.emptyState && items.size === 0,
             coverage: { t1: comments.floor, t3: posts.floor },

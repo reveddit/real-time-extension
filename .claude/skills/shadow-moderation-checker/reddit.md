@@ -93,6 +93,7 @@ Young posts still in the feed are checked on their own pages, at most 10 per cyc
 - **Alerts:** a removal alerts after 3 to 5 consecutive removed verdicts (the count is drawn again each time the background starts), and a reinstatement after 2 live ones by default.
 - **Warnings** after 5 consecutive failed cycles: `public_view_unavailable`, `absent_verify_unavailable`, `logged_in_view_unavailable`. `profile_publicly_empty` is the account-wide shadowban signature.
 - 2026-11-17: when the latest failure was a page Reddit sent that couldn't be read, not a refusal or no answer, the public view's warning is `public_view_unreadable` instead: the same steps (a tab first, then a second account), in words that say so.
+- 2026-11-17, for 0.0.5.37: when only one tab can't be read and the other lists the user's items, the lookup stands: that kind's items go unjudged (coverage Infinity) and the other's are checked. Five in a row raise `profile_posts_unreadable` or `profile_comments_unreadable`, kept at a pass's end like the pagination warning. An empty tab beside an unreadable one still fails the lookup, since a shadowban takes both tabs to tell.
 
 ## The website bridge
 

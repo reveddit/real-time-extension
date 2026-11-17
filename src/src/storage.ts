@@ -175,6 +175,12 @@ export const subscribedThings = (users: Record<string, unknown>): { thing: strin
 // { ids, t } in local storage (bridge.ts reads it)
 export const getPublicLiveKey = (user: string): string => getObjectName('public_live', user, true)
 
+// When a check last read the logged-in user's items, and since when the
+// checks after it have read none (lookup-status.ts noteItemsCheck), for the
+// status line and the history page's first scan. Not named items_…: the
+// history page reloads at any change of a key so named.
+export const OWN_ITEMS_CHECK_KEY = 'own_items_check'
+
 export const getOldestDateKey = (thing: string, isUser: boolean): string => getObjectName('oldest_date', thing, isUser)
 
 // A scan reads feeds with the user's login, and Reddit can ask an account to verify
