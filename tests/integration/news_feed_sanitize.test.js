@@ -305,4 +305,31 @@ describe('sanitizeChallengeConfig solution_regex', () => {
     it.each([undefined, null, 'x', 5])('returns nothing for %j', raw => {
         expect(sanitizeChallengeConfig(raw)).toEqual({})
     })
+    // The pattern runs over a 189 KB page in the background: one that can
+    // backtrack without end would hang monitoring wherever the feed reaches
+    it.each([
+        DEFAULT_CHALLENGE_CONFIG.solutionRegex,
+        '"puzzle":"([^"]*)"',
+        'data-s="([A-Za-z0-9_-]{1,64})"',
+        '(?:jsc|js)_puzzle="([^"]+)"',
+        'x\\{(\\w+)\\}y',
+    ])('keeps the safe pattern %s', pattern => {
+        expect(regex(pattern)).toEqual({ solutionRegex: pattern })
+    })
+    it.each([
+        '(a+)+b',
+        '(\\w*)*"',
+        '(x|x)*(y)',
+        '(.*)"',
+        '(a).*.*.*.*b',
+        '([^"]*)[^"]*[^"]*z',
+        '(a)\\1',
+        '(?=a)(b)',
+        '(?<n>a)',
+        'a{1,5000}(b)',
+        'a**(b)',
+        '(a){2}',
+    ])('ignores the pattern %s, which could backtrack without end', pattern => {
+        expect(regex(pattern)).toEqual({})
+    })
 })
