@@ -69,12 +69,13 @@ import { installDevLog, createDevActionHandler, installReplayInstall } from './s
 // The background context is the diagnostic log's single writer — see diaglog.ts.
 initDiagPersistence()
 
-// Pages that may use the bridge: reveddit.com, and the local website in dev
-// and staging builds. Dev actions take the local website only.
+// Pages that may use the bridge: www.reveddit.com, where the site's other names
+// redirect, and the local website in dev and staging builds. A page on any
+// other reveddit.com name is an old deploy or someone else's, and the bridge
+// fetches with the user's login. Dev actions take the local website only.
 const isDevSitePage = (url: string) => __DEV__ && url.startsWith('http://localhost:8080/')
 const isBridgePage = (url: string) =>
-    /^https:\/\/([a-z0-9-]+\.)?reveddit\.com\//.test(url) ||
-    (__LOCAL_SITE__ && url.startsWith('http://localhost:8080/'))
+    url.startsWith('https://www.reveddit.com/') || (__LOCAL_SITE__ && url.startsWith('http://localhost:8080/'))
 
 if (__DEV__) {
     installDevLog()

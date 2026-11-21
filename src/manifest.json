@@ -19,7 +19,7 @@
     ],
     "externally_connectable": {
         "matches": [
-          "https://*.reveddit.com/*"
+          "https://www.reveddit.com/*"
         ]
     },
     "icons": { "128": "icons/128.png",
