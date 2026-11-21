@@ -479,6 +479,10 @@ const scanTurnIn = async (): Promise<number> => {
 // monitoring and the bridge honor, whichever tab they run in. Too soon, it answers
 // with waitMs: the page waits and asks again, where a cancel can take the read back.
 export const readWithLogin = async (path: string, secondTryMode?: unknown) => {
+    // A path, so the read stays on www.reddit.com: "@host" or "//host" would move it
+    if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) {
+        return { ok: false, status: 0, error: 'bad path' }
+    }
     if ((await getRemoteMechanism(MECHANISM_SCAN_FEEDS)) === 'off') {
         return { ok: false, status: 0, blockPage: true }
     }

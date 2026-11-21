@@ -51,6 +51,13 @@ afterEach(() => {
 })
 
 describe('a read for a scan', () => {
+    it.each(['@example.com/x', '//example.com/x', 'user/alice', '', undefined])(
+        'stays on www.reddit.com: a path of %j sends nothing',
+        async path => {
+            expect(await readWithLogin(path)).toMatchObject({ ok: false, error: 'bad path' })
+            expect(fetchMock).not.toHaveBeenCalled()
+        },
+    )
     it("carries the login and never comes from the browser's cache, as feeds invite", async () => {
         expect(await readWithLogin(PATH)).toMatchObject({ ok: true, status: 200, text: '<feed/>' })
         expect(fetchMock.mock.calls[0][0]).toBe(`https://www.reddit.com${PATH}`)

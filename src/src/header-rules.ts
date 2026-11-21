@@ -78,7 +78,7 @@ export function installWebRequestHeaders() {
             //only need to check the value supported by firefox
             if (
                 details.originUrl &&
-                details.originUrl.match(/^https?:\/\/(www.reveddit.com|localhost:[0-9]*)(\/.*)?$/)
+                details.originUrl.match(/^https?:\/\/(www\.reveddit\.com|localhost:[0-9]*)(\/.*)?$/)
             ) {
                 let newCookie = '_options={%22pref_quarantine_optin%22:true};'
                 let gotCookie = false
