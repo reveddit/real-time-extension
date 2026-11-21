@@ -21,8 +21,8 @@ jobs:
           node-version-file: '.nvmrc'
           cache: yarn
 
-      - run: corepack enable
-
+      # Node 26 has no Corepack. The runner's own yarn hands each command to the
+      # Yarn this repo vendors (yarnPath in .yarnrc.yml).
       - run: yarn install --immutable
 
       - name: Audit dependencies
@@ -53,8 +53,6 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
-
-      - run: corepack enable
 
       - name: Install Socket Firewall
         run: npm install -g sfw
