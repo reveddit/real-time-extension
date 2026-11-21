@@ -1,0 +1,25 @@
+{
+  "modules": {
+    "publish": {
+      "stores": ["chrome", "edge", "firefox"],
+      "showsReleaseNotes": true,
+      "versionLine": "date - version",
+      "privacyFile": "STORE_PRIVACY.txt",
+      "checks": [
+        { "script": "preflight", "label": "Preflight" },
+        { "script": "test:signin:chrome", "label": "The real sign-in test", "skipFlag": "--skip-signin" }
+      ],
+      "clearEnv": ["STAGING", "SIMULATE_DEPRECATION"],
+      "sourceZip": "source-code-submission.zip",
+      "sourceZipExcludes": ["*.env*", "dist-*", ".claude", ".claude-mcp"],
+      "chromeDashboardUser": 1,
+      "storeCheck": "python3 ../website/scripts/sync-store-version.py --check",
+      "notBuildInputs": [
+        "tests", "scripts", "*.md", "dist-*", ".claude", ".claude-mcp", ".github", ".husky", "graphics", "images",
+        "test-results", "LICENSE", "renovate.json", "eslint.config.js", ".prettierrc", ".prettierignore",
+        ".editorconfig", "playwright.config.js", "vitest.config.js", ".gitignore", ".gitattributes",
+        "STORE_PRIVACY.txt", "shared.json", "shared.lock.json"
+      ]
+    }
+  }
+}

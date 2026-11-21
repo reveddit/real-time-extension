@@ -1,0 +1,20 @@
+{
+  "about": "Written by the sync from the shared source: each file it syncs into this repo, with its sha256. Change those files in the shared source, not here; a test fails when one is edited here.",
+  "modules": {
+    "core": {
+      "scripts/shared-files.test.mjs": "d2f3437b7f75063e34e161c8a46c4c51ff67d657808f201ebbacc5230cbce7a8"
+    },
+    "publish": {
+      "scripts/lib/env.mjs": "10b75a4900e5bbe0ec0ebc2d4ff2fb18bc86679c4e50e5d1d678e4732c69816d",
+      "scripts/publishing/__tests__/publish.test.mjs": "d39df1698a21ee2ece8ed48275a0af36436588649aa5cdeae20113abd7356e65",
+      "scripts/publishing/common.mjs": "0e43e2b084805a639221ab5e02f266fa117030cc65e82e791841783939b52b59",
+      "scripts/publishing/publish-all.mjs": "b174b7362db9b80ec7668db9b917a8c1e881396afd6e15fe9c20beb61e0fbad9",
+      "scripts/publishing/publish-chrome.mjs": "46ec50508a3c5619122598e2c0b482819a04f5bca96f6c24c117f6ab241ee1c3",
+      "scripts/publishing/publish-edge.mjs": "cf7c4982d6357cf6d25a282fff4634cca7a58cbc1b8f05b2f98e9d04398a9a99",
+      "scripts/publishing/publish-firefox.mjs": "2399f9ca81c88051e0f2d888ffdd623424ad8120dcabf82faa332f633a9f11ac",
+      "scripts/publishing/publish-log.mjs": "b8287e582c0875b3cc1eb3b3fe4befc4a8347ac2123d417abe15bcaca7cd6bee",
+      "scripts/publishing/refresh-chrome-token.mjs": "049aa5cb4627487c728ac01b8d76e2464363df96f0c6bc672a361ad5a8215cff",
+      "scripts/publishing/settings.mjs": "6c8a9314cc1bcee3f6f173116f7fc2d16dbe8292c1e59e2247c92bb9dfeb052b"
+    }
+  }
+}

@@ -2,7 +2,9 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
     test: {
-        include: ['tests/**/*.test.{js,ts}'],
+        // scripts/: the publish scripts' tests and the shared files' check, which run
+        // the real scripts in scratch repos
+        include: ['tests/**/*.test.{js,ts}', 'scripts/**/*.test.mjs'],
         exclude: ['tests/e2e/**'],
         globals: true,
         environment: 'node',
