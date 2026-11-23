@@ -80,14 +80,18 @@ export default {
 }
 `
 
-// FAKE_CHROME=fail: the submit answers without OK. FAKE_EDGE: ok, unauthorized,
-// refuse-package, refuse-submit or slow (the submission never settles).
-// FAKE_COMMIT_DURING_SUBMIT: other code is committed while a store's step waits.
+// FAKE_CHROME=fail: the submit answers without OK. FAKE_CHROME_UPLOAD or
+// FAKE_CHROME_SUBMIT=<status>: that call answers Google's error body with that
+// HTTP status. FAKE_EDGE: ok, unauthorized, refuse-package, refuse-submit or slow
+// (the submission never settles). FAKE_COMMIT_DURING_SUBMIT: other code is
+// committed while a store's step waits. FAKE_CTRL_C: the first store call gets
+// Ctrl+C, as at a store's prompt (only that store's script sees it, and exits 130).
 const STUB_FETCH = `import fs from 'fs'
 import { execFileSync } from 'child_process'
 const log = line => fs.appendFileSync(process.env.FAKE_LOG, line + '\\n')
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 const accepted = operation => new Response(null, { status: 202, headers: { location: operation } })
+const googleError = status => json({ error: { code: Number(status), message: 'Backend Error', status: 'UNAVAILABLE' } }, Number(status))
 const GIT_ID = ${JSON.stringify(GIT_ID)}
 function commitLater() {
     if (!process.env.FAKE_COMMIT_DURING_SUBMIT) return
@@ -99,9 +103,16 @@ globalThis.fetch = async (url, init = {}) => {
     const u = String(url)
     const method = init.method || 'GET'
     log(\`fetch \${method} \${u}\`)
+    if (process.env.FAKE_CTRL_C) {
+        process.kill(process.pid, 'SIGINT')
+        await new Promise(() => setInterval(() => {}, 1000)) // waits, as at a prompt, for the signal
+    }
     if (u === 'https://oauth2.googleapis.com/token') return json({ access_token: 'token' })
-    if (u.startsWith('https://www.googleapis.com/upload/chromewebstore/')) return json({ uploadState: 'SUCCESS' })
+    if (u.startsWith('https://www.googleapis.com/upload/chromewebstore/')) {
+        return process.env.FAKE_CHROME_UPLOAD ? googleError(process.env.FAKE_CHROME_UPLOAD) : json({ uploadState: 'SUCCESS' })
+    }
     if (u.startsWith('https://www.googleapis.com/chromewebstore/') && u.endsWith('/publish')) {
+        if (process.env.FAKE_CHROME_SUBMIT) return googleError(process.env.FAKE_CHROME_SUBMIT)
         commitLater()
         return json({ status: [process.env.FAKE_CHROME === 'fail' ? 'NOT_AUTHORIZED' : 'OK'] })
     }
@@ -370,6 +381,27 @@ describe.each(CASES)('publishing with $name', kase => {
             expect(third.calls).toEqual([])
         })
 
+        it("stops every store after one whose script was aborted (Ctrl+C at its prompt), and says what was published", SLOW, () => {
+            const r = run('publish-all.mjs', { FAKE_CTRL_C: '1' })
+            expect(r.code).toBe(130)
+            expect(built(r.calls)).toEqual([stores[0]])
+            expect(r.out).toContain('Publishing aborted by user')
+            expect(r.out).toContain(`Not published: ${stores.map(s => NAMES[s]).join(', ')}`)
+            expect(published()).toEqual([])
+            expect(events().some(e => e.event === 'publish:all finished')).toBe(false)
+
+            // Aborted in a later store, after one that has the version
+            if (stores.length > 2 && stores[1] !== 'firefox') {
+                expect(run(`publish-${stores[0]}.mjs`).code).toBe(0)
+                const later = run('publish-all.mjs', { FAKE_CTRL_C: '1' })
+                expect(later.code).toBe(130)
+                expect(built(later.calls)).toEqual([stores[1]])
+                expect(later.out).toContain(`Published: ${NAMES[stores[0]]}`)
+                expect(later.out).toContain(`Not published: ${stores.slice(1).map(s => NAMES[s]).join(', ')}`)
+                expect(published()).toEqual([stores[0]])
+            }
+        })
+
         it("never counts its own files as the extension's, whatever .gitignore says", SLOW, () => {
             const own = ['.publish-status.json', '.publish-log.jsonl', 'web-ext-artifacts/']
             write('.gitignore', kase.gitignore.split('\n').filter(line => !own.includes(line)).join('\n'))
@@ -632,6 +664,26 @@ describe.each(CASES)('publishing with $name', kase => {
                 expect(events().at(-1)).toMatchObject({ store, event: 'failed', reason: 'description changed during the listing step' })
             },
         )
+    })
+
+    describe.runIf(stores.includes('chrome'))('Chrome', () => {
+        it.each(['503', '429', '401'])('stops on an upload Google answers with HTTP %s, before submitting', SLOW, code => {
+            const r = run('publish-chrome.mjs', { FAKE_CHROME_UPLOAD: code })
+            expect(r.code).toBe(1)
+            expect(r.out).toContain(`Upload failed: HTTP ${code}`)
+            expect(r.out).toContain('Backend Error')
+            expect(r.out).not.toContain('Upload accepted')
+            expect(r.calls.some(line => line.endsWith('/publish'))).toBe(false)
+            expect(published()).toEqual([])
+            expect(events().at(-1)).toMatchObject({ store: 'chrome', event: 'failed', reason: `upload refused (HTTP ${code})` })
+        })
+
+        it('stops on a submit Google answers with HTTP 503, saying so', SLOW, () => {
+            const r = run('publish-chrome.mjs', { FAKE_CHROME_SUBMIT: '503' })
+            expect(r.code).toBe(1)
+            expect(r.out).toContain('Submit failed: HTTP 503')
+            expect(published()).toEqual([])
+        })
     })
 
     describe.runIf(stores.includes('edge'))('Edge', () => {

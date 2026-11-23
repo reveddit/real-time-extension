@@ -39,6 +39,13 @@ async function accessToken() {
 
 const headers = token => ({ Authorization: `Bearer ${token}`, 'x-goog-api-version': '2' })
 
+// An answer's JSON, stopping on one that isn't 2xx: Google's error body has no
+// uploadState, so a 401, 429 or 5xx would read as an accepted upload
+async function answer(res, what, reason) {
+    if (!res.ok) stop(`${what}: HTTP ${res.status} ${await res.text().catch(() => '')}`.trim(), '', `${reason} (HTTP ${res.status})`)
+    return res.json()
+}
+
 // The item's edit page: /u/<n>/ picks the browser's Google account that publishes
 // it, and the publisher id is optional
 function dashboardUrl(id) {
@@ -52,13 +59,15 @@ async function uploadAndSubmit(commit) {
     const id = process.env.CHROME_EXTENSION_ID
 
     console.log('\n' + c.yellow('[1/3] Uploading chrome.zip...'))
-    const up = await (
+    const up = await answer(
         await fetch(`${API}/upload/chromewebstore/v1.1/items/${id}`, {
             method: 'PUT',
             headers: headers(token),
             body: fs.readFileSync(ARTIFACTS.chrome),
-        })
-    ).json()
+        }),
+        'Upload failed',
+        'upload refused',
+    )
     if (up.uploadState === 'FAILURE') stop(`Upload failed: ${JSON.stringify(up.itemError)}`, '', 'upload refused')
     console.log(c.green(`✔ Upload ${up.uploadState || 'accepted'}`))
 
@@ -86,7 +95,11 @@ async function uploadAndSubmit(commit) {
     })
 
     console.log('\n' + c.yellow('[3/3] Submitting for review...'))
-    const pub = await (await fetch(`${API}/chromewebstore/v1.1/items/${id}/publish`, { method: 'POST', headers: headers(token) })).json()
+    const pub = await answer(
+        await fetch(`${API}/chromewebstore/v1.1/items/${id}/publish`, { method: 'POST', headers: headers(token) }),
+        'Submit failed',
+        'submit not accepted',
+    )
     if (pub.status?.[0] !== 'OK') stop(`Submit failed or returned warnings: ${JSON.stringify(pub)}`, '', 'submit not accepted')
     console.log(c.green("✔ Submitted for review. It goes live once the review clears; until then the dashboard won't take another submission."))
     markPublished('chrome', commit)

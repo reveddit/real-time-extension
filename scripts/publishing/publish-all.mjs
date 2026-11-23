@@ -6,7 +6,8 @@
 // script builds its own fresh production artifact. A store that fails doesn't stop
 // the others, and each store that takes the version is recorded (common.mjs), so
 // running this again publishes only to the stores still missing it, and skips the
-// checks that passed for this code. Ctrl+C kills the current child and aborts.
+// checks that passed for this code. Ctrl+C, at a store's prompt too, kills the
+// current child and aborts.
 import { spawn, spawnSync } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -29,12 +30,18 @@ const LISTING = {
 
 let current = null
 let aborted = false
-process.on('SIGINT', () => {
+function abort() {
     console.log('\n' + c.red('✖ Publishing aborted by user'))
     aborted = true
     current?.kill('SIGINT')
+    const has = store => readPublishStatus().published[store]
+    const done = stores.filter(has)
+    const left = stores.filter(store => !has(store))
+    if (done.length) console.log(c.green(`✔ Published: ${done.map(name).join(', ')}`))
+    if (left.length) console.error(c.red(`✖ Not published: ${left.map(name).join(', ')}`))
     process.exit(130)
-})
+}
+process.on('SIGINT', abort)
 
 const run = store =>
     new Promise((resolve, reject) => {
@@ -42,6 +49,8 @@ const run = store =>
         current = spawn(process.execPath, [path.join(HERE, script)], { stdio: 'inherit', cwd: ROOT })
         current.on('close', code => {
             current = null
+            // Ctrl+C at a store's prompt reaches only its script, which exits 130
+            if (code === 130) abort()
             code === 0 ? resolve() : reject(new Error(`${script} exited with code ${code}`))
         })
         current.on('error', err => {

@@ -6,10 +6,10 @@
     },
     "publish": {
       "scripts/lib/env.mjs": "10b75a4900e5bbe0ec0ebc2d4ff2fb18bc86679c4e50e5d1d678e4732c69816d",
-      "scripts/publishing/__tests__/publish.test.mjs": "d39df1698a21ee2ece8ed48275a0af36436588649aa5cdeae20113abd7356e65",
+      "scripts/publishing/__tests__/publish.test.mjs": "e36554ef19c031cc792c07ceb51d3187438c4cd90d54783cc1b35dd9694de34b",
       "scripts/publishing/common.mjs": "0e43e2b084805a639221ab5e02f266fa117030cc65e82e791841783939b52b59",
-      "scripts/publishing/publish-all.mjs": "b174b7362db9b80ec7668db9b917a8c1e881396afd6e15fe9c20beb61e0fbad9",
-      "scripts/publishing/publish-chrome.mjs": "46ec50508a3c5619122598e2c0b482819a04f5bca96f6c24c117f6ab241ee1c3",
+      "scripts/publishing/publish-all.mjs": "0a0f5664468dcfe363dd848e9e510008d38e37f9de6080162bd8d64610ca51a9",
+      "scripts/publishing/publish-chrome.mjs": "6ef9ec17f68fc4c3a6c7dd2926bcaea80c6421c8ed33937f258081f1ea64b21c",
       "scripts/publishing/publish-edge.mjs": "cf7c4982d6357cf6d25a282fff4634cca7a58cbc1b8f05b2f98e9d04398a9a99",
       "scripts/publishing/publish-firefox.mjs": "2399f9ca81c88051e0f2d888ffdd623424ad8120dcabf82faa332f633a9f11ac",
       "scripts/publishing/publish-log.mjs": "b8287e582c0875b3cc1eb3b3fe4befc4a8347ac2123d417abe15bcaca7cd6bee",
