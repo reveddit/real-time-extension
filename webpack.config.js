@@ -6,28 +6,23 @@ import CopyWebpackPlugin from "copy-webpack-plugin"
 import TerserPlugin from 'terser-webpack-plugin'
 import ExtReloader from 'webpack-ext-reloader'
 import AfterEmitPlugin from './AfterEmitPlugin.js'
+import { parseReleaseHistory } from './release-history.js'
 
+// Every release in the file, for the news page; the popup's "released" card
+// shows the manifest's own
+const releaseHistory = parseReleaseHistory(fs.readFileSync(path.join(__dirname, 'STORE_DESCRIPTION.txt'), 'utf8'))
 const latestRelease = (() => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'src', 'manifest.json'), 'utf8'))
   const manifestVersion = manifest.version
 
-  const desc = fs.readFileSync(path.join(__dirname, 'STORE_DESCRIPTION.txt'), 'utf8')
-  const lines = desc.split('\n')
-  const histIdx = lines.findIndex(l => l.startsWith('VERSION HISTORY'))
-  if (histIdx === -1) throw new Error('STORE_DESCRIPTION.txt: could not find VERSION HISTORY section')
-
-  for (let i = histIdx + 1; i < lines.length; i++) {
-    const match = lines[i].trim().match(/^[\d/]+\s*-\s*(.+)$/)
-    if (match && match[1] === manifestVersion) {
-      const descLine = lines[i + 1]?.trim()
-      return { version: manifestVersion, description: descLine?.replace(/^-\s*/, '') || '' }
-    }
+  const release = releaseHistory.find(r => r.version === manifestVersion)
+  if (!release) {
+    throw new Error(
+      `STORE_DESCRIPTION.txt has no changelog entry for manifest version ${manifestVersion}. ` +
+      `Add an entry before building.`
+    )
   }
-
-  throw new Error(
-    `STORE_DESCRIPTION.txt has no changelog entry for manifest version ${manifestVersion}. ` +
-    `Add an entry before building.`
-  )
+  return { version: manifestVersion, description: release.notes[0] || '' }
 })()
 
 const mode = process.env.NODE_ENV
@@ -115,6 +110,7 @@ const extensionPages = {
     other: './src/src/other.tsx',
     welcome: './src/src/welcome.tsx',
     whatsnew: './src/src/whatsnew.tsx',
+    'news-page': './src/src/news-page.tsx',
 }
 const extensionPageNames = Object.keys(extensionPages)
 
@@ -138,6 +134,7 @@ const plugins = [
         __DEV__: JSON.stringify(mode !== 'production'),
         __LOCAL_SITE__: JSON.stringify(localSite),
         __LATEST_RELEASE__: JSON.stringify(latestRelease),
+        __RELEASE_HISTORY__: JSON.stringify(releaseHistory),
     }),
     new AfterEmitPlugin(),
 ]

@@ -357,6 +357,19 @@ describe('the header', () => {
         expect(chrome.runtime.openOptionsPage).toHaveBeenCalledTimes(1)
         expect(window.close).toHaveBeenCalledTimes(2)
     })
+
+    // The way back to a message dismissed from the card
+    it('opens the news page from its icon, and the popup closes', async () => {
+        const { document, window } = await openPopup()
+        const news = () => document.querySelector('button[aria-label="News"]')
+        await vi.waitFor(() => expect(news()).toBeTruthy())
+        expect(news().getAttribute('title')).toBe('News')
+        expect(news().querySelector('svg')).toBeTruthy()
+
+        news().click()
+        expect(chrome.tabs.create).toHaveBeenCalledWith({ url: chrome.runtime.getURL('src/news-page.html') })
+        expect(window.close).toHaveBeenCalledTimes(1)
+    })
 })
 
 // News messages as the popup shows them. The cache is what a fetch stored, a

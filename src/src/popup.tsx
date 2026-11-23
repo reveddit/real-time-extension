@@ -106,6 +106,15 @@ const ClockIcon = () => (
   </Icon>
 )
 
+// A newspaper: the page, and its fold at the right
+const NewsIcon = () => (
+  <Icon>
+    <path d="M4 5h12v14H6a2 2 0 0 1-2-2V5z" />
+    <path d="M16 9h4v8a2 2 0 0 1-2 2h-2" />
+    <path d="M7.5 9h5M7.5 12.5h5M7.5 16h2.5" />
+  </Icon>
+)
+
 // Eight teeth around a hole
 const GearIcon = () => (
   <Icon>
@@ -439,6 +448,7 @@ function Popup() {
     (userData?.otherUnseen.length ?? 0) > 0 || Object.values(userData?.users ?? {}).some(u => u.unseen.length > 0)
 
   const historyUrl = chrome.runtime.getURL('src/history.html')
+  const newsUrl = chrome.runtime.getURL('src/news-page.html')
 
   let otherUrl = chrome.runtime.getURL('src/other.html')
   if (userData && userData.otherUnseen.length) {
@@ -459,6 +469,16 @@ function Popup() {
             }}
           >
             <ClockIcon />
+          </HeaderBtn>
+          <HeaderBtn
+            title="News"
+            aria-label="News"
+            onClick={() => {
+              chrome.tabs.create({ url: newsUrl })
+              window.close()
+            }}
+          >
+            <NewsIcon />
           </HeaderBtn>
           <HeaderBtn
             title="Options"

@@ -419,6 +419,33 @@ test.describe('History page', () => {
     })
 })
 
+test.describe('News page', () => {
+    test('lists the messages on its first tab and the version history on its second', async ({ worker, openPage }) => {
+        const message = {
+            id: 'a',
+            title: 'New: Something',
+            body_markdown: 'Words with a [link](https://example.com).',
+            published_utc: 1783512000000,
+        }
+        // A fresh cache, so the page fetches nothing
+        await worker.evaluate(cache => chrome.storage.local.set({ news_cache: cache }), {
+            feed: { messages: [message] },
+            lastFetched: Date.now(),
+        })
+        const page = await openPage('news-page.html')
+
+        await expect(page.getByRole('tab', { name: 'Other apps' })).toHaveAttribute('aria-selected', 'true')
+        await expect(page.getByRole('heading', { name: 'New: Something' })).toBeVisible()
+        // The link opens in a new tab, which a plain click on a popup's link doesn't
+        await expect(page.getByRole('link', { name: 'link' })).toHaveAttribute('target', '_blank')
+
+        await page.getByRole('tab', { name: 'Version history' }).click()
+        const { version } = await worker.evaluate(() => chrome.runtime.getManifest())
+        await expect(page.getByRole('heading', { name: `v${version}` })).toBeVisible()
+        await expect(page.getByRole('heading', { name: 'New: Something' })).toHaveCount(0)
+    })
+})
+
 test.describe('Welcome page', () => {
     test('renders welcome UI with connection check', async ({ context, openPage }) => {
         // The rendered state depends on the connection check: "Getting started"

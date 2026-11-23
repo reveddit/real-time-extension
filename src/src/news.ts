@@ -312,9 +312,10 @@ export const requestStoreUpdateIfBehind = async (): Promise<void> => {
     }
 }
 
-export const getUnreadMessages = async (): Promise<NewsMessage[]> => {
-    const [cache, readIds] = await Promise.all([getCachedNews(), getReadIds()])
-    const feed = cache?.feed || { messages: [] }
+// What the cached feed holds for this install, in the order it shows: a higher
+// priority first, then the newest. Read ones too; the news page lists them all.
+export const getMessages = async (): Promise<NewsMessage[]> => {
+    const feed = (await getCachedNews())?.feed || { messages: [] }
     let ownVersion = ''
     try {
         ownVersion = chrome.runtime.getManifest().version
@@ -322,10 +323,14 @@ export const getUnreadMessages = async (): Promise<NewsMessage[]> => {
         /* ignored: no chrome in tests; empty version skips targeting */
     }
     const targeted = ownVersion ? filterMessagesForVersion(feed.messages, ownVersion) : feed.messages
-    // Higher priority first, then the newest
-    return targeted
-        .filter(m => !readIds[m.id])
-        .sort((a, b) => (b.priority || 0) - (a.priority || 0) || (b.published_utc || 0) - (a.published_utc || 0))
+    return [...targeted].sort(
+        (a, b) => (b.priority || 0) - (a.priority || 0) || (b.published_utc || 0) - (a.published_utc || 0),
+    )
+}
+
+export const getUnreadMessages = async (): Promise<NewsMessage[]> => {
+    const [messages, readIds] = await Promise.all([getMessages(), getReadIds()])
+    return messages.filter(m => !readIds[m.id])
 }
 
 // Current remote state of a mechanism switch, from the cached feed. 'auto' when
