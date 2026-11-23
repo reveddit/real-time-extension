@@ -1,5 +1,6 @@
 import { isPlaceholderText } from './common'
 import { isRateLimitError } from './parse_html/common'
+import { parseFeed } from './parse_html/feed'
 import { getRateLimitBackoffRemainingMs, getScanSettings } from './storage'
 import browser from 'webextension-polyfill'
 
@@ -97,42 +98,6 @@ async function fetchWithLogin(path: string, limiter: RateLimiter, secondTryMode?
 export const authorFeedPath = (author: string, sort: string, t: string): string => {
     const query = new URLSearchParams({ sort, limit: '100', ...(t && { t }) })
     return `/user/${encodeURIComponent(author)}/comments/.rss?${query}`
-}
-
-export function parseFeed(xml: string): any[] {
-    const feed = new DOMParser().parseFromString(xml, 'text/xml')
-    // A challenge, a login page, an empty body or a cut-off feed isn't a person
-    // with no comments. Browsers differ on what survives a parse error.
-    if (feed.documentElement?.localName !== 'feed' || feed.querySelector('parsererror')) {
-        throw Object.assign(new Error('a page in place of the feed'), { refused: true })
-    }
-    return Array.from(feed.querySelectorAll('entry')).map(entry => {
-        const name = entry.querySelector('id')?.textContent || ''
-        const isCommentItem = name.startsWith('t1_')
-        const href = entry.querySelector('link')?.getAttribute('href') || ''
-        const permalink = href.replace(/^https:\/\/[^/]+/, '')
-        const post = permalink.match(/\/comments\/([a-z0-9]+)/i)?.[1]
-        const content = entry.querySelector('content')?.textContent || ''
-        const bodyEl = new DOMParser().parseFromString(content, 'text/html').querySelector('.md')
-        const title = entry.querySelector('title')?.textContent || ''
-        const date = entry.querySelector('published')?.textContent || entry.querySelector('updated')?.textContent
-        return {
-            kind: isCommentItem ? 't1' : 't3',
-            data: {
-                name,
-                author: entry.querySelector('author name')?.textContent?.replace(/^\/u\//, '') || '[deleted]',
-                subreddit: entry.querySelector('category')?.getAttribute('term') || '',
-                body: (bodyEl?.textContent || '').trim(),
-                body_html: bodyEl?.innerHTML || '',
-                title: isCommentItem ? undefined : title,
-                // A comment's title reads "/u/name on the post's title"
-                link_title: isCommentItem ? title.replace(/^\/u\/\S+ on /, '') : undefined,
-                created_utc: Math.floor(Date.parse(date || '') / 1000) || 0,
-                permalink,
-                link_id: post ? 't3_' + post : undefined,
-            },
-        }
-    })
 }
 
 // --- Scans and the backoff ---

@@ -56,6 +56,7 @@ beforeAll(async () => {
         {},
         await import('../../src/src/restore.ts'),
         await import('../../src/src/scan-reads.ts'),
+        await import('../../src/src/parse_html/feed.ts'),
         await import('../../src/src/comment-tree.ts'),
         await import('../../src/src/profile-scan.ts'),
     )

@@ -8,9 +8,9 @@ import {
     commentFeedPath,
     lookupCommentsByIds,
     monitoringBackoffGate,
-    parseFeed,
     scanFailure,
 } from './scan-reads'
+import { parseFeed } from './parse_html/feed'
 import {
     type CommentTreeNode,
     extractCommentTree_newReddit,
