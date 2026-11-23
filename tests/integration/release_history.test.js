@@ -33,6 +33,21 @@ describe('parseReleaseHistory', () => {
         ])
     })
 
+    it('reads one-digit months and days, and writes them with two digits', () => {
+        const text = 'VERSION HISTORY:\n\n2026/4/12 - 0.0.5.2\n- b\n\n2026/4/1 - 0.0.5.1\n- a\n\n2026-5-3 - 0.0.5.3\n- c\n'
+        expect(parseReleaseHistory(text)).toEqual([
+            { version: '0.0.5.2', date: '2026/04/12', notes: ['b'] },
+            { version: '0.0.5.1', date: '2026/04/01', notes: ['a'] },
+            { version: '0.0.5.3', date: '2026/05/03', notes: ['c'] },
+        ])
+    })
+
+    // Skipping it would file its notes under the release above, with nothing to show it
+    it("refuses a dated line it can't read as a release header", () => {
+        const text = 'VERSION HISTORY:\n\n2026/11/17 - 0.0.5.37\n- a\n\n2026/11/15 - 0.0.5.36 (hotfix)\n- b\n'
+        expect(() => parseReleaseHistory(text)).toThrow("can't read this VERSION HISTORY header")
+    })
+
     it('refuses a file with no VERSION HISTORY, as the build does', () => {
         expect(() => parseReleaseHistory('2026/11/17 - 0.0.5.37\n- a note')).toThrow('VERSION HISTORY')
     })
@@ -50,6 +65,16 @@ describe("this repo's STORE_DESCRIPTION.txt", () => {
             expect(release.notes.length, release.version).toBeGreaterThan(0)
         }
         expect(new Set(releases.map(release => release.version)).size).toBe(releases.length)
+    })
+
+    // Counted without the parser's own header rule, which once skipped three of them
+    it('reads a release for every dated header line, each with its own notes', () => {
+        const text = read('STORE_DESCRIPTION.txt')
+        const history = text.slice(text.indexOf('VERSION HISTORY')).split('\n')
+        const headers = history.filter(line => /^\d{4}[/-]\d{1,2}[/-]\d{1,2}\s*-/.test(line.trim()))
+        const bullets = history.filter(line => line.trim().startsWith('- '))
+        expect(releases).toHaveLength(headers.length)
+        expect(releases.flatMap(release => release.notes)).toHaveLength(bullets.length)
     })
 
     // What the build needs, found here before it fails there

@@ -134,7 +134,14 @@ function News() {
   const [messages, setMessages] = useState<NewsMessage[] | null>(null)
 
   useEffect(() => {
-    fetchNews().finally(() => getMessages().then(setMessages))
+    // The cached messages show at once, so a fetch that stalls leaves them on the page,
+    // and what the fetch brings replaces them
+    getMessages()
+      .then(cached => {
+        if (cached.length) setMessages(cached)
+      })
+      .then(() => fetchNews())
+      .finally(() => getMessages().then(setMessages))
   }, [])
 
   return (

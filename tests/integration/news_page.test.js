@@ -21,17 +21,25 @@ const message = (id, extra = {}) => ({
 // What a fetch stored, a fresh one, so the page fetches nothing
 const newsCache = (...messages) => ({ news_cache: { feed: { messages }, lastFetched: Date.now() } })
 
-const openNews = ({ local = {}, hash = '' } = {}) =>
+// fetched: the feed a fetch brings; without it the fetch never answers
+const openNews = ({ local = {}, hash = '', fetched } = {}) =>
     openPage(
         () => {
             globalThis.window.location = { hash }
             vi.stubGlobal('__RELEASE_HISTORY__', RELEASES)
-            vi.stubGlobal('fetch', () => new Promise(() => {}))
+            vi.stubGlobal(
+                'fetch',
+                fetched
+                    ? async () => ({ ok: true, status: 200, json: async () => fetched })
+                    : () => new Promise(() => {}),
+            )
             return import('../../src/src/news-page.tsx')
         },
         {},
         local,
     )
+// A cache from over an hour ago, so the page fetches
+const staleCache = (...messages) => ({ news_cache: { feed: { messages }, lastFetched: 0 } })
 
 const tabs = document => Array.from(document.querySelectorAll('[role="tab"]'))
 const selectedTab = document => tabs(document).find(tab => tab.getAttribute('aria-selected') === 'true')?.textContent
@@ -89,5 +97,17 @@ describe('the news page', () => {
         const { document } = await openNews({ hash: '#versions', local: newsCache(message('a')) })
         await vi.waitFor(() => expect(selectedTab(document)).toBe('Version history'))
         expect(headings(document)).toEqual(['v0.0.5.37', 'v0.0.5.36'])
+    })
+
+    // A fetch that stalls must not hold back what the cache already has
+    it('lists the cached messages while the feed fetch is still waiting', async () => {
+        const { document } = await openNews({ local: staleCache(message('a')) })
+        await vi.waitFor(() => expect(headings(document)).toEqual(['Title a']))
+    })
+
+    it('replaces them with what the fetch brings', async () => {
+        const fetched = { messages: [message('b'), message('c', { priority: 2 })] }
+        const { document } = await openNews({ local: staleCache(message('a')), fetched })
+        await vi.waitFor(() => expect(headings(document)).toEqual(['Title c', 'Title b']))
     })
 })
