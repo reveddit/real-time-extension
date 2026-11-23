@@ -39,8 +39,9 @@
 // - Reddit shows authors their own removed items as if nothing happened. The
 //   items the extension's own monitoring has confirmed removed are marked
 //   removed, which costs no extra reddit requests. The user's other own items
-//   carry reveddit_unverified unless monitoring's last pass saw them in the
-//   logged-out view, since only that can tell (the website can say so).
+//   carry reveddit_unverified when monitoring's last pass could have seen them
+//   in the logged-out view and didn't, since only that can tell (the website
+//   can say so).
 // - Moderators see removed items in their subreddits with the text intact and
 //   removed: true or banned_by (the remover) set, verified 2026-10-17 on
 //   r/pushshift; spam marks spam-filter removals.
@@ -71,11 +72,12 @@ import {
     getRateLimitBackoffRemainingMs,
     getMsSinceLastRateLimitHit,
     getObjectNamesForThing,
+    getOldestDateKey,
     getPublicLiveKey,
     getScanSettings,
 } from './storage'
 import { flagIfRateLimited, RECENT_RATE_LIMIT_WINDOW_MS, readLocal, isFresh } from './request-gates'
-import { isPublicProfileUnavailable } from './lookup-status'
+import { isPublicProfileUnavailable, publicViewUncheckedReason } from './lookup-status'
 import { isCycleInFlight } from './monitoring'
 import { isPlaceholderText, isRemovedInModView, isViewerBlockedItem } from './common'
 import { dlog } from './diaglog'
@@ -221,7 +223,17 @@ interface PublicViewContext {
     me: string
     // The user's items monitoring's last pass saw in the logged-out view
     verifiedLive: Set<string>
+    // While that record is fresh, the created_utc of the oldest item its one
+    // listing page covers (0: all of them). Unset, no item is flagged.
+    liveSince?: number
 }
+
+// Whether monitoring's record could have seen the user's item live: one it
+// covers, in a community the logged-out view shows
+const couldBeSeenLive = (data: any, liveSince: number | undefined): boolean =>
+    liveSince !== undefined &&
+    Number(data.created_utc) >= liveSince &&
+    !publicViewUncheckedReason(String(data.name || ''), data)
 
 const getPublicViewContext = async (me: string): Promise<PublicViewContext> => {
     const context: PublicViewContext = { knownRemoved: new Set(), me: me.toLowerCase(), verifiedLive: new Set() }
@@ -241,6 +253,8 @@ const getPublicViewContext = async (me: string): Promise<PublicViewContext> => {
             const live: any = await readLocal(liveKey, null)
             if (Array.isArray(live?.ids) && isFresh(Number(live?.t), PUBLIC_LIVE_MAX_AGE_MS, Date.now())) {
                 live.ids.forEach((id: string) => context.verifiedLive.add(id))
+                // Written only from a full page: fewer items, and it covers all
+                context.liveSince = Number(await readLocal(getOldestDateKey(me, true), 0)) || 0
             }
         }
     } catch {
@@ -428,7 +442,8 @@ export const toPublicView = (json: any, context: PublicViewContext): any => {
             } else if (
                 context.me &&
                 String(data.author || '').toLowerCase() === context.me &&
-                !context.verifiedLive.has(data.name)
+                !context.verifiedLive.has(data.name) &&
+                couldBeSeenLive(data, context.liveSince)
             ) {
                 data.reveddit_unverified = true
             }
@@ -703,13 +718,14 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
                     if (r.status === 429) {
                         flagIfRateLimited(new Error(`www.reddit.com request failed: ${r.status}`))
                     }
-                    // The edge's page in both modes says nothing of this feed
-                    // or comment, where Reddit's own 403 or 404 does
+                    // The edge's page in both modes says nothing of this feed,
+                    // comment or profile, where Reddit's own 403 (a suspended
+                    // account) or 404 does
                     return {
                         ok: false,
                         status: r.status,
                         data: null,
-                        ...(check && blockPage && { error: 'block_page' }),
+                        ...(blockPage && { error: 'block_page' }),
                     }
                 }
                 if (USER_COMMENT_FEED.test(path)) {
