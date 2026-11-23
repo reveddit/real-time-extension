@@ -29,7 +29,7 @@ DECLARATIVENETREQUESTWITHHOSTACCESS
 
 reveddit real-time tells users when reddit removes their own posts and comments, by reading reddit the way other people see it: logged out, or as an optional second Reddit account.
 
-Its session rules apply to the extension's own requests only. They remove the Origin header on its background requests to old.reddit.com and www.reddit.com, which reddit otherwise refuses. As the fetch API cannot set cookies, the rules set them: two that reddit's old layout and its adult-content notice need, on those pages; the logged-out cookies reddit gave earlier logged-out reads, on later ones; and an optional second account's login cookies, on the GET requests made as that account.
+Its session rules apply to the extension's own requests only. They remove the Origin header on its background requests to old.reddit.com and www.reddit.com, which reddit otherwise refuses. As the fetch API cannot set cookies, the rules set them: the logged-out cookies reddit gave earlier logged-out reads, on later ones, and an optional second account's login cookies, on the GET requests made as that account.
 
 Every rule is limited to reddit.com and to requests the extension makes itself: from its background, or logged-out reads it sends from inside an open reddit tab, which carry a secret marker. Never the user's own browsing. The rules only modify request headers. They never block, redirect, or read requests or responses.
 
@@ -50,7 +50,7 @@ Reads the cookies reddit.com sets in its answers to the extension's own logged-o
 
 STORAGE
 
-Used to persist user preferences, the list of subscribed usernames and content IDs, the text, status and history of monitored content, a diagnostic log the user can copy into a bug report, and cached state such as the last logged-in user and unseen notification count. It also keeps copies of reddit.com cookies, login included: the user's own, an optional second Reddit account's, and the logged-out cookies reddit gives the extension's logged-out reads. chrome.storage.sync holds settings, subscriptions and each item's status and recent changes, which roam across the user's devices if browser sync is on; chrome.storage.local holds the rest. Stored data leaves the browser only through that sync, a log the user copies themselves, the item IDs, usernames, optional client id and the random markers on its own requests sent to reddit.com, and reveddit.com links the user opens. The cookies are only ever sent to reddit.com.
+Used to persist user preferences, the list of subscribed usernames and content IDs, the text, status and history of monitored content, a diagnostic log the user can copy into a bug report, and cached state such as the last logged-in user and unseen notification count. It also keeps copies of reddit.com cookies, login included: the user's own, an optional second Reddit account's, and the logged-out cookies reddit gives the extension's logged-out reads. chrome.storage.sync holds settings, subscriptions and each item's status and recent changes, which roam across the user's devices if browser sync is on; chrome.storage.local holds the rest. Stored data leaves the browser only through that sync, a log the user copies themselves, the item IDs, usernames and the random markers on its own requests sent to reddit.com, and reveddit.com links the user opens. The cookies are only ever sent to reddit.com.
 
 
 CONTEXTMENUS

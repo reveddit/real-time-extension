@@ -1,17 +1,9 @@
 import { FetchHtml, PublicProfileData, getPublicProfileItems } from './parse_html/new'
 import browser from 'webextension-polyfill'
 import { dlog } from './diaglog'
-import {
-    removeMultipleFromPendingPostQueue,
-    clearRateLimitBackoff,
-    getScanSettings,
-    getMsSinceLastRateLimitHit,
-    SCAN_SECONDS_MAX,
-} from './storage'
+import { clearRateLimitBackoff, getScanSettings, getMsSinceLastRateLimitHit, SCAN_SECONDS_MAX } from './storage'
 import { isRemovedItem, RedditItem } from './common'
 import { getViewer, isSignedInViewer, isViewerConnecting, hasRedditLoginCookie } from './viewer'
-import { isRateLimitError } from './parse_html/common'
-import { isLoginWallMessage } from './login-wall-config'
 import { getRemoteMechanism, MECHANISM_SCAN_FEEDS } from './news'
 import { fetchForScan, UNCACHED_MODES, WWW_FETCH_TIMEOUT_MS, withDeadline, workerSession } from './logged-in-fetch'
 import {
@@ -30,7 +22,6 @@ import {
     notePublicViewUnchecked,
     viewerCheckedLast,
     VIEWER_THREAD_FAILURES_KEY,
-    PROFILE_PUBLICLY_EMPTY,
 } from './lookup-status'
 import { getWwwHtmlFetcher } from './www-fetcher'
 import { notePublicViewUnreadable } from './public-cookies'
@@ -41,7 +32,6 @@ import {
     isAbsentUnverifiedUnknown,
     verifyFeedAbsentItems,
 } from './page-verify'
-import { lookupItemsByID_legacy } from './legacy-lookup'
 import { lookupOtherItemsByID_authed } from './followed-lookup'
 import { lookupItemsByID_fromViewer } from './viewer-lookup'
 import { isLoginKeptOut } from './reddit-auth'
@@ -175,7 +165,6 @@ export const lookupItemsByID_fromPublicProfile = async (
         }
         return isCovered(id, profile.coverage)
     })
-    const canaryCommentIds = [...profile.items.keys()].filter(id => id.startsWith('t1_')).slice(0, 3)
     // A post page's 429 (verifyFeedPresentPosts) ends this cycle's page
     // checks: the absent items get no verdict, which is no news
     const rateLimited = absentToVerify.length > 0 && (await isRateLimitedNow())
@@ -184,7 +173,7 @@ export const lookupItemsByID_fromPublicProfile = async (
     }
     const absentVerdicts =
         absentToVerify.length && !rateLimited
-            ? await verifyFeedAbsentItems(absentToVerify, authItemsMeta, fetchHtml, canaryCommentIds)
+            ? await verifyFeedAbsentItems(absentToVerify, authItemsMeta, fetchHtml)
             : {}
     if (!absentToVerify.length) {
         // Nothing absent needs a page verdict (or verification is off), so the
@@ -296,13 +285,6 @@ export const lookupItemsByID_fromPublicProfile = async (
             }
         }
     }
-    // The legacy pending-post queue may hold a conflicting verdict from a cycle
-    // where the www path failed over to old.reddit — clear our ids from it so
-    // the two paths can't alternate verdicts for the same post.
-    const t3Requested = ids.filter(id => id.startsWith('t3_'))
-    if (t3Requested.length) {
-        removeMultipleFromPendingPostQueue(t3Requested).catch(() => {})
-    }
     // Counted the way monitoring reads them (readLookupResult): what nobody
     // logged out can see is neither removed nor live, and is named once, in the
     // copied log's header, instead of on every cycle's line
@@ -341,19 +323,12 @@ export const lookupItemsByID_fromPublicProfile = async (
     return results
 }
 
-// Primary: compare against the logged-out www.reddit.com profile (survives the
-// deprecation). Falls back to the legacy chain while that still exists. With a
-// second account connected (viewer.ts), it checks the user's items instead,
-// and the logged-out view isn't tried.
-export const lookupItemsByID = (
-    ids: string | string[],
-    auth: any,
-    monitor_quarantined = false,
-    username = '',
-    authItemsMeta: AuthItemsMeta = {},
-) => {
+// A user's items are compared against the logged-out www.reddit.com profile.
+// With a second account connected (viewer.ts), it checks the user's items
+// instead, and the logged-out view isn't tried. Followed items have no profile
+// to compare, so api/info says (followed-lookup.ts).
+export const lookupItemsByID = (ids: string | string[], username = '', authItemsMeta: AuthItemsMeta = {}) => {
     const idsArray = (Array.isArray(ids) ? ids : String(ids).split(',')).filter(x => x)
-    const legacy = () => lookupItemsByID_legacy(auth, monitor_quarantined, ids, authItemsMeta)
     if (!idsArray.length) {
         if (username) {
             // None of the user's items left to check: nothing to ask reddit,
@@ -366,25 +341,20 @@ export const lookupItemsByID = (
                 .catch(() => null)
                 .then(() => [])
         }
-        return legacy()
+        return Promise.resolve([])
     }
     if (!username) {
-        // "Other" (non-profile) subscriptions: no public profile to diff against.
-        // Authenticated api/info is the deprecation-surviving primary; the legacy
-        // chain stays as a fallback only while old.reddit/unauth-.json still work.
-        return lookupOtherItemsByID_authed(idsArray, auth, monitor_quarantined)
+        // "Other" (non-profile) subscriptions: no public profile to diff against
+        return lookupOtherItemsByID_authed(idsArray)
             .then(result => {
                 clearRateLimitBackoff()
                 return result
             })
             .catch((authedError: Error) => {
                 console.log('authenticated api/info lookup failed:', authedError.message)
-                // A 429 on monitoring's own lookup enters the shared backoff,
-                // and the legacy chain would only send more
-                if (noteRateLimited(authedError)) {
-                    throw authedError
-                }
-                return legacy()
+                // A 429 on monitoring's own lookup enters the shared backoff
+                noteRateLimited(authedError)
+                throw authedError
             })
     }
     return getViewer().then(viewer => {
@@ -405,42 +375,11 @@ export const lookupItemsByID = (
                   clearRateLimitBackoff()
                   return result
               })
-            : lookupItemsByID_publicThenLegacy(idsArray, username, authItemsMeta, legacy)
+            : lookupItemsByID_fromPublicProfile(idsArray, username, authItemsMeta).then(result => {
+                  clearRateLimitBackoff()
+                  return result
+              })
     })
-}
-
-const lookupItemsByID_publicThenLegacy = (
-    idsArray: string[],
-    username: string,
-    authItemsMeta: AuthItemsMeta,
-    legacy: () => Promise<any>,
-) => {
-    return lookupItemsByID_fromPublicProfile(idsArray, username, authItemsMeta)
-        .then(result => {
-            clearRateLimitBackoff()
-            return result
-        })
-        .catch((publicError: Error) => {
-            // A 429 (already in the backoff) ends the lookup: the legacy chain
-            // would only send more. So does a login page: the legacy pages are
-            // logged out too.
-            if (
-                publicError.message === PROFILE_PUBLICLY_EMPTY ||
-                isRateLimitError(publicError) ||
-                isLoginWallMessage(publicError.message)
-            ) {
-                throw publicError
-            }
-            console.log('www.reddit.com public profile lookup failed:', publicError.message)
-            return legacy().catch((legacyError: any) => {
-                // Name both failures. The legacy fallback's alone ("legacy reddit
-                // HTML request failed: 403") hid the www failure behind it in
-                // issue #27, which was filed about the legacy message.
-                throw new Error(
-                    `${publicError.message}; legacy fallback: ${String(legacyError?.message || legacyError)}`,
-                )
-            })
-        })
 }
 
 // Every tab's scans take turns, so more of them don't mean a faster pace. The turn

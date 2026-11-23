@@ -114,16 +114,6 @@ const Footer = styled.div`
   gap: ${tokens.space.md};
 `
 
-const AdvancedLink = styled.div`
-  margin-top: ${tokens.space.md};
-  font-size: 0.9em;
-`
-
-const AdvancedSection = styled.div<{ visible: boolean }>`
-  display: ${p => (p.visible ? 'block' : 'none')};
-  margin-top: ${tokens.space.sm};
-`
-
 // The two stored booleans per type ({track, notify}) have three valid states;
 // the picker names them. track:false with notify:true is unreachable from this
 // UI and behaves as 'off' in monitoring, so it displays as 'off'.
@@ -142,18 +132,14 @@ function Options() {
   const [scanReads, setScanReads] = useState('')
   const [scanSeconds, setScanSeconds] = useState('')
   const [scanLimits, setScanLimits] = useState<ScanLimits>({})
-  const [clientId, setClientId] = useState('')
   const [removedMode, setRemovedMode] = useState<TrackMode>('off')
   const [lockedMode, setLockedMode] = useState<TrackMode>('off')
   const [hideSubscribe, setHideSubscribe] = useState(false)
-  const [monitorQuarantined, setMonitorQuarantined] = useState(false)
   const [showScanOnOwnProfile, setShowScanOnOwnProfile] = useState(false)
   const [showScanOnOtherProfiles, setShowScanOnOtherProfiles] = useState(true)
   const [showThreadScanButtons, setShowThreadScanButtons] = useState(true)
   const [highlightOwnProfileStatus, setHighlightOwnProfileStatus] = useState(true)
   const [autoFilterRemovedThreads, setAutoFilterRemovedThreads] = useState(true)
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [simulateDeprecation, setSimulateDeprecation] = useState(false)
   const [themeMode, setThemeModeState] = useState<ThemeMode>('auto')
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
@@ -185,11 +171,9 @@ function Options() {
         const scan = scanSettingsFrom(opts)
         setScanReads(String(scan.readsPerClick))
         setScanSeconds(String(scan.seconds))
-        setClientId(opts.custom_clientid || '')
         setRemovedMode(modeFromStatus(removal))
         setLockedMode(modeFromStatus(lock))
         setHideSubscribe(!!opts.hide_subscribe)
-        setMonitorQuarantined(!!opts.monitor_quarantined)
         setShowScanOnOwnProfile(!!opts.show_scan_on_own_profile)
         setShowScanOnOtherProfiles(opts.show_scan_on_other_profiles !== false)
         setShowThreadScanButtons(opts.show_thread_scan_buttons !== false)
@@ -203,9 +187,6 @@ function Options() {
     getRemoteScanLimits().then(setScanLimits)
     chrome.storage.local.get([THEME_STORAGE_KEY], res => {
       setThemeModeState((res?.[THEME_STORAGE_KEY] as ThemeMode) || 'auto')
-    })
-    chrome.storage.local.get(['dev_simulate_endpoint_deprecation'], res => {
-      setSimulateDeprecation(!!res?.dev_simulate_endpoint_deprecation)
     })
     sendMessageAny({ action: 'get-diag-status' }, (resp: DiagStatus) => {
       if (runtimeAny.lastError || !resp || resp.error) return
@@ -255,14 +236,6 @@ function Options() {
     })
   }
 
-  // Written straight to local storage (not through saveOptions) so it takes
-  // effect on the next monitoring cycle without needing "save". It's a dev/test
-  // switch, not a user preference.
-  const handleSimulateDeprecationChange = (checked: boolean) => {
-    setSimulateDeprecation(checked)
-    chrome.storage.local.set({ dev_simulate_endpoint_deprecation: checked })
-  }
-
   const handleThemeChange = (mode: ThemeMode) => {
     setThemeModeState(mode)
     setThemeMode(mode)
@@ -273,13 +246,11 @@ function Options() {
     setSeenCount(String(SEEN_COUNT_DEFAULT))
     setScanReads(String(SCAN_READS_DEFAULT))
     setScanSeconds(String(SCAN_SECONDS_DEFAULT))
-    setClientId('')
   }
 
   const saveAndClose = () => {
     const intervalNum = Number(interval)
     const seenCountNum = Number(seenCount)
-    const customClientId = (clientId || '').trim()
 
     const refuse = (message: string) => {
       setError(message)
@@ -305,11 +276,9 @@ function Options() {
       {
         seen_count: seenCountNum,
         interval: intervalNum,
-        custom_clientid: customClientId,
         removal_status: { track: removedMode !== 'off', notify: removedMode === 'notify' },
         lock_status: { track: lockedMode !== 'off', notify: lockedMode === 'notify' },
         hide_subscribe: hideSubscribe,
-        monitor_quarantined: monitorQuarantined,
         show_scan_on_own_profile: showScanOnOwnProfile,
         show_scan_on_other_profiles: showScanOnOtherProfiles,
         show_thread_scan_buttons: showThreadScanButtons,
@@ -335,9 +304,6 @@ function Options() {
     .join(' and ')
 
   if (!loaded) return <Page>Loading…</Page>
-
-  // Only requests made with this id's token read monitor_quarantined
-  const hasClientId = clientId.trim() !== ''
 
   return (
     <Page>
@@ -418,13 +384,6 @@ function Options() {
           <label>same-status count before alert</label>
           <input type="text" value={seenCount} onChange={e => setSeenCount(e.target.value)} />
         </Field>
-        {hasClientId && (
-          <CheckField
-            label="monitor quarantined content"
-            checked={monitorQuarantined}
-            onChange={setMonitorQuarantined}
-          />
-        )}
         <CheckField label="hide subscribe button" checked={hideSubscribe} onChange={setHideSubscribe} />
         <CheckField
           label="show removed-content scan on other profiles"
@@ -452,12 +411,6 @@ function Options() {
           onChange={setAutoFilterRemovedThreads}
         />
       </FieldStack>
-      {hasClientId && monitorQuarantined && (
-        <Note>
-          Enabling "monitor quarantined content" may appear to cause an occasional logout. Refreshing the page should
-          show you are still logged in. Increase "minutes between Reddit checks" to 5 or more to reduce this occurrence.
-        </Note>
-      )}
 
       <SectionHeader>Scans</SectionHeader>
       <FieldStack>
@@ -508,60 +461,6 @@ function Options() {
         <Button onClick={clearDiagLogClick}>clear log</Button>
       </DiagActions>
       {diagStatus && <Note>{diagStatus}</Note>}
-
-      <AdvancedLink>
-        {!showAdvanced && (
-          <BlueLink
-            href="#"
-            onClick={e => {
-              e.preventDefault()
-              setShowAdvanced(true)
-            }}
-          >
-            advanced
-          </BlueLink>
-        )}
-      </AdvancedLink>
-      <AdvancedSection visible={showAdvanced}>
-        <SectionHeader>Advanced</SectionHeader>
-        <Note>
-          Takes an "installed app" client id from reddit &gt; preferences &gt; apps. Checks then also use Reddit&apos;s
-          API with it.
-        </Note>
-        <FieldStack>
-          <Field>
-            <label>custom client id</label>
-            <input
-              type="text"
-              value={clientId}
-              onChange={e => setClientId(e.target.value)}
-              placeholder="<default is blank>"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-            />
-          </Field>
-          {/* Dev/test switch only — gated out of released builds (mirrors __replayInstall). */}
-          {__DEV__ && (
-            <Field>
-              <label>
-                simulate Reddit endpoint deprecation (dev)
-                <Hint>
-                  Blocks the legacy old.reddit.com HTML and unauthenticated .json paths, as if Reddit had already
-                  removed them. Detection then relies only on the logged-out www.reddit.com profile view. Applies on the
-                  next check — no save needed.
-                </Hint>
-              </label>
-              <input
-                type="checkbox"
-                checked={simulateDeprecation}
-                onChange={e => handleSimulateDeprecationChange(e.target.checked)}
-              />
-            </Field>
-          )}
-        </FieldStack>
-      </AdvancedSection>
 
       {error && <MessageBanner variant="warning">{error}</MessageBanner>}
 

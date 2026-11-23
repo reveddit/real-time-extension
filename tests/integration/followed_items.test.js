@@ -19,9 +19,9 @@ import { _followedTiming, FOLLOWED_POST_IDS_KEY } from '../../src/src/followed-l
 import { fetchLoggedIn, _resetLoggedInFetchState } from '../../src/src/logged-in-fetch'
 import { setCurrentStateForId } from '../../src/src/monitoring'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
-import { useLegacyStub } from '../mocks/public-profile.js'
+import { usePublicLookupHooks } from '../mocks/public-profile.js'
 
-useLegacyStub()
+usePublicLookupHooks()
 
 describe('followed items while api/info is refused', () => {
     const COMMENT = 't1_folc1'
@@ -52,7 +52,7 @@ describe('followed items while api/info is refused', () => {
             throw new Error(`unexpected url: ${u}`)
         }
     }
-    const lookupFollowed = ids => lookupItemsByID(ids, 'none', false, '', {})
+    const lookupFollowed = ids => lookupItemsByID(ids, '', {})
     // The followed list (storage.sync), which the rotation's maps are pruned to
     const following = ids => Object.fromEntries(ids.map(id => [id, { t: 1 }]))
     const savedCookies = browserMock.cookies

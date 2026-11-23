@@ -1,30 +1,17 @@
 // Fixtures for the tests of lookupItemsByID_fromPublicProfile and the lookups
 // around it (public_lookup, post_pages, capability_rests, followed_items):
 // profile and comment pages modeled on live ones, a fetch that serves them by
-// URL, and the seam that keeps the legacy parsers (HTMLRewriter, WASM) out.
+// URL.
 import { beforeEach, afterEach } from 'vitest'
 import browserMock, { __resetStorage } from './webextension-polyfill.js'
-import { _legacyLookups } from '../../src/src/legacy-lookup'
 import { _wwwRouteTiming } from '../../src/src/www-fetcher'
 
-// The real legacy parsers run HTMLRewriter (WASM) which cannot load under
-// vitest — always stub the seam so no test can reach them.
-const originalLegacyLookups = { ..._legacyLookups }
-export const stubLegacy = (commentsById, postByPath) => {
-    _legacyLookups.commentsById = commentsById || (async () => [])
-    _legacyLookups.postByPath = postByPath || (async () => ({ error: 'stubbed' }))
-}
-
 // Call once at the top of a test file: each test starts with empty storage and
-// the stubbed seam, and leaves the seam and the tab query as it found them.
-export const useLegacyStub = () => {
+// leaves the tab query as it found it.
+export const usePublicLookupHooks = () => {
     const savedQuery = browserMock.tabs.query
-    beforeEach(() => {
-        __resetStorage()
-        stubLegacy()
-    })
+    beforeEach(() => __resetStorage())
     afterEach(() => {
-        Object.assign(_legacyLookups, originalLegacyLookups)
         browserMock.tabs.query = savedQuery
     })
 }

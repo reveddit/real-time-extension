@@ -64,9 +64,9 @@ describe('readLookupResult', () => {
         expect(readLookupResult(liveComment('t1_a'), authItem, KNOWN)).toBe('approved')
     })
 
-    it('reads results the legacy paths returned as they are, since those can see this content', () => {
-        const legacy = { ...synthetic('t1_a'), _public_view: undefined }
-        expect(readLookupResult(legacy, { name: 't1_a', over_18: true }, undefined)).toBe('removed')
+    it("reads results from any other view than the public one as they are, since those can see this content", () => {
+        const other = { ...synthetic('t1_a'), _public_view: undefined }
+        expect(readLookupResult(other, { name: 't1_a', over_18: true }, undefined)).toBe('removed')
         // followed items have no author view
         expect(readLookupResult(synthetic('t1_a'), null, undefined)).toBe('removed')
     })
@@ -103,7 +103,6 @@ describe('lookup results through whole checks', () => {
             [authItem.name],
             USER,
             true,
-            null,
             structuredClone(__getSyncStorage()),
             SUBSCRIBED_FROM_NA,
             { [authItem.name]: authItem },

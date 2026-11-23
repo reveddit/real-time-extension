@@ -378,15 +378,6 @@ test.describe('Options page', () => {
 
         // Reset link
         await expect(page.locator('text=reset to defaults')).toBeVisible()
-
-        // Advanced section should be hidden initially
-        const advancedHeading = page.locator('h2', { hasText: 'Advanced' })
-        await expect(advancedHeading).not.toBeVisible()
-
-        // Click advanced to reveal it
-        await page.locator('a', { hasText: 'advanced' }).click()
-        await expect(advancedHeading).toBeVisible()
-        await expect(page.locator('text=custom client id')).toBeVisible()
     })
 })
 

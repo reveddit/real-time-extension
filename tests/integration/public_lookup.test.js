@@ -25,7 +25,6 @@ import {
 import { getDiagEntries } from '../mocks/diag-entries.js'
 import { res } from '../mocks/responses.js'
 import {
-    stubLegacy,
     USER,
     thingIdEl,
     emptyStatePage,
@@ -41,10 +40,10 @@ import {
     meta,
     installFetch,
     defaultRoutes,
-    useLegacyStub,
+    usePublicLookupHooks,
 } from '../mocks/public-profile.js'
 
-useLegacyStub()
+usePublicLookupHooks()
 
 describe('an item older than the walked part of the feed', () => {
     const cursor = id => Buffer.from(id).toString('base64')
@@ -258,71 +257,6 @@ describe('lookupItemsByID_fromPublicProfile feed-absent verification', () => {
         const results = await lookupItemsByID_fromPublicProfile([HIDDEN], USER, authItemsMeta)
         expect(calls.filter(u => u.includes('/r/hiddensub/')).length).toBe(0)
         expect(results[0].data.author).toBe('[deleted]')
-    })
-
-    it('resolves unknown www verdicts via the old.reddit tiebreaker', async () => {
-        // www serves shells (unrecognizable) for both items; old.reddit knows
-        // the truth: HIDDEN is live, GONE is removed.
-        installFetch([
-            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
-            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
-            [THREAD_PAGES[HIDDEN], '<html><body>shell</body></html>'],
-            [THREAD_PAGES[GONE], '<html><body>shell</body></html>'],
-        ])
-        // old.reddit /api/info drops removed comments: GONE is absent from the
-        // response; the feed-present canary (FEED_OK) and the hidden-but-live
-        // comment render. Absence + rendered canary → removed.
-        let requestedIds
-        stubLegacy(async ids => {
-            requestedIds = ids
-            return [
-                { data: { name: HIDDEN, author: USER, body: 'still here' } },
-                { data: { name: FEED_OK, author: USER, body: 'canary' } },
-            ]
-        })
-        const ids = [FEED_OK, HIDDEN, GONE]
-        const authItemsMeta = Object.fromEntries(ids.map(id => [id, meta(id)]))
-        const results = await lookupItemsByID_fromPublicProfile(ids, USER, authItemsMeta)
-        const byId = Object.fromEntries(results.map(r => [r.data.name, r.data]))
-        expect(byId[HIDDEN].author).toBe(USER)
-        expect(byId[GONE].author).toBe('[deleted]')
-        // the batch included the feed-present canary alongside the unresolved ids
-        expect(requestedIds).toContain(FEED_OK)
-        // tiebreaker verdicts are cached like www verdicts
-        expect(__getLocalStorage().www_absent_item_verdicts[HIDDEN].v).toBe('live')
-        expect(__getLocalStorage().www_absent_item_verdicts[GONE].v).toBe('removed')
-    })
-
-    it('does not treat absence from a canary-less or unhealthy legacy response as removed', async () => {
-        installFetch([
-            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
-            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
-            [THREAD_PAGES[GONE], '<html><body>shell</body></html>'],
-        ])
-        // Legacy response renders nothing (unhealthy/blocked) → no absence verdict
-        stubLegacy(async () => [])
-        const results = await lookupItemsByID_fromPublicProfile([FEED_OK, GONE], USER, {
-            [FEED_OK]: meta(FEED_OK),
-            [GONE]: meta(GONE),
-        })
-        expect(results.map(r => r.data.name)).not.toContain(GONE)
-    })
-
-    it('skips the tiebreaker when the legacy paths are disabled', async () => {
-        __resetStorage({}, { dev_simulate_endpoint_deprecation: true })
-        installFetch([
-            [`/user/${USER}/comments/?sort=new`, commentsPage('') + thingIdEl(FEED_OK)],
-            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
-            [THREAD_PAGES[GONE], '<html><body>shell</body></html>'],
-        ])
-        let called = false
-        stubLegacy(async () => {
-            called = true
-            return []
-        })
-        const results = await lookupItemsByID_fromPublicProfile([GONE], USER, { [GONE]: meta(GONE) })
-        expect(called).toBe(false)
-        expect(results.map(r => r.data.name)).not.toContain(GONE)
     })
 
     it('omits a known-removed feed-present post with no page verdict instead of approving it', async () => {
@@ -676,11 +610,10 @@ describe('lookup failure reasons', () => {
         expect(await lookupWarningToKeep(USER)).toBeNull()
     })
 
-    it('when the legacy fallback fails too, the error names both', async () => {
+    it('the error names the www failure alone', async () => {
         blockAll()
-        __getLocalStorage().dev_simulate_endpoint_deprecation = true
-        await expect(lookupItemsByID([GONE], 'none', false, USER, { [GONE]: meta(GONE) })).rejects.toThrow(
-            /^www profile lookup invalid: www\.reddit\.com request failed: 403 \(refused: .*\); legacy fallback: legacy reddit HTML request failed: 403 \(legacy endpoints disabled\)$/,
+        await expect(lookupItemsByID([GONE], USER, { [GONE]: meta(GONE) })).rejects.toThrow(
+            /^www profile lookup invalid: www\.reddit\.com request failed: 403 \(refused: [^;]*\)$/,
         )
     })
 })
@@ -762,22 +695,6 @@ describe('a profile that hides its comments from logged-out visitors', () => {
         expect(byId[GONE].author).toBe('[deleted]')
     })
 
-    it('gives the legacy tiebreak canaries from comments recently read live, when none is in the feed', async () => {
-        const asked = []
-        stubLegacy(async ids => {
-            asked.push(...ids)
-            return []
-        })
-        __resetStorage({}, { www_absent_item_verdicts: { t1_known1: { v: 'live', t: Date.now() - 60 * 1000 } } })
-        installFetch([
-            [`/user/${USER}/comments/?sort=new`, hiddenStatePage('comments')],
-            [`/user/${USER}/submitted/?sort=new`, emptyStatePage('posts')],
-            // the comment's own page can't be read: the tiebreak decides
-            [THREAD_PAGES[GONE], FRONT_PAGE],
-        ])
-        await lookupItemsByID_fromPublicProfile([GONE], USER, { [GONE]: meta(GONE) })
-        expect(asked).toEqual([GONE, 't1_known1'])
-    })
 })
 
 describe('profile lookup warnings and limits', () => {
@@ -809,18 +726,16 @@ describe('profile lookup warnings and limits', () => {
         expect(await isProfilePaginationShort()).toBe(false)
     })
 
-    it('a profile 429 ends the lookup without the legacy chain', async () => {
+    it('a profile 429 ends the lookup', async () => {
         const calls = []
         globalThis.fetch = async url => {
             calls.push(String(url))
             return res(429, '')
         }
-        await expect(lookupItemsByID([GONE, 't3_q1'], 'none', false, USER, { [GONE]: meta(GONE) })).rejects.toThrow(
+        await expect(lookupItemsByID([GONE, 't3_q1'], USER, { [GONE]: meta(GONE) })).rejects.toThrow(
             /429/,
         )
         expect(__getLocalStorage().rate_limit_until).toBeGreaterThan(Date.now())
-        // the chain would queue the post first, then ask the legacy hosts
-        expect(__getLocalStorage().pending_post_lookups).toBeUndefined()
         expect(calls.every(u => u.includes(`/user/${USER}/`))).toBe(true)
     })
 

@@ -100,7 +100,7 @@ export const WWW_DETECT_FAILURES_KEY = 'www_detect_consecutive_failures'
 // fetches more than POST_VERIFY_MAX_PER_CYCLE pages.
 const POST_FEED_GRACE_SECONDS = 48 * 3600
 
-export const ABSENT_VERDICT_LIVE_TTL_MS = 6 * 3600 * 1000
+const ABSENT_VERDICT_LIVE_TTL_MS = 6 * 3600 * 1000
 
 // A young item's 'live' is read again sooner, since that's when removals
 // happen: after an eighth of its age, at least 10 minutes, at most the 6 h
@@ -117,10 +117,10 @@ export const absentLiveTtl = (createdUtc: number | undefined, nowMs: number): nu
           )
 
 // F4 (issue #14): consecutive cycles where absent-item verification fetched
-// pages but resolved nothing — every page unreadable AND the legacy tiebreak
-// silent. Without this, that state is invisible: removals in profile-hidden
-// subs simply stop being detected. Mirrors recordWwwDetectOutcome; any fresh
-// definitive verdict (from a page fetch or the tiebreak) resets the streak.
+// pages but resolved nothing — every page unreadable. Without this, that state
+// is invisible: removals in profile-hidden subs simply stop being detected.
+// Mirrors recordWwwDetectOutcome; any fresh definitive verdict from a page
+// fetch resets the streak.
 // Cycles that fetch nothing (all verdicts cached) are neutral.
 export const ABSENT_VERIFY_UNAVAILABLE = 'absent_verify_unavailable'
 
@@ -303,10 +303,9 @@ export const isPublicProfileUnavailable = async (username: string): Promise<bool
 }
 
 // The shadowban signature, as one warning instead of N removal alerts. Thrown
-// (not returned) so the fallback chain doesn't run the legacy paths, and so
-// monitoring skips this cycle without clearing the warning. missing: the
-// profile is a 404 logged out, which the bridge then answers for it too; an
-// empty profile still exists, so the bridge keeps serving it.
+// (not returned) so monitoring skips this cycle without clearing the warning.
+// missing: the profile is a 404 logged out, which the bridge then answers for
+// it too; an empty profile still exists, so the bridge keeps serving it.
 export const reportPublicProfileShadowban = async (
     username: string,
     what: string,

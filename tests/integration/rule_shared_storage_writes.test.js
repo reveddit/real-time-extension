@@ -43,8 +43,6 @@ import {
     markBacklogSummarySent,
     getBacklogSummaryState,
     addLocalStorageItems,
-    addToPendingPostQueue,
-    removeMultipleFromPendingPostQueue,
     subscribeId,
     unsubscribeId,
     subscribeUser,
@@ -54,12 +52,11 @@ import {
     markIDsAsSeenIfSubscribed,
     PAGE_WRITE,
 } from '../../src/src/storage'
-import { noteCapabilityRefused, noteCapabilityWorked } from '../../src/src/request-gates'
-import { fetchNews, NEWS_CACHE_KEY, CAPABILITY_REST_KEY } from '../../src/src/news'
+import { noteCapabilityRefused, noteCapabilityWorked, dropRetiredRests } from '../../src/src/request-gates'
+import { CAPABILITY_REST_KEY } from '../../src/src/news'
 import { setCurrentStateForId, _checkForChanges_thing_byId, checkForChanges } from '../../src/src/monitoring'
 import { FOLLOWED_POST_IDS_KEY, _followedTiming } from '../../src/src/followed-lookup'
 import { lookupItemsByID } from '../../src/src/requests'
-import { NO_AUTH } from '../../src/src/reddit-auth'
 import { _resetLoggedInFetchState } from '../../src/src/logged-in-fetch'
 import {
     VIEWER_CONNECT_KEY,
@@ -124,14 +121,13 @@ const removedView = name => ({
     locked: false,
 })
 const authorsView = name => ({ ...removedView(name), author: USER, body: 'words of mine' })
-// The cycle's check of the account finding a new removal, recorded at once as
-// the pending-post queue records one
+// The cycle's check of the account finding a new removal, recorded at once,
+// without the count of confirming checks
 const checkFindsRemoval = (name, user = USER) =>
     _checkForChanges_thing_byId(
         [name],
         user,
         true,
-        null,
         structuredClone(__getSyncStorage()),
         2,
         { [name]: authorsView(name) },
@@ -306,17 +302,6 @@ const overlaps = [
         expect: () => expect(Object.keys(__getLocalStorage().items_other).sort()).toEqual(['t1_a', 't1_b']),
     },
 
-    // The pending-post queue: the legacy fallback adds, the queue and a lookup
-    // that read a queued post (requests.ts, not waited for) remove
-    {
-        name: 'the pending-post queue keeps a post the legacy fallback queues while a lookup removes one it read',
-        local: { pending_post_lookups: ['t3_read'] },
-        keys: 'pending_post_lookups',
-        first: () => addToPendingPostQueue(['t3_new']),
-        second: () => removeMultipleFromPendingPostQueue(['t3_read']),
-        expect: () => expect(__getLocalStorage().pending_post_lookups).toEqual(['t3_new']),
-    },
-
     // other_subscriptions: follow buttons (content scripts), the popup's
     // switches, the link menu (background), the followed items page
     {
@@ -374,33 +359,26 @@ const overlaps = [
         keys: FOLLOWED_POST_IDS_KEY,
         nth: 2,
         page: '../../src/src/monitoring',
-        first: () => lookupItemsByID(['t1_x'], NO_AUTH, false, '', {}),
+        first: () => lookupItemsByID(['t1_x'], '', {}),
         second: ({ page }) => page.setCurrentStateForId('t1_y', 'https://www.reddit.com/r/pics/comments/ypost/t/y/'),
         expect: () => expect(__getLocalStorage()[FOLLOWED_POST_IDS_KEY]).toEqual({ t1_x: 'xpost', t1_y: 'ypost' }),
     },
 
-    // Capability rests (request-gates.ts noteCapabilityRefused and
-    // noteCapabilityWorked, news.ts fetchNews)
+    // Capability rests (request-gates.ts noteCapabilityRefused,
+    // noteCapabilityWorked and dropRetiredRests)
     {
-        name: "the capability rests keep a refusal of the thread reads and the legacy pages' success",
-        local: { [CAPABILITY_REST_KEY]: { legacy: rest() } },
+        name: "the capability rests keep a refusal of the thread reads and the api/info read's success",
+        local: { [CAPABILITY_REST_KEY]: { api_info: rest() } },
         keys: CAPABILITY_REST_KEY,
         first: () => noteCapabilityRefused('thread_json', 'block page'),
-        second: () => noteCapabilityWorked('legacy'),
+        second: () => noteCapabilityWorked('api_info'),
         expect: () => expect(Object.keys(__getLocalStorage()[CAPABILITY_REST_KEY])).toEqual(['thread_json']),
     },
     {
-        name: "the capability rests keep a refusal the alarm's check notes while the alarm's news ends the legacy rest",
-        local: {
-            [CAPABILITY_REST_KEY]: { legacy: rest() },
-            [NEWS_CACHE_KEY]: { feed: { messages: [], options: { mechanisms: {} } }, lastFetched: 1 },
-        },
-        setup: () =>
-            vi.stubGlobal('fetch', async () =>
-                json(200, { messages: [], options: { mechanisms: {}, legacy_host: 'old.reddit.com' } }),
-            ),
+        name: "the capability rests keep a refusal a check notes while an update drops the retired rests",
+        local: { [CAPABILITY_REST_KEY]: { legacy: rest() } },
         keys: CAPABILITY_REST_KEY,
-        first: () => fetchNews(),
+        first: () => dropRetiredRests(),
         second: () => noteCapabilityRefused('thread_json', 'block page'),
         expect: () => expect(Object.keys(__getLocalStorage()[CAPABILITY_REST_KEY])).toEqual(['thread_json']),
     },
@@ -680,7 +658,7 @@ describe('objects only one context writes', () => {
         )
         const written = keysWritten(LOCAL_AREAS())
         const page = await inPage('../../src/src/requests')
-        const found = await page.lookupItemsByID(['t1_x'], NO_AUTH, false, '', {})
+        const found = await page.lookupItemsByID(['t1_x'], '', {})
         expect(found.map(item => item.data.name)).toEqual(['t1_x'])
         expect(written.size).toBeGreaterThan(0)
         expect([...written].filter(key => BACKGROUND_ONLY.includes(key))).toEqual([])

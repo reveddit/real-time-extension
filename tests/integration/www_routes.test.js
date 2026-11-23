@@ -20,7 +20,6 @@ import {
     getRemoteWwwRouteOrder,
     getRemoteLoginCookies,
     NEWS_CACHE_KEY,
-    CAPABILITY_REST_KEY,
     applyRemoteConfig,
 } from '../../src/src/news'
 import { getPublicModlogsFeed, setPublicModlogsFeed, DEFAULT_PUBLICMODLOGS_FEED } from '../../src/src/bridge-config'
@@ -184,28 +183,6 @@ describe('0.0.5.27 review fixes: the news feed', () => {
         serveFeed({})
         await fetchNews()
         expect(globalThis.fetch).toHaveBeenCalled()
-    })
-
-    it('a change of legacy host or switch ends the legacy rest; the same settings keep it', async () => {
-        const until = Date.now() + 3600 * 1000
-        __resetStorage(
-            {},
-            {
-                [NEWS_CACHE_KEY]: { feed: { messages: [], options: { mechanisms: {} } }, lastFetched: 1 },
-                [CAPABILITY_REST_KEY]: {
-                    legacy: { refusals: 2, until, since: 1 },
-                    api_info: { refusals: 1, until, since: 1 },
-                },
-            },
-        )
-        serveFeed({ options: { mechanisms: {} } })
-        await fetchNews({ force: true })
-        expect(__getLocalStorage()[CAPABILITY_REST_KEY].legacy.until).toBe(until)
-        serveFeed({ options: { mechanisms: {}, legacy_host: 'old.reddit.com' } })
-        await fetchNews({ force: true })
-        expect(__getLocalStorage()[CAPABILITY_REST_KEY].legacy).toBeUndefined()
-        // other methods' rests stay
-        expect(__getLocalStorage()[CAPABILITY_REST_KEY].api_info.until).toBe(until)
     })
 
     it('a well-formed publicmodlogs_feed replaces the token, also after a worker restart', async () => {

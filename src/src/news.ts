@@ -10,7 +10,6 @@ import { sanitizeLoginWallConfig, setLoginWallConfig, LoginWallConfig } from './
 import { sanitizeWwwRouteOrder, WwwRouteOrderOption } from './www-routes'
 import { sanitizePublicModlogsFeed, setPublicModlogsFeed } from './bridge-config'
 import { sanitizeNameList } from './name-list'
-import { oneAtATime } from './one-at-a-time'
 
 const NEWS_URL = 'https://www.reveddit.com/extension-news.json'
 export const NEWS_CACHE_KEY = 'news_cache'
@@ -43,12 +42,6 @@ export interface NewsMessage {
 type RemoteMechanismState = 'auto' | 'on' | 'off'
 interface RemoteOptions {
     mechanisms: Record<string, RemoteMechanismState>
-    // Host that serves reddit's legacy (pre-Shreddit) HTML logged out. Set to
-    // www.reddit.com on 2026-08-31 when old.reddit.com began requiring login
-    // while the same renderer stayed reachable on www for legacy-only routes
-    // (/api/info?id=, and post pages with the redesign_optout cookie).
-    // Allowlisted: only LEGACY_HOSTS values survive sanitization.
-    legacy_host?: string
     // Solver inputs for the logged-out challenge page (challenge-config.ts):
     // { token_fields: string[], solution_regex: string }. Sanitized field by
     // field; stored in camelCase.
@@ -87,11 +80,6 @@ export interface ScanLimits {
     reads_per_click?: number
     seconds_between_reads?: number
 }
-const LEGACY_HOSTS = ['www.reddit.com', 'old.reddit.com'] as const
-export const LEGACY_HOST_DEFAULT = 'www.reddit.com'
-// The unauthenticated legacy paths (old.reddit HTML, unauth www .json). Flip to
-// 'off' once Reddit's deprecation actually lands, to stop the doomed attempts.
-export const MECHANISM_LEGACY = 'legacyOldReddit'
 // Verification of feed-absent items against their own logged-out pages (the
 // profile-hidden-subreddit false-alert fix, v0.0.5.14). Enabled by default;
 // flip to 'off' to fall back to the older feed-absence-only classification if
@@ -139,8 +127,6 @@ interface NewsCache {
     feed: NewsFeed
     lastFetched: number
 }
-
-const isLegacyHost = (value: unknown): value is string => (LEGACY_HOSTS as readonly unknown[]).includes(value)
 
 // Not request-gates' or storage's readLocal: this module can't import either.
 // Takes several keys and returns the record. Nothing stored and nothing
@@ -353,13 +339,6 @@ const applyOptions = (options: any) => {
     setPublicModlogsFeed(options.publicmodlogs_feed || '')
 }
 
-// Legacy-HTML host from the cached feed, else the compiled default. Lets the
-// host move again without a store republish.
-export const getRemoteLegacyHost = async (): Promise<string> => {
-    const value = (await cachedOptions()).legacy_host
-    return isLegacyHost(value) ? value : LEGACY_HOST_DEFAULT
-}
-
 // Public-view fetch route order from the cached feed, per engine; empty when
 // unset, and the caller keeps its built-in order. Sanitized again on read.
 export const getRemoteWwwRouteOrder = async (): Promise<WwwRouteOrderOption> =>
@@ -369,10 +348,8 @@ const COOKIE_NAME = /^[A-Za-z0-9_.-]{1,64}$/
 const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList(raw, COOKIE_NAME, 4)
 
 // Methods reddit refused outright rest for a while, longer with each refusal
-// in a row (request-gates.ts noteCapabilityRefused), keyed by name ('legacy',
-// 'legacy_info', 'api_info', 'thread_json', 'oauth'). Kept here so a feed change to the
-// legacy host or switch can end the legacy rest at once: the new setting
-// deserves a try.
+// in a row (request-gates.ts noteCapabilityRefused), keyed by name ('api_info',
+// 'thread_json').
 export const CAPABILITY_REST_KEY = 'capability_rest'
 
 const isNumberFrom = (least: number, value: unknown): value is number =>
@@ -466,7 +443,6 @@ const sanitizeFeed = (feed: NewsFeed): NewsFeed => {
         options: {
             mechanisms: sanitizeMechanisms(options.mechanisms),
             ...nonEmpty({
-                legacy_host: isLegacyHost(options.legacy_host) ? options.legacy_host : '',
                 challenge: sanitizeChallengeConfig(options.challenge),
                 www_route_order: sanitizeWwwRouteOrder(options.www_route_order),
                 markup: sanitizeMarkupConfig(options.markup),
@@ -517,23 +493,6 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
         const newCache: NewsCache = { feed: sanitized, lastFetched: now }
         chrome.storage.local.set({ [NEWS_CACHE_KEY]: newCache })
         applyOptions(options)
-        // A new legacy host or switch ends a refusal rest at once
-        const before = cache?.feed?.options
-        if (
-            cache &&
-            (before?.legacy_host !== options.legacy_host ||
-                before?.mechanisms?.[MECHANISM_LEGACY] !== options.mechanisms[MECHANISM_LEGACY])
-        ) {
-            // In the rests' turn, as request-gates.ts rewrites them too
-            await oneAtATime(CAPABILITY_REST_KEY, async () => {
-                const rests = { ...((await readLocal(CAPABILITY_REST_KEY))[CAPABILITY_REST_KEY] || {}) }
-                if (rests.legacy || rests.legacy_info) {
-                    delete rests.legacy
-                    delete rests.legacy_info
-                    await writeLocal({ [CAPABILITY_REST_KEY]: rests })
-                }
-            }).catch(() => {})
-        }
         dlog(
             'news',
             `[reveddit] news fetch ok: ${sanitized.messages.length} messages, mechanisms=${JSON.stringify(options.mechanisms)}` +

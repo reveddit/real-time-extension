@@ -86,7 +86,6 @@ const check = async view => {
         [ID],
         USER,
         true,
-        null,
         storage,
         SUBSCRIBED_FROM_NA,
         { [ID]: authItem },

@@ -60,7 +60,7 @@ vi.mock('../../src/src/viewer', async importOriginal => {
 })
 
 const USER = 'alice'
-const TOKEN_URL = 'https://www.reddit.com/api/v1/access_token'
+const LISTING_URL = 'https://www.reddit.com/user/me.json'
 
 // Listeners loadBackground's stand-in events drop: the alarm's, and the cookie
 // changes' and tab loads' that start the login recovery
@@ -85,26 +85,26 @@ beforeAll(async () => {
     devAction = createDevActionHandler(async () => ({}))
 })
 
-// Each check asks for a token with the user's own client id first, and that
-// request waits for the test to answer it. So a check is in its requests while
-// its token request waits, and two waiting at once are two checks' requests at
-// once. Connect and an install ask who's logged in before their check, which
-// isn't a check's request.
-let tokens
-let tokensSent
+// Each check reads the user's own listing, and that request waits for the test
+// to answer it. So a check is in its requests while its listing request waits,
+// and two waiting at once are two checks' requests at once. Connect and an
+// install ask who's logged in before their check, which isn't a check's
+// request.
+let listings
+let listingsSent
 let mostAtOnce
-const answerTokens = () => tokens.splice(0).forEach(answer => answer())
+const answerListings = () => listings.splice(0).forEach(answer => answer())
 const stubFetch = () => {
-    tokens = []
-    tokensSent = 0
+    listings = []
+    listingsSent = 0
     mostAtOnce = 0
     vi.stubGlobal('fetch', async url => {
         url = String(url)
-        if (url === TOKEN_URL) {
-            tokensSent++
+        if (url.startsWith(LISTING_URL)) {
+            listingsSent++
             return new Promise(resolve => {
-                tokens.push(() => resolve(res(500, '')))
-                mostAtOnce = Math.max(mostAtOnce, tokens.length)
+                listings.push(() => resolve(res(500, '')))
+                mostAtOnce = Math.max(mostAtOnce, listings.length)
             })
         }
         if (url.includes('/api/me.json')) return res(200, JSON.stringify({ data: { name: USER } }))
@@ -224,11 +224,11 @@ const SKIPPED = 'previous cycle still running'
 // Every check ends: its requests are answered, and a jitter or a wait runs out
 const endEveryCheck = async () => {
     for (let i = 0; i < 4; i++) {
-        answerTokens()
+        answerListings()
         await vi.advanceTimersByTimeAsync(10 * 1000)
         await settle()
     }
-    expect(tokens).toHaveLength(0)
+    expect(listings).toHaveLength(0)
     expect(checks.every(check => check.settled)).toBe(true)
 }
 
@@ -238,12 +238,12 @@ const expectTheRule = async () => {
     expect.soft(isCycleInFlight(), 'a check still marked in flight').toBe(false)
     const started = await count(STARTED)
     const skipped = await count(SKIPPED)
-    const sent = tokensSent
+    const sent = listingsSent
     await fireAlarm()
     await endEveryCheck()
     expect.soft(await count(SKIPPED), 'the next trigger skipped').toBe(skipped)
     expect.soft(await count(STARTED), "the next trigger's check started").toBe(started + 1)
-    expect.soft(tokensSent, "the next trigger's check sent").toBe(sent + 1)
+    expect.soft(listingsSent, "the next trigger's check sent").toBe(sent + 1)
 }
 
 // The checks' times outlive a test, so each test starts an hour on, past
@@ -258,7 +258,7 @@ beforeEach(async () => {
     // The alarm's jitter: a tenth of a second
     vi.spyOn(Math, 'random').mockReturnValue(0.01)
     __resetStorage({
-        options: { custom_clientid: 'someclient', removal_status: { track: true }, lock_status: { track: true } },
+        options: { removal_status: { track: true }, lock_status: { track: true } },
         user_subscriptions: {},
         other_subscriptions: {},
     })
@@ -284,7 +284,7 @@ beforeEach(async () => {
 afterEach(async () => {
     // Whatever a failed test left waiting ends here, not in the next test
     readRules = []
-    answerTokens()
+    answerListings()
     await vi.advanceTimersByTimeAsync(60 * 1000)
     await settle()
 })
@@ -314,16 +314,16 @@ const phases = [
         onlyFor: trigger => trigger.jitters,
         // 9 s, past an install's 3 s
         random: 0.9,
-        reached: async () => (await count(STARTED)) === 1 && tokensSent === 0,
+        reached: async () => (await count(STARTED)) === 1 && listingsSent === 0,
     },
     {
         name: 'its requests',
-        reached: () => tokens.length === 1,
+        reached: () => listings.length === 1,
     },
     {
         name: 'after it ends',
         reached: async () => {
-            answerTokens()
+            answerListings()
             return (await count(DONE)) === 1
         },
     },
@@ -355,11 +355,11 @@ describe('a second trigger while a check runs', () => {
                     phase.beforeRelease?.()
                     hold.release()
                 }
-                // Every check going ahead asks for its token before any is answered
+                // Every check going ahead asks for its listing before any is answered
                 await vi.advanceTimersByTimeAsync(10 * 1000)
                 await settle()
                 await endEveryCheck()
-                expect(tokensSent, 'the first check sent').toBeGreaterThanOrEqual(1)
+                expect(listingsSent, 'the first check sent').toBeGreaterThanOrEqual(1)
                 await expectTheRule()
             })
         })
@@ -425,25 +425,6 @@ describe("a check's first steps that fail", () => {
                 await expectTheRule()
             },
         )
-    })
-})
-
-// The queue runs inside the check, before its end, so it has no guard of its own
-describe('the pending-post queue', () => {
-    it('waits between posts as part of its check, which a trigger meanwhile leaves alone', async () => {
-        __getLocalStorage().pending_post_lookups = ['t3_queue1', 't3_queue2']
-        fireAlarm()
-        await until('asked for a token', () => tokens.length === 1)
-        answerTokens()
-        // Between the two posts
-        await until('read the first post', () => __getLocalStorage().pending_post_progress)
-        expect(await count(DONE)).toBe(0)
-        expect(isCycleInFlight()).toBe(true)
-        await background.send({ action: 'run-check-now' })
-        expect(await count(SKIPPED)).toBe(1)
-        await endEveryCheck()
-        expect(__getLocalStorage().pending_post_lookups).toEqual([])
-        await expectTheRule()
     })
 })
 

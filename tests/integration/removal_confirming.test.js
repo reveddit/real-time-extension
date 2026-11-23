@@ -29,7 +29,7 @@ let answer
 beforeEach(() => {
     lookups = []
     answer = undefined
-    lookupItemsByID.mockImplementation(async (ids, auth, monitor_quarantined, username, authItemsMeta) => {
+    lookupItemsByID.mockImplementation(async (ids, username, authItemsMeta) => {
         const message = { ids, username, authItemsMeta }
         lookups.push(message)
         return typeof answer === 'function' ? answer(message) : answer
@@ -52,7 +52,7 @@ const seed = ({ removed = {}, records = {}, oldest = null, track = true } = {}) 
     )
 
 const check = (names, items = Object.fromEntries(names.map(name => [name, item(name)]))) =>
-    _checkForChanges_thing_byId(names, USER, true, null, structuredClone(__getSyncStorage()), 2, items)
+    _checkForChanges_thing_byId(names, USER, true, structuredClone(__getSyncStorage()), 2, items)
 
 // What the last lookup was told about each item
 const confirming = () =>
@@ -118,13 +118,13 @@ describe('the removals monitoring is confirming', () => {
 
     it.each([
         ['while removals go untracked', { track: false }, null],
-        ['for a pending post, whose lookup is done', {}, [{ data: item('t1_a') }]],
+        ['with the lookup already done', {}, [{ data: item('t1_a') }]],
     ])('need nothing read before the lookup %s', async (_, options, preFetched) => {
         seed({ records: { t1_a: record(0) }, ...options })
         answer = { items: [{ data: item('t1_a') }] }
         const get = vi.spyOn(browserMock.storage.local, 'get')
         const storage = structuredClone(__getSyncStorage())
-        await _checkForChanges_thing_byId(['t1_a'], USER, true, null, storage, 2, { t1_a: item('t1_a') }, preFetched)
+        await _checkForChanges_thing_byId(['t1_a'], USER, true, storage, 2, { t1_a: item('t1_a') }, preFetched)
         // Once each, after the lookup
         const reads = key => get.mock.calls.filter(([keys]) => key in Object(keys)).length
         expect(reads('items_u_' + USER)).toBe(1)

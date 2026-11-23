@@ -36,6 +36,7 @@ import {
     keepPageTextHere,
     markIDsAsSeenHere,
 } from './src/storage'
+import { dropRetiredRests } from './src/request-gates'
 import { setupContextualMenu } from './src/contextMenus'
 import browser from 'webextension-polyfill'
 import { handleBridgeFetch } from './src/bridge'
@@ -597,6 +598,25 @@ chrome.runtime.onInstalled.addListener(function (details) {
                 /* ignored */
             }
             clearPendingNotification('other').catch(() => {})
+        }
+        // What 0.0.5.37 and earlier kept for the legacy pages (the pending-post
+        // queue, their rests, the dev switch) and the optional custom client id's
+        // rest, none of which is read any more. The retired options stay in
+        // `options`, unread: only the options page writes that object.
+        if (details.previousVersion && compareVersions(details.previousVersion, '0.0.5.37') <= 0) {
+            try {
+                browser.storage.local
+                    .remove([
+                        'pending_post_lookups',
+                        'pending_post_attempts',
+                        'pending_post_progress',
+                        'dev_simulate_endpoint_deprecation',
+                    ])
+                    .catch(() => {})
+            } catch {
+                /* ignored */
+            }
+            dropRetiredRests()
         }
     }
 })

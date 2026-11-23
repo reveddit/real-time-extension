@@ -20,10 +20,10 @@ import {
     FEED_OK,
     meta,
     installFetch,
-    useLegacyStub,
+    usePublicLookupHooks,
 } from '../mocks/public-profile.js'
 
-useLegacyStub()
+usePublicLookupHooks()
 
 describe('feed-present post verification', () => {
     const POST = 't3_post11'
@@ -175,7 +175,7 @@ describe('post page verdicts and the backoff', () => {
             [GONE]: meta(GONE),
             ...Object.fromEntries(POSTS.map(id => [id, { locked: false, created_utc: now() - 3600 }])),
         }
-        const results = await lookupItemsByID([FEED_OK, GONE, ...POSTS], 'none', false, USER, authItemsMeta)
+        const results = await lookupItemsByID([FEED_OK, GONE, ...POSTS], USER, authItemsMeta)
         // the first post page's 429, then nothing more
         expect(pageCalls).toHaveLength(1)
         expect(__getLocalStorage().rate_limit_until).toBeGreaterThan(Date.now())

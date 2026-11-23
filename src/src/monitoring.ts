@@ -1,7 +1,6 @@
 import { lookupItemsByID } from './requests'
 import {
     lookupItemsByLoggedInUserWithAuth,
-    getAuth,
     getLoggedinUserDetailed,
     recordLoginDetectOutcome,
     isLoginRefusal,
@@ -17,16 +16,8 @@ import {
 } from './lookup-status'
 import { storeRedditCookies } from './reddit-cookies'
 import { logActivityHourly } from './activity-counts'
-import { isLegacyOff } from './legacy-lookup'
-import {
-    isCapabilityResting,
-    noteCapabilityRefused,
-    noteCapabilityWorked,
-    noteRateLimited,
-    isRateLimitedNow,
-    flagIfRateLimited,
-} from './request-gates'
-import { readThreadItemLoggedIn, FOLLOWED_POST_IDS_KEY } from './followed-lookup'
+import { isRateLimitedNow, flagIfRateLimited } from './request-gates'
+import { FOLLOWED_POST_IDS_KEY } from './followed-lookup'
 import { withTimeout, canTabAnswer, isSupportedRedditTab } from './www-fetcher'
 import { dlog } from './diaglog'
 import { isViewerConnecting, recoverViewerConnect, hasRedditLoginCookie } from './viewer'
@@ -43,13 +34,6 @@ import {
     subscribedThings,
     getOldestDateKey,
     notificationName,
-    getNextPendingPosts,
-    addToPendingPostQueue,
-    removeFromPendingPostQueue,
-    recordPendingPostAttempt,
-    clearPendingPostAttempt,
-    emptyPendingPostQueue,
-    MAX_PENDING_POST_ATTEMPTS,
     getRateLimitBackoffRemainingMs,
     getUnseenIDs_thing,
     getBacklogSummaryState,
@@ -87,7 +71,6 @@ import {
     isOtherIdentity,
 } from './common'
 import browser from 'webextension-polyfill'
-import { getPost_fromOld } from './parse_html/old'
 
 const SUBSCRIBED_FROM_REDDIT = 0
 const SUBSCRIBED_FROM_REVEDDIT = 1
@@ -176,192 +159,6 @@ const getOldestDateThreshold = async (thing: string, isUser: boolean): Promise<n
 const isTooOld = (createdUtc: number | undefined, oldestDateThreshold: number | null) =>
     !!(oldestDateThreshold && createdUtc && createdUtc < oldestDateThreshold)
 
-const PENDING_POST_BATCH_SIZE = 3
-const PENDING_POST_DELAY_MS = 2000
-
-// No "Scanning N posts" banner. Removed only when set: most cycles get here.
-const clearPendingPostProgress = async () => {
-    if (((await browser.storage.local.get({ pending_post_progress: null })) as any).pending_post_progress) {
-        await browser.storage.local.remove('pending_post_progress')
-    }
-}
-
-const processPendingPosts = async (storage: Record<string, any>) => {
-    // Fed only by the legacy lookup chain (getItemsById_fromOldHTML): a queued
-    // post's legacy page says whether it was removed, and its thread's JSON,
-    // read with the user's login, gives its data (api/info.json is refused,
-    // 2026-10-24). Either can rest after reddit refuses it.
-    // Nothing queued can be read while the legacy pages are off or resting
-    // (reddit has answered every one with its challenge since 2026-10-28), so
-    // the queue empties: its banner would say "Scanning N posts" all along
-    if (await isLegacyOff()) {
-        await emptyPendingPostQueue()
-        return
-    }
-    if (await isCapabilityResting('thread_json')) {
-        // Nothing is being scanned, so no "Scanning N posts" progress either
-        await clearPendingPostProgress()
-        return
-    }
-    // After a 429 earlier in this cycle: the queue waits
-    if (await isRateLimitedNow()) {
-        return
-    }
-    const { posts, totalRemaining } = await getNextPendingPosts(PENDING_POST_BATCH_SIZE)
-    if (posts.length === 0) {
-        await clearPendingPostProgress()
-        return
-    }
-
-    const totalAtStart = totalRemaining
-    let processed = 0
-    // The previous post's legacy page answered 403
-    let refusedBefore = false
-
-    for (const [index, postId] of posts.entries()) {
-        const isAlreadyKnownRemoved = (() => {
-            for (const { thing, isUser } of subscribedThings(storage.user_subscriptions || {})) {
-                const keys = getObjectNamesForThing(thing, isUser)
-                if (postId in (storage[keys['removed']] || {})) return true
-            }
-            return false
-        })()
-
-        if (isAlreadyKnownRemoved) {
-            await removeFromPendingPostQueue(postId)
-            await clearPendingPostAttempt(postId)
-            processed++
-            continue
-        }
-
-        // done: the post leaves the queue; retry: it stays where it is;
-        // rotate: it goes to the back; wait: it stays, and this cycle's batch
-        // ends (reddit refused or rate limited a request, or no login).
-        // Attempts count only outcomes about the post itself, so a post that
-        // never resolves stops being re-enqueued by the lookup fallback
-        // (prevents a permanently "stuck" scan banner).
-        let outcome: 'done' | 'retry' | 'rotate' | 'wait' = 'done'
-        try {
-            const postPath = '/comments/' + postId.substring(3) + '/'
-            const result: any = await getPost_fromOld(postPath)
-            if (result?.refused) {
-                // The challenge reddit sends for every legacy page: they rest,
-                // and the queue empties, as it does while they rest
-                await noteCapabilityRefused('legacy', 'challenge page')
-                await emptyPendingPostQueue()
-                return
-            } else if (result?.status === 403) {
-                if (refusedBefore) {
-                    // Two posts in a row: reddit refuses the legacy pages,
-                    // which rest (the listing rests on its own), and the queue
-                    // empties while they do
-                    await noteCapabilityRefused('legacy', 'HTTP 403')
-                    outcome = 'wait'
-                } else {
-                    // One post's 403 can be its own (a community only members
-                    // can read): it moves to the back, and the next post says
-                    // whether reddit refuses them all
-                    refusedBefore = true
-                    await recordPendingPostAttempt(postId)
-                    outcome = 'rotate'
-                }
-            } else if (result?.status === 429) {
-                noteRateLimited(new Error(String(result.error)))
-                outcome = 'wait'
-            } else {
-                refusedBefore = false
-                if (result && 'is_removed' in result) {
-                    await noteCapabilityWorked('legacy')
-                }
-                if (result && 'is_removed' in result && result.is_removed) {
-                    // Its data comes from its thread's JSON with the user's
-                    // login. Logged out, reddit answers with its block page,
-                    // which would rest the reads followed items need.
-                    const read = (await hasRedditLoginCookie()) ? await readThreadItemLoggedIn(postId, postId) : null
-                    if (!read) {
-                        outcome = 'wait'
-                    } else if (read.status === 429) {
-                        noteRateLimited(new Error('www.reddit.com request failed: 429'))
-                        outcome = 'wait'
-                    } else if (read.blocked) {
-                        if (read.refused) {
-                            await noteCapabilityRefused('thread_json', 'block page')
-                        }
-                        outcome = 'wait'
-                    } else if (read.data) {
-                        const itemData = read.data
-                        itemData.is_robot_indexable = false
-
-                        const author = itemData.author
-                        const isUser = storage.user_subscriptions && author in storage.user_subscriptions
-                        const thing = isUser ? author : 'other'
-
-                        console.log(`Detected removed post ${postId} (author: ${author}), updating status...`)
-
-                        const itemLookup = { [postId]: itemData }
-
-                        await checkForChanges_thing_byId(
-                            [postId],
-                            thing,
-                            isUser,
-                            null,
-                            storage,
-                            SUBSCRIBED_FROM_NA,
-                            itemLookup,
-                            [{ data: itemData }],
-                            true,
-                        )
-                        await clearPendingPostAttempt(postId)
-                    } else if ((await recordPendingPostAttempt(postId)) < MAX_PENDING_POST_ATTEMPTS) {
-                        // A removal whose data didn't come back: read again next cycle
-                        outcome = 'retry'
-                    }
-                } else {
-                    await recordPendingPostAttempt(postId)
-                    console.log(
-                        result?.error
-                            ? `Pending post lookup: ${postId}: no page (${result.error})`
-                            : `Pending post lookup: ${postId} is not removed.`,
-                    )
-                }
-            }
-        } catch {
-            await recordPendingPostAttempt(postId).catch(() => 0)
-        }
-        if (outcome === 'wait') {
-            break
-        }
-        if (outcome === 'rotate') {
-            // Re-added at the back unless it has used up its attempts
-            await removeFromPendingPostQueue(postId)
-            await addToPendingPostQueue([postId])
-        } else if (outcome === 'done') {
-            await removeFromPendingPostQueue(postId)
-            processed++
-
-            await browser.storage.local.set({
-                pending_post_progress: {
-                    processed: totalAtStart - totalRemaining + processed,
-                    total: totalAtStart,
-                    lastUpdated: Date.now(),
-                },
-            })
-        }
-
-        if (index < posts.length - 1 && _pendingPostTiming.delayMs > 0) {
-            await new Promise(r => setTimeout(r, _pendingPostTiming.delayMs))
-        }
-    }
-
-    const remainingAfter = totalRemaining - processed
-    if (remainingAfter <= 0) {
-        await browser.storage.local.remove('pending_post_progress')
-    }
-}
-// For tests
-export const _processPendingPosts = processPendingPosts
-export const _pendingPostTiming = { delayMs: PENDING_POST_DELAY_MS }
-
 // postId: the comment's post, when the page knows it (an old reddit comment's
 // permalink); else the post the URL names. Every follow is of the item its URL
 // names (popup, context menu) or of an item on the page (its buttons), and a
@@ -396,9 +193,7 @@ export const setCurrentStateForIdHere = async (id: string, subscribedFromURL: st
     return browser.storage.sync
         .get(null)
         .then((storage: Record<string, any>) =>
-            getAuth().then((auth: any) =>
-                checkForChanges_thing_byId([id], 'other', false, auth, storage, subscribedFrom, {}),
-            ),
+            checkForChanges_thing_byId([id], 'other', false, storage, subscribedFrom, {}),
         )
 }
 
@@ -508,25 +303,15 @@ export const checkForChanges = async (applyJitter = false, opts: { bypassBackoff
         const other = Object.keys(storage.other_subscriptions || {})
         const now = Math.floor(Date.now() / 1000)
 
-        let cachedAuth: any
-        getAuth()
-            .then(async (auth: any) => {
-                cachedAuth = auth
-                await stopIfSigningIn()
-                // Always check for logged-in user, regardless of subscription status
-                return checkForChanges_loggedInUser(auth, storage)
-            })
+        stopIfSigningIn()
+            // Always check for logged-in user, regardless of subscription status
+            .then(() => checkForChanges_loggedInUser(storage))
             .then(async () => {
                 await stopIfSigningIn()
                 // Also check other subscriptions if any exist
                 if (other.length) {
-                    return checkForChanges_other(cachedAuth, storage)
+                    return checkForChanges_other(storage)
                 }
-            })
-            .then(async () => {
-                await stopIfSigningIn()
-                // Process one pending post per alarm cycle (throttled)
-                return processPendingPosts(storage)
             })
             .then(() => {
                 chrome.storage.sync.set({ last_check: now })
@@ -564,7 +349,7 @@ const getGraceUser = async (): Promise<string | null> => {
     }
 }
 
-const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, any>) => {
+const checkForChanges_loggedInUser = async (storage: Record<string, any>) => {
     // First get the current logged-in user — with failure class, so a broken
     // detection channel isn't mistaken for "logged out" and silently skipped.
     return getLoggedinUserDetailed()
@@ -650,15 +435,7 @@ const checkForChanges_loggedInUser = async (auth: any, storage: Record<string, a
                     itemLookup[item.name] = item
                 })
                 processedItems = true
-                return checkForChanges_thing_byId(
-                    ids,
-                    loggedInUser,
-                    true,
-                    auth,
-                    storage,
-                    SUBSCRIBED_FROM_NA,
-                    itemLookup,
-                )
+                return checkForChanges_thing_byId(ids, loggedInUser, true, storage, SUBSCRIBED_FROM_NA, itemLookup)
             }
             // Use message passing to get items from content script context
             return new Promise(resolve => {
@@ -800,8 +577,8 @@ const notePubliclyLive = async (user: string, ids: string[]) => {
 // recorded, which stays as recorded until they can be checked again ('skip')
 // rather than reading as approved. A post's own author view is that check
 // when it showed the removal (removed_by_category, marked a: 1 in the entry):
-// once it stops showing it, the post counts as approved again. The legacy
-// paths can see this content, so their results are read as they are.
+// once it stops showing it, the post counts as approved again. Results from
+// any other view are read as they are.
 export const readLookupResult = (
     item: any,
     authItem: any,
@@ -835,12 +612,12 @@ const announce = (thing: string, name: string, pending: PendingNotificationData,
 }
 
 // Returns the lookup, so the cycle (and the bridge's wait on it) lasts until it
-// ends. Its failure is logged here: reaching the cycle's catch would skip the
-// pending posts and last_check, and reset the badge a warning had set.
-function checkForChanges_other(auth: any, storage: Record<string, any>) {
+// ends. Its failure is logged here: reaching the cycle's catch would skip last_check,
+// and reset the badge a warning had set.
+function checkForChanges_other(storage: Record<string, any>) {
     const ids = Object.keys(storage.other_subscriptions)
     if (ids.length) {
-        return checkForChanges_thing_byId(ids, 'other', false, auth, storage, SUBSCRIBED_FROM_NA).catch(error => {
+        return checkForChanges_thing_byId(ids, 'other', false, storage, SUBSCRIBED_FROM_NA).catch(error => {
             dlog('cycle', 'Error checking followed items:', String(error?.message || error))
         })
     }
@@ -850,15 +627,14 @@ const checkForChanges_thing_byId = async (
     ids: string[],
     thing: string,
     isUser: boolean,
-    auth: any,
     storage: Record<string, any>,
     subscribedFrom: number,
     itemLookup: Record<string, any> = {},
+    // Tests hand the lookup's answer in here, and skip the confirmation count
     preFetchedItems: any[] | null = null,
     skipConfirmationThreshold = false,
 ) => {
-    let promise
-    const monitor_quarantined = storage.options.monitor_quarantined
+    let promise: Promise<any>
     // For user-tracked lookups, `thing` is the username — the www.reddit.com
     // public-profile comparison needs it. The public HTML lacks locked/created_utc,
     // so carry those per-item from the authenticated view (itemLookup).
@@ -910,7 +686,7 @@ const checkForChanges_thing_byId = async (
     if (preFetchedItems) {
         promise = Promise.resolve(preFetchedItems)
     } else {
-        promise = lookupItemsByID(ids, auth, monitor_quarantined, username, authItemsMeta)
+        promise = lookupItemsByID(ids, username, authItemsMeta)
     }
     return promise.then(async result => {
         if (!result) return // handle expected errors

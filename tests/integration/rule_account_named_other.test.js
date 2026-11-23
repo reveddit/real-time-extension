@@ -34,27 +34,12 @@ import {
 } from '../../src/src/storage'
 import {
     _checkForChanges_thing_byId,
-    _processPendingPosts,
-    _pendingPostTiming,
     getUnseenBacklogItemIds,
 } from '../../src/src/monitoring'
 import { handleBridgeFetch } from '../../src/src/bridge'
 import { lookupItemsByID } from '../../src/src/requests'
-import { NO_AUTH } from '../../src/src/reddit-auth'
 import { _resetLoggedInFetchState } from '../../src/src/logged-in-fetch'
 import { loadOwnRemovedSets } from '../../src/src/own-status'
-
-// The legacy page reader runs HTMLRewriter (WASM), which can't load here. The
-// pending-post queue reads a post's legacy page through it.
-const legacyPosts = {}
-const legacyReads = []
-vi.mock('../../src/src/parse_html/old', () => ({
-    getPost_fromOld: async path => {
-        legacyReads.push(path)
-        return legacyPosts[path] || { error: 'no page', status: 404 }
-    },
-    getItemsById_fromOldHTML: async () => [],
-}))
 
 // content-common.ts asks where it's running as it loads: on reveddit.com
 globalThis.location.hostname = 'www.reveddit.com'
@@ -185,25 +170,9 @@ const authorsView = name => ({ ...removedView(name), author: ACCOUNT, body: 'wor
 const check = async (isUser, name) => {
     const lookup = isUser ? { [name]: authorsView(name) } : {}
     const storage = structuredClone(__getSyncStorage())
-    await _checkForChanges_thing_byId([name], 'other', isUser, null, storage, 2, lookup, [{ data: removedView(name) }])
+    await _checkForChanges_thing_byId([name], 'other', isUser, storage, 2, lookup, [{ data: removedView(name) }])
     // The pending entry and a retry's notification are written after the check ends
     await ticks()
-}
-
-// A removed post the pending-post queue finds: its legacy page says removed,
-// and its thread, read with the login, names its author
-const findQueuedRemovedPost = async author => {
-    fill([cookie('reddit_session', 'S1')])
-    __getLocalStorage().pending_post_lookups = ['t3_queued']
-    legacyPosts['/comments/queued/'] = { is_removed: true }
-    const post = { name: 't3_queued', author, title: 'a post', created_utc: NOW - 600, is_robot_indexable: true }
-    vi.stubGlobal('fetch', async () =>
-        json(200, [{ kind: 'Listing', data: { children: [{ kind: 't3', data: post }] } }]),
-    )
-    const shown = notifications({ failing: true })
-    await _processPendingPosts(structuredClone(__getSyncStorage()))
-    await ticks()
-    return shown
 }
 
 // The popup over the install, as popup_page.test.js opens it
@@ -491,31 +460,6 @@ const rows = [
         },
     ],
     [
-        "a removed post the pending-post queue finds by u/other goes on the account's lists, told under its name",
-        async () => {
-            expect(await findQueuedRemovedPost(ACCOUNT)).toEqual([ACCOUNT])
-            expectOnlyOn(mine, 't3_queued')
-        },
-    ],
-    [
-        "one the queue finds by anyone else goes on followed items' lists, told under theirs",
-        async () => {
-            expect(await findQueuedRemovedPost('someone')).toEqual([FOLLOWED_NOTIFICATION])
-            expectOnlyOn(followed, 't3_queued')
-        },
-    ],
-    [
-        'the pending-post queue skips a post either side already has as removed',
-        async () => {
-            __getSyncStorage()[mine.removed].t3_mine = unseenItem()
-            __getSyncStorage()[followed.removed].t3_followed = unseenItem()
-            __getLocalStorage().pending_post_lookups = ['t3_mine', 't3_followed']
-            await _processPendingPosts(structuredClone(__getSyncStorage()))
-            expect(legacyReads).toEqual([])
-            expect(__getLocalStorage().pending_post_lookups).toEqual([])
-        },
-    ],
-    [
         "following an item from reveddit keeps it, with the words the page shows, among followed items and not the account's",
         async () => {
             // A content script's follow is the background's, which reads reddit with the login
@@ -604,7 +548,7 @@ const rows = [
                     { kind: 'Listing', data: { children: [{ kind: 't1', data: removedView(FOLLOWED) }] } },
                 ])
             })
-            const found = await lookupItemsByID([FOLLOWED], NO_AUTH, false, '', {})
+            const found = await lookupItemsByID([FOLLOWED], '', {})
             expect(found.map(item => item.data.name)).toEqual([FOLLOWED])
             expect(reads.filter(url => !url.includes('/api/info.json'))).toEqual([
                 expect.stringContaining('/comments/post/_/followed.json'),
@@ -653,15 +597,12 @@ let buildFlags
 beforeAll(async () => {
     background = await loadBackground()
     buildFlags = Object.fromEntries(BUILD_FLAGS.map(name => [name, globalThis[name]]))
-    _pendingPostTiming.delayMs = 0
 })
 
 beforeEach(() => {
     __resetStorage(SYNC, LOCAL)
     fill([])
     _resetLoggedInFetchState()
-    legacyReads.length = 0
-    for (const path of Object.keys(legacyPosts)) delete legacyPosts[path]
 })
 
 afterEach(() => {

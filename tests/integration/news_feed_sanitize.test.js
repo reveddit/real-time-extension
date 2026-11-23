@@ -1,6 +1,6 @@
 // What fetchNews keeps from the feed and hands on: the stored cache's shape,
-// the configs it applies, the log line, and the end of a legacy rest when the
-// switch or host changes. Also the solver regex rules in challenge-config.
+// the configs it applies, and the log line. Also the solver regex rules in
+// challenge-config.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
@@ -8,7 +8,7 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 
-import { fetchNews, NEWS_CACHE_KEY, NEWS_FETCH_FAILED_AT_KEY, CAPABILITY_REST_KEY } from '../../src/src/news'
+import { fetchNews, NEWS_CACHE_KEY, NEWS_FETCH_FAILED_AT_KEY } from '../../src/src/news'
 import {
     getChallengeConfig,
     setChallengeConfig,
@@ -152,7 +152,6 @@ describe('the messages and fields it keeps', () => {
         expect(Object.keys(options).sort()).toEqual(
             [
                 'challenge',
-                'legacy_host',
                 'login_cookies',
                 'login_wall',
                 'mechanisms',
@@ -163,7 +162,8 @@ describe('the messages and fields it keeps', () => {
             ].sort(),
         )
         expect(options.mechanisms).toEqual({ legacyOldReddit: 'off', scanFeeds: 'auto', other: 'on' })
-        expect(options.legacy_host).toBe('old.reddit.com')
+        // an older feed's legacy_host is accepted and dropped
+        expect(options).not.toHaveProperty('legacy_host')
         expect(options.scan_limits).toEqual({ reads_per_click: 2, seconds_between_reads: 4 })
         expect(options.markup).toEqual({ commentIdAttributes: ['a-b'] })
         expect(options.www_route_order).toEqual({ chrome: { order: ['tab:reload'], skip: [] } })
@@ -173,7 +173,7 @@ describe('the messages and fields it keeps', () => {
         expect(options.publicmodlogs_feed).toBe('a'.repeat(40))
     })
 
-    it.each(['evil.example', 5, null, undefined])('refuses a legacy_host of %j', async host => {
+    it.each(['old.reddit.com', 'evil.example', 5, null, undefined])('drops a legacy_host of %j', async host => {
         serve({ messages: [], options: { legacy_host: host } })
         await fetchNews({ force: true })
         expect(cachedFeed().options).toEqual({ mechanisms: {} })
@@ -237,42 +237,6 @@ describe('the log line', () => {
         serve({ messages: [] })
         await fetchNews({ force: true })
         expect((await getDiagEntries()).map(e => e.m)).toEqual(['[reveddit] news fetch ok: 0 messages, mechanisms={}'])
-    })
-})
-
-describe('ending a legacy rest', () => {
-    const seedCache = options => ({
-        [NEWS_CACHE_KEY]: { feed: { messages: [], options }, lastFetched: 0 },
-        [CAPABILITY_REST_KEY]: { legacy: { n: 1 }, legacy_info: { n: 2 }, api_info: { n: 3 } },
-    })
-    const rests = () => __getLocalStorage()[CAPABILITY_REST_KEY]
-
-    it('clears the legacy rests, and only those, when the switch changes', async () => {
-        __resetStorage({}, seedCache({ mechanisms: { legacyOldReddit: 'on' } }))
-        serve({ messages: [], options: { mechanisms: { legacyOldReddit: 'off' } } })
-        await fetchNews({ force: true })
-        expect(rests()).toEqual({ api_info: { n: 3 } })
-    })
-
-    it('clears them when the host changes', async () => {
-        __resetStorage({}, seedCache({ mechanisms: {}, legacy_host: 'www.reddit.com' }))
-        serve({ messages: [], options: { legacy_host: 'old.reddit.com' } })
-        await fetchNews({ force: true })
-        expect(rests()).toEqual({ api_info: { n: 3 } })
-    })
-
-    it('leaves them when neither changed', async () => {
-        __resetStorage({}, seedCache({ mechanisms: { legacyOldReddit: 'off' }, legacy_host: 'old.reddit.com' }))
-        serve({ messages: [], options: { mechanisms: { legacyOldReddit: 'off' }, legacy_host: 'old.reddit.com' } })
-        await fetchNews({ force: true })
-        expect(rests()).toEqual({ legacy: { n: 1 }, legacy_info: { n: 2 }, api_info: { n: 3 } })
-    })
-
-    it('leaves them on the first fetch, when nothing was cached', async () => {
-        __resetStorage({}, { [CAPABILITY_REST_KEY]: { legacy: { n: 1 } } })
-        serve({ messages: [], options: { mechanisms: { legacyOldReddit: 'off' } } })
-        await fetchNews({ force: true })
-        expect(rests()).toEqual({ legacy: { n: 1 } })
     })
 })
 

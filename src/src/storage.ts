@@ -232,10 +232,8 @@ const getStorageInit = () => {
         options: {
             interval: INTERVAL_DEFAULT,
             seen_count: SEEN_COUNT_DEFAULT,
-            custom_clientid: '',
             removal_status: { track: true, notify: true },
             lock_status: { track: true, notify: true },
-            monitor_quarantined: false,
             show_scan_on_own_profile: false,
             show_scan_on_other_profiles: true,
             show_thread_scan_buttons: true,
@@ -762,68 +760,6 @@ export const saveOptions = (options: SavedOptions, callback: () => void) => {
         },
         callback,
     )
-}
-
-// Pending post queue for throttled HTML lookups when JSON API fails
-const PENDING_POSTS_KEY = 'pending_post_lookups'
-
-export const addToPendingPostQueue = async (postIds: string[]) => {
-    // Don't re-enqueue posts that have already been attempted the maximum number
-    // of times without resolving — otherwise a failing lookup keeps refilling the
-    // queue every cycle and the scan banner never clears.
-    const attempts = await getPendingPostAttempts()
-    const allowed = postIds.filter(id => (attempts[id] || 0) < MAX_PENDING_POST_ATTEMPTS)
-    if (allowed.length === 0) return
-    await updateLocal<string[]>(PENDING_POSTS_KEY, [], queue => [...new Set([...queue, ...allowed])])
-}
-
-const readPendingPosts = () => readLocal<string[]>(PENDING_POSTS_KEY, [])
-
-export const getNextPendingPosts = async (count: number) => {
-    const queue = await readPendingPosts()
-    return { posts: queue.slice(0, count), totalRemaining: queue.length }
-}
-
-export const getPendingPostQueueSize = async () => (await readPendingPosts()).length
-
-export const removeMultipleFromPendingPostQueue = (postIds: string[]) => {
-    const idsToRemove = new Set(postIds)
-    return updateLocal<string[]>(PENDING_POSTS_KEY, [], queue => queue.filter(id => !idsToRemove.has(id)))
-}
-
-export const removeFromPendingPostQueue = (postId: string) => removeMultipleFromPendingPostQueue([postId])
-
-// Per-post attempt tracking so a post that never resolves (e.g. Reddit keeps
-// returning a non-removed status, or the lookup keeps failing) can't be
-// re-enqueued by the lookup fallback forever and keep the scan banner stuck.
-const PENDING_POST_ATTEMPTS_KEY = 'pending_post_attempts'
-export const MAX_PENDING_POST_ATTEMPTS = 3
-
-export const clearPendingPostQueue = async () => {
-    await browser.storage.local.remove([PENDING_POSTS_KEY, 'pending_post_progress', PENDING_POST_ATTEMPTS_KEY])
-}
-
-// Empties the queue and its progress but keeps the attempts, which stop the
-// lookup fallback from queueing a post that never resolves again and again
-export const emptyPendingPostQueue = async () => {
-    await browser.storage.local.remove([PENDING_POSTS_KEY, 'pending_post_progress'])
-}
-
-export const getPendingPostAttempts = () => readLocal<Record<string, number>>(PENDING_POST_ATTEMPTS_KEY, {})
-
-export const recordPendingPostAttempt = async (postId: string): Promise<number> => {
-    const attempts = await getPendingPostAttempts()
-    attempts[postId] = (attempts[postId] || 0) + 1
-    await browser.storage.local.set({ [PENDING_POST_ATTEMPTS_KEY]: attempts })
-    return attempts[postId]
-}
-
-export const clearPendingPostAttempt = async (postId: string) => {
-    const attempts = await getPendingPostAttempts()
-    if (postId in attempts) {
-        delete attempts[postId]
-        await browser.storage.local.set({ [PENDING_POST_ATTEMPTS_KEY]: attempts })
-    }
 }
 
 // --- Rate-limit backoff (shared across the monitoring alarm) ---

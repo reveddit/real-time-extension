@@ -56,7 +56,6 @@ const lookup = async (results, thing, subscribedFrom, itemLookup) => {
         results.map(result => result.name),
         thing,
         thing !== OTHER,
-        null,
         structuredClone(__getSyncStorage()),
         subscribedFrom,
         itemLookup,

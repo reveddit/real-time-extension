@@ -256,7 +256,7 @@ export const WWW_BLOCKED_RETRY_MS = 30 * 60 * 1000
 
 // Pause before trying another route, so a refusal isn't answered with a burst
 // (the captcha came in bursts during back-to-back requests, 2026-10-21).
-// Mutable for tests, like _legacyLookups.
+// Mutable for tests.
 export const _wwwRouteTiming = { switchDelayMs: 500 }
 
 // A route's last outcome for a kind of page: t is when it happened, and until

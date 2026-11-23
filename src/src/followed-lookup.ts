@@ -12,18 +12,16 @@ import {
     noteCapabilityWorked,
     isRateLimitedNow,
 } from './request-gates'
-import { NO_AUTH, fetch_forReddit } from './reddit-auth'
 import { rehydrateStoredRedditCookies } from './reddit-cookies'
 import { oneAtATime } from './one-at-a-time'
 
 // "Other" (non-profile) items have no public profile to diff against, so removal
-// is read from api/info instead. This is the deprecation-surviving primary for
-// that case: an AUTHENTICATED api/info request (the optional custom client id's
-// OAuth token while reddit takes it, else the user's real session cookies). It
-// reveals removals for content the user did NOT author (Reddit's self-view only
-// hides your OWN removals); self-authored items are handled separately via the
-// logged-out thread view. Ids are batched to Reddit's 100-per-call api/info limit,
-// one chunk at a time with a small gap, so a large watch list can't burst.
+// is read from api/info instead, with an AUTHENTICATED request (the user's real
+// session cookies). It reveals removals for content the user did NOT author
+// (Reddit's self-view only hides your OWN removals); self-authored items are
+// handled separately via the logged-out thread view. Ids are batched to Reddit's
+// 100-per-call api/info limit, one chunk at a time with a small gap, so a large
+// watch list can't burst.
 const OTHER_APIINFO_CHUNK = 100
 
 const OTHER_APIINFO_CHUNK_DELAY_MS = 1000
@@ -40,7 +38,7 @@ interface ThreadItemRead {
     refused: boolean
 }
 
-export const readThreadItemLoggedIn = async (id: string, postId: string): Promise<ThreadItemRead> => {
+const readThreadItemLoggedIn = async (id: string, postId: string): Promise<ThreadItemRead> => {
     const r = await fetchJsonLoggedIn(threadItemUrl(id, postId))
     return {
         data: r.ok ? threadItemOf(r.json, id) : undefined,
@@ -206,52 +204,31 @@ const lookupFollowedItemsByThread = async (ids: string[]): Promise<any[]> => {
     return results
 }
 
-export const lookupOtherItemsByID_authed = async (
-    ids: string[],
-    auth: any,
-    monitor_quarantined: boolean,
-): Promise<any[]> => {
+export const lookupOtherItemsByID_authed = async (ids: string[]): Promise<any[]> => {
     // After a 429 earlier in the cycle (the user's own lookup): no news this time
     if (await isRateLimitedNow()) {
         dlog('cycle', `[reveddit] followed items not read: rate limited`)
         return []
     }
-    const useOAuth = auth && auth !== NO_AUTH
-    if (!useOAuth) {
-        // Put the user's harvested session back in the cookie jar so credentials
-        // 'include' yields the authenticated view (mirrors lookupItemsByLoggedInUserWithAuth).
-        await rehydrateStoredRedditCookies()
-        if (await isCapabilityResting('api_info')) {
-            return lookupFollowedItemsByThread(ids)
-        }
+    // Put the user's harvested session back in the cookie jar so credentials
+    // 'include' yields the authenticated view (mirrors lookupItemsByLoggedInUserWithAuth).
+    await rehydrateStoredRedditCookies()
+    if (await isCapabilityResting('api_info')) {
+        return lookupFollowedItemsByThread(ids)
     }
     const children: any[] = []
     for (let i = 0; i < ids.length; i += OTHER_APIINFO_CHUNK) {
         const chunk = ids.slice(i, i + OTHER_APIINFO_CHUNK)
-        const search = `?id=${chunk.join(',')}&raw_json=1`
-        let batch: any
-        if (useOAuth) {
-            batch = await fetch_forReddit('api/info' + search, auth, monitor_quarantined).catch(console.log)
-        } else {
-            const r = await fetchJsonLoggedIn(`${www_reddit}api/info.json${search}`)
-            if (r.blocked) {
-                await noteCapabilityRefused('api_info', 'block page')
-                return lookupFollowedItemsByThread(ids)
-            }
-            if (!r.ok) {
-                throw new Error(`authenticated api/info request failed: ${r.status}`)
-            }
-            batch = r.json?.data?.children
+        const r = await fetchJsonLoggedIn(`${www_reddit}api/info.json?id=${chunk.join(',')}&raw_json=1`)
+        if (r.blocked) {
+            await noteCapabilityRefused('api_info', 'block page')
+            return lookupFollowedItemsByThread(ids)
         }
+        if (!r.ok) {
+            throw new Error(`authenticated api/info request failed: ${r.status}`)
+        }
+        const batch = r.json?.data?.children
         if (!Array.isArray(batch)) {
-            // fetch_forReddit swallows its request's errors (returns undefined),
-            // and its cookie steps' are caught above. When the client id's read
-            // fails, the login reads them all, as without the option. The
-            // login's read failing is a failure, and the caller drops to the
-            // legacy chain.
-            if (useOAuth) {
-                return lookupOtherItemsByID_authed(ids, NO_AUTH, monitor_quarantined)
-            }
             throw new Error('authenticated api/info returned no children')
         }
         children.push(...batch)
@@ -259,9 +236,7 @@ export const lookupOtherItemsByID_authed = async (
             await new Promise(r => setTimeout(r, OTHER_APIINFO_CHUNK_DELAY_MS))
         }
     }
-    if (!useOAuth) {
-        await noteCapabilityWorked('api_info')
-    }
+    await noteCapabilityWorked('api_info')
     // Items whose authors blocked the user read [unavailable] logged in, which
     // would look like removals: no news about them
     const visible = children.filter(child => !isViewerBlockedItem(child?.data))

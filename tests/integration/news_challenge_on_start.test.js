@@ -34,7 +34,7 @@ describe('applyRemoteConfig on worker start', () => {
 })
 
 // A 403 is a block, not rate limiting: it gets its own status and never
-// enters the 429 backoff. The simulated legacy-disabled 403 sets nothing.
+// enters the 429 backoff.
 describe('flagIfRateLimited status classes', () => {
     beforeEach(() => __resetStorage({}, {}))
 
@@ -47,10 +47,5 @@ describe('flagIfRateLimited status classes', () => {
         flagIfRateLimited(new Error('www.reddit.com request failed: 403'))
         expect(__getLocalStorage().error_status).toBe('reddit_blocked')
         expect(__getLocalStorage().rate_limit_until).toBeUndefined()
-    })
-
-    it('the synthetic legacy-disabled 403 sets nothing', () => {
-        flagIfRateLimited(new Error('profile request failed: 403 (legacy endpoints disabled)'))
-        expect(__getLocalStorage().error_status).toBeUndefined()
     })
 })

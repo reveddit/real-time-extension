@@ -57,7 +57,7 @@ const seed = (options = OPTIONS) =>
 
 // A cycle in which the one comment is live and nothing changes
 const quietCycle = async () => {
-    await _checkForChanges_thing_byId([ID], USER, true, null, structuredClone(__getSyncStorage()), 2, { [ID]: item }, [
+    await _checkForChanges_thing_byId([ID], USER, true, structuredClone(__getSyncStorage()), 2, { [ID]: item }, [
         { data: { ...item } },
     ])
     for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 0))
@@ -189,7 +189,7 @@ describe('retry of a pending notification', () => {
 
     // Followed items' check, of a comment that shows as it is
     const followedCheck = async view => {
-        await _checkForChanges_thing_byId([ID], 'other', false, null, structuredClone(__getSyncStorage()), 2, {}, [
+        await _checkForChanges_thing_byId([ID], 'other', false, structuredClone(__getSyncStorage()), 2, {}, [
             { data: { ...item, ...view } },
         ])
         for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 0))
@@ -264,7 +264,6 @@ describe('the end of a check', () => {
             [ID],
             USER,
             true,
-            null,
             structuredClone(__getSyncStorage()),
             2,
             { [ID]: item },
@@ -302,7 +301,7 @@ describe('a save after storage changed during the lookup', () => {
 
     // A check whose storage was read before the change, as every check's is
     const checkFrom = (copy, thing, isUser, view, itemLookup = {}) =>
-        _checkForChanges_thing_byId([view.name], thing, isUser, null, copy, 2, itemLookup, [{ data: { ...view } }])
+        _checkForChanges_thing_byId([view.name], thing, isUser, copy, 2, itemLookup, [{ data: { ...view } }])
     const checkOfUser = copy => checkFrom(copy, USER, true, item, { [ID]: item })
     const unfollow = () => new Promise(resolve => unsubscribeId(followed.name, resolve))
 

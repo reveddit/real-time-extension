@@ -13,7 +13,7 @@ import browserMock, { __resetStorage, __getLocalStorage } from '../mocks/webexte
 import { cookie, jar, fill, find, cookiesApi, COOKIE_EXPIRES as EXPIRES } from '../mocks/cookies.js'
 
 import { storeRedditCookies, rehydrateStoredRedditCookies } from '../../src/src/reddit-cookies'
-import { fetch_forReddit, getLoggedinUser } from '../../src/src/reddit-auth'
+import { getLoggedinUser } from '../../src/src/reddit-auth'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
 
 const CSRF = cookie('csrf_token', 'C1', {
@@ -349,27 +349,5 @@ describe('the cookie snapshot', () => {
         jar.clear()
         expect(await rehydrateStoredRedditCookies()).toBe(false)
         expect(find('reddit_session')).toBeUndefined()
-    })
-
-    it('the quarantined-content check takes the login out for its request and puts it back with its expiry', async () => {
-        let loginDuringRequest
-        globalThis.fetch = vi.fn(async () => {
-            loginDuringRequest = find('reddit_session')
-            return { ok: true, json: async () => ({ data: { children: [] } }) }
-        })
-        // Its callers pass OAuth details: api/info read with a custom client id
-        const auth = { headers: { Authorization: 'bearer x' } }
-        await fetch_forReddit('api/info?id=t1_a&raw_json=1', auth, true)
-        expect(globalThis.fetch).toHaveBeenCalledWith('https://oauth.reddit.com/api/info?id=t1_a&raw_json=1', {
-            ...auth,
-            cache: 'reload',
-        })
-        expect(loginDuringRequest).toBeUndefined()
-        expect(find('reddit_session')).toMatchObject({
-            value: 'S1',
-            session: false,
-            expirationDate: EXPIRES,
-            sameSite: 'no_restriction',
-        })
     })
 })

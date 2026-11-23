@@ -34,7 +34,7 @@ export default [
             // src is all TypeScript, and yarn typecheck (tsc) runs in the same
             // pre-commit hook — it checks for undefined identifiers correctly,
             // including DOM types (RequestInit) and declared globals from
-            // global.d.ts (__SIMULATE_DEPRECATION__) that no-undef can't see.
+            // global.d.ts (__DEV__) that no-undef can't see.
             // Per typescript-eslint guidance, leave no-undef off to avoid false positives.
             'no-undef': 'off',
             'no-constant-condition': 'warn',

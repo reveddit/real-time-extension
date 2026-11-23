@@ -38,7 +38,6 @@ type DiagArea =
     | 'auth' // logged-in-user detection
     | 'feed' // public-profile lookup
     | 'verify' // feed-absent page verification
-    | 'legacy' // legacy-reddit tiebreak paths
     | 'ratelimit' // 429 hits and backoff decisions
     | 'bridge' // website bridge requests (refusals and failures)
     | 'news' // remote news/mechanism fetches
@@ -235,7 +234,7 @@ const record = (tier: DiagTier, area: DiagArea, message: string, data?: unknown)
 export const dlog = (area: DiagArea, message: string, data?: unknown): void =>
     record(SUMMARY_AREAS.has(area) ? 'summary' : 'detail', area, message, data)
 
-// A per-cycle line living in a detail area (e.g. the verify/legacy roll-ups)
+// A per-cycle line living in a detail area (e.g. the verify roll-up)
 // opts into the summary tier so it survives the per-item churn.
 export const dlogSummary = (area: DiagArea, message: string, data?: unknown): void =>
     record('summary', area, message, data)

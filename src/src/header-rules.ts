@@ -1,6 +1,5 @@
 import browser from 'webextension-polyfill'
 import { getViewer, viewerCookieHeaderFor, ViewerAccount, VIEWER_KEY } from './viewer'
-import { isLegacyPageUrl, LEGACY_PAGE_MARKER_PATTERN } from './parse_html/common'
 import { isPublicViewUrl, publicCookieHeaderFor, PUBLIC_VIEW_URL_FILTER } from './public-cookies'
 
 // The header rules the extension's own requests need (from the background, and
@@ -64,16 +63,6 @@ export function installWebRequestHeaders() {
                         header === null ? details.requestHeaders : withCookie(details.requestHeaders, header),
                 }))
             }
-            // Legacy post pages on www: background requests carrying the
-            // legacy marker get the redesign_optout cookie (see the DNR rule
-            // below for Chrome/Edge and parse_html/common.ts legacyPageUrl).
-            if (
-                details.tabId === -1 &&
-                details.url.startsWith('https://www.reddit.com/') &&
-                isLegacyPageUrl(details.url)
-            ) {
-                return { requestHeaders: withCookie(details.requestHeaders, 'redesign_optout=true; over18=1') }
-            }
             //chrome uses details.initiator, but since chrome doesn't support webRequest anymore,
             //only need to check the value supported by firefox
             if (
@@ -103,15 +92,14 @@ export function installWebRequestHeaders() {
             return { requestHeaders: details.requestHeaders }
         },
         {
-            // The rv_ patterns are the markers of the legacy pages, the second
-            // account and the logged-out reads (match patterns test the query
+            // The rv_ patterns are the markers of the second account and the
+            // logged-out reads (match patterns test the query
             // string too); keeping this list narrow matters because the
             // listener is blocking and would otherwise run on every request
             // the user's own reddit tabs make.
             urls: [
                 'https://oauth.reddit.com/*.json*',
                 'https://*.reddit.com/api/info*',
-                'https://www.reddit.com/*rv_legacy=1',
                 'https://www.reddit.com/*rv_viewer=*',
                 PUBLIC_VIEW_URL_FILTER,
             ],
@@ -122,7 +110,7 @@ export function installWebRequestHeaders() {
 // END webRequest API code
 
 // Strip the chrome-extension:// Origin header off the background's reddit
-// requests (legacy page fetches, www.reddit public-profile fetches):
+// requests (www.reddit public-profile fetches):
 // Reddit 403s requests carrying that Origin.
 //
 // The Sec-Fetch-* trio is deliberately LEFT INTACT. Earlier versions removed it
@@ -166,33 +154,15 @@ export function installDnrHeaderRules() {
             initiatorDomains: [chrome.runtime.id],
         },
     })
-    // Legacy post pages on www render old markup only with the
-    // redesign_optout cookie; without it the Shreddit challenge comes back.
-    // fetch() cannot set Cookie, so set it here for background requests that
-    // carry the legacy marker (parse_html/common.ts legacyPageUrl). Scoped to
-    // tabId -1 like the strip rules, so it never touches the user's browsing.
-    const cookieRule = {
-        id: 9003,
-        priority: 2,
-        action: {
-            type: 'modifyHeaders',
-            requestHeaders: [{ header: 'cookie', operation: 'set', value: 'redesign_optout=true; over18=1' }],
-        },
-        condition: {
-            regexFilter: '^https://www\\.reddit\\.com/.*' + LEGACY_PAGE_MARKER_PATTERN,
-            resourceTypes: ['xmlhttprequest', 'other'],
-            tabIds: [-1],
-            initiatorDomains: [chrome.runtime.id],
-        },
-    }
     try {
         // Prior versions persisted 9001 as a dynamic rule (no tab scoping) — clean it up
         Promise.resolve(dnr.updateDynamicRules({ removeRuleIds: [9001, 9002] })).catch(() => {})
         Promise.resolve(
             dnr.updateSessionRules({
-                // 9004 was the bridge's loid cookie rule, replaced by the user's login
+                // 9003 set the legacy pages' cookie, gone with them; 9004 was the bridge's loid
+                // cookie rule, replaced by the user's login
                 removeRuleIds: [9001, 9002, 9003, 9004],
-                addRules: [makeRule(9001, '||old.reddit.com/'), makeRule(9002, '||www.reddit.com/'), cookieRule],
+                addRules: [makeRule(9001, '||old.reddit.com/'), makeRule(9002, '||www.reddit.com/')],
             }),
         )
             .then(() => console.log('[reveddit] DNR header rules installed for old+www reddit'))

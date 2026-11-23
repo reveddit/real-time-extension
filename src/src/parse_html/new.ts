@@ -10,7 +10,7 @@
 // Only item IDs are load-bearing here. Bodies, scores, and permalinks for the
 // user's own items come from the authenticated view, so parsing failures on
 // those fields must never break detection. String/regex extraction (rather than
-// HTMLRewriter) keeps this module free of WASM so it runs in vitest as-is.
+// a DOM parser) keeps this module free of dependencies, so it runs in vitest as-is.
 //
 // Page structure (verified live 2026-07-01; reddit.md, Logged-out views, has
 // the paging and the empty state):

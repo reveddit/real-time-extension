@@ -861,22 +861,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@stardazed/streams-compression@npm:^1.0.0":
-  version: 1.0.0
-  resolution: "@stardazed/streams-compression@npm:1.0.0"
-  dependencies:
-    "@stardazed/zlib": "npm:^1.0.0"
-  checksum: 10c0/90d0dafa610bce9640cf50fee56b68b710a2f0195e2b1396d81e37bf9a8457f7f1099bbc5ebd7d92fcbaf13fab10f840672f47543581ee6387038b54033f217e
-  languageName: node
-  linkType: hard
-
-"@stardazed/zlib@npm:^1.0.0":
-  version: 1.0.1
-  resolution: "@stardazed/zlib@npm:1.0.1"
-  checksum: 10c0/6b042ad5d6bd3958ab6b4a510b39af0c6ff62c39a29892ca846cb3962576aad634a542cc03f93145a81e67ea0efcb8d8c93c8832294677069aeaf61c52fa1a53
-  languageName: node
-  linkType: hard
-
 "@tybys/wasm-util@npm:^0.10.1":
   version: 0.10.1
   resolution: "@tybys/wasm-util@npm:0.10.1"
@@ -1544,23 +1528,6 @@ __metadata:
     webpack-dev-server:
       optional: true
   checksum: 10c0/36079d34971ff99a58b66b13f4184dcdd8617853c48cccdbc3f9ab7ea9e5d4fcf504e873c298ea7aa15e0b51ad2c4aee4d7a70bd7d9364e60f57b0eb93ca15fc
-  languageName: node
-  linkType: hard
-
-"@worker-tools/html-rewriter@npm:^0.1.0-pre.19":
-  version: 0.1.0-pre.19
-  resolution: "@worker-tools/html-rewriter@npm:0.1.0-pre.19"
-  dependencies:
-    "@stardazed/streams-compression": "npm:^1.0.0"
-    "@worker-tools/resolvable-promise": "npm:latest"
-  checksum: 10c0/ac5c15537b746373da97ad3077b3833aea1ec37ae65ae4fcd364901d231115200149df3c4cf49576f9288c552cd597283ce7eb6966178a41c2111c2de23cca41
-  languageName: node
-  linkType: hard
-
-"@worker-tools/resolvable-promise@npm:latest":
-  version: 0.2.0-pre.6
-  resolution: "@worker-tools/resolvable-promise@npm:0.2.0-pre.6"
-  checksum: 10c0/500ec9d401ca3768222868d80eaeffff3fdce12ed448cd2c69a6bd3579a5e1e00b03e6e065e707abcac37cd68775c4a99d744ff432ba9a9df8eac121645f9725
   languageName: node
   linkType: hard
 
@@ -5612,7 +5579,6 @@ __metadata:
     "@types/react": "npm:^19.2.14"
     "@types/react-dom": "npm:^19.2.3"
     "@types/webextension-polyfill": "npm:^0.12.5"
-    "@worker-tools/html-rewriter": "npm:^0.1.0-pre.19"
     chrome-types: "npm:^0.1.425"
     copy-webpack-plugin: "npm:^11.0.0"
     dotenv: "npm:^17.2.3"

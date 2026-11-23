@@ -101,11 +101,6 @@ function modify(buffer) {
             manifest.externally_connectable.matches.push(localhostPattern)
         }
     }
-    if (process.env.SIMULATE_DEPRECATION === 'true') {
-        // Distinguish the post-deprecation test build in chrome://extensions.
-        // Don't enable both builds at once — they'd double-monitor.
-        manifest.name += ' (no legacy)'
-    }
     // pretty print to JSON with two spaces
     return JSON.stringify(manifest, null, 2);
 }
@@ -143,7 +138,6 @@ const plugins = [
         __DEV__: JSON.stringify(mode !== 'production'),
         __LOCAL_SITE__: JSON.stringify(localSite),
         __LATEST_RELEASE__: JSON.stringify(latestRelease),
-        __SIMULATE_DEPRECATION__: JSON.stringify(process.env.SIMULATE_DEPRECATION === 'true'),
     }),
     new AfterEmitPlugin(),
 ]

@@ -9,9 +9,9 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect } from 'vitest'
 import { __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { lookupItemsByID_fromPublicProfile } from '../../src/src/requests'
-import { USER, thingIdEl, emptyStatePage, installFetch, useLegacyStub } from '../mocks/public-profile.js'
+import { USER, thingIdEl, emptyStatePage, installFetch, usePublicLookupHooks } from '../mocks/public-profile.js'
 
-useLegacyStub()
+usePublicLookupHooks()
 
 describe('a mature post in the public feed', () => {
     const POST = 't3_mature1'

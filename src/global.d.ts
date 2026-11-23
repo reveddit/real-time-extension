@@ -6,7 +6,6 @@ declare const __STORE__: 'chrome' | 'edge' | 'firefox'
 declare const __DEV__: boolean
 // Dev and staging builds: the local website (localhost:8080) may use the bridge
 declare const __LOCAL_SITE__: boolean
-declare const __SIMULATE_DEPRECATION__: boolean
 
 // linkedom
 declare module 'linkedom/worker' {

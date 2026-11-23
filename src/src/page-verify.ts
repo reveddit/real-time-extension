@@ -22,7 +22,6 @@ import {
     authSaysPostRemoved,
     AuthItemMeta,
     absentLiveTtl,
-    ABSENT_VERDICT_LIVE_TTL_MS,
     recordAbsentVerifyOutcome,
 } from './lookup-status'
 import {
@@ -33,7 +32,6 @@ import {
     isFresh,
     isMechanismDisabled,
 } from './request-gates'
-import { legacyTiebreakAbsent } from './legacy-lookup'
 
 export const isAbsentUnverifiedUnknown = async (): Promise<boolean> =>
     (await getRemoteMechanism(MECHANISM_ABSENT_UNVERIFIED_UNKNOWN).catch(() => 'auto')) === 'on'
@@ -339,7 +337,6 @@ export const verifyFeedAbsentItems = async (
     ids: string[],
     authItemsMeta: AuthItemsMeta,
     fetchHtml: FetchHtml,
-    canaryCommentIds: string[] = [],
 ): Promise<Record<string, PostPageStatus>> => {
     const nowMs = Date.now()
     let cache = await readLocal<Record<string, AbsentVerdictEntry>>(ABSENT_VERDICT_CACHE_KEY, {})
@@ -359,8 +356,7 @@ export const verifyFeedAbsentItems = async (
                 if (cached.v === 'unknown') {
                     // Recently confirmed unreadable — pace instead of retrying
                     // every cycle. Stays out of `verdicts` (callers treat it as
-                    // unresolved, fail-open) but still reaches the legacy
-                    // tiebreak below, which may settle it definitively.
+                    // unresolved, fail-open).
                     recentUnknownSkipped++
                 } else {
                     verdicts[id] = cached.v
@@ -411,34 +407,6 @@ export const verifyFeedAbsentItems = async (
             break
         }
     }
-    let cacheMutated = fetched > 0
-    // The tiebreak's canaries are comments known live. None is in the feed when
-    // the owner hides their comments: then comments their own pages showed
-    // live, recently. Without canaries the listing can only say 'live'.
-    const canaries = canaryCommentIds.length
-        ? canaryCommentIds
-        : Object.entries(cache)
-              .filter(
-                  ([id, e]) =>
-                      id.startsWith('t1_') &&
-                      !ids.includes(id) &&
-                      e.v === 'live' &&
-                      isFresh(e.t, ABSENT_VERDICT_LIVE_TTL_MS, nowMs),
-              )
-              .slice(0, 3)
-              .map(([id]) => id)
-    await legacyTiebreakAbsent(
-        ids,
-        canaries,
-        verdicts,
-        (id, v) => {
-            verdicts[id] = v
-            cache[id] = { v, t: nowMs, ...classifierMark(id) }
-            cacheMutated = true
-            freshDefinitive++
-        },
-        authItemsMeta,
-    )
     if (fetched > 0 || recentUnknownSkipped > 0) {
         dlogSummary(
             'verify',
@@ -448,7 +416,7 @@ export const verifyFeedAbsentItems = async (
     if (fetched > 0) {
         await recordAbsentVerifyOutcome(freshDefinitive > 0)
     }
-    if (cacheMutated) {
+    if (fetched > 0) {
         const entries = Object.entries(cache).sort((a, b) => b[1].t - a[1].t)
         cache = Object.fromEntries(entries.slice(0, ABSENT_VERDICT_CACHE_MAX))
         try {

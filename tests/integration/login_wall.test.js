@@ -1,8 +1,7 @@
 // Reddit's login wall (login-wall-config.ts): a public-view fetch that lands on
 // the login page ends there, since every route is logged out alike. The kind
-// of page then rests an hour at a time until one loads, the lookup skips the
-// legacy pages, and a streak raises login_required instead of the generic
-// public-view warning. Plus the popup's report-a-problem link to the issue
+// of page then rests an hour at a time until one loads, and a streak raises
+// login_required instead of the generic public-view warning. Plus the popup's report-a-problem link to the issue
 // form (report.ts, .github/ISSUE_TEMPLATE).
 
 // Install chrome global BEFORE any source import
@@ -15,7 +14,6 @@ import { getWwwHtmlFetcher, getLoginWallLine, WWW_ROUTE_STATE_KEY, LOGIN_WALL_RE
 import { lookupItemsByID } from '../../src/src/requests'
 import { lookupWarningToKeep, LOGIN_REQUIRED } from '../../src/src/lookup-status'
 import { verifyFeedAbsentItems } from '../../src/src/page-verify'
-import { _legacyLookups } from '../../src/src/legacy-lookup'
 import {
     loginWallLanding,
     sanitizeLoginWallConfig,
@@ -236,17 +234,15 @@ describe('a profile lookup that meets the login wall', () => {
         expect(mixed).toMatchObject({ valid: false, loginWall: true, error: 'www.reddit.com request failed: 429' })
     })
 
-    it('raises login_required after five in a row, without trying the legacy pages; the first one sends the only request', async () => {
+    it('raises login_required after five in a row; the first one sends the only request', async () => {
         globalThis.fetch = vi.fn(async () => res(200, 'LOGIN PAGE', LOGIN))
-        const lookup = () => lookupItemsByID(['t1_a'], null, false, 'u', {})
+        const lookup = () => lookupItemsByID(['t1_a'], 'u', {})
         for (let i = 1; i <= 5; i++) {
             const error = await lookup().catch(e => e)
             expect(isLoginWallMessage(error?.message)).toBe(true)
             expect(__getLocalStorage().error_status).toBe(i < 5 ? undefined : LOGIN_REQUIRED)
         }
         expect(globalThis.fetch).toHaveBeenCalledTimes(1)
-        expect(_legacyLookups.commentsById).not.toHaveBeenCalled()
-        expect(_legacyLookups.postByPath).not.toHaveBeenCalled()
     })
 })
 
@@ -270,7 +266,7 @@ describe('a login wall on the pages a lookup reads after the profile', () => {
         })
         const meta = { [NEWEST]: { link_id: 't3_p', created_utc: 1 }, [OLDER]: { link_id: 't3_p', created_utc: 1 } }
         for (let i = 1; i <= 5; i++) {
-            await lookupItemsByID([NEWEST, OLDER], null, false, 'u', meta)
+            await lookupItemsByID([NEWEST, OLDER], 'u', meta)
             expect(__getLocalStorage().error_status).toBe(i < 5 ? undefined : LOGIN_REQUIRED)
         }
         expect(await lookupWarningToKeep('u')).toBe(LOGIN_REQUIRED)

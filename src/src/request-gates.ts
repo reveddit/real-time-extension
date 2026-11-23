@@ -8,19 +8,14 @@ import { oneAtATime } from './one-at-a-time'
 
 // Methods reddit can refuse outright, each resting on its own: 'api_info'
 // (api/info.json with the user's login, refused everywhere tried on
-// 2026-10-24), 'legacy_info' (the legacy /api/info HTML listing, refused with
-// it), 'legacy' (the legacy post pages, which still answered then, and have
-// answered with a challenge page since 2026-10-28), 'thread_json' (a
-// thread's JSON with the user's login, which followed items and pending posts
-// read while api/info rests) and 'oauth' (the optional custom client id's token
-// and reads, reddit-auth.ts, which reddit starts turning away on 2027-01-12 for
-// apps it hasn't registered). One kind's refusal says nothing about another's,
-// so they don't share a rest. A refused method rests, and each refusal in a row
-// doubles the rest, up to a week. A blocked method then costs almost nothing,
-// yet is tried again at least weekly, in case reddit restores it; one success
-// ends the rest. Nothing gives up for good. (The remote option legacyOldReddit
-// 'off' is the switch that stops the legacy paths outright.)
-type RestingCapability = 'legacy' | 'legacy_info' | 'api_info' | 'thread_json' | 'oauth'
+// 2026-10-24) and 'thread_json' (a thread's JSON with the user's login, which
+// followed items read while api/info rests). One kind's refusal says nothing
+// about another's, so they don't share a rest. A refused method rests, and each
+// refusal in a row doubles the rest, up to a week. A blocked method then costs
+// almost nothing, yet is tried again at least weekly, in case reddit restores
+// it; one success ends the rest. Nothing gives up for good.
+const RESTING_CAPABILITIES = ['api_info', 'thread_json'] as const
+type RestingCapability = (typeof RESTING_CAPABILITIES)[number]
 
 export const CAPABILITY_FIRST_REST_MS = 6 * 3600 * 1000
 
@@ -102,6 +97,19 @@ export const noteCapabilityRefused = (capability: RestingCapability, why: string
         )
     }).catch(() => {})
 
+// Rests of methods this version no longer has ('legacy', 'legacy_info' and
+// 'oauth', which 0.0.5.37 and earlier kept), in the rests' turn
+export const dropRetiredRests = () =>
+    oneAtATime(CAPABILITY_REST_KEY, async () => {
+        const rests = await readLocal<Record<string, unknown>>(CAPABILITY_REST_KEY, {})
+        const kept = Object.fromEntries(
+            Object.entries(rests).filter(([name]) => (RESTING_CAPABILITIES as readonly string[]).includes(name)),
+        )
+        if (Object.keys(kept).length < Object.keys(rests).length) {
+            await browser.storage.local.set({ [CAPABILITY_REST_KEY]: kept })
+        }
+    }).catch(() => {})
+
 export const noteCapabilityWorked = (capability: RestingCapability) =>
     oneAtATime(CAPABILITY_REST_KEY, async () => {
         const rests = await readCapabilityRests()
@@ -119,8 +127,7 @@ export const noteCapabilityWorked = (capability: RestingCapability) =>
 
 // Only a 429 is rate limiting. A 403 is a block (challenge page, structural
 // block on unauthenticated JSON) and gets its own status so the popup and
-// support triage stop calling it rate limiting. The synthetic '(legacy
-// endpoints disabled)' 403 is a build-time simulation, not a live block.
+// support triage stop calling it rate limiting.
 const RATE_LIMIT_STATUSES = new Set([429])
 
 export const flagIfRateLimited = (err: Error) => {
@@ -129,7 +136,7 @@ export const flagIfRateLimited = (err: Error) => {
     const status = Number(m[1])
     if (RATE_LIMIT_STATUSES.has(status)) {
         setWarningBadge('rate_limited')
-    } else if (status === 403 && !err.message.includes('legacy endpoints disabled')) {
+    } else if (status === 403) {
         setWarningBadge('reddit_blocked')
     }
     // Only a real 429 means rate-limited. A 403 is Reddit's structural block on

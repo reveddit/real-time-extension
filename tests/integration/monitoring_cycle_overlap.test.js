@@ -9,7 +9,7 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { res } from '../mocks/responses.js'
-import { fill, cookiesApi } from '../mocks/cookies.js'
+import { cookie, fill, cookiesApi } from '../mocks/cookies.js'
 import { getDiagEntries } from '../mocks/diag-entries.js'
 import { checkForChanges, isCycleInFlight } from '../../src/src/monitoring'
 import { clearDiagLog } from '../../src/src/diaglog'
@@ -20,13 +20,12 @@ const lines = async text => (await getDiagEntries()).filter(entry => entry.m.inc
 
 beforeEach(async () => {
     await clearDiagLog()
-    // With a client id of their own, each cycle first asks reddit for a token
     __resetStorage({
-        options: { custom_clientid: 'someclient', removal_status: { track: true }, lock_status: { track: true } },
+        options: { removal_status: { track: true }, lock_status: { track: true } },
         user_subscriptions: {},
         other_subscriptions: {},
     })
-    // No login, so nothing else is sent
+    // No login, so nothing is sent
     fill([])
     browserMock.cookies = cookiesApi
 })
@@ -35,9 +34,14 @@ afterEach(() => {
     delete browserMock.cookies
 })
 
+// Reddit's answer for a browser nobody is signed in on, which ends a cycle's checks there
+const nobody = () => res(200, '{}')
+
 describe('a cycle that ends while a newer one runs', () => {
     it("doesn't let a third start meanwhile", async () => {
         vi.useFakeTimers({ toFake: ['Date'] })
+        // With a login, each cycle first asks reddit who it is, and waits
+        fill([cookie('reddit_session', 'S1')])
         const answers = []
         vi.stubGlobal('fetch', () => new Promise(resolve => answers.push(resolve)))
         await checkForChanges()
@@ -47,7 +51,7 @@ describe('a cycle that ends while a newer one runs', () => {
         await vi.waitFor(() => expect(answers).toHaveLength(2))
 
         vi.setSystemTime(Date.now() + 1000)
-        answers[0](res(500, ''))
+        answers[0](nobody())
         await vi.waitFor(async () => expect(await lines('cycle done')).toBe(1))
         // The next alarm
         vi.setSystemTime(Date.now() + 60 * 1000)
@@ -55,7 +59,7 @@ describe('a cycle that ends while a newer one runs', () => {
         expect(await lines('cycle start')).toBe(2)
         expect(await lines('previous cycle still running')).toBe(1)
 
-        answers[1](res(500, ''))
+        answers[1](nobody())
         await vi.waitFor(async () => expect(await lines('cycle done')).toBe(2))
         expect(__getSyncStorage().last_check).toBeDefined()
     })
@@ -69,7 +73,7 @@ describe('the start of a cycle', () => {
     beforeEach(() => {
         clock += 60 * 60 * 1000
         vi.spyOn(Date, 'now').mockImplementation(() => ++clock)
-        // The token request answers at once
+        // Any request answers at once
         vi.stubGlobal('fetch', async () => res(500, ''))
     })
 

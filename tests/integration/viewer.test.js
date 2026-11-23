@@ -501,7 +501,7 @@ describe('checking the user’s items through the second account', () => {
             }
             throw new Error(`unexpected request: ${url}`)
         }))
-    const lookup = (ids, meta = {}) => lookupItemsByID(ids, null, false, 'alice', meta)
+    const lookup = (ids, meta = {}) => lookupItemsByID(ids, 'alice', meta)
     const meta = ids => Object.fromEntries(ids.map(id => [id, { link_id: 't3_post1', created_utc: 1 }]))
 
     it('makes the header rule again before each lookup, so a cookie that has expired since stays off', async () => {
@@ -1033,14 +1033,14 @@ describe('checking the user’s items through the second account', () => {
         globalThis.fetch = vi.fn(async () => {
             throw new TypeError('Failed to fetch')
         })
-        await lookupItemsByID(['t1_x'], null, false, 'alice', {
+        await lookupItemsByID(['t1_x'], 'alice', {
             t1_x: { author: 'Bob', link_id: 't3_post1' },
         }).catch(() => {})
         __getLocalStorage().viewer_thread_consecutive_failures = { token: TOKEN, failures: 5 }
         __getLocalStorage().absent_verify_consecutive_failures = 7
         expect(await lookupWarningToKeep('alice')).toBe(ABSENT_VERIFY_UNAVAILABLE)
         // A later pass with no items checks through neither view: the usual rule again
-        expect(await lookupItemsByID([], null, false, 'alice', {})).toEqual([])
+        expect(await lookupItemsByID([], 'alice', {})).toEqual([])
         expect(await lookupWarningToKeep('alice')).toBe(null)
     })
 
@@ -1115,7 +1115,7 @@ describe('checking the user’s items through the second account', () => {
         globalThis.fetch = vi.fn(async () => {
             throw new TypeError('Failed to fetch')
         })
-        const results = await lookupItemsByID(['t1_x'], null, false, 'Bob', {}).catch(e => e)
+        const results = await lookupItemsByID(['t1_x'], 'Bob', {}).catch(e => e)
         expect(results).toBeInstanceOf(Error)
         const urls = globalThis.fetch.mock.calls.map(c => c[0])
         expect(urls.length).toBeGreaterThan(0)
@@ -1229,7 +1229,7 @@ describe('checking the user’s items through the second account', () => {
         globalThis.fetch = vi.fn(async () => {
             throw new TypeError('Failed to fetch')
         })
-        await lookupItemsByID(['t1_x'], null, false, 'alice', {
+        await lookupItemsByID(['t1_x'], 'alice', {
             t1_x: { author: 'Bob', link_id: 't3_post1' },
         }).catch(() => {})
         const urls = globalThis.fetch.mock.calls.map(c => c[0])

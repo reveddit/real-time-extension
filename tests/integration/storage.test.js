@@ -29,14 +29,6 @@ import {
     getOptions,
     getScanSettings,
     saveOptions,
-    addToPendingPostQueue,
-    getNextPendingPosts,
-    removeFromPendingPostQueue,
-    clearPendingPostQueue,
-    recordPendingPostAttempt,
-    clearPendingPostAttempt,
-    getPendingPostAttempts,
-    MAX_PENDING_POST_ATTEMPTS,
     recordRateLimitHit,
     clearRateLimitBackoff,
     getRateLimitBackoffRemainingMs,
@@ -56,11 +48,9 @@ const saveOptionsP = (options) =>
 const optionsToSave = (changes = {}) => ({
     seen_count: 2,
     interval: 1,
-    custom_clientid: '',
     removal_status: { track: true, notify: true },
     lock_status: { track: true, notify: true },
     hide_subscribe: false,
-    monitor_quarantined: false,
     show_scan_on_own_profile: false,
     show_scan_on_other_profiles: true,
     show_thread_scan_buttons: true,
@@ -80,10 +70,8 @@ function makeStorageInit(overrides = {}) {
         options: {
             interval: INTERVAL_DEFAULT,
             seen_count: SEEN_COUNT_DEFAULT,
-            custom_clientid: '',
             removal_status: { track: true, notify: true },
             lock_status: { track: true, notify: true },
-            monitor_quarantined: false,
         },
         last_check: null,
         // "other" tracking keys
@@ -330,74 +318,6 @@ describe('getAllChanges', () => {
     })
 })
 
-describe('pending post queue', () => {
-    beforeEach(() => __resetStorage({}, {}))
-
-    it('gives nothing from an empty queue', async () => {
-        expect(await getNextPendingPosts(1)).toEqual({ posts: [], totalRemaining: 0 })
-    })
-
-    it('adds to queue and retrieves next', async () => {
-        await addToPendingPostQueue(['t3_a', 't3_b'])
-        const { posts } = await getNextPendingPosts(1)
-        expect(posts[0]).toBe('t3_a')
-    })
-
-    it('removes from queue', async () => {
-        await addToPendingPostQueue(['t3_a', 't3_b', 't3_c'])
-        await removeFromPendingPostQueue('t3_a')
-        const { posts } = await getNextPendingPosts(1)
-        expect(posts[0]).toBe('t3_b')
-    })
-
-    it('deduplicates entries', async () => {
-        await addToPendingPostQueue(['t3_a', 't3_b'])
-        await addToPendingPostQueue(['t3_b', 't3_c'])
-        const local = __getLocalStorage()
-        const queue = local.pending_post_lookups
-        expect(queue).toEqual(['t3_a', 't3_b', 't3_c'])
-    })
-})
-
-describe('pending post attempt cap', () => {
-    beforeEach(() => __resetStorage({}, {}))
-
-    it('records and increments attempts', async () => {
-        expect(await recordPendingPostAttempt('t3_a')).toBe(1)
-        expect(await recordPendingPostAttempt('t3_a')).toBe(2)
-        const attempts = await getPendingPostAttempts()
-        expect(attempts['t3_a']).toBe(2)
-    })
-
-    it('stops re-enqueuing a post once it hits the attempt cap', async () => {
-        for (let i = 0; i < MAX_PENDING_POST_ATTEMPTS; i++) {
-            await recordPendingPostAttempt('t3_stuck')
-        }
-        await addToPendingPostQueue(['t3_stuck', 't3_ok'])
-        expect(__getLocalStorage().pending_post_lookups).toEqual(['t3_ok'])
-    })
-
-    it('clearPendingPostAttempt lets a post be enqueued again', async () => {
-        for (let i = 0; i < MAX_PENDING_POST_ATTEMPTS; i++) {
-            await recordPendingPostAttempt('t3_a')
-        }
-        await clearPendingPostAttempt('t3_a')
-        await addToPendingPostQueue(['t3_a'])
-        expect(__getLocalStorage().pending_post_lookups).toEqual(['t3_a'])
-    })
-
-    it('clearPendingPostQueue empties queue, progress, and attempts', async () => {
-        await addToPendingPostQueue(['t3_a'])
-        await recordPendingPostAttempt('t3_a')
-        __getLocalStorage().pending_post_progress = { processed: 1, total: 5 }
-        await clearPendingPostQueue()
-        const local = __getLocalStorage()
-        expect(local.pending_post_lookups).toBeUndefined()
-        expect(local.pending_post_attempts).toBeUndefined()
-        expect(local.pending_post_progress).toBeUndefined()
-    })
-})
-
 describe('rate-limit backoff', () => {
     beforeEach(() => __resetStorage({}, {}))
 
@@ -545,7 +465,6 @@ describe('getOptions / saveOptions', () => {
             optionsToSave({
                 seen_count: 3,
                 interval: 5,
-                custom_clientid: 'my_client',
                 removal_status: { track: true, notify: false },
                 lock_status: { track: false, notify: true },
                 hide_subscribe: true,
@@ -562,13 +481,11 @@ describe('getOptions / saveOptions', () => {
         expect(storage.options.interval).toBe(5)
         expect(storage.options.scan_reads_per_click).toBe(30)
         expect(storage.options.scan_seconds_between_reads).toBe(2.5)
-        expect(storage.options.custom_clientid).toBe('my_client')
         expect(storage.options.removal_status.track).toBe(true)
         expect(storage.options.removal_status.notify).toBe(false)
         expect(storage.options.lock_status.track).toBe(false)
         expect(storage.options.lock_status.notify).toBe(true)
         expect(storage.options.hide_subscribe).toBe(true)
-        expect(storage.options.monitor_quarantined).toBe(false)
         expect(storage.options.show_scan_on_own_profile).toBe(true)
         expect(storage.options.show_scan_on_other_profiles).toBe(false)
         expect(storage.options.show_thread_scan_buttons).toBe(false)

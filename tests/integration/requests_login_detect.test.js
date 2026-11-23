@@ -379,51 +379,6 @@ describe('a check for a remembered user', () => {
         // Not put back here: a pass with no items to check ends this warning
         it('takes over from a warning about part of the check, viewer_unavailable', () =>
             takesOverFrom('viewer_unavailable'))
-
-        // An OAuth token has no user, so it can't read the user's listing
-        describe('with a custom client id', () => {
-            const token = { ok: true, status: 200, json: async () => ({ access_token: 't' }) }
-            const answering = (www, oauth) => async url => {
-                if (String(url).includes('access_token')) return token
-                return String(url).startsWith('https://oauth.reddit.com/') ? oauth : www(url)
-            }
-            const oauthPaths = () =>
-                fetchMock.mock.calls
-                    .map(([url]) => String(url))
-                    .filter(url => url.startsWith('https://oauth.reddit.com/'))
-                    .map(url => new URL(url).pathname)
-            beforeEach(() => {
-                __getSyncStorage().options = { ...__getSyncStorage().options, custom_clientid: 'mine' }
-            })
-
-            it('stays on reddit, and asks oauth.reddit.com only about followed items', async () => {
-                __getSyncStorage().other_subscriptions = { t1_followed: { t: 1 } }
-                fetchMock.mockImplementation(answering(async () => res(503, 'down'), LISTING))
-                await check()
-                expect(oauthPaths()).toEqual(['/api/info'])
-                const urls = fetchMock.mock.calls.map(call => String(call[0]))
-                expect(urls.filter(url => !/^https:\/\/[a-z.]*reddit\.com\//.test(url))).toEqual([])
-                const [, init] = fetchMock.mock.calls.find(([url]) =>
-                    String(url).startsWith('https://oauth.reddit.com/'),
-                )
-                expect(init.headers).toEqual({ Authorization: 'bearer t', 'Accept-Language': 'en' })
-            })
-
-            it("still says the login isn't working after reddit refuses the login check and the listing five times", async () => {
-                fetchMock.mockImplementation(answering(async () => blockPage(), listingBy('someone')))
-                for (let i = 0; i < 5; i++) await check()
-                expect(local().error_status).toBe(LOGGED_IN_VIEW_UNAVAILABLE)
-                expect(oauthPaths()).toEqual([])
-            })
-
-            it('backs off from a 429 on the listing, and asks nothing more', async () => {
-                const www = async url => (String(url).includes('/user/me.json') ? res(429, 'slow down') : ME)
-                fetchMock.mockImplementation(answering(www, listingBy('someone')))
-                await check()
-                expect(local().rate_limit_until).toBeGreaterThan(Date.now())
-                expect(oauthPaths()).toEqual([])
-            })
-        })
     })
 
     it("takes a login check that names the user as the end of the refusals, whatever the listing does", async () => {

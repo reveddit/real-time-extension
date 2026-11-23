@@ -3,7 +3,7 @@ import styled from '@emotion/styled'
 import { css } from '@emotion/react'
 import { goToOptions, getFullIDsFromURL, createNotification } from './common'
 import { mountPage, setThemeMode, resolveTheme, THEME_STORAGE_KEY } from './ui/global'
-import { MessageBanner, MiniSpinner, Card } from './ui/components'
+import { MessageBanner, Card } from './ui/components'
 import { DiagStatus, formatDiagStatus } from './diag-status'
 import { tokens } from './ui/tokens'
 import {
@@ -12,7 +12,6 @@ import {
   subscribeId,
   unsubscribeId,
   markEverythingAsSeen,
-  getPendingPostQueueSize,
   getTestNotificationMessage,
 } from './storage'
 import { setCurrentStateForId } from './monitoring'
@@ -208,8 +207,6 @@ function Popup() {
   }, [])
   const [newsMessage, setNewsMessage] = useState<NewsMessage | null>(null)
   const [pendingUpdate, setPendingUpdate] = useState<string | null>(null)
-  const [pendingPostCount, setPendingPostCount] = useState(0)
-  const [pendingProgress, setPendingProgress] = useState<{ processed: number; total: number } | null>(null)
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [showRelease, setShowRelease] = useState(false)
 
@@ -271,14 +268,6 @@ function Popup() {
       })
     })
 
-    getPendingPostQueueSize().then(size => setPendingPostCount(size))
-    chrome.storage.local.get(['pending_post_progress'], result => {
-      const prog = result?.pending_post_progress
-      setPendingProgress(
-        prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null,
-      )
-    })
-
     // News feed: opportunistically refresh (at most hourly, MIN_FETCH_INTERVAL_MS) then read top unread.
     fetchNews().finally(() => {
       getUnreadMessages().then(unread => {
@@ -311,17 +300,6 @@ function Popup() {
   useEffect(() => {
     const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area !== 'local') return
-      if (changes.pending_post_lookups) {
-        const newQueue = changes.pending_post_lookups.newValue || []
-        setPendingPostCount(newQueue.length)
-        if (newQueue.length === 0) setPendingProgress(null)
-      }
-      if (changes.pending_post_progress) {
-        const prog = changes.pending_post_progress.newValue
-        setPendingProgress(
-          prog && typeof prog.total === 'number' ? { processed: prog.processed || 0, total: prog.total } : null,
-        )
-      }
       // A check's change to the warning shows at once, as it does on the badge
       if (changes.error_status) setErrorStatus(changes.error_status.newValue || null)
       if (changes[WWW_TAB_FAILURES_KEY]) setWwwTabFailures(Number(changes[WWW_TAB_FAILURES_KEY].newValue) || 0)
@@ -543,15 +521,6 @@ function Popup() {
 
       {showSubdomainWarning && (
         <MessageBanner variant="warning">⚠ User monitoring requires www.reddit.com or old.reddit.com</MessageBanner>
-      )}
-
-      {pendingPostCount > 0 && (
-        <MessageBanner variant="info">
-          <MiniSpinner />
-          {pendingProgress && pendingProgress.total > 0
-            ? `Scanning ${Math.min(pendingProgress.processed, pendingProgress.total)} of ${pendingProgress.total} posts for removals…`
-            : `Scanning ${pendingPostCount} posts for removals…`}
-        </MessageBanner>
       )}
 
       <SubsCard>

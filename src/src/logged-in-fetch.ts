@@ -1,5 +1,5 @@
 // A fetch with the user's reddit login, shared by the bridge and the
-// background's own logged-in reads (followed items, pending posts, the login
+// background's own logged-in reads (followed items, the login
 // check, the user's listing, scans), so all learn which request style reddit's
 // edge lets through.
 //
@@ -12,8 +12,8 @@
 // request, as reddit has refused one kind (api/info) while the rest answered.
 //
 // It imports none of the extension's own modules: bridge.ts, requests.ts,
-// www-fetcher.ts, followed-lookup.ts, reddit-auth.ts, viewer.ts, request-gates.ts
-// and parse_html/old.ts import it.
+// www-fetcher.ts, followed-lookup.ts, reddit-auth.ts, viewer.ts and
+// request-gates.ts import it.
 import browser from 'webextension-polyfill'
 
 export const LOGGED_IN_CACHE_MODES: RequestCache[] = ['default', 'no-cache']

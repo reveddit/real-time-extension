@@ -1,7 +1,7 @@
 // Absent-item verification hardening (issue #14), in page-verify.ts: unknown
 // verdicts are cached briefly and paced instead of re-fetched every cycle,
-// unreadable pages log a page fingerprint, the legacy tiebreak logs its result,
-// and a persistently dead channel raises the absent_verify_unavailable badge.
+// unreadable pages log a page fingerprint, and a persistently dead channel
+// raises the absent_verify_unavailable badge.
 
 // Install chrome global BEFORE any source import
 import '../mocks/chrome-api.js'
@@ -9,9 +9,7 @@ import '../mocks/chrome-api.js'
 import { describe, it, expect, vi } from 'vitest'
 import { __resetStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
 import { verifyFeedAbsentItems } from '../../src/src/page-verify'
-import { _legacyLookups, isLegacyResting } from '../../src/src/legacy-lookup'
 import { ABSENT_VERIFY_UNAVAILABLE } from '../../src/src/lookup-status'
-import { isLegacyPageUrl } from '../../src/src/parse_html/common'
 import { SHELL_HTML, livePage, useFetcherHooks } from '../mocks/www-fetch-hooks.js'
 import { commentsPage, commentEl } from '../mocks/public-profile.js'
 
@@ -53,19 +51,6 @@ describe('verifyFeedAbsentItems unknown caching', () => {
         expect(verdicts).toEqual({ t1_a: 'live' })
         expect(fetchHtml).not.toHaveBeenCalled()
     })
-
-    it('a paced unknown can still be settled by the legacy tiebreak', async () => {
-        __getLocalStorage()[CACHE_KEY] = { t1_a: { v: 'unknown', t: Date.now() } }
-        _legacyLookups.commentsById = vi.fn(async () => [
-            { data: { name: 't1_canary', author: 'bob' } },
-            { data: { name: 't1_a', author: 'alice' } },
-        ])
-        const fetchHtml = vi.fn(async () => SHELL_HTML)
-        const verdicts = await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml, ['t1_canary'])
-        expect(fetchHtml).not.toHaveBeenCalled()
-        expect(verdicts).toEqual({ t1_a: 'live' })
-        expect(__getLocalStorage()[CACHE_KEY].t1_a.v).toBe('live')
-    })
 })
 
 describe('unreadable-page diagnostics', () => {
@@ -80,15 +65,6 @@ describe('unreadable-page diagnostics', () => {
         expect(String(call[1])).toContain('Reddit')
         // The svc partial attempt gets its own fingerprint line too
         expect(spy.mock.calls.some(c => String(c[0]).includes('svc partial unreadable'))).toBe(true)
-    })
-
-    it('logs the legacy tiebreak result including the silent-empty case', async () => {
-        const spy = vi.spyOn(console, 'log')
-        await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), async () => SHELL_HTML, ['t1_canary'])
-        const line = spy.mock.calls.find(c => String(c[0]).includes('legacy comment tiebreak:'))
-        expect(line).toBeTruthy()
-        expect(String(line[0])).toContain('0/2 rendered')
-        expect(String(line[0])).toContain('canaryRendered=false')
     })
 
     it('logs a per-cycle pacing summary', async () => {
@@ -234,19 +210,6 @@ describe('a removal monitoring is counting', () => {
         expect(fetchHtml).not.toHaveBeenCalled()
     })
 
-    it('a removal the legacy listing found follows the same rule', async () => {
-        _legacyLookups.commentsById = vi.fn(async () => [{ data: { name: 't1_canary', author: 'bob' } }])
-        const fetchHtml = vi.fn(async () => SHELL_HTML)
-        const verify = m => verifyFeedAbsentItems(['t1_a'], m, fetchHtml, ['t1_canary'])
-        expect(await verify(meta(['t1_a']))).toEqual({ t1_a: 'removed' })
-        expect(await verify(meta(['t1_a']))).toEqual({ t1_a: 'removed' })
-        // the svc partial and the page, once
-        expect(fetchHtml).toHaveBeenCalledTimes(2)
-        expect(_legacyLookups.commentsById).toHaveBeenCalledTimes(1)
-        await verify(counting(['t1_a']))
-        expect(fetchHtml).toHaveBeenCalledTimes(4)
-    })
-
     it('stays inside the cycle budget, and the items behind get their first reads in order', async () => {
         const pause = vi.spyOn(globalThis, 'setTimeout').mockImplementation(fn => {
             fn()
@@ -364,44 +327,5 @@ describe('absent-item verification loop', () => {
         const fetchHtml = vi.fn(async () => livePage('t1_a'))
         await verifyFeedAbsentItems(['t1_a'], meta(['t1_a']), fetchHtml)
         expect(fetchHtml).toHaveBeenCalled()
-    })
-})
-
-describe('absent verification and the legacy paths', () => {
-    it('a 403 on a legacy post page ends the tiebreak and rests the legacy pages', async () => {
-        _legacyLookups.postByPath = vi.fn(async () => ({
-            error: 'legacy reddit HTML request failed: 403',
-            status: 403,
-        }))
-        const ids = ['t3_a', 't3_b', 't3_c']
-        // no page verdicts, so all three reach the post tiebreak
-        await verifyFeedAbsentItems(
-            ids,
-            {},
-            vi.fn(async () => SHELL_HTML),
-        )
-        expect(_legacyLookups.postByPath).toHaveBeenCalledTimes(1)
-        expect(await isLegacyResting()).toBe(true)
-    })
-
-    it('the challenge page reddit sends for every legacy page ends the tiebreak and rests the legacy pages', async () => {
-        _legacyLookups.postByPath = vi.fn(async () => ({
-            error: 'challenge page: reddit refuses legacy pages',
-            refused: true,
-        }))
-        await verifyFeedAbsentItems(
-            ['t3_a', 't3_b', 't3_c'],
-            {},
-            vi.fn(async () => SHELL_HTML),
-        )
-        expect(_legacyLookups.postByPath).toHaveBeenCalledTimes(1)
-        expect(await isLegacyResting()).toBe(true)
-    })
-
-    it('the legacy marker matches only as a whole query parameter', () => {
-        expect(isLegacyPageUrl('https://www.reddit.com/user/x/?rv_legacy=1')).toBe(true)
-        expect(isLegacyPageUrl('https://www.reddit.com/comments/a/?sort=new&rv_legacy=1&x=2')).toBe(true)
-        expect(isLegacyPageUrl('https://www.reddit.com/user/x/?rv_legacy=10')).toBe(false)
-        expect(isLegacyPageUrl('https://www.reddit.com/user/x/?xrv_legacy=1')).toBe(false)
     })
 })

@@ -1,24 +1,12 @@
-import browser from 'webextension-polyfill'
 import { dlog } from './diaglog'
 import { setWarningBadge, OWN_LISTING_QUERY } from './common'
-import { settableCookie, toStoredCookie, hasRedditLoginCookie } from './viewer'
-import { getOptions } from './storage'
+import { hasRedditLoginCookie } from './viewer'
 import { MECHANISM_ME_CHALLENGE } from './news'
 import { solveChallenge } from './parse_html/new'
 import { isStreakLong, recordStreak } from './lookup-status'
 import { rehydrateStoredRedditCookies } from './reddit-cookies'
-import {
-    flagIfRateLimited,
-    isMechanismDisabled,
-    isCapabilityResting,
-    noteCapabilityRefused,
-    noteCapabilityWorked,
-} from './request-gates'
+import { flagIfRateLimited, isMechanismDisabled } from './request-gates'
 import { fetchLoggedIn, withDeadline, UNCACHED_MODES, WWW_FETCH_TIMEOUT_MS } from './logged-in-fetch'
-
-const oauth_reddit = 'https://oauth.reddit.com/'
-
-export const NO_AUTH = 'none'
 
 // Consecutive refusals of the logged-in detection path, mirroring
 // recordWwwDetectOutcome in lookup-status.ts: one is noise, a streak means
@@ -50,50 +38,8 @@ export const recordLoginDetectOutcome = (indeterminate: boolean) =>
         () => setWarningBadge(LOGGED_IN_VIEW_UNAVAILABLE),
     )
 
-const cookieDetails_redditSession = { name: 'reddit_session', url: 'https://reddit.com' }
-
-// What cookies.set needs to put a cookie back as it was, expiry included: one
-// put back without it lasts only until the browser closes, which signs the
-// user out of Reddit (viewer.ts settableCookie)
-const getSettableCookie = (cookie: any): any => (cookie ? settableCookie(toStoredCookie(cookie)) : cookie)
-
-// A request with a real OAuth token: only the token paths get here. The cookie
-// that opts in to quarantined content is set every time. monitor_quarantined
-// also takes reddit_session out as the request starts and puts it back right
-// after, without waiting for the answer. Reddit refusing the read rests the
-// client id (noteIfClientIdRefused), and a read that works ends the rest.
-export const fetch_forReddit = async (pathAndSearch: string, auth: any, monitor_quarantined: boolean) => {
-    let cookie_redditSession
-    await browser.cookies.set({
-        domain: 'reddit.com',
-        url: 'https://reddit.com',
-        name: '_options',
-        value: '{%22pref_quarantine_optin%22:true}',
-    })
-    if (monitor_quarantined) {
-        cookie_redditSession = getSettableCookie(await browser.cookies.get(cookieDetails_redditSession))
-        if (cookie_redditSession) {
-            await browser.cookies.remove(cookieDetails_redditSession)
-        }
-    }
-    const result = fetch(oauth_reddit + pathAndSearch, { ...auth, cache: 'reload' })
-        .then(response => noteIfClientIdRefused(response, pathAndSearch.split('?')[0]))
-        .then(handleFetchErrors)
-        .then(getRedditData)
-        .then(async children => {
-            await noteCapabilityWorked('oauth')
-            return children
-        })
-        .catch(console.log)
-    if (cookie_redditSession) {
-        await browser.cookies.set(cookie_redditSession)
-    }
-    return result
-}
-
 // The logged-in user's own listing, read with their login, which is put back
-// first if the browser lost it. An OAuth token has no user, so nothing else
-// can stand in for this read.
+// first if the browser lost it
 export const lookupItemsByLoggedInUserWithAuth = () =>
     rehydrateStoredRedditCookies().then(() => {
         const url = `https://www.reddit.com/user/me.json${OWN_LISTING_QUERY}`
@@ -122,71 +68,6 @@ export const lookupItemsByLoggedInUserWithAuth = () =>
             throw error
         })
     })
-
-// Reddit turning the optional custom client id away: its token request, or a
-// read with its token, answered 401 or 403. The client id then rests
-// (request-gates.ts), and the login does its reads, as without the option. An
-// outage's 5xx is no such answer.
-const noteIfClientIdRefused = async (response: Response, what: string) => {
-    if (response.status === 401 || response.status === 403) {
-        await noteCapabilityRefused('oauth', `${what} ${response.status}`)
-    }
-    return response
-}
-
-const handleFetchErrors = (response: Response) => {
-    if (!response.ok) {
-        throw Error(response.statusText)
-    }
-    return response.json()
-}
-
-const getRedditData = (data: any) => {
-    if (!data || !data.data || !data.data.children) {
-        throw Error('reddit data is not defined')
-    }
-    return data.data.children
-}
-
-const getRedditToken = (data: any) => {
-    if (!data || !data.access_token) {
-        throw Error('access token is not defined')
-    }
-    return data.access_token
-}
-
-export const getAuth = () => {
-    return getOptions(async (options: Record<string, any>) => {
-        const use_this_clientID = options.custom_clientid
-        // While the client id rests, no token is asked for
-        if (!use_this_clientID || use_this_clientID === 'testing' || (await isCapabilityResting('oauth'))) {
-            return NO_AUTH
-        }
-        const tokenInit = {
-            headers: {
-                Authorization: `Basic ${btoa(`${use_this_clientID}:`)}`,
-                'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
-            },
-            method: 'POST',
-            body: `grant_type=${encodeURIComponent('https://oauth.reddit.com/grants/installed_client')}&device_id=DO_NOT_TRACK_THIS_DEVICE`,
-        }
-
-        return fetch('https://www.reddit.com/api/v1/access_token', tokenInit)
-            .then(response => noteIfClientIdRefused(response, 'token'))
-            .then(handleFetchErrors)
-            .then(getRedditToken)
-            .then(token => ({
-                headers: {
-                    Authorization: `bearer ${token}`,
-                    'Accept-Language': 'en',
-                },
-            }))
-            .catch(error => {
-                console.log(error)
-                return NO_AUTH
-            })
-    })
-}
 
 // --- Logged-in-user detection ---
 // Tri-state so callers can tell "definitely logged out" from "couldn't

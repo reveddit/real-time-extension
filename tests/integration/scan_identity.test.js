@@ -67,18 +67,15 @@ describe("a reddit page's follow, which the background checks", () => {
         fetch.mockImplementation(async () => new Response(answer, { status: 200 }))
     })
 
-    it('reads with the login and asks for no token with no client id', async () => {
+    it('reads with the login and asks for no token', async () => {
         followed()
         expect(await follow()).toEqual({ ok: true })
         expect(urls()).toEqual(['https://www.reddit.com/api/info.json?id=t1_a&raw_json=1'])
     })
 
-    it('reads through the API with a token with a client id', async () => {
+    it('ignores a client id stored by an earlier version', async () => {
         followed({ custom_clientid: 'mine' })
         expect(await follow()).toEqual({ ok: true })
-        expect(urls()).toEqual([
-            'https://www.reddit.com/api/v1/access_token',
-            'https://oauth.reddit.com/api/info?id=t1_a&raw_json=1',
-        ])
+        expect(urls()).toEqual(['https://www.reddit.com/api/info.json?id=t1_a&raw_json=1'])
     })
 })

@@ -235,6 +235,37 @@ describe('an update', () => {
         expect(Object.keys(__getLocalStorage().pending_notifications)).toEqual(['someuser'])
     })
 
+    it("from 0.0.5.37 or earlier drops the legacy pages and the client id's rest, and keeps what is still read", async () => {
+        const rest = { refusals: 1, until: Date.now() + 3600 * 1000, since: 1 }
+        Object.assign(__getLocalStorage(), {
+            pending_post_lookups: ['t3_a'],
+            pending_post_attempts: { t3_a: 1 },
+            pending_post_progress: { processed: 1, total: 2 },
+            dev_simulate_endpoint_deprecation: true,
+            capability_rest: { legacy: rest, legacy_info: rest, oauth: rest, api_info: rest },
+            pending_notifications: { someuser: { count: 1 } },
+        })
+        __getSyncStorage().options = { interval: 5, custom_clientid: 'mine', monitor_quarantined: true }
+        background.install({ reason: 'update', previousVersion: '0.0.5.37' })
+        await settle()
+        const local = __getLocalStorage()
+        for (const key of ['pending_post_lookups', 'pending_post_attempts', 'pending_post_progress', 'dev_simulate_endpoint_deprecation']) {
+            expect(local).not.toHaveProperty(key)
+        }
+        expect(Object.keys(local.capability_rest)).toEqual(['api_info'])
+        expect(Object.keys(local.pending_notifications)).toEqual(['someuser'])
+        // only the options page writes options, and its next save drops them
+        expect(__getSyncStorage().options).toEqual({ interval: 5, custom_clientid: 'mine', monitor_quarantined: true })
+    })
+
+    it('from a version that has none of them leaves the rests alone', async () => {
+        const rest = { refusals: 1, until: Date.now() + 3600 * 1000, since: 1 }
+        __getLocalStorage().capability_rest = { legacy: rest }
+        background.install({ reason: 'update', previousVersion: '0.0.5.38' })
+        await settle()
+        expect(Object.keys(__getLocalStorage().capability_rest)).toEqual(['legacy'])
+    })
+
     // An account named other has the name followed items once had
     it("from a version that wrote none keeps u/other's pending notification", async () => {
         __getLocalStorage().pending_notifications = { other: { count: 1 }, someuser: { count: 1 } }

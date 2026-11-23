@@ -40,7 +40,7 @@ Measurements, not facts. Each line ends with the date it was verified or, where 
 - `new.reddit.com` redirects to www.reddit.com, and the earlier redesign's `.Post` markup was on none of the pages checked, so code keyed to it never runs. (2026-11-04)
 - On a comment's logged-out page, a live comment renders as `<shreddit-comment thingId="t1_…" author="<name>">`, including comments in subreddits hidden from the profile. A removed comment with no replies is absent. A removed comment kept for its replies renders with `author="[deleted]"`. `<shreddit-comment-tree>` carries the focal comment's id even when that comment is removed (2026-07-20). That proves the page is the right one, not that the comment is live, so count a missing comment as removed only when the tree names the requested comment (2026-10-17).
 - Reddit sometimes serves comment-less page shells for long stretches (12 of 12 in one run, 2026-07-26), and once served its front page for a permalink, even after a solved challenge (2026-08-17). Read both as unknown. The front page has `<link rel="canonical" href="https://www.reddit.com/">`, three `<shreddit-post>` feed items and no comment tree, while post pages, comment pages and `/svc` partials have no canonical link at all. So identify a thread page by the ids above, not by a canonical link or its title, which every page now shares. Code that only looked for those elements read the front page as "every comment removed, every post live". (2026-10-17)
-- Lighter routes that Reddit's own scripts load, and legacy pages, carry the same signals. The extension uses them as fallbacks and tiebreakers, each behind a remote switch: see `verifyFeedAbsentItems` in [page-verify.ts](../../../src/src/page-verify.ts), `legacyTiebreakAbsent` in [legacy-lookup.ts](../../../src/src/legacy-lookup.ts) and the comments in [parse_html/common.ts](../../../src/src/parse_html/common.ts). (2026-10-17)
+- Lighter routes that Reddit's own scripts load, and legacy pages, carry the same signals. The extension read legacy pages as a tiebreaker until 2026-11-22, when that code was removed: Reddit has answered every legacy page with its JS challenge since 2026-10-28. See `verifyFeedAbsentItems` in [page-verify.ts](../../../src/src/page-verify.ts) for the www pages' verdicts. (2026-10-17)
 
 ## Feeds
 
@@ -88,8 +88,8 @@ Young posts still in the feed are checked on their own pages, at most 10 per cyc
 
 - **Cycle:** every minute by default, one at a time, with up to 10 seconds of jitter.
 - **Items missing from the feed:** checked on their own pages, the lighter route first. Up to 20 per cycle, 500 ms apart, halved and spaced twice as far for an hour after a 429. Verdicts are cached for 6 hours if live, 2 hours if removed, and 30 minutes if held or unknown.
-- **When the public profile fails:** a legacy chain takes over. Comments are checked every cycle, and posts go to a pending queue that checks each one at most 3 times. After a real 403 from it, every legacy path rests for 6 hours (0.0.5.27).
-- 2026-11-05: that rest is no longer shared or fixed. The legacy `/api/info` listing and the legacy post pages rest apart, each refusal in a row doubles the rest up to a week, one success ends it, and a challenge page answered with a 200 counts as a refusal, like a 403.
+- **When the public profile fails:** until 2026-11-22 a legacy chain took over: comments were checked every cycle, and posts went to a pending queue that checked each one at most 3 times. After a real 403 from it, every legacy path rested for 6 hours (0.0.5.27). That chain is gone, and the lookup fails with the public view's own error.
+- 2026-11-05: that rest stopped being shared or fixed. The legacy `/api/info` listing and the legacy post pages rested apart, each refusal in a row doubled the rest up to a week, one success ended it, and a challenge page answered with a 200 counted as a refusal, like a 403. The legacy rests went with the chain; the api/info and thread reads keep the doubling (`request-gates.ts`).
 - **Alerts:** a removal alerts after 3 to 5 consecutive removed verdicts (the count is drawn again each time the background starts), and a reinstatement after 2 live ones by default.
 - **Warnings** after 5 consecutive failed cycles: `public_view_unavailable`, `absent_verify_unavailable`, `logged_in_view_unavailable`. `profile_publicly_empty` is the account-wide shadowban signature.
 - 2026-11-17: when the latest failure was a page Reddit sent that couldn't be read, not a refusal or no answer, the public view's warning is `public_view_unreadable` instead: the same steps (a tab first, then a second account), in words that say so.
@@ -120,7 +120,7 @@ Also worth copying: a closed list of allowed paths, not a URL proxy; requests wa
 
 - `src/src/www-fetcher.ts`: `getWwwHtmlFetcher` (paths and handoffs). `src/src/www-routes.ts`: `PUBLIC_VIEW_FETCH_INIT`.
 - `src/src/requests.ts`: `lookupItemsByID_fromPublicProfile` (classification).
-- `src/src/page-verify.ts`: `verifyFeedPresentPosts`, `verifyFeedAbsentItems`. `src/src/legacy-lookup.ts`: `legacyTiebreakAbsent`. `src/src/reddit-auth.ts`: `getLoggedinUserDetailed`.
+- `src/src/page-verify.ts`: `verifyFeedPresentPosts`, `verifyFeedAbsentItems`. `src/src/reddit-auth.ts`: `getLoggedinUserDetailed`.
 - `src/src/parse_html/new.ts`: profile parsing, `classifyPostPage`, `classifyCommentPage`, `solveChallenge`, `describePageForDiag`.
 - `src/src/content-reddit.ts`: `showRemovalStatusOnPostPages`, the note on a post's page.
 - `src/src/challenge-config.ts`, `src/src/bridge.ts`, `src/src/monitoring.ts` (the cycle, confirmation counts, never-public classes) and `src/src/diaglog.ts`.
