@@ -358,3 +358,66 @@ describe('the header', () => {
         expect(window.close).toHaveBeenCalledTimes(2)
     })
 })
+
+// News messages as the popup shows them. The cache is what a fetch stored, a
+// fresh one, so the popup fetches nothing. The feed's side is in
+// news_messages.test.js.
+describe('the news message', () => {
+    const newsMessage = (id, extra = {}) => ({
+        id,
+        title: `Title ${id}`,
+        body_markdown: `Words of ${id}`,
+        published_utc: 1,
+        ...extra,
+    })
+    const newsCache = (...messages) => ({ news_cache: { feed: { messages }, lastFetched: Date.now() } })
+    const card = document => document.querySelector('button[aria-label="Dismiss"]')?.parentElement
+    const title = document => card(document)?.querySelector('h4').textContent
+    const dismiss = document => card(document).querySelector('button[aria-label="Dismiss"]').click()
+    const PNG = 'data:image/png;base64,iVBORw0KGgo='
+
+    it('opens a link in a new tab, since a plain click on one does nothing in the popup', async () => {
+        const body = '[Get it free →](https://twisitter.com)'
+        const { document } = await openPopup({ local: newsCache(newsMessage('a', { body_markdown: body })) })
+        await vi.waitFor(() => expect(card(document)).toBeTruthy())
+        const link = card(document).querySelector('.md-body a')
+        expect([link.getAttribute('href'), link.getAttribute('target')]).toEqual(['https://twisitter.com', '_blank'])
+    })
+
+    it('shows a higher priority first, then the newest', async () => {
+        const local = newsCache(
+            newsMessage('new', { published_utc: 9 }),
+            newsMessage('old', { published_utc: 1 }),
+            newsMessage('first', { published_utc: 5, priority: 3 }),
+        )
+        const { document } = await openPopup({ local })
+        await vi.waitFor(() => expect(title(document)).toBe('Title first'))
+    })
+
+    // A second tap on × would otherwise dismiss a message nobody saw
+    it('holds the next message until the popup opens again', async () => {
+        const local = newsCache(newsMessage('old', { published_utc: 1 }), newsMessage('new', { published_utc: 2 }))
+        const first = await openPopup({ local })
+        await vi.waitFor(() => expect(title(first.document)).toBe('Title new'))
+
+        dismiss(first.document)
+        await vi.waitFor(() => expect(card(first.document)).toBeFalsy())
+
+        const second = await openPopup({ local: first.__getLocalStorage() })
+        await vi.waitFor(() => expect(title(second.document)).toBe('Title old'))
+    })
+
+    it('shows an icon beside the title', async () => {
+        const { document } = await openPopup({ local: newsCache(newsMessage('a', { icon: PNG })) })
+        await vi.waitFor(() => expect(card(document)).toBeTruthy())
+        expect(card(document).className).toContain('has-icon')
+        expect(card(document).querySelector('img.icon').getAttribute('src')).toBe(PNG)
+    })
+
+    it('shows no picture for a message without an icon', async () => {
+        const { document } = await openPopup({ local: newsCache(newsMessage('a')) })
+        await vi.waitFor(() => expect(card(document)).toBeTruthy())
+        expect(card(document).className).not.toContain('has-icon')
+        expect(card(document).querySelector('img')).toBeNull()
+    })
+})

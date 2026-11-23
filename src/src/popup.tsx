@@ -341,14 +341,11 @@ function Popup() {
     markEverythingAsSeen().then(() => loadData())
   }
 
+  // The next message waits for the next time the popup opens, so a second tap on
+  // × can't dismiss one that was never seen
   const handleDismissNews = () => {
     if (!newsMessage) return
-    const id = newsMessage.id
-    markNewsRead(id)
-      .then(() => getUnreadMessages())
-      .then(unread => {
-        setNewsMessage(unread[0] || null)
-      })
+    markNewsRead(newsMessage.id).then(() => setNewsMessage(null))
   }
 
   const handleDismissUpdateNotice = () => {

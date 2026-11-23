@@ -14,12 +14,30 @@ const NewsCard = styled(Card)`
   position: relative;
   & h4 {
     margin: 0 0 4px 0;
+    /* Clear of the × in the corner */
+    padding-right: 16px;
     font-size: 0.92em;
     color: var(--text-primary);
   }
   & .md-body {
     font-size: 0.85em;
     color: var(--text-primary);
+  }
+  /* A message with an icon: the picture on the left, the title and words beside it */
+  &.has-icon {
+    display: grid;
+    grid-template-columns: 32px 1fr;
+    column-gap: ${tokens.space.sm};
+  }
+  & .icon {
+    grid-row: 1 / span 2;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+  }
+  &.has-icon h4,
+  &.has-icon .md-body {
+    grid-column: 2;
   }
   & .dismiss {
     position: absolute;
@@ -40,12 +58,13 @@ const NewsCard = styled(Card)`
 
 export function NewsBanner({ message, onDismiss }: { message: NewsMessage; onDismiss: () => void }) {
   return (
-    <NewsCard>
+    <NewsCard className={message.icon ? 'has-icon' : undefined}>
       <button className="dismiss" onClick={onDismiss} aria-label="Dismiss">
         ×
       </button>
+      {message.icon && <img className="icon" src={message.icon} alt="" />}
       <h4>{message.title}</h4>
-      <div className="md-body" dangerouslySetInnerHTML={{ __html: markdownToHTML(message.body_markdown) }} />
+      <div className="md-body" dangerouslySetInnerHTML={{ __html: markdownToHTML(message.body_markdown, true) }} />
     </NewsCard>
   )
 }

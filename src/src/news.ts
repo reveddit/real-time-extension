@@ -33,6 +33,13 @@ export interface NewsMessage {
     // nags people who already updated.
     min_version?: string
     max_version?: string
+    // Which shows first when several are unread: the higher number, then the
+    // newer. Without one, 0. It only orders; nothing is hidden by it.
+    priority?: number
+    // A picture beside the title, to tell the extension or site a message is
+    // about from the rest: a small PNG written into the feed as a data: URL,
+    // so showing it asks no other site for anything (see isNewsIcon)
+    icon?: string
 }
 
 // Remote options: an optional "options" block in the same JSON. Each mechanism
@@ -315,7 +322,10 @@ export const getUnreadMessages = async (): Promise<NewsMessage[]> => {
         /* ignored: no chrome in tests; empty version skips targeting */
     }
     const targeted = ownVersion ? filterMessagesForVersion(feed.messages, ownVersion) : feed.messages
-    return targeted.filter(m => !readIds[m.id]).sort((a, b) => (b.published_utc || 0) - (a.published_utc || 0))
+    // Higher priority first, then the newest
+    return targeted
+        .filter(m => !readIds[m.id])
+        .sort((a, b) => (b.priority || 0) - (a.priority || 0) || (b.published_utc || 0) - (a.published_utc || 0))
 }
 
 // Current remote state of a mechanism switch, from the cached feed. 'auto' when
@@ -422,6 +432,14 @@ const nonEmpty = <T extends Record<string, any>>(fields: T): Partial<T> =>
         ),
     ) as Partial<T>
 
+// A message's icon is a small PNG data: URL, so the popup fetches nothing to
+// show it and no other site learns who has the popup open. Anything else is
+// dropped, as is a picture too big for a 32 px icon.
+const MAX_NEWS_ICON_LENGTH = 8000
+const NEWS_ICON_RE = /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/
+const isNewsIcon = (v: unknown): v is string =>
+    typeof v === 'string' && v.length <= MAX_NEWS_ICON_LENGTH && NEWS_ICON_RE.test(v)
+
 // What the cache keeps of a served feed: the known fields, each sanitized
 const sanitizeFeed = (feed: NewsFeed): NewsFeed => {
     const options = (feed.options || {}) as any
@@ -439,6 +457,8 @@ const sanitizeFeed = (feed: NewsFeed): NewsFeed => {
                 severity: m.severity,
                 ...(isValidVersion(m.min_version) ? { min_version: m.min_version } : {}),
                 ...(isValidVersion(m.max_version) ? { max_version: m.max_version } : {}),
+                ...(Number(m.priority) ? { priority: Number(m.priority) } : {}),
+                ...(isNewsIcon(m.icon) ? { icon: m.icon } : {}),
             })),
         options: {
             mechanisms: sanitizeMechanisms(options.mechanisms),
