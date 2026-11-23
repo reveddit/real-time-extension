@@ -142,10 +142,11 @@ export const fetchLoggedIn = async (
     let response = await fetchInMode(url, first, opts.signal)
     let blockPage = isBlockPage(response)
     let retried = false
-    // The resource's own JSON answer, whatever its status, got through. Not a page
-    // such as me.json's challenge: its solved request is the same kind, and each
-    // check's challenge would reopen the retry that request gets refused in.
-    if (!blockPage && /json/i.test(response.headers?.get?.('content-type') || '')) {
+    // The resource's own JSON answer (or a feed's XML), whatever its status, got
+    // through. Not a page such as me.json's challenge: its solved request is the
+    // same kind, and each check's challenge would reopen the retry that request
+    // gets refused in.
+    if (!blockPage && /json|xml/i.test(response.headers?.get?.('content-type') || '')) {
         if (doubleBlock in _loggedInFetchState.doubleBlockAt) {
             forgetDoubleBlock(doubleBlock)
             keepState()

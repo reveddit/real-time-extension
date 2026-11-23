@@ -392,9 +392,10 @@ const SCAN_TURN_KEY = 'scan_turn_next'
 
 // 0 once the turn is taken, or how long until it comes. The pace is the user's
 // (options), and half that for a while after a 429, mirroring monitoring's own
-// gentle resume (computeAbsentVerifyBudget).
-const scanTurnIn = async (): Promise<number> => {
-    const { gapMs } = await getScanSettings()
+// gentle resume (computeAbsentVerifyBudget). minGapMs: the slowest pace the
+// caller allows itself, whatever the options say (the bridge's user-page reads).
+export const scanTurnIn = async (minGapMs = 0): Promise<number> => {
+    const gapMs = Math.max((await getScanSettings()).gapMs, minGapMs)
     const sinceHit = await getMsSinceLastRateLimitHit().catch(() => null)
     const gap = sinceHit !== null && sinceHit < RECENT_RATE_LIMIT_WINDOW_MS ? gapMs * 2 : gapMs
     const session = workerSession()

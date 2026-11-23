@@ -105,6 +105,8 @@ const FROM_REDDIT_TAB = { tab: { id: 7, url: REDDIT_PAGE }, url: REDDIT_PAGE }
 const REVEDDIT_PAGE = 'https://www.reveddit.com/v/spez/'
 const FROM_REVEDDIT_TAB = { tab: { id: 9, url: REVEDDIT_PAGE }, url: REVEDDIT_PAGE }
 const BRIDGE_URL = 'https://www.reddit.com/user/spez/about/.json'
+// What reveddit.com's user pages read through it, at the scans' pace
+const BRIDGE_FEED_URL = 'https://www.reddit.com/user/spez/comments/.rss?sort=new&limit=100'
 
 // A thread page with a live comment and a removed one kept for its reply
 const POST = 't3_post'
@@ -226,6 +228,11 @@ const ROWS = [
     {
         name: 'the bridge, relayed from a reveddit.com tab',
         drive: () => background.send({ action: 'bridge-fetch', url: BRIDGE_URL }, FROM_REVEDDIT_TAB),
+        check: bridgeSaysBusy,
+    },
+    {
+        name: "the bridge's user-page reads, relayed from a reveddit.com tab",
+        drive: () => background.send({ action: 'bridge-fetch', url: BRIDGE_FEED_URL }, FROM_REVEDDIT_TAB),
         check: bridgeSaysBusy,
     },
     {

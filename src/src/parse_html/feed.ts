@@ -1,8 +1,8 @@
-// Reddit's Atom feeds, read into the items the scans use. A person's feed still
-// has the comments moderators removed, with their text, and leaves out what the
-// person deleted (verified 2026-11-04). Content scripts parse with the
-// browser's DOMParser; a caller without one, such as Chrome's service worker,
-// passes its own.
+// Reddit's Atom feeds, read into the items the scans and the bridge use. A
+// person's feed still has the comments moderators removed, with their text,
+// and leaves out what the person deleted (verified 2026-11-04). Content scripts
+// parse with the browser's DOMParser; Chrome's service worker has none, so the
+// bridge passes linkedom's (feed-listing.ts).
 
 interface DomParser {
     parseFromString(text: string, type: any): any
