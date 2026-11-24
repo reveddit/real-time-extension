@@ -1,7 +1,7 @@
 {
   "name": "reveddit real-time",
-  "description": "reveddit notifies you when your reddit content is removed, and scans threads and profiles for what moderators removed.",
-  "version": "0.0.5.37",
+  "description": "reveddit notifies you when your reddit content is removed.",
+  "version": "0.0.5.38",
   "permissions": [
     "cookies",
     "notifications",
