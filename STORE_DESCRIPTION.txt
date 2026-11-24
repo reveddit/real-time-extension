@@ -22,6 +22,9 @@ Note, the extension can't check your own comments in private, quarantined or 18+
 
 VERSION HISTORY:
 
+2026/11/23 - 0.0.5.38
+- removes scans, which Reddit no longer supports; a news page lists announcements and versions
+
 2026/11/17 - 0.0.5.37
 - removal checks no longer pause when reddit shows your profile in a different layout
 
