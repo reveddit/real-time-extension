@@ -1,6 +1,6 @@
 // A fetch with the user's reddit login, shared by the bridge and the
 // background's own logged-in reads (followed items, the login
-// check, the user's listing, scans), so all learn which request style reddit's
+// check, the user's listing), so all learn which request style reddit's
 // edge lets through.
 //
 // Reddit's edge refuses some request-header combinations with its HTML block
@@ -17,9 +17,8 @@
 import browser from 'webextension-polyfill'
 
 export const LOGGED_IN_CACHE_MODES: RequestCache[] = ['default', 'no-cache']
-// Feeds send max-age=3600, so a scan's read must never come from the browser's
-// cache, and nor may the login check or the user's listing. On Chrome's wire
-// no-store is the same as default (reddit.md).
+// The login check and the user's listing must never come from the browser's
+// cache. On Chrome's wire no-store is the same as default (reddit.md).
 export const UNCACHED_MODES: RequestCache[] = ['no-store', 'no-cache']
 const DOUBLE_BLOCK_MEMORY_MS = 5 * 60 * 1000
 
@@ -142,11 +141,10 @@ export const fetchLoggedIn = async (
     let response = await fetchInMode(url, first, opts.signal)
     let blockPage = isBlockPage(response)
     let retried = false
-    // The resource's own JSON answer (or a feed's XML), whatever its status, got
-    // through. Not a page such as me.json's challenge: its solved request is the
-    // same kind, and each check's challenge would reopen the retry that request
-    // gets refused in.
-    if (!blockPage && /json|xml/i.test(response.headers?.get?.('content-type') || '')) {
+    // The resource's own JSON answer, whatever its status, got through. Not a page
+    // such as me.json's challenge: its solved request is the same kind, and each
+    // check's challenge would reopen the retry that request gets refused in.
+    if (!blockPage && /json/i.test(response.headers?.get?.('content-type') || '')) {
         if (doubleBlock in _loggedInFetchState.doubleBlockAt) {
             forgetDoubleBlock(doubleBlock)
             keepState()
@@ -176,21 +174,6 @@ export const fetchLoggedIn = async (
         }
     }
     return { response, blockPage, retried }
-}
-
-// A scan's read: one request. After a block page it names the other mode for a
-// second try, which the page sends on a turn of its own, where a cancel can stop
-// it. That's always offered: another kind's double block says nothing about
-// feeds, and a feed's may be about that one feed, so none is kept. The page stops
-// asking in a click that saw both modes refused.
-export const fetchForScan = async (url: string, signal: AbortSignal, secondTryMode?: RequestCache) => {
-    const kind = requestKind(url)
-    await loadState()
-    const mode = secondTryMode ?? firstMode(kind, UNCACHED_MODES)
-    const response = await fetchInMode(url, mode, signal)
-    const blockPage = isBlockPage(response)
-    if (secondTryMode && !blockPage) learn(kind, UNCACHED_MODES, mode)
-    return { response, blockPage, otherMode: blockPage && !secondTryMode ? otherOf(UNCACHED_MODES, mode) : undefined }
 }
 
 // A fetch, tab message or injected script that never settles (a stalled

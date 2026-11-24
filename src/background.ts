@@ -11,7 +11,6 @@ import {
     feedbackFormLink,
 } from './src/common'
 import { checkForChanges, setCurrentStateForIdHere } from './src/monitoring'
-import { readWithLogin } from './src/requests'
 import { getLoggedinUser, getLoggedinUserDetailed, isSettledByLogin, whoIsSignedIn } from './src/reddit-auth'
 import { storeRedditCookies } from './src/reddit-cookies'
 import { countCookieChange, countStorageWrites } from './src/activity-counts'
@@ -382,15 +381,6 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         // Trigger cookie capture in background context
         storeRedditCookies()
         sendResponse({ response: 'done' })
-        return true
-    } else if (request.action === 'fetch-with-login') {
-        if (isOtherIdentity(sender?.tab)) {
-            sendResponse({ ok: false, status: 0, otherIdentity: true })
-            return true
-        }
-        readWithLogin(String(request.path), request.secondTryMode)
-            .then(sendResponse)
-            .catch(err => sendResponse({ ok: false, status: 0, error: String(err?.message || err) }))
         return true
     } else if (request.action === 'get-diag-log') {
         Promise.all([

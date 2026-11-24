@@ -4,15 +4,6 @@ import {
   getOptions,
   INTERVAL_DEFAULT,
   SEEN_COUNT_DEFAULT,
-  SCAN_READS_DEFAULT,
-  SCAN_READS_MIN,
-  SCAN_READS_MAX,
-  SCAN_SECONDS_DEFAULT,
-  SCAN_SECONDS_MIN,
-  SCAN_SECONDS_MAX,
-  isScanReads,
-  isScanSeconds,
-  scanSettingsFrom,
   saveOptions,
 } from './storage'
 import { DiagStatus, formatDiagStatus } from './diag-status'
@@ -22,7 +13,6 @@ import { BlueLink, Button, SectionHeader, MessageBanner } from './ui/components'
 import { tokens } from './ui/tokens'
 import { Note, DiagActions, sendMessageAny, runtimeAny } from './options-shared'
 import { SecondAccount } from './options-second-account'
-import { getRemoteScanLimits, ScanLimits } from './news'
 
 const Page = styled.div`
   width: 380px;
@@ -129,17 +119,10 @@ const MODE_OPTIONS: { value: TrackMode; label: string }[] = [
 function Options() {
   const [interval, setInterval_] = useState('')
   const [seenCount, setSeenCount] = useState('')
-  const [scanReads, setScanReads] = useState('')
-  const [scanSeconds, setScanSeconds] = useState('')
-  const [scanLimits, setScanLimits] = useState<ScanLimits>({})
   const [removedMode, setRemovedMode] = useState<TrackMode>('off')
   const [lockedMode, setLockedMode] = useState<TrackMode>('off')
   const [hideSubscribe, setHideSubscribe] = useState(false)
-  const [showScanOnOwnProfile, setShowScanOnOwnProfile] = useState(false)
-  const [showScanOnOtherProfiles, setShowScanOnOtherProfiles] = useState(true)
-  const [showThreadScanButtons, setShowThreadScanButtons] = useState(true)
   const [highlightOwnProfileStatus, setHighlightOwnProfileStatus] = useState(true)
-  const [autoFilterRemovedThreads, setAutoFilterRemovedThreads] = useState(true)
   const [themeMode, setThemeModeState] = useState<ThemeMode>('auto')
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
@@ -168,23 +151,15 @@ function Options() {
         const lock = opts.lock_status || {}
         setInterval_(String(opts.interval ?? INTERVAL_DEFAULT))
         setSeenCount(String(opts.seen_count || SEEN_COUNT_DEFAULT))
-        const scan = scanSettingsFrom(opts)
-        setScanReads(String(scan.readsPerClick))
-        setScanSeconds(String(scan.seconds))
         setRemovedMode(modeFromStatus(removal))
         setLockedMode(modeFromStatus(lock))
         setHideSubscribe(!!opts.hide_subscribe)
-        setShowScanOnOwnProfile(!!opts.show_scan_on_own_profile)
-        setShowScanOnOtherProfiles(opts.show_scan_on_other_profiles !== false)
-        setShowThreadScanButtons(opts.show_thread_scan_buttons !== false)
         setHighlightOwnProfileStatus(opts.highlight_own_profile_status !== false)
-        setAutoFilterRemovedThreads(opts.auto_filter_removed_threads !== false)
         setLoaded(true)
       })
     }
     chrome.storage.onChanged.addListener(onStorageChanged)
     tryLoadOptions()
-    getRemoteScanLimits().then(setScanLimits)
     chrome.storage.local.get([THEME_STORAGE_KEY], res => {
       setThemeModeState((res?.[THEME_STORAGE_KEY] as ThemeMode) || 'auto')
     })
@@ -244,8 +219,6 @@ function Options() {
   const resetDefaults = () => {
     setInterval_(String(INTERVAL_DEFAULT))
     setSeenCount(String(SEEN_COUNT_DEFAULT))
-    setScanReads(String(SCAN_READS_DEFAULT))
-    setScanSeconds(String(SCAN_SECONDS_DEFAULT))
   }
 
   const saveAndClose = () => {
@@ -262,14 +235,6 @@ function Options() {
     if (!(Number.isInteger(seenCountNum) && seenCountNum > 0)) {
       return refuse('"same-status count before alert" must be a positive integer')
     }
-    if (!isScanReads(scanReads)) {
-      return refuse(
-        `"most Reddit reads per scan click" must be a whole number from ${SCAN_READS_MIN} to ${SCAN_READS_MAX}`,
-      )
-    }
-    if (!isScanSeconds(scanSeconds)) {
-      return refuse(`"seconds between scan reads" must be from ${SCAN_SECONDS_MIN} to ${SCAN_SECONDS_MAX}`)
-    }
 
     setError('')
     saveOptions(
@@ -279,13 +244,7 @@ function Options() {
         removal_status: { track: removedMode !== 'off', notify: removedMode === 'notify' },
         lock_status: { track: lockedMode !== 'off', notify: lockedMode === 'notify' },
         hide_subscribe: hideSubscribe,
-        show_scan_on_own_profile: showScanOnOwnProfile,
-        show_scan_on_other_profiles: showScanOnOtherProfiles,
-        show_thread_scan_buttons: showThreadScanButtons,
         highlight_own_profile_status: highlightOwnProfileStatus,
-        auto_filter_removed_threads: autoFilterRemovedThreads,
-        scan_reads_per_click: Number(scanReads),
-        scan_seconds_between_reads: Number(scanSeconds),
       },
       () => {
         setAlarm(intervalNum)
@@ -294,14 +253,6 @@ function Options() {
       },
     )
   }
-
-  const heldTo = [
-    scanLimits.reads_per_click && `at most ${scanLimits.reads_per_click} reads a click`,
-    scanLimits.seconds_between_reads &&
-      `at least ${Math.min(scanLimits.seconds_between_reads, SCAN_SECONDS_MAX)} seconds between reads`,
-  ]
-    .filter(Boolean)
-    .join(' and ')
 
   if (!loaded) return <Page>Loading…</Page>
 
@@ -386,48 +337,11 @@ function Options() {
         </Field>
         <CheckField label="hide subscribe button" checked={hideSubscribe} onChange={setHideSubscribe} />
         <CheckField
-          label="show removed-content scan on other profiles"
-          checked={showScanOnOtherProfiles}
-          onChange={setShowScanOnOtherProfiles}
-        />
-        <CheckField
-          label="show removed-content scan on your own profile"
-          checked={showScanOnOwnProfile}
-          onChange={setShowScanOnOwnProfile}
-        />
-        <CheckField
-          label={'show "scan for removed comments" buttons on threads'}
-          checked={showThreadScanButtons}
-          onChange={setShowThreadScanButtons}
-        />
-        <CheckField
           label="flag your removed/locked content on your own profile"
           checked={highlightOwnProfileStatus}
           onChange={setHighlightOwnProfileStatus}
         />
-        <CheckField
-          label="auto-filter to show only removed comments after thread scan"
-          checked={autoFilterRemovedThreads}
-          onChange={setAutoFilterRemovedThreads}
-        />
       </FieldStack>
-
-      <SectionHeader>Scans</SectionHeader>
-      <FieldStack>
-        <Field>
-          <label>most Reddit reads per scan click</label>
-          <input type="text" value={scanReads} onChange={e => setScanReads(e.target.value)} />
-        </Field>
-        <Field>
-          <label>seconds between scan reads</label>
-          <input type="text" value={scanSeconds} onChange={e => setScanSeconds(e.target.value)} />
-        </Field>
-      </FieldStack>
-      <Note>
-        Scans read Reddit with your login. More reads or a shorter wait get through big threads sooner, but Reddit may
-        ask you to verify you&apos;re human if it sees what looks like automated activity.
-        {heldTo && ` For now, Reveddit holds every scan to ${heldTo}, whatever these say.`}
-      </Note>
 
       <SectionHeader>Appearance</SectionHeader>
       <FieldStack>

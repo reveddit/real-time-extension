@@ -24,7 +24,6 @@ import {
 import { _resetLoggedInFetchState } from '../../src/src/logged-in-fetch.ts'
 import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates.ts'
 import { PUBLIC_PROFILE_UNAVAILABLE_KEY } from '../../src/src/lookup-status.ts'
-import { getOldestDateKey, getPublicLiveKey } from '../../src/src/storage.ts'
 
 describe('validateBridgeUrl', () => {
     it('accepts the endpoints the website uses', () => {
@@ -137,11 +136,10 @@ describe('toPublicView', () => {
         } as Record<string, any>,
     })
     const listing = (children: any[]) => ({ kind: 'Listing', data: { children } })
-    const context = (knownRemoved: string[] = [], me = '', verifiedLive: string[] = [], liveSince?: number) => ({
+    const context = (knownRemoved: string[] = [], me = '', verifiedLive: string[] = []) => ({
         knownRemoved: new Set(knownRemoved),
         me,
         verifiedLive: new Set(verifiedLive),
-        liveSince,
     })
 
     it('marks known-removed comments removed wherever they sit in a thread', () => {
@@ -240,44 +238,12 @@ describe('toPublicView', () => {
         const unseen = comment('t1_unseen', 'mine too', 'alice')
         const removed = comment('t1_removed', 'gone', 'alice')
         const theirs = comment('t1_theirs', 'not mine', 'bob')
-        for (const item of [seen, unseen, removed, theirs]) item.data.created_utc = 2000
-        toPublicView(listing([seen, unseen, removed, theirs]), context(['t1_removed'], 'alice', ['t1_seen'], 0))
+        toPublicView(listing([seen, unseen, removed, theirs]), context(['t1_removed'], 'alice', ['t1_seen']))
         expect(seen.data.reveddit_unverified).toBeUndefined()
         expect(unseen.data.reveddit_unverified).toBe(true)
         expect(removed.data).toMatchObject({ body: '[removed]' })
         expect(removed.data.reveddit_unverified).toBeUndefined()
         expect(theirs.data.reveddit_unverified).toBeUndefined()
-    })
-    // 0.0.5.38 review K7: the website shows the flag as "may have been removed"
-    it('flags only own items monitoring could have seen live: covered by a fresh record, in a community shown logged out', () => {
-        const own = (name: string, extra: Record<string, any> = {}) => {
-            const c = comment(name, 'mine', 'alice')
-            Object.assign(c.data, { created_utc: 2000 }, extra)
-            return c
-        }
-        const covered = own('t1_covered')
-        const atOldest = own('t1_at_oldest', { created_utc: 1000 })
-        const older = own('t1_older', { created_utc: 999 })
-        const undated = own('t1_undated', { created_utc: undefined })
-        const quarantined = own('t1_quarantined', { quarantine: true })
-        const nsfw = own('t1_nsfw', { over_18: true })
-        const members = own('t1_private', { subreddit_type: 'private' })
-        const all = [covered, atOldest, older, undated, quarantined, nsfw, members]
-        toPublicView(listing(all), context([], 'alice', [], 1000))
-        expect(Object.fromEntries(all.map(c => [c.data.name, Boolean(c.data.reveddit_unverified)]))).toEqual({
-            t1_covered: true,
-            t1_at_oldest: true,
-            t1_older: false,
-            t1_undated: false,
-            t1_quarantined: false,
-            t1_nsfw: false,
-            t1_private: false,
-        })
-
-        // no fresh record: nothing is flagged
-        const unrecorded = own('t1_unrecorded')
-        toPublicView(listing([unrecorded]), context([], 'alice', []))
-        expect(unrecorded.data.reveddit_unverified).toBeUndefined()
     })
     it('flags items by authors who blocked the user, so they are not taken for removals', () => {
         const blocked = comment('t1_blocked', '[unavailable]', '[unavailable]')
@@ -399,68 +365,6 @@ describe('handleBridgeFetch', () => {
         await new Promise(r => setTimeout(r, 350))
         expect((await handleBridgeFetch({ url: URL_INFO })).ok).toBe(true)
         expect((globalThis.fetch as any).mock.calls.map((c: any) => c[1].cache)).toEqual(['no-cache'])
-    })
-
-    // 0.0.5.38 review K3: the website reads a listing's bare 403 as a suspended
-    // account. Every path on the closed list tags the edge's page (the feed and
-    // the permalink: bridge_feeds.test.ts).
-    it("tags the edge's block page on every path, and leaves Reddit's own 403 bare", async () => {
-        for (const url of [
-            'https://www.reddit.com/user/bob/comments.json?limit=100&sort=new',
-            'https://www.reddit.com/user/bob/.json',
-            'https://www.reddit.com/user/bob/submitted.json',
-            'https://www.reddit.com/user/bob/about.json',
-            'https://www.reddit.com/user/bob/moderated_subreddits.json',
-            'https://www.reddit.com/comments/abc.json',
-            URL_INFO,
-        ]) {
-            _resetLoggedInFetchState()
-            globalThis.fetch = vi.fn(refusing())
-            expect(await handleBridgeFetch({ url }), url).toEqual({
-                ok: false,
-                status: 403,
-                data: null,
-                error: 'block_page',
-            })
-        }
-        // a suspended account: Reddit's own JSON 403
-        globalThis.fetch = vi.fn(async () => json(403, { message: 'Forbidden', error: 403 }))
-        expect(await handleBridgeFetch({ url: 'https://www.reddit.com/user/bob/comments.json' })).toEqual({
-            ok: false,
-            status: 403,
-            data: null,
-        })
-    })
-
-    // 0.0.5.38 review K7
-    it("reads monitoring's public-live record and its oldest date for the unverified flag, and flags nothing once it's stale", async () => {
-        const mine = () =>
-            json(200, {
-                kind: 'Listing',
-                data: {
-                    children: [
-                        { kind: 't1', data: { name: 't1_new', author: 'alice', body: 'x', created_utc: 2000 } },
-                        { kind: 't1', data: { name: 't1_seen', author: 'alice', body: 'x', created_utc: 2000 } },
-                        { kind: 't1', data: { name: 't1_old', author: 'alice', body: 'x', created_utc: 999 } },
-                    ],
-                },
-            })
-        const flags = async () => {
-            const resp = await handleBridgeFetch({ url: 'https://www.reddit.com/user/alice/comments.json' })
-            return Object.fromEntries(
-                resp.data.data.children.map((c: any) => [c.data.name, Boolean(c.data.reveddit_unverified)]),
-            )
-        }
-        globalThis.fetch = vi.fn(async () => mine())
-        const local = __getLocalStorage()
-        local[getPublicLiveKey('alice')] = { ids: ['t1_seen'], t: Date.now() }
-        local[getOldestDateKey('alice', true)] = 1000
-        expect(await flags()).toEqual({ t1_new: true, t1_seen: false, t1_old: false })
-        // fewer than a full page listed: no oldest date, and the record covers all
-        delete local[getOldestDateKey('alice', true)]
-        expect(await flags()).toEqual({ t1_new: true, t1_seen: false, t1_old: true })
-        local[getPublicLiveKey('alice')] = { ids: ['t1_seen'], t: Date.now() - 3 * 3600 * 1000 }
-        expect(await flags()).toEqual({ t1_new: false, t1_seen: false, t1_old: false })
     })
 
     it('waits for a monitoring cycle, but answers busy rather than after the page has given up', async () => {

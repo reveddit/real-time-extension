@@ -77,15 +77,6 @@ interface RemoteOptions {
     // (login-wall-config.ts): { paths: string[], markers: string[] }, added to
     // the built-in login paths.
     login_wall?: Partial<LoginWallConfig>
-    // Holds every install to this pace or slower, whatever its options say, so
-    // scans can slow down without a release: { reads_per_click?: number,
-    // seconds_between_reads?: number }. Scans wait 60 seconds at most
-    // (storage.ts SCAN_SECONDS_MAX), whatever a higher number says.
-    scan_limits?: ScanLimits
-}
-export interface ScanLimits {
-    reads_per_click?: number
-    seconds_between_reads?: number
 }
 // Verification of feed-absent items against their own logged-out pages (the
 // profile-hidden-subreddit false-alert fix, v0.0.5.14). Enabled by default;
@@ -102,10 +93,6 @@ export const MECHANISM_ME_CHALLENGE = 'meJsonChallengeSolve'
 // suppress alerts, never cause false ones. Default off: absence within
 // coverage keeps counting as removed. Cached verdicts (6 h) are unaffected.
 export const MECHANISM_ABSENT_UNVERIFIED_UNKNOWN = 'absentUnverifiedIsUnknown'
-// The feeds a scan reads with the user's login (requests.ts readWithLogin).
-// Flip to 'off' if reddit closes them or starts to mind the pace: scans then
-// stop before sending anything and say reddit is refusing them.
-export const MECHANISM_SCAN_FEEDS = 'scanFeeds'
 // The cookies the logged-out reads keep and send back, as a logged-out browser
 // does (public-cookies.ts). On by default. Flip to 'off' if reddit ever minds
 // them: the reads then go out without cookies, as they used to, and the
@@ -367,22 +354,6 @@ const sanitizeLoginCookies = (raw: unknown): string[] => sanitizeNameList(raw, C
 // 'thread_json').
 export const CAPABILITY_REST_KEY = 'capability_rest'
 
-const isNumberFrom = (least: number, value: unknown): value is number =>
-    typeof value === 'number' && Number.isFinite(value) && value >= least
-// A read and its second try, which a block page takes from the same reads. At 0,
-// scans would stop without saying so (mechanisms.scanFeeds is how to turn them
-// off), and at 1 a block page would never get its second try.
-const FEWEST_SCAN_READS = 2
-const sanitizeScanLimits = (raw: any): ScanLimits => ({
-    ...(isNumberFrom(0, raw?.reads_per_click)
-        ? { reads_per_click: Math.max(Math.floor(raw.reads_per_click), FEWEST_SCAN_READS) }
-        : {}),
-    ...(isNumberFrom(1, raw?.seconds_between_reads) ? { seconds_between_reads: raw.seconds_between_reads } : {}),
-})
-
-// The feed's limits on scans (storage.ts getScanSettings)
-export const getRemoteScanLimits = async (): Promise<ScanLimits> => (await cachedOptions()).scan_limits ?? {}
-
 // The login cookie names (viewer.ts hasRedditLoginCookie): the feed's, else reddit_session
 export const getRemoteLoginCookies = async (): Promise<string[]> => {
     const names = sanitizeLoginCookies((await cachedOptions()).login_cookies)
@@ -473,7 +444,6 @@ const sanitizeFeed = (feed: NewsFeed): NewsFeed => {
                 markup: sanitizeMarkupConfig(options.markup),
                 login_cookies: sanitizeLoginCookies(options.login_cookies),
                 login_wall: sanitizeLoginWallConfig(options.login_wall),
-                scan_limits: sanitizeScanLimits(options.scan_limits),
                 publicmodlogs_feed: sanitizePublicModlogsFeed(options.publicmodlogs_feed),
             }),
         },
@@ -524,7 +494,6 @@ export const fetchNews = async (opts: { force?: boolean } = {}): Promise<void> =
                 (options.www_route_order ? `, www_route_order=${JSON.stringify(options.www_route_order)}` : '') +
                 (options.markup ? `, markup=${JSON.stringify(options.markup)}` : '') +
                 (options.login_wall ? `, login_wall=${JSON.stringify(options.login_wall)}` : '') +
-                (options.scan_limits ? `, scan_limits=${JSON.stringify(options.scan_limits)}` : '') +
                 (options.publicmodlogs_feed ? ', publicmodlogs_feed set' : ''),
         )
     } catch (err: any) {

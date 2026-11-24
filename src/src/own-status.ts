@@ -1,7 +1,6 @@
 import { getObjectNamesForThing } from './storage'
 import { observe } from './dom-helpers'
-import { commentIdOf, commentSelector } from './comment-tree'
-import { ownPart } from './comment-dom'
+import { commentIdOf, commentSelector, ownPart } from './comment-dom'
 import { createNoteMark } from './note-mark'
 
 // --- Own-content status highlight (threads + profiles) ---
@@ -175,7 +174,7 @@ function injectOwnFilterBar(isNewReddit: boolean, hasRemoved: boolean, hasLocked
     let note: HTMLElement | null = null
     if (hasRemoved) {
         note = document.createElement('div')
-        note.className = 'rev-scan-note rev-own-note'
+        note.className = 'rev-note rev-own-note'
         note.appendChild(createNoteMark(false))
         const text = document.createElement('span')
         text.textContent =

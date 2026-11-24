@@ -315,22 +315,6 @@ const repeating = [
         { every: 30000, start: asking({ action: 'get-diag-status' }, {}, answer => 'lastCheck' in answer) },
     ],
     [
-        "reveddit.com's user page asking for a person's feed every 2 seconds, which the scans' pace mostly answers wait",
-        {
-            every: 2000,
-            start: () => {
-                signedIn()
-                const atom = '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>'
-                vi.stubGlobal('fetch', vi.fn(async () => res(200, atom, 'application/atom+xml')))
-                return asking(
-                    { action: 'bridge-fetch', url: 'https://www.reddit.com/user/someuser/comments/.rss?sort=new&limit=100' },
-                    { tab: { url: 'https://www.reveddit.com/v/someuser/comments/' } },
-                    answer => answer.ok || answer.error === 'wait',
-                )()
-            },
-        },
-    ],
-    [
         "reveddit.com's requests through the extension every 5 seconds while nobody is signed in",
         {
             every: 5000,

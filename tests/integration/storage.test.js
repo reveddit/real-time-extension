@@ -6,7 +6,6 @@ import '../mocks/chrome-api.js'
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import browserMock, { __resetStorage, __getSyncStorage, __getLocalStorage } from '../mocks/webextension-polyfill.js'
-import { fetchNews, NEWS_CACHE_KEY } from '../../src/src/news'
 import { REMOVED, APPROVED, LOCKED, UNLOCKED } from '../../src/src/common'
 
 import {
@@ -27,7 +26,6 @@ import {
     getAllChanges,
     FOLLOWED_NOTIFICATION,
     getOptions,
-    getScanSettings,
     saveOptions,
     recordRateLimitHit,
     clearRateLimitBackoff,
@@ -51,13 +49,7 @@ const optionsToSave = (changes = {}) => ({
     removal_status: { track: true, notify: true },
     lock_status: { track: true, notify: true },
     hide_subscribe: false,
-    show_scan_on_own_profile: false,
-    show_scan_on_other_profiles: true,
-    show_thread_scan_buttons: true,
     highlight_own_profile_status: true,
-    auto_filter_removed_threads: true,
-    scan_reads_per_click: 20,
-    scan_seconds_between_reads: 3,
     ...changes,
 })
 
@@ -361,94 +353,6 @@ describe('rate-limit backoff', () => {
     })
 })
 
-describe('getScanSettings', () => {
-    it('is gentle with nothing saved', async () => {
-        __resetStorage()
-        expect(await getScanSettings()).toEqual({ readsPerClick: 20, gapMs: 3000 })
-    })
-
-    it('uses what was saved, the ends of the range included', async () => {
-        for (const [reads, seconds] of [
-            [10, 1],
-            [100, 60],
-            [35, 2.5],
-        ]) {
-            __resetStorage({ options: { scan_reads_per_click: reads, scan_seconds_between_reads: seconds } })
-            expect(await getScanSettings()).toEqual({ readsPerClick: reads, gapMs: seconds * 1000 })
-        }
-    })
-
-    it("uses the default for what it can't use, which a limit of 5 would be on a profile", async () => {
-        for (const [reads, seconds] of [
-            [9, 0.5],
-            [101, 61],
-            [20.5, 'fast'],
-            [null, null],
-            [[50], true],
-        ]) {
-            __resetStorage({ options: { scan_reads_per_click: reads, scan_seconds_between_reads: seconds } })
-            expect(await getScanSettings()).toEqual({ readsPerClick: 20, gapMs: 3000 })
-        }
-    })
-
-    it("uses the defaults when storage can't be read", async () => {
-        vi.spyOn(browserMock.storage.sync, 'get').mockRejectedValueOnce(new Error('Extension context invalidated.'))
-        expect(await getScanSettings()).toEqual({ readsPerClick: 20, gapMs: 3000 })
-    })
-
-    it("holds the user's choice to the website's limits, and only ever slower", async () => {
-        const limits = scan_limits => (__getLocalStorage()[NEWS_CACHE_KEY] = { feed: { options: { scan_limits } } })
-        __resetStorage({ options: { scan_reads_per_click: 50, scan_seconds_between_reads: 2 } })
-        limits({ reads_per_click: 12, seconds_between_reads: 5 })
-        expect(await getScanSettings()).toEqual({ readsPerClick: 12, gapMs: 5000 })
-        limits({ reads_per_click: 80, seconds_between_reads: 1 })
-        expect(await getScanSettings()).toEqual({ readsPerClick: 50, gapMs: 2000 })
-    })
-
-    it("applies a website limit past the options' range, up to the slowest pace the turns allow", async () => {
-        __resetStorage({}, { [NEWS_CACHE_KEY]: { feed: { options: { scan_limits: { reads_per_click: 6, seconds_between_reads: 99 } } } } })
-        expect(await getScanSettings()).toEqual({ readsPerClick: 6, gapMs: 60000 })
-    })
-
-    it('takes limits from the news feed, whole reads and sane numbers only', async () => {
-        vi.stubGlobal(
-            'fetch',
-            vi.fn(async () => ({
-                ok: true,
-                json: async () => ({
-                    messages: [],
-                    options: { scan_limits: { reads_per_click: 12.5, seconds_between_reads: 'slow', other: 1 } },
-                }),
-            })),
-        )
-        __resetStorage()
-        await fetchNews({ force: true })
-        expect(__getLocalStorage()[NEWS_CACHE_KEY].feed.options.scan_limits).toEqual({ reads_per_click: 12 })
-        expect(await getScanSettings()).toEqual({ readsPerClick: 12, gapMs: 3000 })
-    })
-
-    it('takes no limit under what a scan needs to start', async () => {
-        vi.stubGlobal(
-            'fetch',
-            vi.fn(async () => ({ ok: true, json: async () => ({ messages: [], options: { scan_limits: { reads_per_click: 1 } } }) })),
-        )
-        __resetStorage()
-        await fetchNews({ force: true })
-        expect(await getScanSettings()).toEqual({ readsPerClick: 2, gapMs: 3000 })
-    })
-
-    it('leaves the defaults unset, so a gentler one later reaches those who never chose', async () => {
-        __resetStorage()
-        const save = (reads, seconds) =>
-            saveOptionsP(optionsToSave({ scan_reads_per_click: reads, scan_seconds_between_reads: seconds }))
-        await save(20, 3)
-        expect(__getSyncStorage().options).not.toHaveProperty('scan_reads_per_click')
-        expect(__getSyncStorage().options).not.toHaveProperty('scan_seconds_between_reads')
-        await save(30, 3)
-        expect(__getSyncStorage().options.scan_reads_per_click).toBe(30)
-    })
-})
-
 describe('getOptions / saveOptions', () => {
     beforeEach(() => __resetStorage(makeStorageInit()))
 
@@ -468,29 +372,18 @@ describe('getOptions / saveOptions', () => {
                 removal_status: { track: true, notify: false },
                 lock_status: { track: false, notify: true },
                 hide_subscribe: true,
-                show_scan_on_own_profile: true,
-                show_scan_on_other_profiles: false,
-                show_thread_scan_buttons: false,
-                auto_filter_removed_threads: false,
-                scan_reads_per_click: 30,
-                scan_seconds_between_reads: 2.5,
+                highlight_own_profile_status: false,
             }),
         )
         const storage = __getSyncStorage()
         expect(storage.options.seen_count).toBe(3)
         expect(storage.options.interval).toBe(5)
-        expect(storage.options.scan_reads_per_click).toBe(30)
-        expect(storage.options.scan_seconds_between_reads).toBe(2.5)
         expect(storage.options.removal_status.track).toBe(true)
         expect(storage.options.removal_status.notify).toBe(false)
         expect(storage.options.lock_status.track).toBe(false)
         expect(storage.options.lock_status.notify).toBe(true)
         expect(storage.options.hide_subscribe).toBe(true)
-        expect(storage.options.show_scan_on_own_profile).toBe(true)
-        expect(storage.options.show_scan_on_other_profiles).toBe(false)
-        expect(storage.options.show_thread_scan_buttons).toBe(false)
-        expect(storage.options.highlight_own_profile_status).toBe(true)
-        expect(storage.options.auto_filter_removed_threads).toBe(false)
+        expect(storage.options.highlight_own_profile_status).toBe(false)
     })
 })
 

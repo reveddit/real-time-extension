@@ -134,8 +134,7 @@ const showsRemoved = (id: string, item: any): boolean =>
 // the comment intact (verified 2026-10-30 on two mod-removed comments). So a
 // comment missing there is removed, when the post is the right one and nothing
 // else came back in its place, which would mean the permalink's focus didn't take.
-// The bridge reads reveddit.com's user-page checks by the same rule (bridge.ts).
-export const viewerVerdictOf = (id: string, postId: string, json: any): ViewerVerdict => {
+const viewerVerdictOf = (id: string, postId: string, json: any): ViewerVerdict => {
     const post = json?.[0]?.data?.children?.[0]?.data
     if (!post || post.name !== `t3_${postId.replace(/^t3_/, '')}`) {
         return 'unknown'

@@ -7,7 +7,6 @@ import {
     setWarningBadge,
     isPlaceholderText,
 } from './common'
-import { getRemoteScanLimits } from './news'
 import { oneAtATime, afterWrites } from './one-at-a-time'
 import browser from 'webextension-polyfill'
 
@@ -183,41 +182,6 @@ export const OWN_ITEMS_CHECK_KEY = 'own_items_check'
 
 export const getOldestDateKey = (thing: string, isUser: boolean): string => getObjectName('oldest_date', thing, isUser)
 
-// A scan reads feeds with the user's login, and Reddit can ask an account to verify
-// it's human after a lot of automated activity, as it did a test account in 2026-11.
-// So scans start gentle, and people can speed them up in options at their own risk.
-export const SCAN_READS_DEFAULT = 20
-// The fewest the options take. A scan doesn't need this many: what a click reads
-// carries over to the next (scan-reads.ts), and the website's floor is 2 (news.ts)
-export const SCAN_READS_MIN = 10
-export const SCAN_READS_MAX = 100
-export const SCAN_SECONDS_DEFAULT = 3
-export const SCAN_SECONDS_MIN = 1
-export const SCAN_SECONDS_MAX = 60
-const isNumberBetween = (value: unknown, min: number, max: number) =>
-    ['number', 'string'].includes(typeof value) && Number(value) >= min && Number(value) <= max
-export const isScanReads = (value: unknown) =>
-    isNumberBetween(value, SCAN_READS_MIN, SCAN_READS_MAX) && Number.isInteger(Number(value))
-export const isScanSeconds = (value: unknown) => isNumberBetween(value, SCAN_SECONDS_MIN, SCAN_SECONDS_MAX)
-// What the options say, or the default in place of what can't be used
-export const scanSettingsFrom = (options: any) => ({
-    readsPerClick: isScanReads(options?.scan_reads_per_click)
-        ? Number(options.scan_reads_per_click)
-        : SCAN_READS_DEFAULT,
-    seconds: isScanSeconds(options?.scan_seconds_between_reads)
-        ? Number(options.scan_seconds_between_reads)
-        : SCAN_SECONDS_DEFAULT,
-})
-// The user's choice, held to the website's limits
-export const getScanSettings = async () => {
-    const chosen = scanSettingsFrom(await getOptions(options => options))
-    const { reads_per_click = Infinity, seconds_between_reads = 0 } = await getRemoteScanLimits()
-    return {
-        readsPerClick: Math.min(chosen.readsPerClick, reads_per_click),
-        gapMs: 1000 * Math.min(Math.max(chosen.seconds, seconds_between_reads), SCAN_SECONDS_MAX),
-    }
-}
-
 export const getUserInit = (user: string): Record<string, any> => {
     const result = {}
     addTrackTypes(result, user, true)
@@ -234,11 +198,7 @@ const getStorageInit = () => {
             seen_count: SEEN_COUNT_DEFAULT,
             removal_status: { track: true, notify: true },
             lock_status: { track: true, notify: true },
-            show_scan_on_own_profile: false,
-            show_scan_on_other_profiles: true,
-            show_thread_scan_buttons: true,
             highlight_own_profile_status: true,
-            auto_filter_removed_threads: true,
         },
         last_check: null,
     }
@@ -743,23 +703,10 @@ export const getOptions = (callback: (options: Record<string, any>) => any) => {
 // A new default in getStorageInit is one the page has to save too.
 type SavedOptions = ReturnType<typeof getStorageInit>['options'] & {
     hide_subscribe: boolean
-    scan_reads_per_click: number
-    scan_seconds_between_reads: number
 }
 
 export const saveOptions = (options: SavedOptions, callback: () => void) => {
-    const { scan_reads_per_click, scan_seconds_between_reads, ...rest } = options
-    chrome.storage.sync.set(
-        {
-            options: {
-                ...rest,
-                // Left out at the default, so a later, gentler one reaches them
-                ...(scan_reads_per_click !== SCAN_READS_DEFAULT && { scan_reads_per_click }),
-                ...(scan_seconds_between_reads !== SCAN_SECONDS_DEFAULT && { scan_seconds_between_reads }),
-            },
-        },
-        callback,
-    )
+    chrome.storage.sync.set({ options }, callback)
 }
 
 // --- Rate-limit backoff (shared across the monitoring alarm) ---

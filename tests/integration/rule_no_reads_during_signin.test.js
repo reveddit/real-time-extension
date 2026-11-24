@@ -23,7 +23,6 @@ import { getDiagEntries } from '../mocks/diag-entries.js'
 import { clearDiagLog } from '../../src/src/diaglog'
 import { ALARM_NAME, REMOVED } from '../../src/src/common'
 import { setCurrentStateForId } from '../../src/src/monitoring'
-import { _scanTurn } from '../../src/src/requests'
 import { _resetLoggedInFetchState } from '../../src/src/logged-in-fetch'
 import { VIEWER_CONNECT_KEY } from '../../src/src/viewer'
 import { PAGE_WRITE } from '../../src/src/storage'
@@ -105,36 +104,18 @@ const FROM_REDDIT_TAB = { tab: { id: 7, url: REDDIT_PAGE }, url: REDDIT_PAGE }
 const REVEDDIT_PAGE = 'https://www.reveddit.com/v/spez/'
 const FROM_REVEDDIT_TAB = { tab: { id: 9, url: REVEDDIT_PAGE }, url: REVEDDIT_PAGE }
 const BRIDGE_URL = 'https://www.reddit.com/user/spez/about/.json'
-// What reveddit.com's user pages read through it, at the scans' pace
-const BRIDGE_FEED_URL = 'https://www.reddit.com/user/spez/comments/.rss?sort=new&limit=100'
 
-// A thread page with a live comment and a removed one kept for its reply
-const POST = 't3_post'
-const commentOnPage = (id, author, parent, inner = '<div slot="comment"><p>live words</p></div>') =>
-    `<shreddit-comment thingid="${id}" author="${author}" ${parent ? `parentid="${parent}"` : ''} ` +
-    `created="${new Date().toISOString()}"><details open>${inner}<div id="comment-children"></div></details></shreddit-comment>`
-const THREAD_PAGE =
-    '<html><body><shreddit-post comment-count="3"></shreddit-post><shreddit-comment-tree><section>' +
-    commentOnPage('t1_tomb', '[deleted]', '', '<p>Comment removed by moderator</p>') +
-    commentOnPage('t1_bob1', 'bob', 't1_tomb') +
-    '</section></shreddit-comment-tree></body></html>'
+// A reddit page for the follow button's row to put its button on
+const REDDIT_DOCUMENT = '<html><body></body></html>'
 
 const SKIPPED = '[reveddit] checkForChanges: skipping, a second account is signing in'
 const savedLog = async () => (await getDiagEntries()).map(entry => entry.m)
-const lastProgress = async scan => {
-    const progress = []
-    await scan(p => progress.push(p))
-    return progress.at(-1)
-}
-const scanSaysWhy = last =>
-    expect(last).toMatchObject({ status: 'error', message: expect.stringMatching(/^A second account is signing in\./) })
 const bridgeSaysBusy = answer =>
     expect(answer).toEqual({ ok: false, status: 0, error: 'busy', retryAfterMs: expect.any(Number) })
 const connectSaysWhy = answer =>
     expect(answer).toEqual({ success: false, indeterminate: true, reason: 'a second account is signing in' })
 
 let background
-let scans
 let contentCommon
 let atStart
 
@@ -231,40 +212,12 @@ const ROWS = [
         check: bridgeSaysBusy,
     },
     {
-        name: "the bridge's user-page reads, relayed from a reveddit.com tab",
-        drive: () => background.send({ action: 'bridge-fetch', url: BRIDGE_FEED_URL }, FROM_REVEDDIT_TAB),
-        check: bridgeSaysBusy,
-    },
-    {
         name: 'the bridge, from a reveddit.com page in Chrome',
         drive: () =>
             new Promise(resolve =>
                 fire('onMessageExternal', { action: 'bridge-fetch', url: BRIDGE_URL }, { url: REVEDDIT_PAGE }, resolve),
             ),
         check: bridgeSaysBusy,
-    },
-    {
-        name: 'the thread scan',
-        drive: () =>
-            lastProgress(onProgress => scans.scanThreadForRemovedComments(POST, 'sub', true, new Map(), onProgress)),
-        check: scanSaysWhy,
-    },
-    {
-        name: 'Scan-Rev on a live comment',
-        drive: () =>
-            lastProgress(onProgress => scans.restoreComment('t1_bob1', POST, 'sub', true, onProgress, new Map())),
-        check: scanSaysWhy,
-    },
-    {
-        name: 'restore on a removed comment',
-        drive: () =>
-            lastProgress(onProgress => scans.restoreComment('t1_tomb', POST, 'sub', true, onProgress, new Map())),
-        check: scanSaysWhy,
-    },
-    {
-        name: 'the profile scan',
-        drive: () => lastProgress(onProgress => scans.scanUserProfile('bob', onProgress)),
-        check: scanSaysWhy,
     },
     {
         name: 'the browser starting, with no account remembered',
@@ -281,7 +234,7 @@ const ROWS = [
 ]
 
 // Long enough for any row's waits: a cycle's jitter, the bridge's wait for a
-// cycle, a scan's turn
+// cycle
 const SETTLE_MS = 30 * 1000
 
 beforeAll(async () => {
@@ -292,7 +245,6 @@ beforeAll(async () => {
     await new Promise(resolve => setTimeout(resolve, 50))
     atStart = toReddit()
     globalThis.DOMParser = DOMParser
-    scans = { ...(await import('../../src/src/restore.ts')), ...(await import('../../src/src/profile-scan.ts')) }
     // The buttons' module reads the page's address as it loads
     vi.stubGlobal('location', REDDIT_LOCATION)
     contentCommon = await import('../../src/src/content-common')
@@ -310,9 +262,8 @@ beforeEach(async () => {
     // The browser's login: the second account's during a sign-in
     fill([cookie('reddit_session', 'S2')])
     _resetLoggedInFetchState()
-    _scanTurn.next = 0
     reply = asDuringSignIn
-    globalThis.document = parseHTML(THREAD_PAGE).document
+    globalThis.document = parseHTML(REDDIT_DOCUMENT).document
     // A page's messages reach the background, as from a reddit tab. Not a badge
     // update: with the page's address shared here, the background's own one
     // would come back to it forever, where in the browser it's set in place.
@@ -383,26 +334,6 @@ describe('a sign-in that starts while the user is being read for', () => {
         await vi.advanceTimersByTimeAsync(SETTLE_MS)
         expect(toReddit(from)).toEqual([])
         bridgeSaysBusy(await second)
-    })
-
-    it('stops a scan waiting for its turn, as it asks again, and says why', async () => {
-        // Another scan's read just went out, so this one waits its turn
-        _scanTurn.next = Date.now() + 2500
-        const answers = []
-        browserMock.runtime.sendMessage = async message => {
-            const answer = await background.send(message, FROM_REDDIT_TAB)
-            answers.push(answer)
-            return answer
-        }
-        const last = lastProgress(onProgress =>
-            scans.scanThreadForRemovedComments(POST, 'sub', true, new Map(), onProgress),
-        )
-        await vi.waitFor(() => expect(answers).toHaveLength(1))
-        expect(answers[0].waitMs).toBeGreaterThan(0)
-        Object.assign(__getLocalStorage(), signingIn())
-        await vi.advanceTimersByTimeAsync(SETTLE_MS)
-        expect(toReddit()).toEqual([])
-        scanSaysWhy(await last)
     })
 })
 

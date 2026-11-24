@@ -842,7 +842,7 @@ describe('markup config', () => {
         ).toHaveLength(8)
     })
 
-    it("puts the feed's slot for the scan button ahead of the built-in one", () => {
+    it("puts the feed's slot for a comment's subscribe button ahead of the built-in one", () => {
         setMarkupConfig(sanitizeMarkupConfig({ comment_button_slots: ['comment-actions'] }))
         expect(getMarkupConfig().commentButtonSlots).toEqual(['comment-actions', 'comment-share'])
     })

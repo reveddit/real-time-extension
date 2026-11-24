@@ -29,7 +29,6 @@ import { computeAbsentVerifyBudget } from '../../src/src/page-verify'
 import { RECENT_RATE_LIMIT_WINDOW_MS } from '../../src/src/request-gates'
 import { checkForChanges } from '../../src/src/monitoring'
 import { getUserInit, getObjectNamesForThing } from '../../src/src/storage'
-import { readWithLogin, _scanTurn } from '../../src/src/requests'
 import { WWW_FETCH_TIMEOUT_MS, _resetLoggedInFetchState } from '../../src/src/logged-in-fetch'
 import { clearDiagLog } from '../../src/src/diaglog'
 
@@ -190,20 +189,6 @@ describe('a browser with no Reddit login', () => {
         __getLocalStorage().stored_reddit_cookie_objects = [cookie('reddit_session', 'S1')]
         fetchMock.mockResolvedValue(res(200, USER_JSON))
         expect(await getLoggedinUserDetailed()).toEqual({ user: 'alice', indeterminate: false })
-    })
-})
-
-describe("a scan's read when the count of login refusals can't be read", () => {
-    it('still answers, and a 429 still enters the backoff', async () => {
-        const get = browserMock.storage.local.get
-        vi.spyOn(browserMock.storage.local, 'get').mockImplementation(async keys => {
-            if ('login_detect_consecutive_failures' in Object(keys)) throw new Error('unreadable')
-            return get(keys)
-        })
-        _scanTurn.next = 0
-        fetchMock.mockResolvedValue(new Response('', { status: 429 }))
-        expect(await readWithLogin('/user/bob/comments/.rss')).toMatchObject({ ok: false, status: 429 })
-        await vi.waitFor(() => expect(__getLocalStorage().rate_limit_until).toBeGreaterThan(Date.now()))
     })
 })
 

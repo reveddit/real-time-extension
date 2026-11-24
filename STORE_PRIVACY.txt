@@ -12,12 +12,12 @@ Uninstall survey: on Chrome and Edge, the form the browser opens after an uninst
 
 SINGLE PURPOSE
 
-To show Reddit users what moderators removed: it notifies them about their own and subscribed posts and comments, and scans threads and profiles they choose.
+To show Reddit users what moderators removed: it notifies them about their own and subscribed posts and comments.
 
 
 HOST PERMISSIONS
 
-The extension checks the user's own and subscribed Reddit posts and comments for removal, and scans threads and profiles for removed content when the user asks. reddit.com: its background fetches reddit pages, JSON and feeds. It reads the user's own listing and subscribed items with their Reddit login, then checks their own items logged out or through their optional second account. A scan reads feeds with the user's login, because reddit allows too few logged-out feed requests. It also restores the cookies these reads use, and its content script shows removal status, scan and subscribe buttons on reddit pages. reveddit.com: its content script tells reveddit.com pages the extension is installed, adds subscribe links and marks items seen. Those pages can ask it for a fixed list of public reddit paths, read with the user's login because reddit refuses them logged out. The page gets the data, never the login. It also downloads a settings file. It makes no requests to other sites.
+The extension checks the user's own and subscribed Reddit posts and comments for removal. reddit.com: its background fetches reddit pages and JSON. It reads the user's own listing and subscribed items with their Reddit login, then checks their own items logged out or through their optional second account. It also restores the cookies these reads use, and its content script shows removal status and subscribe buttons on reddit pages. reveddit.com: its content script tells reveddit.com pages the extension is installed, adds subscribe links and marks items seen. Those pages can ask it for a fixed list of public reddit paths, read with the user's login because reddit refuses them logged out. The page gets the data, never the login. It also downloads a settings file. It makes no requests to other sites.
 
 
 COOKIES

@@ -1,4 +1,4 @@
-// E2E tests: the extension's note and scan buttons on reddit pages.
+// E2E tests: the extension's notes, highlights and buttons on reddit pages.
 // They load the real built extension in Chromium and verify what a user would see.
 // Prerequisites: run `yarn build-chrome-dev` before running these tests.
 
@@ -140,8 +140,6 @@ test.describe('Reddit pages reached without a new document', () => {
     const LIST = '/r/pics/'
     const OWN = 't1_own'
     const OTHERS = 't1_others'
-    const THREAD_SCAN = '.rev-scan-all-btn'
-    const PROFILE_SCAN = '.rev-profile-scan-container'
     const OWN_BAR = '.rev-own-filter-bar'
     const post = postElement(POST)
     const feed = (...items) => `<div><hr><shreddit-feed>${items.join('')}</shreddit-feed></div>`
@@ -150,7 +148,7 @@ test.describe('Reddit pages reached without a new document', () => {
     const profileComment = id => `<shreddit-profile-comment comment-id="${id}"><p>Words</p></shreddit-profile-comment>`
     const ownComment = page => page.locator(`[thingid="${OWN}"].rev-removed-highlight`)
 
-    test('a post reached from a list gets its scan button and own highlights, once', async ({
+    test('a post reached from a list gets its own highlights, also after back and forward', async ({
         context,
         seedOwnRemoved,
     }) => {
@@ -158,22 +156,20 @@ test.describe('Reddit pages reached without a new document', () => {
         const page = await openNewReddit(context, LIST, feed(post))
         await startRouter(page)
         await settle(page)
-        await expect(page.locator(THREAD_SCAN)).toHaveCount(0)
 
         await visit(page, THREAD, post, tree)
-        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
         await expect(ownComment(page)).toHaveCount(1)
         await expect(page.locator('.rev-removed-highlight')).toHaveCount(1)
 
         await page.goBack()
-        await expect(page.locator(THREAD_SCAN)).toHaveCount(0)
+        await expect(page.locator('shreddit-feed')).toHaveCount(1)
         await page.goForward()
         await expect(ownComment(page)).toHaveCount(1)
         await settle(page)
-        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
+        await expect(page.locator('.rev-removed-highlight')).toHaveCount(1)
     })
 
-    test('the next post gets its own scan button, and records newer than the document count', async ({
+    test('the next post gets its own highlights, from records newer than the document', async ({
         context,
         seedOwnRemoved,
     }) => {
@@ -185,44 +181,6 @@ test.describe('Reddit pages reached without a new document', () => {
         await seedOwnRemoved(OWN)
         await visit(page, '/r/pics/comments/abc456/a_title/', postElement('t3_abc456'), tree)
         await expect(ownComment(page)).toHaveCount(1)
-        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
-    })
-
-    test('a profile reached from a post gets its scan button, once', async ({ context }) => {
-        const page = await openNewReddit(context, THREAD, post + tree)
-        await startRouter(page)
-        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
-
-        await visit(page, '/user/other/', feed())
-        await expect(page.locator(PROFILE_SCAN)).toHaveCount(1)
-
-        await page.goBack()
-        await expect(page.locator(PROFILE_SCAN)).toHaveCount(0)
-        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
-        await page.goForward()
-        await expect(page.locator('shreddit-feed')).toHaveCount(1)
-        await settle(page)
-        await expect(page.locator(PROFILE_SCAN)).toHaveCount(1)
-    })
-
-    test('a profile with no feed gets its scan button too', async ({ context }) => {
-        const page = await openNewReddit(context, LIST, feed(post))
-        await startRouter(page)
-        await visit(page, '/user/other/', '<div><div data-testid="profile-main"></div></div>')
-        await expect(page.locator(PROFILE_SCAN)).toHaveCount(1)
-    })
-
-    test('a scan button leaves with its profile', async ({ context, seedOwnRemoved }) => {
-        await seedOwnRemoved(OWN)
-        const page = await openNewReddit(context, '/user/other/', feed())
-        await startRouter(page)
-        await expect(page.locator(PROFILE_SCAN)).toHaveCount(1)
-
-        // The scan is off for one's own profile unless the options turn it on
-        await visit(page, '/user/someone/', feed(profileComment(OWN)))
-        await expect(page.locator(OWN_BAR)).toHaveCount(1)
-        await settle(page)
-        await expect(page.locator(PROFILE_SCAN)).toHaveCount(0)
     })
 
     test("one's own profile gets its highlights and filter bar, and pages after it stay out of them", async ({
@@ -253,31 +211,18 @@ test.describe('Reddit pages reached without a new document', () => {
         await expect(page.locator(`[comment-id="${OTHERS}"]`)).toBeHidden()
     })
 
-    test('a post on a profile gets no thread scan, which needs a subreddit', async ({ context }) => {
-        const page = await openNewReddit(context, THREAD, post + tree)
-        await startRouter(page)
-        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
-
-        await visit(page, '/user/other/comments/abc123/a_title/', post, tree)
-        await expect(page.locator('shreddit-comment-tree')).toHaveCount(1)
-        await settle(page)
-        await expect(page.locator(THREAD_SCAN)).toHaveCount(0)
-    })
-
     // Old reddit loads a new document for each page, through the same functions
     const thing = (id, kind = '') =>
         `<div class="thing ${kind}" data-fullname="${id}"><div class="entry"><ul class="buttons"><li>permalink</li></ul></div></div>`
 
-    test("old reddit's threads keep their scan buttons", async ({ context }) => {
+    test("old reddit's comments get a subscribe link", async ({ context }) => {
         const page = await open(
             context,
             `https://old.reddit.com${THREAD}`,
             `<!doctype html><html><body><div id="header"></div><div class="content" role="main">` +
                 `<div class="commentarea"><div class="menuarea"></div>${thing(OTHERS, 'comment')}</div></div></body></html>`,
         )
-        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
-        await expect(page.locator('.rev-scan-comment-btn')).toHaveCount(1)
-        await expect(page.locator('.buttons a:not(.rev-scan-comment-btn)')).toHaveText('subscribe-rev')
+        await expect(page.locator('.buttons a')).toHaveText('subscribe-rev')
     })
 
     test("old reddit's posts get a subscribe link, among the buttons under the title", async ({ context }) => {
@@ -291,20 +236,20 @@ test.describe('Reddit pages reached without a new document', () => {
         await expect(page.locator('.top-matter .buttons a')).toHaveText('subscribe-rev')
     })
 
-    test("old reddit's buttons from the extension's last run give way to working ones", async ({ context }) => {
+    test("old reddit's subscribe link from the extension's last run gives way to a working one", async ({ context }) => {
+        // A 0.0.5.37 run's scan-rev link has the subscribe link's class too, and can sit ahead of it
         const dead =
-            '<li><a class="rev-comment-action">dead</a></li><li><a class="rev-scan-comment-btn rev-comment-action">dead</a></li>'
+            '<li><a class="rev-scan-comment-btn rev-comment-action">dead</a></li><li><a class="rev-comment-action">dead</a></li>'
         const page = await open(
             context,
             `https://old.reddit.com${THREAD}`,
             `<!doctype html><html><body><div id="header"></div><div class="content" role="main">` +
-                `<div class="commentarea"><div class="menuarea"><button class="rev-scan-all-btn">dead</button></div>` +
+                `<div class="commentarea"><div class="menuarea"></div>` +
                 `${thing(OTHERS, 'comment').replace('<li>permalink</li>', dead)}</div></div></body></html>`,
         )
-        await expect(page.locator(`${THREAD_SCAN}[data-rev-subscribe-run]`)).toHaveCount(1)
-        await expect(page.locator(THREAD_SCAN)).toHaveCount(1)
-        await expect(page.locator('.rev-scan-comment-btn')).toHaveText('scan-rev')
-        await expect(page.locator('.buttons a:not(.rev-scan-comment-btn)')).toHaveText('subscribe-rev')
+        const subscribe = page.locator('.buttons a:not(.rev-scan-comment-btn)')
+        await expect(subscribe).toHaveText('subscribe-rev')
+        await expect(subscribe).toHaveCount(1)
     })
 
     test("old reddit's own profile keeps its filter", async ({ context, seedOwnRemoved }) => {
@@ -325,19 +270,22 @@ test.describe('Reddit thread pages', () => {
     // Before 0.0.4.0, a scan meant for spans read the text of every element,
     // <html> included, a few times per page view. Threads froze for seconds at
     // a time (the survey's reports of 2026-02-21 and 2026-03-05).
-    test('a long thread is not held up by the content script', async ({ context, worker }) => {
+    test('a long thread is not held up by the content script', async ({ context, worker, seedOwnRemoved }) => {
         // The page's removal check stays off reddit
         await worker.evaluate(() => {
             self.fetch = async () => new Response('', { status: 404 })
         })
+        await seedOwnRemoved('t1_own')
         // As on Reddit, comments sit under nested wrappers, each holding all of their text
         const comment = `<div><span>someone</span>${' '.repeat(300)}<p>${'words in a comment '.repeat(20)}</p></div>`
         const thread = Array.from({ length: 12 }).reduce(html => `<div>${html}</div>`, comment.repeat(1000))
+        // One of the user's own removed comments, whose mark shows the content script has read the page
+        const own = '<shreddit-comment thingid="t1_own"><details open><p>Words</p></details></shreddit-comment>'
         await context.route('https://www.reddit.com/**', route =>
             route.fulfill({
                 status: 200,
                 contentType: 'text/html',
-                body: `<html device="desktop"><body><shreddit-comment-tree>${thread}</shreddit-comment-tree></body></html>`,
+                body: `<html device="desktop"><body><shreddit-comment-tree>${thread}${own}</shreddit-comment-tree></body></html>`,
             }),
         )
         const page = await context.newPage()
@@ -350,7 +298,7 @@ test.describe('Reddit thread pages', () => {
         await page.goto('https://www.reddit.com/r/test/comments/abc123/title/')
 
         // The content script is done with the page, and its rescan a second later has run
-        await expect(page.locator('.rev-scan-all-btn')).toBeAttached()
+        await expect(page.locator('[thingid="t1_own"].rev-removed-highlight')).toBeAttached()
         await page.waitForTimeout(1500)
         expect(await page.evaluate(() => window.blockedMs)).toBeLessThan(1000)
     })

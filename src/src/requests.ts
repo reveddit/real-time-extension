@@ -1,11 +1,9 @@
 import { FetchHtml, PublicProfileData, getPublicProfileItems } from './parse_html/new'
 import browser from 'webextension-polyfill'
 import { dlog } from './diaglog'
-import { clearRateLimitBackoff, getScanSettings, getMsSinceLastRateLimitHit, SCAN_SECONDS_MAX } from './storage'
+import { clearRateLimitBackoff } from './storage'
 import { isRemovedItem, RedditItem } from './common'
-import { getViewer, isSignedInViewer, isViewerConnecting, hasRedditLoginCookie } from './viewer'
-import { getRemoteMechanism, MECHANISM_SCAN_FEEDS } from './news'
-import { fetchForScan, UNCACHED_MODES, WWW_FETCH_TIMEOUT_MS, withDeadline, workerSession } from './logged-in-fetch'
+import { getViewer, isSignedInViewer } from './viewer'
 import {
     PROFILE_CONTROL_USER,
     AuthItemsMeta,
@@ -25,7 +23,7 @@ import {
 } from './lookup-status'
 import { getWwwHtmlFetcher } from './www-fetcher'
 import { notePublicViewUnreadable } from './public-cookies'
-import { noteRateLimited, isRateLimitedNow, RECENT_RATE_LIMIT_WINDOW_MS, readLocal, isFresh } from './request-gates'
+import { noteRateLimited, isRateLimitedNow, readLocal, isFresh } from './request-gates'
 import {
     verifyFeedPresentPosts,
     isAbsentVerificationDisabled,
@@ -34,7 +32,6 @@ import {
 } from './page-verify'
 import { lookupOtherItemsByID_authed } from './followed-lookup'
 import { lookupItemsByID_fromViewer } from './viewer-lookup'
-import { isLoginKeptOut } from './reddit-auth'
 
 const PROFILE_CONTROL_KEY = 'public_profile_control'
 
@@ -379,89 +376,5 @@ export const lookupItemsByID = (ids: string | string[], username = '', authItems
                   clearRateLimitBackoff()
                   return result
               })
-    })
-}
-
-// Every tab's scans take turns, so more of them don't mean a faster pace. The turn
-// is taken when a read goes out, so its spacing is between real requests.
-// Mutable for tests, like _wwwRouteTiming.
-export const _scanTurn = { next: 0 }
-// Session storage keeps the turn too, so a worker that stops between reads still
-// holds the pace. Only the worker uses it (workerSession).
-const SCAN_TURN_KEY = 'scan_turn_next'
-
-// 0 once the turn is taken, or how long until it comes. The pace is the user's
-// (options), and half that for a while after a 429, mirroring monitoring's own
-// gentle resume (computeAbsentVerifyBudget). minGapMs: the slowest pace the
-// caller allows itself, whatever the options say (the bridge's user-page reads).
-export const scanTurnIn = async (minGapMs = 0): Promise<number> => {
-    const gapMs = Math.max((await getScanSettings()).gapMs, minGapMs)
-    const sinceHit = await getMsSinceLastRateLimitHit().catch(() => null)
-    const gap = sinceHit !== null && sinceHit < RECENT_RATE_LIMIT_WINDOW_MS ? gapMs * 2 : gapMs
-    const session = workerSession()
-    if (!_scanTurn.next && session) {
-        const stored: Record<string, any> = await session.get(SCAN_TURN_KEY).catch(() => ({}))
-        // Another ask may have taken a turn while this one read
-        _scanTurn.next ||= Number(stored[SCAN_TURN_KEY]) || 0
-    }
-    const now = Date.now()
-    // Further off than any gap could put it, the clock went back
-    const left = _scanTurn.next - now
-    if (left > 0 && left <= 2000 * SCAN_SECONDS_MAX) return left
-    _scanTurn.next = now + gap
-    session?.set({ [SCAN_TURN_KEY]: _scanTurn.next }).catch(() => {})
-    return 0
-}
-
-// For a scan the user started (scan-reads.ts). A login reads reddit's feeds at a
-// scan's pace, where a logged-out browser gets one a minute (verified 2026-11-04).
-// Every scan comes through here, so they share one pace and the backoff that
-// monitoring and the bridge honor, whichever tab they run in. Too soon, it answers
-// with waitMs: the page waits and asks again, where a cancel can take the read back.
-export const readWithLogin = async (path: string, secondTryMode?: unknown) => {
-    // A path, so the read stays on www.reddit.com: "@host" or "//host" would move it
-    if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) {
-        return { ok: false, status: 0, error: 'bad path' }
-    }
-    if ((await getRemoteMechanism(MECHANISM_SCAN_FEEDS)) === 'off') {
-        return { ok: false, status: 0, blockPage: true }
-    }
-    // The sign-in owns the browser's login until it ends (viewer.ts)
-    if (await isViewerConnecting()) {
-        return { ok: false, status: 0, busy: true }
-    }
-    if (!(await hasRedditLoginCookie())) {
-        return { ok: false, status: 0, needsLogin: true }
-    }
-    if (await isRateLimitedNow()) {
-        return { ok: false, status: 0, resting: true }
-    }
-    const waitMs = await scanTurnIn()
-    if (waitMs > 0) {
-        return { ok: false, status: 0, waitMs }
-    }
-    // A second try's mode comes from the page's message, and only one that
-    // skips the browser's cache is taken
-    const secondTry = UNCACHED_MODES.find(mode => mode === secondTryMode)
-    return withDeadline(WWW_FETCH_TIMEOUT_MS, async signal => {
-        const url = `https://www.reddit.com${path}`
-        const { response, blockPage, otherMode } = await fetchForScan(url, signal, secondTry)
-        // Reddit's logout leaves a short cookie of the login's name, so holding one
-        // settles nothing, and no wait helps. Its answers to the login check do. A
-        // block page with a second try to come says nothing yet.
-        const refused = response.status === 429 || (blockPage && otherMode === undefined)
-        if (refused && (await isLoginKeptOut())) {
-            return { ok: false, status: 0, needsLogin: true }
-        }
-        if (response.status === 429) {
-            noteRateLimited(new Error('www.reddit.com request failed: 429'))
-        }
-        return {
-            ok: response.ok,
-            status: response.status,
-            blockPage,
-            otherMode,
-            text: response.ok ? await response.text() : '',
-        }
     })
 }

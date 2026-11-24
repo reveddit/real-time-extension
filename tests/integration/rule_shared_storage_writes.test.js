@@ -594,9 +594,8 @@ describe('two writes of one object at once both survive', () => {
 })
 
 // So a row above can only fail for the overlap: each change shows once the
-// two writers run one after the other. The options, with the scan settings,
-// are saved whole by the options page alone (saveOptions), so none of these
-// writers may write them.
+// two writers run one after the other. The options are saved whole by the
+// options page alone (saveOptions), so none of these writers may write them.
 describe('the same two writes one after the other', () => {
     it.each(overlaps)('$name', async row => {
         const context = await startRow(row)

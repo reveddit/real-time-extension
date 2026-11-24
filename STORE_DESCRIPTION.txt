@@ -1,4 +1,4 @@
-Reveddit real-time watches the posts and comments you make on reddit, plus any others you subscribe to, and tells you when one is removed, locked, reapproved or unlocked. It can also scan a thread or profile for what moderators removed, while you're signed in to reddit. Scans can miss some, and can't find what people deleted themselves.
+Reveddit real-time watches the posts and comments you make on reddit, plus any others you subscribe to, and tells you when one is removed, locked, reapproved or unlocked. It can't show what other people's removed comments or posts said, except ones you subscribed to before they were removed.
 
 Features:
 
@@ -6,7 +6,6 @@ Features:
 ★ Monitor your own account, plus any comments and posts you choose
 ★ Works with both new and old reddit layouts
 ★ Highlight your removed or locked comments and posts on your profile and in threads
-★ Scan threads and profiles for what moderators removed, while signed in to reddit
 ★ Show removal status of posts on their reddit.com comments pages, including for private subreddits, on both new and old reddit
 ★ Show locked status of posts on old reddit subreddit pages
 ★ View the history of observed changes

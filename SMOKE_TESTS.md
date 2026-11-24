@@ -43,9 +43,8 @@ Testing subreddit: **r/CantSayAnything** (auto-removes all posts/comments).
 - [ ] "turn off all notifications" link sets both pickers to badge only, leaves "off" pickers alone, and hides itself
 - [ ] With both pickers on "badge only": detection updates badge and history, no notification appears (including the install-time backlog notice)
 - [ ] "hide subscribe" toggle works
-- [ ] "reset to defaults" restores only "minutes between Reddit checks", "same-status count before alert" and the two scan settings
+- [ ] "reset to defaults" restores only "minutes between Reddit checks" and "same-status count before alert"
 - [ ] Invalid interval value shows error
-- [ ] Scans: set "most Reddit reads per scan click" and "seconds between scan reads" → save → reopen → values persist; a thread scan's network log shows that many reads per click at that pace
 
 ---
 

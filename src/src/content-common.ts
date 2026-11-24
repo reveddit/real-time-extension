@@ -13,7 +13,7 @@ if (ON_REVEDDIT) {
 }
 
 // On old reddit, tint the reveddit buttons light blue so they stand out from the
-// native action buttons (same look as the "scan-rev" button), while new reddit's
+// native action buttons, while new reddit's
 // match the row around them (.rev-newreddit-action). Not on reveddit, where
 // they're part of the site's own button row.
 const styleRevButton = (element: HTMLElement) => {

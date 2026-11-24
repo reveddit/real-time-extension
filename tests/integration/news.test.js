@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
     resolveMechanismDisabled,
     getRemoteMechanism,
-    MECHANISM_SCAN_FEEDS,
+    MECHANISM_PUBLIC_COOKIES,
     compareVersions,
     filterMessagesForVersion,
     shouldShowUpdateNotice,
@@ -41,7 +41,7 @@ describe('getRemoteMechanism', () => {
                 },
             },
         })
-        expect(await getRemoteMechanism(MECHANISM_SCAN_FEEDS)).toBe('auto')
+        expect(await getRemoteMechanism(MECHANISM_PUBLIC_COOKIES)).toBe('auto')
     })
 })
 

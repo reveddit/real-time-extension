@@ -39,9 +39,8 @@
 // - Reddit shows authors their own removed items as if nothing happened. The
 //   items the extension's own monitoring has confirmed removed are marked
 //   removed, which costs no extra reddit requests. The user's other own items
-//   carry reveddit_unverified when monitoring's last pass could have seen them
-//   in the logged-out view and didn't, since only that can tell (the website
-//   can say so).
+//   carry reveddit_unverified unless monitoring's last pass saw them in the
+//   logged-out view, since only that can tell (the website can say so).
 // - Moderators see removed items in their subreddits with the text intact and
 //   removed: true or banned_by (the remover) set, verified 2026-10-17 on
 //   r/pushshift; spam marks spam-filter removals.
@@ -55,39 +54,22 @@
 //   view (the shadowban signature, lookup-status.ts), the bridge answers 404 for
 //   it, as reddit does logged out.
 // Monitoring's own public-view fetches stay logged out.
-//
-// reveddit.com's user pages also read a person's comment feed, which still has
-// the comments moderators removed, with their text, and each comment the
-// profile listing leaves out, on its permalink, to tell removed from hidden
-// (website data_processing/user.ts). Those two read like scans (requests.ts
-// scanTurnIn): at the scans' pace, never under CHECK_MIN_GAP_MS apart, skipping
-// the browser's cache, within half the window, and not at all while the
-// scanFeeds remote option is off. The feed is answered as a comments listing
-// (feed-listing.ts) and isn't rewritten: Reddit shows it the same to everyone,
-// removed comments included. A permalink read carries the second account's
-// verdict on its comment (viewerVerdictOf).
 
 import browser from 'webextension-polyfill'
 import {
     getRateLimitBackoffRemainingMs,
     getMsSinceLastRateLimitHit,
     getObjectNamesForThing,
-    getOldestDateKey,
     getPublicLiveKey,
-    getScanSettings,
 } from './storage'
 import { flagIfRateLimited, RECENT_RATE_LIMIT_WINDOW_MS, readLocal, isFresh } from './request-gates'
-import { isPublicProfileUnavailable, publicViewUncheckedReason } from './lookup-status'
+import { isPublicProfileUnavailable } from './lookup-status'
 import { isCycleInFlight } from './monitoring'
 import { isPlaceholderText, isRemovedInModView, isViewerBlockedItem } from './common'
 import { dlog } from './diaglog'
 import { getPublicModlogsFeed } from './bridge-config'
-import { fetchLoggedIn, withDeadline, UNCACHED_MODES, workerSession } from './logged-in-fetch'
+import { fetchLoggedIn, withDeadline } from './logged-in-fetch'
 import { isViewerConnecting, hasRedditLoginCookie } from './viewer'
-import { getRemoteMechanism, MECHANISM_SCAN_FEEDS } from './news'
-import { scanTurnIn } from './requests'
-import { feedListing, NOT_A_FEED } from './feed-listing'
-import { viewerVerdictOf } from './viewer-lookup'
 
 const www_reddit = 'https://www.reddit.com'
 
@@ -96,44 +78,6 @@ const www_reddit = 'https://www.reddit.com'
 // about, the moderated subreddits. Group 1 is the name.
 const USER_PATH =
     /^\/user\/([\w-]{1,30})(?:\.json|\/(?:comments|submitted|overview|gilded|about|moderated_subreddits)\.json)$/
-
-// A person's comment feed and one comment's permalink, as the user pages read
-// them: the forms scans and followed items were measured with
-const USER_COMMENT_FEED = /^\/user\/([\w-]{1,30})\/comments\/\.rss$/
-const COMMENT_PERMALINK = /^\/comments\/([a-z0-9]{1,20})\/_\/([a-z0-9]{1,20})\.json$/
-const T1_FULLNAME = /^t1_[a-z0-9]{1,20}$/
-// Each parameter at most once, with these values only, and the permalink's
-// all three. Reddit's private feeds take feed and user parameters, so a read
-// with the login must never carry one.
-const CHECK_PARAMS: [RegExp, Record<string, RegExp>, string[]][] = [
-    [
-        USER_COMMENT_FEED,
-        {
-            sort: /^(new|top|controversial|hot)$/,
-            t: /^(hour|day|week|month|year|all)$/,
-            limit: /^([1-9][0-9]?|100)$/,
-            after: T1_FULLNAME,
-            before: T1_FULLNAME,
-        },
-        [],
-    ],
-    [COMMENT_PERMALINK, { limit: /^1$/, depth: /^1$/, raw_json: /^1$/ }, ['limit', 'depth', 'raw_json']],
-]
-const isCheckPath = (path: string): boolean => CHECK_PARAMS.some(([path_]) => path_.test(path))
-const checkParamsAllowed = (path: string, params: URLSearchParams): boolean => {
-    const rule = CHECK_PARAMS.find(([path_]) => path_.test(path))
-    if (!rule) {
-        return true
-    }
-    const [, allowed, required] = rule
-    const keys = [...params.keys()]
-    return (
-        new Set(keys).size === keys.length &&
-        !(params.has('after') && params.has('before')) &&
-        keys.every(key => allowed[key]?.test(params.get(key) || '')) &&
-        required.every(key => params.has(key))
-    )
-}
 
 // Public JSON the website is allowed to request — a closed list, not a URL
 // proxy. Anything else (including any non-reddit host) is refused.
@@ -150,8 +94,6 @@ const ALLOWED_PATHS = [
     /^\/r\/[\w+.-]{1,60}\/about\/(log|spam)\.json$/,
     /^\/r\/[\w+.-]{1,60}\/search\.json$/,
     USER_PATH,
-    USER_COMMENT_FEED,
-    COMMENT_PERMALINK,
 ]
 
 // Listings whose content depends on who is logged in: /user/me is the viewer,
@@ -172,7 +114,7 @@ export const validateBridgeUrl = (raw: any): string | null => {
     }
     // the website uses both the '/.json' and '.json' forms
     const path = u.pathname.replace(/\/{2,}/g, '/').replace(/\/\.json$/, '.json')
-    if (!ALLOWED_PATHS.some(re => re.test(path)) || !checkParamsAllowed(path, u.searchParams)) {
+    if (!ALLOWED_PATHS.some(re => re.test(path))) {
         return null
     }
     if (VIEWER_USER.test(path)) {
@@ -223,17 +165,7 @@ interface PublicViewContext {
     me: string
     // The user's items monitoring's last pass saw in the logged-out view
     verifiedLive: Set<string>
-    // While that record is fresh, the created_utc of the oldest item its one
-    // listing page covers (0: all of them). Unset, no item is flagged.
-    liveSince?: number
 }
-
-// Whether monitoring's record could have seen the user's item live: one it
-// covers, in a community the logged-out view shows
-const couldBeSeenLive = (data: any, liveSince: number | undefined): boolean =>
-    liveSince !== undefined &&
-    Number(data.created_utc) >= liveSince &&
-    !publicViewUncheckedReason(String(data.name || ''), data)
 
 const getPublicViewContext = async (me: string): Promise<PublicViewContext> => {
     const context: PublicViewContext = { knownRemoved: new Set(), me: me.toLowerCase(), verifiedLive: new Set() }
@@ -253,8 +185,6 @@ const getPublicViewContext = async (me: string): Promise<PublicViewContext> => {
             const live: any = await readLocal(liveKey, null)
             if (Array.isArray(live?.ids) && isFresh(Number(live?.t), PUBLIC_LIVE_MAX_AGE_MS, Date.now())) {
                 live.ids.forEach((id: string) => context.verifiedLive.add(id))
-                // Written only from a full page: fewer items, and it covers all
-                context.liveSince = Number(await readLocal(getOldestDateKey(me, true), 0)) || 0
             }
         }
     } catch {
@@ -279,8 +209,6 @@ const REMOVED_COMMENT_AUTHOR_FIELDS = /^author_(?:fullname|flair_\w+|premium|pat
 const markPubliclyRemoved = (kind: string, item: any) => {
     if (kind === 't1') {
         if (!isPlaceholderText(item.body ?? '')) {
-            // Trusted where '[removed]' isn't: an author can type that
-            item.reveddit_removed = true
             item.body = '[removed]'
             item.author = '[deleted]'
             if ('body_html' in item) {
@@ -296,7 +224,6 @@ const markPubliclyRemoved = (kind: string, item: any) => {
             }
         }
     } else if (item.author !== '[deleted]') {
-        item.reveddit_removed = true
         item.is_robot_indexable = false
         if (item.is_self) {
             item.selftext = '[removed]'
@@ -442,8 +369,7 @@ export const toPublicView = (json: any, context: PublicViewContext): any => {
             } else if (
                 context.me &&
                 String(data.author || '').toLowerCase() === context.me &&
-                !context.verifiedLive.has(data.name) &&
-                couldBeSeenLive(data, context.liveSince)
+                !context.verifiedLive.has(data.name)
             ) {
                 data.reveddit_unverified = true
             }
@@ -524,55 +450,6 @@ export const waitUntilIdle = async (isBusy: () => boolean, maxMs: number, pollMs
 }
 
 let recentTimes: number[] = []
-
-// The feed and permalink reads' half of the window, and how long Reddit's rate
-// headers asked them to stop. Kept in the worker's session storage too: the
-// page waits seconds between these reads, and Chrome stops an idle worker,
-// memory and all. Mutable for tests.
-export const _bridgeChecks = { times: [] as number[], restUntil: 0 }
-const BRIDGE_CHECKS_KEY = 'bridge_checks'
-// The user pages' pace never comes under this, whatever the scans are set to
-const CHECK_MIN_GAP_MS = 3000
-// Reddit's rate headers, where it sends them (a flagged account had 100 per
-// 10 minutes at 4 a read, 2026-11-05): at this many left, these reads stop
-const RATE_REMAINING_FLOOR = 20
-const RATE_REST_MAX_MS = BRIDGE_WINDOW_MS
-
-const loadChecks = async () => {
-    const session = workerSession()
-    if (!session || _bridgeChecks.times.length || _bridgeChecks.restUntil) {
-        return
-    }
-    const read: Record<string, any> = await session.get(BRIDGE_CHECKS_KEY).catch(() => ({}))
-    const stored = read?.[BRIDGE_CHECKS_KEY]
-    if (Array.isArray(stored?.times)) {
-        _bridgeChecks.times = stored.times.filter((t: unknown) => Number.isFinite(t))
-    }
-    _bridgeChecks.restUntil = Number(stored?.restUntil) || 0
-}
-const saveChecks = () => {
-    workerSession()
-        ?.set({ [BRIDGE_CHECKS_KEY]: { times: _bridgeChecks.times, restUntil: _bridgeChecks.restUntil } })
-        .catch(() => {})
-}
-const noteCheckRead = () => {
-    _bridgeChecks.times.push(Date.now())
-    saveChecks()
-}
-const noteRateHeaders = (r: Response) => {
-    const remaining = r.headers?.get?.('x-ratelimit-remaining')
-    if (remaining == null || !(Number(remaining) < RATE_REMAINING_FLOOR)) {
-        return
-    }
-    const reset = Number(r.headers.get('x-ratelimit-reset'))
-    const restMs = reset > 0 ? Math.min(reset * 1000, RATE_REST_MAX_MS) : RATE_REST_MAX_MS
-    _bridgeChecks.restUntil = Date.now() + restMs
-    saveChecks()
-    dlog(
-        'bridge',
-        `[reveddit] bridge: reddit's rate headers say ${remaining} left, so user-page reads stop for ${Math.ceil(restMs / 1000)}s`,
-    )
-}
 // single-lane serialization with spacing between fetches
 let lane: Promise<void> = Promise.resolve()
 
@@ -584,20 +461,13 @@ interface BridgeResponse {
     retryAfterMs?: number
     // Fetched with the user's login and rewritten to the public view (above)
     view?: 'logged_in'
-    // A comment feed's: whether it's the account the bridge reads as, and the
-    // reads a click may spend checking (the scans' setting)
-    own?: boolean
-    readsPerClick?: number
-    // A permalink read's
-    verdict?: 'live' | 'removed' | 'unknown'
 }
 
 const busy = (): BridgeResponse => ({ ok: false, status: 0, error: 'busy', retryAfterMs: BUSY_RETRY_AFTER_MS })
 
 // The user's own listings and abouts, under /user/<name>
 const ownProfileUser = (url: string, me: string): boolean => {
-    const path = new URL(url).pathname
-    const name = (path.match(USER_PATH) || path.match(USER_COMMENT_FEED))?.[1]
+    const name = new URL(url).pathname.match(USER_PATH)?.[1]
     return Boolean(me && name && name.toLowerCase() === me.toLowerCase())
 }
 
@@ -606,11 +476,6 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
     const url = validateBridgeUrl(request?.url)
     if (!url) {
         return { ok: false, status: 0, error: 'invalid url' }
-    }
-    const path = new URL(url).pathname
-    const check = isCheckPath(path)
-    if (check && (await getRemoteMechanism(MECHANISM_SCAN_FEEDS)) === 'off') {
-        return { ok: false, status: 0, error: 'feeds_off' }
     }
     // A second account is signing in (viewer.ts): the browser's login isn't
     // the user's for that minute
@@ -646,35 +511,9 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
         dlog('bridge', `[reveddit] bridge: window budget exhausted (${budget}/${BRIDGE_WINDOW_MS / 60000}min)`)
         return { ok: false, status: 0, error: 'budget_exhausted', retryAfterMs: 60 * 1000 }
     }
-    if (check) {
-        await loadChecks()
-        _bridgeChecks.times = _bridgeChecks.times.filter(t => now - t >= 0 && now - t < BRIDGE_WINDOW_MS)
-        if (_bridgeChecks.restUntil > now + RATE_REST_MAX_MS) {
-            // a clock set back
-            _bridgeChecks.restUntil = 0
-        }
-        if (_bridgeChecks.restUntil > now) {
-            return { ok: false, status: 0, error: 'reddit_limit', retryAfterMs: _bridgeChecks.restUntil - now }
-        }
-        // Not logged: a page that keeps asking would fill the saved log, and the
-        // page says it itself
-        if (_bridgeChecks.times.length >= Math.floor(budget / 2)) {
-            const freesAt = Math.min(..._bridgeChecks.times) + BRIDGE_WINDOW_MS
-            return { ok: false, status: 0, error: 'budget_exhausted', retryAfterMs: Math.max(1000, freesAt - now) }
-        }
-    }
     const me = await getLoggedInUser()
     if (ownProfileUser(url, me) && (await isPublicProfileUnavailable(me))) {
         return { ok: false, status: 404 }
-    }
-    if (check) {
-        // Takes the scans' turn, so these and scans share one pace. Too soon,
-        // the page waits and asks again: nothing is sent, counted or logged.
-        const waitMs = await scanTurnIn(CHECK_MIN_GAP_MS)
-        if (waitMs > 0) {
-            return { ok: false, status: 0, error: 'wait', retryAfterMs: waitMs }
-        }
-        noteCheckRead()
     }
     recentTimes.push(now)
     const run = lane.then(async (): Promise<BridgeResponse> => {
@@ -687,25 +526,15 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
             try {
                 const { response: r, blockPage } = await fetchLoggedIn(url, {
                     signal,
-                    // Feeds say the browser may keep them an hour
-                    ...(check && { modes: UNCACHED_MODES }),
                     canRetry: () => deadline - Date.now() >= MIN_FETCH_MS,
                     // the retry is a request too
-                    onRetry: () => {
-                        recentTimes.push(Date.now())
-                        if (check) {
-                            noteCheckRead()
-                        }
-                    },
+                    onRetry: () => recentTimes.push(Date.now()),
                     onSwitched: (blocked, answered, status) =>
                         dlog(
                             'bridge',
                             `[reveddit] bridge: block page in cache mode ${blocked}, ${answered} got through (${status})`,
                         ),
                 })
-                if (check) {
-                    noteRateHeaders(r)
-                }
                 if (!r.ok) {
                     dlog(
                         'bridge',
@@ -718,47 +547,18 @@ export const handleBridgeFetch = async (request: any): Promise<BridgeResponse> =
                     if (r.status === 429) {
                         flagIfRateLimited(new Error(`www.reddit.com request failed: ${r.status}`))
                     }
-                    // The edge's page in both modes says nothing of this feed,
-                    // comment or profile, where Reddit's own 403 (a suspended
-                    // account) or 404 does
-                    return {
-                        ok: false,
-                        status: r.status,
-                        data: null,
-                        ...(blockPage && { error: 'block_page' }),
-                    }
-                }
-                if (USER_COMMENT_FEED.test(path)) {
-                    let data
-                    try {
-                        data = feedListing(await r.text())
-                    } catch {
-                        dlog('bridge', `[reveddit] bridge: ${url.split('?')[0]} -> a page in place of the feed`)
-                        return { ok: false, status: r.status, error: NOT_A_FEED }
-                    }
-                    const { readsPerClick } = await getScanSettings()
-                    return {
-                        ok: true,
-                        status: r.status,
-                        data,
-                        view: 'logged_in',
-                        readsPerClick,
-                        ...(ownProfileUser(url, me) && { own: true }),
-                    }
+                    return { ok: false, status: r.status, data: null }
                 }
                 const json = await r.json()
                 if (isMembersOnlyAnswer(json)) {
                     dlog('bridge', `[reveddit] bridge: ${url.split('?')[0]} -> members-only community, answered 403`)
                     return { ok: false, status: 403, data: MEMBERS_ONLY_ANSWER }
                 }
-                const data = toPublicView(json, await getPublicViewContext(me))
-                const comment = path.match(COMMENT_PERMALINK)
                 return {
                     ok: true,
                     status: r.status,
-                    data,
+                    data: toPublicView(json, await getPublicViewContext(me)),
                     view: 'logged_in',
-                    ...(comment && { verdict: viewerVerdictOf(`t1_${comment[2]}`, comment[1], data) }),
                 }
             } catch (err: any) {
                 return { ok: false, status: 0, error: signal.aborted ? 'timeout' : String(err?.message || err) }

@@ -63,32 +63,6 @@ describe('a feed without a messages array', () => {
     })
 })
 
-describe('the scan limits', () => {
-    const limitsFrom = async scan_limits => {
-        serve({ messages: [], options: { scan_limits } })
-        await fetchNews({ force: true })
-        return cachedFeed().options.scan_limits
-    }
-
-    it.each([
-        [0, 2],
-        [0.5, 2],
-        [1, 2],
-        [2.9, 2],
-        [7.9, 7],
-    ])('hold reads_per_click %j to %j', async (limit, kept) => {
-        expect(await limitsFrom({ reads_per_click: limit })).toEqual({ reads_per_click: kept })
-    })
-
-    it.each([-1, 'x', null, Infinity])('leave out a reads_per_click of %j', async limit => {
-        expect(await limitsFrom({ reads_per_click: limit })).toBeUndefined()
-    })
-
-    it.each([0, 0.5, -1, 'x'])('leave out seconds_between_reads of %j', async seconds => {
-        expect(await limitsFrom({ seconds_between_reads: seconds })).toBeUndefined()
-    })
-})
-
 describe('the messages and fields it keeps', () => {
     it('drops messages missing a string id, title or body, and keeps only the known fields', async () => {
         serve({
@@ -135,14 +109,13 @@ describe('the messages and fields it keeps', () => {
         serve({
             messages: [],
             options: {
-                mechanisms: { legacyOldReddit: 'off', scanFeeds: 'auto', other: 'on', bad: 'maybe', worse: 1 },
+                mechanisms: { legacyOldReddit: 'off', publicViewCookies: 'auto', other: 'on', bad: 'maybe', worse: 1 },
                 legacy_host: 'old.reddit.com',
                 challenge: { token_fields: ['abc_token', 'BAD-'], solution_regex: 'a(b)' },
                 www_route_order: { chrome: ['tab:reload', 'bad'] },
                 markup: { comment_id_attributes: ['a-b', '1bad'] },
                 login_cookies: ['sess', 'bad name'],
                 login_wall: { paths: ['/signin/', 'nope'], markers: ['<auth-flow-modal'] },
-                scan_limits: { reads_per_click: 1, seconds_between_reads: 4, junk: 1 },
                 publicmodlogs_feed: 'a'.repeat(40),
                 unknown_option: 1,
             },
@@ -158,13 +131,11 @@ describe('the messages and fields it keeps', () => {
                 'markup',
                 'publicmodlogs_feed',
                 'www_route_order',
-                'scan_limits',
             ].sort(),
         )
-        expect(options.mechanisms).toEqual({ legacyOldReddit: 'off', scanFeeds: 'auto', other: 'on' })
+        expect(options.mechanisms).toEqual({ legacyOldReddit: 'off', publicViewCookies: 'auto', other: 'on' })
         // an older feed's legacy_host is accepted and dropped
         expect(options).not.toHaveProperty('legacy_host')
-        expect(options.scan_limits).toEqual({ reads_per_click: 2, seconds_between_reads: 4 })
         expect(options.markup).toEqual({ commentIdAttributes: ['a-b'] })
         expect(options.www_route_order).toEqual({ chrome: { order: ['tab:reload'], skip: [] } })
         expect(options.challenge).toEqual({ tokenFields: ['abc_token'], solutionRegex: 'a(b)' })
@@ -230,7 +201,6 @@ describe('the log line', () => {
         expect(line).toContain(', markup=')
         expect(line).toContain(', login_wall={')
         expect(line).toMatch(/, publicmodlogs_feed set$/)
-        expect(line).not.toContain('scan_limits')
     })
 
     it('is bare when the feed sets nothing', async () => {

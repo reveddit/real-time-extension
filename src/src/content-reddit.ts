@@ -9,10 +9,8 @@ import { placeForThisRun, ofThisRun, markThisRun, orphaned } from './run-token'
 import { element, observe, findByText } from './dom-helpers'
 import browser from 'webextension-polyfill'
 import { subscribeUser, MAX_SUBSCRIPTIONS } from './storage'
-import { initRestoreOnThread, initProfileScan, resetScansForPage } from './restore-ui'
 import { initOwnProfileStatus, initOwnThreadStatus, loadOwnRemovedSets, stopWatchingOwnItems } from './own-status'
-import { ownPart } from './comment-dom'
-import { commentIdOf } from './comment-tree'
+import { commentIdOf, ownPart } from './comment-dom'
 import { classifyPostPage } from './parse_html/new'
 import { getMarkupConfig } from './markup-config'
 import { applyRemoteConfig } from './news'
@@ -37,19 +35,12 @@ export const redditModifications = async (
         showRemovalStatus({ isNewReddit })
     }
 
-    // Restore buttons on thread pages, profile scan on user pages
+    // The user's own removed and locked items, marked on thread and profile pages
     const startPageFeatures = () => {
         stopWatchingOwnItems()
-        resetScansForPage()
         const [postID, , user, subreddit] = getFullIDsFromPath(window.location.pathname)
-        if (postID && subreddit) {
-            initRestoreOnThread(isNewReddit)
-            initOwnThreadStatus(isNewReddit)
-        }
-        if (user) {
-            initProfileScan(user, isNewReddit)
-            initOwnProfileStatus(user, isNewReddit)
-        }
+        if (postID && subreddit) initOwnThreadStatus(isNewReddit)
+        if (user) initOwnProfileStatus(user, isNewReddit)
     }
     startPageFeatures()
     // Reddit moves between its pages without loading a new document. The address
@@ -263,10 +254,9 @@ const setSubscribeButton = (
     return setTextAndFunction_subscribe(id, element, commentBody, postId)
 }
 
-// A comment's button takes a slot of its action row, beside Scan-Rev, and a post's
-// takes the spare slot at the end of its action row: its share button's slot would
-// push Share out of line. Reddit stamps a comment's row when the comment comes
-// into view (thread-scan-ui.ts injectScanButton_newReddit).
+// A comment's button takes a slot of its action row, and a post's takes the spare
+// slot at the end of its action row: its share button's slot would push Share out
+// of line. Reddit stamps a comment's row when the comment comes into view.
 const addSubscribeButtons_newReddit = async (subscriptions: Record<string, any>) => {
     let followed = subscriptions
     let { last_logged_in_user: me } = (await browser.storage.local.get({ last_logged_in_user: '' })) as any
@@ -361,6 +351,8 @@ const addSubscribeLinks_oldReddit = (
         const buttons = element.querySelector(
             ':scope > .entry > ul.buttons, :scope > .entry > .top-matter > ul.buttons',
         )
+        // A tab open through the update from 0.0.5.37 still has that run's scan-rev
+        // link, ahead of the subscribe link and with its class
         const placed = buttons?.querySelector('.rev-comment-action:not(.rev-scan-comment-btn)')
         if (!buttons || ofThisRun(placed) || orphaned()) return
         placed?.closest('li')?.remove()

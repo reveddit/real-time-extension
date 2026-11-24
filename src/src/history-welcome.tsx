@@ -59,7 +59,7 @@ export function FullWelcomeBanner({ currentUser, onDismiss }: { currentUser: str
           <BlueLink href={`https://www.reveddit.com/user/${currentUser}?all=true`} target="_blank" rel="noreferrer">
             reveddit.com user page
           </BlueLink>
-          , which can show orphaned and collapsed comments.
+          , which marks the removed comments and posts the extension finds.
         </p>
       )}
       <BannerActions>
@@ -88,8 +88,8 @@ export function SlimWelcomeBanner({ currentUser }: { currentUser: string | null 
           You can also check your{' '}
           <BlueLink href={`https://www.reveddit.com/user/${currentUser}?all=true`} target="_blank" rel="noreferrer">
             reveddit.com user page
-          </BlueLink>{' '}
-          for orphaned and collapsed comments.
+          </BlueLink>
+          , which marks the removed comments and posts the extension finds.
         </p>
       )}
     </WelcomeBanner>
